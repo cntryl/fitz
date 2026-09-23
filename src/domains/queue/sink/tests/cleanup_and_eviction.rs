@@ -1,4 +1,106 @@
+use super::actor_delivery::DlqSeedClock;
 use super::*;
+
+fn delayed_queue_with_clock() -> (
+    QueueDomain,
+    Arc<crate::control::admin::read_model::AdminReadModel>,
+    DlqSeedClock,
+) {
+    let family = RouteFamily::new(1);
+    let key =
+        QueueKey::from_route(family, &Route::new("queue://acme/jobs/delayed")).expect("queue key");
+    let clock = DlqSeedClock::new();
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let mut actor = crate::domains::queue::QueueActor::with_clock(
+        family,
+        key.clone(),
+        store.clone(),
+        Box::new(clock.clone()),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    assert!(matches!(
+        actor.handle_send(bytes::Bytes::from_static(b"delayed"), Some(1)),
+        crate::domains::queue::QueueResponse::Sent { .. }
+    ));
+    let read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store,
+        Arc::new(Router::new()),
+        read_model.clone(),
+        crate::domains::WritePolicy::Buffered,
+    );
+    sink.install_actor_for_tests(key, actor);
+    (sink, read_model, clock)
+}
+
+#[test]
+fn should_not_promote_due_delayed_message_during_queue_admin_refresh() {
+    // Arrange
+    let (sink, read_model, clock) = delayed_queue_with_clock();
+    let family = RouteFamily::new(1);
+    sink.inspect_family_for_tests(family, QueueFamilyState::mark_admin_snapshot_dirty);
+    clock.advance(Duration::from_secs(2));
+
+    // Act
+    sink.refresh_admin_snapshot_if_dirty();
+
+    // Assert
+    let queues = read_model.queues(None);
+    assert_eq!(queues.len(), 1);
+    assert_eq!(queues[0].messages_delayed, 1);
+    assert_eq!(queues[0].messages_ready, 0);
+    let snapshot = sink.queue_snapshot_for_tests(family, "queue://acme/jobs/delayed");
+    assert_eq!(snapshot.messages_delayed, 1);
+    assert_eq!(snapshot.messages_ready, 0);
+}
+
+#[test]
+fn should_promote_due_delayed_message_during_runtime_sweep_without_admin_refresh() {
+    // Arrange
+    let (sink, _read_model, clock) = delayed_queue_with_clock();
+    let family = RouteFamily::new(1);
+    clock.advance(Duration::from_secs(2));
+
+    // Act
+    sink.sweep_runtime_state_at(Instant::now());
+
+    // Assert
+    let snapshot = sink.queue_snapshot_for_tests(family, "queue://acme/jobs/delayed");
+    assert_eq!(snapshot.messages_delayed, 0);
+    assert_eq!(snapshot.messages_ready, 1);
+}
+
+#[test]
+fn should_not_evict_idle_queue_actor_during_queue_admin_refresh() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_route = "queue://acme/jobs/idle";
+    let key = QueueKey::from_route(family, &Route::new(queue_route)).expect("queue key");
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let actor = crate::domains::queue::QueueActor::new(
+        family,
+        key.clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let sink = new_queue_domain_sink(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::Buffered,
+    );
+    sink.install_actor_for_tests(key, actor);
+    sink.force_actor_idle_for_tests(family, queue_route);
+    sink.inspect_family_for_tests(family, QueueFamilyState::mark_admin_snapshot_dirty);
+
+    // Act
+    sink.refresh_admin_snapshot_if_dirty();
+
+    // Assert
+    assert_eq!(sink.actor_count_for_tests(), 1);
+}
 
 struct QueueRequestContext<'a> {
     sink: &'a QueueDomain,

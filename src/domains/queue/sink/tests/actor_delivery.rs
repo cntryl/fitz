@@ -3,7 +3,7 @@ use super::*;
 use crate::domains::queue::QueueAdminSnapshot;
 
 #[derive(Clone)]
-struct DlqSeedClock {
+pub(super) struct DlqSeedClock {
     state: Arc<std::sync::Mutex<DlqSeedClockState>>,
 }
 
@@ -14,7 +14,7 @@ struct DlqSeedClockState {
 }
 
 impl DlqSeedClock {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             state: Arc::new(std::sync::Mutex::new(DlqSeedClockState {
                 instant: Instant::now(),
@@ -23,7 +23,7 @@ impl DlqSeedClock {
         }
     }
 
-    fn advance(&self, duration: Duration) {
+    pub(super) fn advance(&self, duration: Duration) {
         let mut state = self.state.lock().expect("clock state");
         state.instant += duration;
         state.epoch_ms = state
