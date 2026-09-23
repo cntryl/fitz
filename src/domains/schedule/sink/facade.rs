@@ -318,7 +318,7 @@ impl ScheduleDomain {
         family: RouteFamily,
         route: String,
         timeout: std::time::Duration,
-    ) -> Result<Option<super::model::ScheduleRunNowResult>, String> {
+    ) -> Result<Option<super::model::ScheduleRunNowResult>, super::model::ScheduleRunNowError> {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let deadline = Instant::now()
             .checked_add(timeout)
@@ -328,20 +328,10 @@ impl ScheduleDomain {
             crate::runtime::FamilyActorLane::Control,
             ScheduleDomainCommand::RunNow(route, deadline, reply_tx),
         )
-        .map_err(|error| format!("schedule run-now enqueue failed: {error}"))?;
+        .map_err(super::model::ScheduleRunNowError::Enqueue)?;
         reply_rx
             .recv_timeout(timeout)
-            .map_err(|error| match error {
-                crossbeam_channel::RecvTimeoutError::Timeout => {
-                    format!(
-                        "schedule run-now reply timed out after {}ms",
-                        timeout.as_millis()
-                    )
-                }
-                crossbeam_channel::RecvTimeoutError::Disconnected => {
-                    "schedule run-now reply channel disconnected".to_string()
-                }
-            })?
+            .map_err(|error| super::model::ScheduleRunNowError::from_reply_wait(error, timeout))?
     }
 
     fn live_counts(&self) -> ScheduleLiveCounts {

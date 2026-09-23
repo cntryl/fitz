@@ -16,6 +16,7 @@ mod delivery_and_subscriptions;
 mod fault_injection;
 mod lifecycle_and_admin;
 mod recovery_and_claims;
+mod run_now_errors;
 
 fn u128_to_u64_saturating(value: u128) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)

@@ -3,7 +3,9 @@ use super::{
     Response, Runtime,
 };
 use crate::api::admin::auth::AdminPrincipal;
-use crate::domains::schedule::sink::{ScheduleRunNowOutcome, ScheduleRunNowResult};
+use crate::domains::schedule::sink::{
+    ScheduleRunNowError, ScheduleRunNowOutcome, ScheduleRunNowResult,
+};
 use crate::runtime::routing::RouteFamily;
 use chrono::Utc;
 use percent_encoding::percent_decode_str;
@@ -107,14 +109,7 @@ fn handle_hierarchical_post_blocking(
                     hyper::StatusCode::NOT_FOUND,
                     "Schedule definition not found",
                 ),
-                Err(error) if error.contains("timed out") => super::super::error_response(
-                    hyper::StatusCode::SERVICE_UNAVAILABLE,
-                    &format!("Schedule run-now outcome may be unknown; inspect consumers before triggering again: {error}"),
-                ),
-                Err(error) => super::super::error_response(
-                    hyper::StatusCode::SERVICE_UNAVAILABLE,
-                    &error,
-                ),
+                Err(error) => schedule_run_now_error_response(&error),
             }
         }
         ["realms", realm, "areas", area, "resources", resource, "dead-letters", message_id, "replay"]
@@ -124,6 +119,16 @@ fn handle_hierarchical_post_blocking(
         }
         _ => super::not_found(),
     }
+}
+
+fn schedule_run_now_error_response(error: &ScheduleRunNowError) -> Response {
+    let message = match error {
+        ScheduleRunNowError::ReplyTimeout { .. } => format!(
+            "Schedule run-now outcome may be unknown; inspect consumers before triggering again: {error}"
+        ),
+        _ => error.to_string(),
+    };
+    super::super::error_response(hyper::StatusCode::SERVICE_UNAVAILABLE, &message)
 }
 
 fn decode_schedule_path_segment(value: &str) -> Result<Cow<'_, str>, &'static str> {
@@ -142,6 +147,67 @@ fn decode_schedule_path_segment(value: &str) -> Result<Cow<'_, str>, &'static st
     percent_decode_str(value)
         .decode_utf8()
         .map_err(|_| "Schedule route path contains invalid UTF-8")
+}
+
+#[cfg(test)]
+mod run_now_error_tests {
+    use super::*;
+    use crate::domains::schedule::sink::ScheduleRunNowError;
+
+    #[tokio::test]
+    async fn should_warn_of_unknown_run_now_outcome_for_typed_reply_timeout() {
+        // Arrange
+        let error = ScheduleRunNowError::ReplyTimeout {
+            timeout: std::time::Duration::from_millis(10),
+        };
+
+        // Act
+        let response = schedule_run_now_error_response(&error);
+
+        // Assert
+        assert_eq!(response.status(), hyper::StatusCode::SERVICE_UNAVAILABLE);
+        let body = crate::testkit::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        let message = String::from_utf8(body.to_vec()).unwrap();
+        assert!(message.contains("outcome may be unknown"));
+    }
+
+    #[tokio::test]
+    async fn should_report_run_now_enqueue_rejection_without_unknown_outcome_warning() {
+        // Arrange
+        let error = ScheduleRunNowError::Enqueue(crate::runtime::DeliveryError::ActorStopped);
+
+        // Act
+        let response = schedule_run_now_error_response(&error);
+
+        // Assert
+        assert_eq!(response.status(), hyper::StatusCode::SERVICE_UNAVAILABLE);
+        let body = crate::testkit::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        let message = String::from_utf8(body.to_vec()).unwrap();
+        assert!(message.contains("enqueue failed"));
+        assert!(!message.contains("outcome may be unknown"));
+    }
+
+    #[tokio::test]
+    async fn should_report_run_now_reply_disconnect_without_unknown_outcome_warning() {
+        // Arrange
+        let error = ScheduleRunNowError::ReplyDisconnected;
+
+        // Act
+        let response = schedule_run_now_error_response(&error);
+
+        // Assert
+        assert_eq!(response.status(), hyper::StatusCode::SERVICE_UNAVAILABLE);
+        let body = crate::testkit::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        let message = String::from_utf8(body.to_vec()).unwrap();
+        assert!(message.contains("reply channel disconnected"));
+        assert!(!message.contains("outcome may be unknown"));
+    }
 }
 
 #[derive(Debug, Serialize)]

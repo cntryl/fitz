@@ -9,20 +9,21 @@ use super::{
     StreamResourceCollection, StreamResourceEntry,
 };
 use crate::api::admin::troubleshooting;
-use crate::domains::kv::sink::AdminKvRowsRequest;
+use crate::domains::kv::sink::{AdminKvRowsError, AdminKvRowsRequest};
 use crate::runtime::routing::RouteFamily;
 use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn kv_storage_error_response(error: &str) -> Response {
-    let status = if error.to_ascii_lowercase().contains("routefamily")
-        || error.to_ascii_lowercase().contains("route family")
-    {
-        hyper::StatusCode::BAD_REQUEST
-    } else {
-        hyper::StatusCode::SERVICE_UNAVAILABLE
+    crate::api::admin::error_response(hyper::StatusCode::SERVICE_UNAVAILABLE, error)
+}
+
+pub(crate) fn kv_rows_error_response(error: &AdminKvRowsError) -> Response {
+    let status = match error {
+        AdminKvRowsError::InvalidCursorPrefix => hyper::StatusCode::BAD_REQUEST,
+        AdminKvRowsError::Backend(_) => hyper::StatusCode::SERVICE_UNAVAILABLE,
     };
-    crate::api::admin::error_response(status, error)
+    crate::api::admin::error_response(status, &error.to_string())
 }
 
 pub(crate) fn kv_byte_value(bytes: &[u8]) -> KvByteValue {
@@ -703,6 +704,6 @@ pub fn kv_rows_for_resource(
                 })
                 .collect(),
         })),
-        Err(error) => Ok(kv_storage_error_response(&error)),
+        Err(error) => Ok(kv_rows_error_response(&error)),
     }
 }

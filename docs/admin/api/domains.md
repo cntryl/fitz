@@ -18,6 +18,11 @@ but open transactions shown here are current-process in-memory state only. They
 disappear on disconnect cleanup or broker restart and do not imply durable
 transaction recovery.
 
+For committed-row browsing, `cursor` is the base64 `next_cursor` from a prior
+page with the same `starts_with` prefix. Invalid encoding or a cursor outside
+that prefix is a client request error (`400`); an unavailable KV backend is
+reported as `503`. Neither result changes committed data.
+
 #### Get KV Resource
 ```
 GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}
@@ -481,6 +486,11 @@ Schedule delivery metrics cover two different boundaries. A notification handoff
 the in-process router accepts it; this is not a consumer acknowledgement or durable-delivery proof.
 `notify_failures` counts router handoff rejections, while `ack_failures` counts failures to persist
 the Schedule-owned claim acknowledgement after handoff attempts. Read the two independently.
+
+The admin `runScheduleNow` action is an ephemeral live handoff. A `503` reply
+timeout says the outcome may be unknown, so inspect consumers before trying
+again. An enqueue rejection or disconnected reply channel is also a `503`, but
+is reported as its own cause rather than inferred from message wording.
 
 The Schedule resource list reports enabled definitions as `schedules_active`,
 durable `pending_claims`, and the earliest enabled `next_run`. Disabled-only

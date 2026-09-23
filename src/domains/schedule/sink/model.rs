@@ -209,6 +209,49 @@ pub(crate) struct ScheduleRunNowResult {
     pub(crate) outcome: ScheduleRunNowOutcome,
 }
 
+#[derive(Debug)]
+pub(crate) enum ScheduleRunNowError {
+    DomainUnavailable,
+    Enqueue(crate::runtime::DeliveryError),
+    ReplyTimeout { timeout: std::time::Duration },
+    ReplyDisconnected,
+    CommandExpired,
+}
+
+impl ScheduleRunNowError {
+    pub(super) fn from_reply_wait(
+        error: crossbeam_channel::RecvTimeoutError,
+        timeout: std::time::Duration,
+    ) -> Self {
+        match error {
+            crossbeam_channel::RecvTimeoutError::Timeout => Self::ReplyTimeout { timeout },
+            crossbeam_channel::RecvTimeoutError::Disconnected => Self::ReplyDisconnected,
+        }
+    }
+}
+
+impl std::fmt::Display for ScheduleRunNowError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DomainUnavailable => formatter.write_str("Schedule domain is not initialized"),
+            Self::Enqueue(error) => write!(formatter, "schedule run-now enqueue failed: {error}"),
+            Self::ReplyTimeout { timeout } => write!(
+                formatter,
+                "schedule run-now reply deadline exceeded after {}ms",
+                timeout.as_millis()
+            ),
+            Self::ReplyDisconnected => {
+                formatter.write_str("schedule run-now reply channel disconnected")
+            }
+            Self::CommandExpired => formatter.write_str(
+                "schedule run-now command expired before execution; no handoff was attempted",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ScheduleRunNowError {}
+
 impl ScheduleLiveCounts {
     pub(super) fn merge(mut self, other: &Self) -> Self {
         self.subscriptions = self.subscriptions.saturating_add(other.subscriptions);
@@ -249,7 +292,7 @@ pub(super) enum ScheduleDomainCommand {
     RunNow(
         String,
         Instant,
-        crossbeam_channel::Sender<Result<Option<ScheduleRunNowResult>, String>>,
+        crossbeam_channel::Sender<Result<Option<ScheduleRunNowResult>, ScheduleRunNowError>>,
     ),
     PanicForFailpoint,
     #[cfg(test)]

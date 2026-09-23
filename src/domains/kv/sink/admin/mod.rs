@@ -36,6 +36,25 @@ pub struct AdminKvRowsRequest<'a> {
     pub limit: usize,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum AdminKvRowsError {
+    InvalidCursorPrefix,
+    Backend(String),
+}
+
+impl std::fmt::Display for AdminKvRowsError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidCursorPrefix => {
+                formatter.write_str("cursor must start with starts_with prefix")
+            }
+            Self::Backend(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for AdminKvRowsError {}
+
 impl KvDomain {
     #[cfg(test)]
     /// Read one family directly for storage-backed admin regression tests.
@@ -132,7 +151,7 @@ impl KvDomain {
     pub fn admin_scan_committed_rows(
         &self,
         request: &AdminKvRowsRequest<'_>,
-    ) -> Result<AdminKvRowsResult, String> {
+    ) -> Result<AdminKvRowsResult, AdminKvRowsError> {
         let mut core = self.admin_core();
         KvFamilyRuntime { core: &mut core }.admin_scan_committed_rows(request)
     }

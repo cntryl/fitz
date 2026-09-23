@@ -321,7 +321,10 @@ impl DomainAdminPorts {
     pub(crate) fn kv_admin_scan_committed_rows(
         &self,
         request: &crate::domains::kv::sink::AdminKvRowsRequest<'_>,
-    ) -> Result<crate::domains::kv::sink::AdminKvRowsResult, String> {
+    ) -> Result<
+        crate::domains::kv::sink::AdminKvRowsResult,
+        crate::domains::kv::sink::AdminKvRowsError,
+    > {
         self.kv.admin_scan_committed_rows(request)
     }
 
@@ -450,7 +453,10 @@ impl DomainAdminPorts {
         family: crate::runtime::routing::RouteFamily,
         route: String,
         timeout: std::time::Duration,
-    ) -> Result<Option<crate::domains::schedule::sink::ScheduleRunNowResult>, String> {
+    ) -> Result<
+        Option<crate::domains::schedule::sink::ScheduleRunNowResult>,
+        crate::domains::schedule::sink::ScheduleRunNowError,
+    > {
         self.schedule.run_now(family, route, timeout)
     }
 

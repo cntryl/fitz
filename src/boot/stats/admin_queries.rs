@@ -1,6 +1,6 @@
 use super::Runtime;
 use crate::boot::domains::DomainAdminPorts;
-use crate::domains::kv::sink::{AdminKvRowsRequest, AdminKvRowsResult};
+use crate::domains::kv::sink::{AdminKvRowsError, AdminKvRowsRequest, AdminKvRowsResult};
 use crate::domains::queue::{MessageId, QueueKey};
 use crate::domains::stream::sink::AdminStreamReadRequest;
 use crate::runtime::routing::RouteFamily;
@@ -169,12 +169,11 @@ impl Runtime {
     pub fn kv_scan_committed_rows(
         &self,
         request: &AdminKvRowsRequest<'_>,
-    ) -> Result<AdminKvRowsResult, String> {
-        let domains = self
-            .domain_admins
-            .read()
-            .clone()
-            .ok_or_else(|| "KV domain is not initialized".to_string())?;
+    ) -> Result<AdminKvRowsResult, AdminKvRowsError> {
+        let domains =
+            self.domain_admins.read().clone().ok_or_else(|| {
+                AdminKvRowsError::Backend("KV domain is not initialized".to_string())
+            })?;
         domains.kv_admin_scan_committed_rows(request)
     }
 
@@ -415,11 +414,14 @@ impl Runtime {
         family: RouteFamily,
         route: String,
         timeout: std::time::Duration,
-    ) -> Result<Option<crate::domains::schedule::sink::ScheduleRunNowResult>, String> {
+    ) -> Result<
+        Option<crate::domains::schedule::sink::ScheduleRunNowResult>,
+        crate::domains::schedule::sink::ScheduleRunNowError,
+    > {
         self.domain_admins
             .read()
             .as_ref()
-            .ok_or_else(|| "Schedule domain is not initialized".to_string())?
+            .ok_or(crate::domains::schedule::sink::ScheduleRunNowError::DomainUnavailable)?
             .schedule_run_now(family, route, timeout)
     }
 
