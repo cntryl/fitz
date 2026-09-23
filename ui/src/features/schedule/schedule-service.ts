@@ -6,6 +6,10 @@ import type {
 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
+import {
+  routeFamilyRequest,
+  type RouteFamilyRequestOptions,
+} from "@/shared/navigation/route-family-request";
 import { mapScheduleOverview } from "./schedule-mappers";
 import type {
   ScheduleExecutionObservationRequest,
@@ -17,11 +21,11 @@ import type {
   ScheduleResourceView,
 } from "./schedule-models";
 
-async function getOverview(options: ServiceRequestOptions = {}): Promise<ScheduleOverview> {
-  const family = apiRouteFamilySegment();
+async function getOverview(options: RouteFamilyRequestOptions = {}): Promise<ScheduleOverview> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listScheduleRealms(apiParams({ family }, options)),
-    apiv1.getScheduleStats(apiParams({ family }, options)),
+    apiv1.listScheduleRealms(apiParams({ family }, requestOptions)),
+    apiv1.getScheduleStats(apiParams({ family }, requestOptions)),
   ]);
 
   return mapScheduleOverview(
@@ -57,17 +61,17 @@ async function listExecutionObservations(
 
 async function listScheduleAreas(
   realm: string,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<ScheduleRealmInventory> {
-  const family = apiRouteFamilySegment();
+  const { family, requestOptions } = routeFamilyRequest(options);
   const areas = unwrapResponse(
-    await apiv1.listScheduleAreas(apiParams({ family, realm }, options)),
+    await apiv1.listScheduleAreas(apiParams({ family, realm }, requestOptions)),
     "Unable to load schedule areas",
   ).areas;
   const areaRows = await Promise.all(
     areas.map(async ({ area }) => {
       const resources = unwrapResponse(
-        await apiv1.listScheduleResources(apiParams({ area, family, realm }, options)),
+        await apiv1.listScheduleResources(apiParams({ area, family, realm }, requestOptions)),
         "Unable to load schedule resources",
       ).resources.map((entry) => entry.resource);
 
@@ -85,11 +89,11 @@ async function listScheduleAreas(
 async function listScheduleResources(
   realm: string,
   area: string,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<ScheduleAreaInventory> {
-  const family = apiRouteFamilySegment();
+  const { family, requestOptions } = routeFamilyRequest(options);
   const resources = unwrapResponse(
-    await apiv1.listScheduleResources(apiParams({ area, family, realm }, options)),
+    await apiv1.listScheduleResources(apiParams({ area, family, realm }, requestOptions)),
     "Unable to load schedule resources",
   ).resources.map((entry) => entry.resource);
 

@@ -2,6 +2,10 @@ import { apiParams, apiv1 } from "@/adapters";
 import { ensureResponseOk, unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
 import {
+  routeFamilyRequest,
+  type RouteFamilyRequestOptions,
+} from "@/shared/navigation/route-family-request";
+import {
   mapQueueAreaDetail,
   mapQueueDeadLetter,
   mapQueueOverview,
@@ -47,11 +51,11 @@ async function mapWithConcurrency<T, R>(
   return results as R[];
 }
 
-async function getOverview(options: ServiceRequestOptions = {}): Promise<QueueOverview> {
-  const family = apiRouteFamilySegment();
+async function getOverview(options: RouteFamilyRequestOptions = {}): Promise<QueueOverview> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listQueueRealms(apiParams({ family }, options)),
-    apiv1.getQueueStats(apiParams({ family }, options)),
+    apiv1.listQueueRealms(apiParams({ family }, requestOptions)),
+    apiv1.getQueueStats(apiParams({ family }, requestOptions)),
   ]);
 
   return mapQueueOverview(
@@ -62,11 +66,10 @@ async function getOverview(options: ServiceRequestOptions = {}): Promise<QueueOv
 
 async function getRealm(
   realm: string,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<QueueRealmDetail> {
-  const response = await apiv1.getQueueRealm(
-    apiParams({ family: apiRouteFamilySegment(), realm }, options),
-  );
+  const { family, requestOptions } = routeFamilyRequest(options);
+  const response = await apiv1.getQueueRealm(apiParams({ family, realm }, requestOptions));
 
   return mapQueueRealmDetail(unwrapResponse(response, `Unable to load queue realm ${realm}`));
 }
@@ -74,11 +77,10 @@ async function getRealm(
 async function getArea(
   realm: string,
   area: string,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<QueueAreaDetail> {
-  const response = await apiv1.getQueueArea(
-    apiParams({ area, family: apiRouteFamilySegment(), realm }, options),
-  );
+  const { family, requestOptions } = routeFamilyRequest(options);
+  const response = await apiv1.getQueueArea(apiParams({ area, family, realm }, requestOptions));
 
   return mapQueueAreaDetail(unwrapResponse(response, `Unable to load queue area ${realm}/${area}`));
 }
@@ -86,17 +88,18 @@ async function getArea(
 async function listDeadLetters(
   resourceRef: QueueResourceRef,
   filters: DeadLetterFilters = {},
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<DeadLetterMessage[]> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const response = await apiv1.listQueueDeadLetters(
     apiParams(
       {
         area: resourceRef.area,
-        family: apiRouteFamilySegment(filters.family),
+        family: filters.family == null ? family : apiRouteFamilySegment(filters.family),
         realm: resourceRef.realm,
         resource: resourceRef.resource,
       },
-      options,
+      requestOptions,
     ),
   );
 
@@ -104,10 +107,10 @@ async function listDeadLetters(
   return dto.messages.map(mapQueueDeadLetter);
 }
 
-async function listInventory(options: ServiceRequestOptions = {}): Promise<QueueInventory> {
-  const family = apiRouteFamilySegment();
+async function listInventory(options: RouteFamilyRequestOptions = {}): Promise<QueueInventory> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const realms = unwrapResponse(
-    await apiv1.listQueueRealms(apiParams({ family }, options)),
+    await apiv1.listQueueRealms(apiParams({ family }, requestOptions)),
     "Unable to load queue realms for inventory",
   ).realms;
 
@@ -115,7 +118,7 @@ async function listInventory(options: ServiceRequestOptions = {}): Promise<Queue
     realms,
     async ({ realm }) => {
       const areas = unwrapResponse(
-        await apiv1.listQueueAreas(apiParams({ family, realm }, options)),
+        await apiv1.listQueueAreas(apiParams({ family, realm }, requestOptions)),
         `Unable to load queue areas for ${realm}`,
       ).areas;
 
@@ -123,7 +126,7 @@ async function listInventory(options: ServiceRequestOptions = {}): Promise<Queue
         areas,
         async ({ area }) => {
           const resourceEntries = unwrapResponse(
-            await apiv1.listQueueResources(apiParams({ area, family, realm }, options)),
+            await apiv1.listQueueResources(apiParams({ area, family, realm }, requestOptions)),
             `Unable to load queue resources for ${realm}/${area}`,
           ).resources.map(mapQueueResource);
 

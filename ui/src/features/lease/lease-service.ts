@@ -3,6 +3,10 @@ import type { LeaseSearchResponse } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
 import {
+  routeFamilyRequest,
+  type RouteFamilyRequestOptions,
+} from "@/shared/navigation/route-family-request";
+import {
   mapLeaseAreaResourceRows,
   mapLeaseAreaSummary,
   mapLeaseOverview,
@@ -43,11 +47,11 @@ async function mapWithConcurrency<T, R>(
   return results as R[];
 }
 
-async function getOverview(options: ServiceRequestOptions = {}): Promise<LeaseOverview> {
-  const family = apiRouteFamilySegment();
+async function getOverview(options: RouteFamilyRequestOptions = {}): Promise<LeaseOverview> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listLeaseRealms(apiParams({ family }, options)),
-    apiv1.getLeaseStats(apiParams({ family }, options)),
+    apiv1.listLeaseRealms(apiParams({ family }, requestOptions)),
+    apiv1.getLeaseStats(apiParams({ family }, requestOptions)),
   ]);
 
   return mapLeaseOverview(
@@ -58,11 +62,11 @@ async function getOverview(options: ServiceRequestOptions = {}): Promise<LeaseOv
 
 async function listRealmResources(
   realm: string,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<LeaseRealmInventory> {
-  const family = apiRouteFamilySegment();
+  const { family, requestOptions } = routeFamilyRequest(options);
   const areaEntries = unwrapResponse(
-    await apiv1.listLeaseAreas(apiParams({ family, realm }, options)),
+    await apiv1.listLeaseAreas(apiParams({ family, realm }, requestOptions)),
     `Unable to load lease areas for ${realm}`,
   ).areas;
 
@@ -73,7 +77,7 @@ async function listRealmResources(
         realm,
         area,
         unwrapResponse(
-          await apiv1.listLeaseResources(apiParams({ area, family, realm }, options)),
+          await apiv1.listLeaseResources(apiParams({ area, family, realm }, requestOptions)),
           `Unable to load lease resources for ${realm}/${area}`,
         ).resources,
       ),
@@ -86,11 +90,11 @@ async function listRealmResources(
 async function listAreaResources(
   realm: string,
   area: string,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<LeaseAreaResourceRows> {
-  const family = apiRouteFamilySegment();
+  const { family, requestOptions } = routeFamilyRequest(options);
   const resources = unwrapResponse(
-    await apiv1.listLeaseResources(apiParams({ area, family, realm }, options)),
+    await apiv1.listLeaseResources(apiParams({ area, family, realm }, requestOptions)),
     `Unable to load lease resources for ${realm}/${area}`,
   ).resources;
 

@@ -9,6 +9,10 @@ import {
 } from "./notice-mappers";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
+import {
+  routeFamilyRequest,
+  type RouteFamilyRequestOptions,
+} from "@/shared/navigation/route-family-request";
 import { mapNoticeOverview } from "./notice-mappers";
 import type {
   NoticeDeliveryRows,
@@ -20,16 +24,6 @@ import type {
 } from "./notice-models";
 
 const NOTICE_INVENTORY_CONCURRENCY = 4;
-type NoticeServiceOptions = ServiceRequestOptions & { routeFamily?: number | string };
-
-function splitRouteFamilyOption(options: NoticeServiceOptions) {
-  const { routeFamily, ...requestOptions } = options;
-
-  return {
-    family: apiRouteFamilySegment(routeFamily),
-    requestOptions,
-  };
-}
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -55,11 +49,11 @@ async function mapWithConcurrency<T, R>(
   return results as R[];
 }
 
-async function getOverview(options: ServiceRequestOptions = {}): Promise<NoticeOverview> {
-  const family = apiRouteFamilySegment();
+async function getOverview(options: RouteFamilyRequestOptions = {}): Promise<NoticeOverview> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listNoticeRealms(apiParams({ family }, options)),
-    apiv1.getNoticeStats(apiParams({ family }, options)),
+    apiv1.listNoticeRealms(apiParams({ family }, requestOptions)),
+    apiv1.getNoticeStats(apiParams({ family }, requestOptions)),
   ]);
 
   return mapNoticeOverview(
@@ -70,9 +64,9 @@ async function getOverview(options: ServiceRequestOptions = {}): Promise<NoticeO
 
 async function listNoticeAreas(
   realm: string,
-  options: NoticeServiceOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<NoticeRealmInventory> {
-  const { family, requestOptions } = splitRouteFamilyOption(options);
+  const { family, requestOptions } = routeFamilyRequest(options);
   const areaEntries = unwrapResponse(
     await apiv1.listNoticeAreas(apiParams({ family, realm }, requestOptions)),
     `Unable to load notice areas for ${realm}`,
@@ -97,9 +91,9 @@ async function listNoticeAreas(
 async function listNoticeResources(
   realm: string,
   area: string,
-  options: NoticeServiceOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<NoticeAreaResourceRows> {
-  const { family, requestOptions } = splitRouteFamilyOption(options);
+  const { family, requestOptions } = routeFamilyRequest(options);
   const resources = unwrapResponse(
     await apiv1.listNoticeResources(apiParams({ area, family, realm }, requestOptions)),
     `Unable to load notice resources for ${realm}/${area}`,

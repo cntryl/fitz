@@ -6,7 +6,7 @@ import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 const kvQueries = queryScope("kv");
 const kvOverviewQuery = defineQuery<{ family: string }, KvOverview>({
   key: ({ family }) => kvQueries.key("overview", family),
-  fetch: ({ signal }) => kvService.getOverview({ signal }),
+  fetch: ({ family, signal }) => kvService.getOverview({ routeFamily: family, signal }),
 });
 
 export function createKvOverviewQuery() {

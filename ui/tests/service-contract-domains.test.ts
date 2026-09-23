@@ -370,6 +370,72 @@ describe("service endpoint contracts", () => {
       ),
     );
   });
+  it("keeps RPC operation detail and call evidence in the requested family", async () => {
+    const { rpcService } = await import("@/features/rpc/rpc-service");
+
+    window.history.pushState({}, "", "/admin/8/rpc/default/ops/primary/GetStatus");
+    try {
+      await rpcService.getOperationView({
+        area: "ops",
+        limit: 25,
+        operation: "GetStatus",
+        realm: "default",
+        resource: "primary",
+        routeFamily: 7,
+      });
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+
+    expect(mocks.apiv1.getRpcOperation).toHaveBeenCalledWith(
+      params({
+        area: "ops",
+        family: "7",
+        operation: "GetStatus",
+        realm: "default",
+        resource: "primary",
+      }),
+    );
+    expect(mocks.apiv1.searchRpcCalls).toHaveBeenCalledWith(
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          correlation_id: undefined,
+          limit: 25,
+          operation: "GetStatus",
+          q: undefined,
+          realm: "default",
+          resource: "primary",
+        },
+      ),
+    );
+  });
+  it("keeps every inventory hop in the family captured before navigation", async () => {
+    const { resourceService } = await import("@/features/resource/resource-service");
+    const realms = {
+      ok: true,
+      status: 200,
+      data: { realms: [{ realm: "default" }] },
+    };
+    mocks.apiv1.listKvRealms.mockImplementationOnce(async () => {
+      window.history.pushState({}, "", "/admin/8/kv");
+      return realms;
+    });
+
+    window.history.pushState({}, "", "/admin/7/kv");
+    try {
+      await resourceService.getResourceInventory("kv");
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+
+    expect(mocks.apiv1.listKvRealms).toHaveBeenCalledWith(params({ family: "7" }));
+    expect(mocks.apiv1.listKvAreas).toHaveBeenCalledWith(params({ family: "7", realm: "default" }));
+    expect(mocks.apiv1.listKvResources).toHaveBeenCalledWith(
+      params({ area: "ops", family: "7", realm: "default" }),
+    );
+  });
   it("loads Stream rollups and resource records through scoped stream endpoints", async () => {
     const { streamService } = await import("@/features/stream/stream-service");
 

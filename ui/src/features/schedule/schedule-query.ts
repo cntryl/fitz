@@ -112,12 +112,13 @@ export function scheduleMissedHandoffsQueryKey(
 
 const scheduleOverviewQuery = defineQuery<{ family: string }, ScheduleOverview>({
   key: ({ family }) => scheduleQueries.key("overview", family),
-  fetch: ({ signal }) => scheduleService.getOverview({ signal }),
+  fetch: ({ family, signal }) => scheduleService.getOverview({ routeFamily: family, signal }),
 });
 
 const scheduleRealmQuery = defineQuery<{ family: string; realm: string }, ScheduleRealmInventory>({
   key: ({ family, realm }) => scheduleRealmQueryKey(realm, family),
-  fetch: ({ realm, signal }) => scheduleService.listScheduleAreas(realm, { signal }),
+  fetch: ({ family, realm, signal }) =>
+    scheduleService.listScheduleAreas(realm, { routeFamily: family, signal }),
 });
 
 const scheduleAreaQuery = defineQuery<
@@ -125,8 +126,8 @@ const scheduleAreaQuery = defineQuery<
   ScheduleAreaInventory
 >({
   key: ({ area, family, realm }) => scheduleAreaQueryKey(realm, area, family),
-  fetch: ({ area, realm, signal }) =>
-    scheduleService.listScheduleResources(realm, area, { signal }),
+  fetch: ({ area, family, realm, signal }) =>
+    scheduleService.listScheduleResources(realm, area, { routeFamily: family, signal }),
 });
 
 interface ScheduleResourceQueryInput {

@@ -68,17 +68,18 @@ export function queueDeadLettersQueryPrefix(resourceRef: QueueResourceRef) {
 
 const queueOverviewQuery = defineQuery<{ family: string }, QueueOverview>({
   key: ({ family }) => queueOverviewQueryKey(family),
-  fetch: ({ signal }) => queueService.getOverview({ signal }),
+  fetch: ({ family, signal }) => queueService.getOverview({ routeFamily: family, signal }),
 });
 
 const queueInventoryQuery = defineQuery<{ family: string }, QueueInventory>({
   key: ({ family }) => queueInventoryQueryKey(family),
-  fetch: ({ signal }) => queueService.listInventory({ signal }),
+  fetch: ({ family, signal }) => queueService.listInventory({ routeFamily: family, signal }),
 });
 
 const queueRealmQuery = defineQuery<{ family: string; realm: string }, QueueRealmDetail>({
   key: ({ family, realm }) => queueRealmQueryKey(realm, family),
-  fetch: ({ realm, signal }) => queueService.getRealm(realm, { signal }),
+  fetch: ({ family, realm, signal }) =>
+    queueService.getRealm(realm, { routeFamily: family, signal }),
 });
 
 const queueAreaQuery = defineQuery<
@@ -86,7 +87,8 @@ const queueAreaQuery = defineQuery<
   QueueAreaDetail
 >({
   key: ({ area, family, realm }) => queueAreaQueryKey(realm, area, family),
-  fetch: ({ area, realm, signal }) => queueService.getArea(realm, area, { signal }),
+  fetch: ({ area, family, realm, signal }) =>
+    queueService.getArea(realm, area, { routeFamily: family, signal }),
 });
 
 interface QueueDeadLettersQueryInput {
@@ -97,8 +99,8 @@ interface QueueDeadLettersQueryInput {
 
 const queueDeadLettersQuery = defineQuery<QueueDeadLettersQueryInput, DeadLetterMessage[]>({
   key: ({ family, filters, resourceRef }) => queueDeadLettersQueryKey(resourceRef, filters, family),
-  fetch: ({ filters, resourceRef, signal }) =>
-    queueService.listDeadLetters(resourceRef, filters, { signal }),
+  fetch: ({ family, filters, resourceRef, signal }) =>
+    queueService.listDeadLetters(resourceRef, filters, { routeFamily: family, signal }),
 });
 
 export function createQueueOverviewQuery() {

@@ -1,6 +1,9 @@
 import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
-import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
-import { apiRouteFamilySegment } from "@/shared/navigation/domains";
+import { unwrapResponse } from "@/shared/errors/api";
+import {
+  routeFamilyRequest,
+  type RouteFamilyRequestOptions,
+} from "@/shared/navigation/route-family-request";
 import {
   mapQueueResourceComparison,
   mapQueueResourceOverview,
@@ -15,9 +18,9 @@ import type {
 
 async function getResource(
   resourceRef: QueueResourceRef,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<QueueResourceOverview> {
-  const family = apiRouteFamilySegment();
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [detailResponse, inflightResponse, deadLettersResponse, timelineResponse] =
     await Promise.all([
       apiv1.getQueueResource(
@@ -28,7 +31,7 @@ async function getResource(
             realm: resourceRef.realm,
             resource: resourceRef.resource,
           },
-          options,
+          requestOptions,
         ),
       ),
       apiv1.listQueueInflightEntries(
@@ -39,7 +42,7 @@ async function getResource(
             realm: resourceRef.realm,
             resource: resourceRef.resource,
           },
-          options,
+          requestOptions,
         ),
       ),
       apiv1.listQueueDeadLetters(
@@ -50,7 +53,7 @@ async function getResource(
             realm: resourceRef.realm,
             resource: resourceRef.resource,
           },
-          options,
+          requestOptions,
         ),
       ),
       apiv1.listQueueResourceEvents(
@@ -62,7 +65,7 @@ async function getResource(
             resource: resourceRef.resource,
           },
           { limit: 8 },
-          options,
+          requestOptions,
         ),
       ),
     ]);
@@ -77,14 +80,14 @@ async function getResource(
 
 async function getTimeline(
   resourceRef: QueueResourceRef,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<QueueResourceTimeline> {
-  const family = apiRouteFamilySegment();
+  const { family, requestOptions } = routeFamilyRequest(options);
   const response = await apiv1.listQueueResourceEvents(
     apiParamsQuery(
       { area: resourceRef.area, family, realm: resourceRef.realm, resource: resourceRef.resource },
       { limit: 8 },
-      options,
+      requestOptions,
     ),
   );
 
@@ -96,13 +99,14 @@ async function getTimeline(
 async function compareResource(
   resourceRef: QueueResourceRef,
   againstResourceRef: QueueResourceRef & { family?: number | null },
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<QueueResourceComparison> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const response = await apiv1.compareQueueResourceSnapshots(
     apiParamsQuery(
       {
         area: resourceRef.area,
-        family: apiRouteFamilySegment(),
+        family,
         realm: resourceRef.realm,
         resource: resourceRef.resource,
       },
@@ -112,7 +116,7 @@ async function compareResource(
         against_realm: againstResourceRef.realm,
         against_resource: againstResourceRef.resource,
       },
-      options,
+      requestOptions,
     ),
   );
 

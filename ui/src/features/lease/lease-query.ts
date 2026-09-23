@@ -44,12 +44,13 @@ export function leaseResourceRowsQueryKey(
 
 const leaseOverviewQuery = defineQuery<{ family: string }, LeaseOverview>({
   key: ({ family }) => leaseOverviewQueryKey(family),
-  fetch: ({ signal }) => leaseService.getOverview({ signal }),
+  fetch: ({ family, signal }) => leaseService.getOverview({ routeFamily: family, signal }),
 });
 
 const leaseRealmQuery = defineQuery<{ family: string; realm: string }, LeaseRealmInventory>({
   key: ({ family, realm }) => leaseRealmQueryKey(realm, family),
-  fetch: ({ realm, signal }) => leaseService.listRealmResources(realm, { signal }),
+  fetch: ({ family, realm, signal }) =>
+    leaseService.listRealmResources(realm, { routeFamily: family, signal }),
 });
 
 const leaseAreaQuery = defineQuery<
@@ -57,7 +58,8 @@ const leaseAreaQuery = defineQuery<
   LeaseAreaResourceRows
 >({
   key: ({ area, family, realm }) => leaseAreaQueryKey(realm, area, family),
-  fetch: ({ area, realm, signal }) => leaseService.listAreaResources(realm, area, { signal }),
+  fetch: ({ area, family, realm, signal }) =>
+    leaseService.listAreaResources(realm, area, { routeFamily: family, signal }),
 });
 
 interface LeaseResourceRowsQueryInput {
@@ -72,8 +74,8 @@ const leaseResourceRowsQuery = defineQuery<LeaseResourceRowsQueryInput, LeaseOwn
   {
     key: ({ area, family, limit, realm, resource }) =>
       leaseResourceRowsQueryKey(realm, area, resource, limit, family),
-    fetch: ({ area, limit, realm, resource, signal }) =>
-      leaseService.searchRows({ area, limit, realm, resource }, { signal }),
+    fetch: ({ area, family, limit, realm, resource, signal }) =>
+      leaseService.searchRows({ area, limit, realm, resource, routeFamily: family }, { signal }),
   },
 );
 

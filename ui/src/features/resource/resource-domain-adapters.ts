@@ -9,7 +9,6 @@ import {
   type StreamResourceEntry,
 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
-import { apiRouteFamilySegment } from "@/shared/navigation/domains";
 import type { DomainId } from "./resource-models";
 
 export type InventoryResourceEntry = Partial<
@@ -23,37 +22,38 @@ export type InventoryResourceEntry = Partial<
 
 export interface ResourceInventoryAdapter {
   domain: DomainId;
-  listRealms(options: ServiceRequestOptions): Promise<Array<{ realm: string }>>;
-  listAreas(realm: string, options: ServiceRequestOptions): Promise<Array<{ area: string }>>;
+  listRealms(family: string, options: ServiceRequestOptions): Promise<Array<{ realm: string }>>;
+  listAreas(
+    realm: string,
+    family: string,
+    options: ServiceRequestOptions,
+  ): Promise<Array<{ area: string }>>;
   listResources(
     ref: { area: string; realm: string },
+    family: string,
     options: ServiceRequestOptions,
   ): Promise<InventoryResourceEntry[]>;
-}
-
-function family() {
-  return apiRouteFamilySegment();
 }
 
 export const resourceInventoryAdapterRegistry = {
   kv: {
     domain: "kv",
-    async listRealms(options) {
+    async listRealms(family, options) {
       return unwrapResponse(
-        await apiv1.listKvRealms(apiParams({ family: family() }, options)),
+        await apiv1.listKvRealms(apiParams({ family }, options)),
         "Unable to load KV realms",
       ).realms;
     },
-    async listAreas(realm, options) {
+    async listAreas(realm, family, options) {
       return unwrapResponse(
-        await apiv1.listKvAreas(apiParams({ family: family(), realm }, options)),
+        await apiv1.listKvAreas(apiParams({ family, realm }, options)),
         "Unable to load KV areas",
       ).areas;
     },
-    async listResources(ref, options) {
+    async listResources(ref, family, options) {
       return unwrapResponse(
         await apiv1.listKvResources(
-          apiParams({ area: ref.area, family: family(), realm: ref.realm }, options),
+          apiParams({ area: ref.area, family, realm: ref.realm }, options),
         ),
         "Unable to load KV resources",
       ).resources;
@@ -61,22 +61,22 @@ export const resourceInventoryAdapterRegistry = {
   },
   lease: {
     domain: "lease",
-    async listRealms(options) {
+    async listRealms(family, options) {
       return unwrapResponse(
-        await apiv1.listLeaseRealms(apiParams({ family: family() }, options)),
+        await apiv1.listLeaseRealms(apiParams({ family }, options)),
         "Unable to load lease realms",
       ).realms;
     },
-    async listAreas(realm, options) {
+    async listAreas(realm, family, options) {
       return unwrapResponse(
-        await apiv1.listLeaseAreas(apiParams({ family: family(), realm }, options)),
+        await apiv1.listLeaseAreas(apiParams({ family, realm }, options)),
         "Unable to load lease areas",
       ).areas;
     },
-    async listResources(ref, options) {
+    async listResources(ref, family, options) {
       return unwrapResponse(
         await apiv1.listLeaseResources(
-          apiParams({ area: ref.area, family: family(), realm: ref.realm }, options),
+          apiParams({ area: ref.area, family, realm: ref.realm }, options),
         ),
         "Unable to load lease resources",
       ).resources;
@@ -84,22 +84,22 @@ export const resourceInventoryAdapterRegistry = {
   },
   notice: {
     domain: "notice",
-    async listRealms(options) {
+    async listRealms(family, options) {
       return unwrapResponse(
-        await apiv1.listNoticeRealms(apiParams({ family: family() }, options)),
+        await apiv1.listNoticeRealms(apiParams({ family }, options)),
         "Unable to load notice realms",
       ).realms;
     },
-    async listAreas(realm, options) {
+    async listAreas(realm, family, options) {
       return unwrapResponse(
-        await apiv1.listNoticeAreas(apiParams({ family: family(), realm }, options)),
+        await apiv1.listNoticeAreas(apiParams({ family, realm }, options)),
         "Unable to load notice areas",
       ).areas;
     },
-    async listResources(ref, options) {
+    async listResources(ref, family, options) {
       return unwrapResponse(
         await apiv1.listNoticeResources(
-          apiParams({ area: ref.area, family: family(), realm: ref.realm }, options),
+          apiParams({ area: ref.area, family, realm: ref.realm }, options),
         ),
         "Unable to load notice resources",
       ).resources;
@@ -107,22 +107,22 @@ export const resourceInventoryAdapterRegistry = {
   },
   rpc: {
     domain: "rpc",
-    async listRealms(options) {
+    async listRealms(family, options) {
       return unwrapResponse(
-        await apiv1.listRpcRealms(apiParams({ family: family() }, options)),
+        await apiv1.listRpcRealms(apiParams({ family }, options)),
         "Unable to load RPC realms",
       ).realms;
     },
-    async listAreas(realm, options) {
+    async listAreas(realm, family, options) {
       return unwrapResponse(
-        await apiv1.listRpcAreas(apiParams({ family: family(), realm }, options)),
+        await apiv1.listRpcAreas(apiParams({ family, realm }, options)),
         "Unable to load RPC areas",
       ).areas;
     },
-    async listResources(ref, options) {
+    async listResources(ref, family, options) {
       return unwrapResponse(
         await apiv1.listRpcResources(
-          apiParams({ area: ref.area, family: family(), realm: ref.realm }, options),
+          apiParams({ area: ref.area, family, realm: ref.realm }, options),
         ),
         "Unable to load RPC resources",
       ).resources;
@@ -130,22 +130,22 @@ export const resourceInventoryAdapterRegistry = {
   },
   schedule: {
     domain: "schedule",
-    async listRealms(options) {
+    async listRealms(family, options) {
       return unwrapResponse(
-        await apiv1.listScheduleRealms(apiParams({ family: family() }, options)),
+        await apiv1.listScheduleRealms(apiParams({ family }, options)),
         "Unable to load schedule realms",
       ).realms;
     },
-    async listAreas(realm, options) {
+    async listAreas(realm, family, options) {
       return unwrapResponse(
-        await apiv1.listScheduleAreas(apiParams({ family: family(), realm }, options)),
+        await apiv1.listScheduleAreas(apiParams({ family, realm }, options)),
         "Unable to load schedule areas",
       ).areas;
     },
-    async listResources(ref, options) {
+    async listResources(ref, family, options) {
       return unwrapResponse(
         await apiv1.listScheduleResources(
-          apiParams({ area: ref.area, family: family(), realm: ref.realm }, options),
+          apiParams({ area: ref.area, family, realm: ref.realm }, options),
         ),
         "Unable to load schedule resources",
       ).resources;
@@ -153,22 +153,22 @@ export const resourceInventoryAdapterRegistry = {
   },
   stream: {
     domain: "stream",
-    async listRealms(options) {
+    async listRealms(family, options) {
       return unwrapResponse(
-        await apiv1.listStreamRealms(apiParams({ family: family() }, options)),
+        await apiv1.listStreamRealms(apiParams({ family }, options)),
         "Unable to load stream realms",
       ).realms;
     },
-    async listAreas(realm, options) {
+    async listAreas(realm, family, options) {
       return unwrapResponse(
-        await apiv1.listStreamAreas(apiParams({ family: family(), realm }, options)),
+        await apiv1.listStreamAreas(apiParams({ family, realm }, options)),
         "Unable to load stream areas",
       ).areas;
     },
-    async listResources(ref, options) {
+    async listResources(ref, family, options) {
       return unwrapResponse(
         await apiv1.listStreamResources(
-          apiParams({ area: ref.area, family: family(), realm: ref.realm }, options),
+          apiParams({ area: ref.area, family, realm: ref.realm }, options),
         ),
         "Unable to load stream resources",
       ).resources;
