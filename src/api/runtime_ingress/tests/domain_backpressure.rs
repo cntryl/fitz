@@ -215,11 +215,9 @@ struct CapturingInboxSink {
 
 impl MailboxSink for CapturingInboxSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        let frame = envelope
-            .payload::<FrameContext>()
-            .expect("client frame payload")
-            .clone();
-        self.frames.lock().unwrap().push(frame);
+        if let Some(frame) = envelope.payload::<FrameContext>() {
+            self.frames.lock().unwrap().push(frame.clone());
+        }
         Ok(())
     }
 
@@ -256,6 +254,102 @@ struct ReplyThenTimeoutSink {
     session_id: u64,
     channel_id: ChannelId,
     msg_type: u16,
+}
+
+struct RpcReplyThenUnavailableSink {
+    router: Arc<crate::runtime::Router>,
+    session_id: u64,
+    request_id: uuid::Uuid,
+}
+
+impl MailboxSink for RpcReplyThenUnavailableSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        assert!(envelope.try_claim_reply(), "domain terminal response claim");
+        let mut response_encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let mut error_encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let payload = crate::protocol::rpc_codec::encode_terminal_error_response_message_into(
+            &self.request_id,
+            crate::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED,
+            "No workers registered for route",
+            &mut response_encoder,
+            &mut error_encoder,
+        );
+        let response = envelope
+            .try_reply_to(FrameContext::new(
+                self.session_id,
+                ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                Bytes::from(payload),
+                RouteFamily::new(1),
+            ))
+            .expect("domain response envelope");
+        self.router.route(response).expect("route domain response");
+        Err(DeliveryError::ActorStopped)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[test]
+fn should_suppress_unavailable_rpc_failure_after_domain_terminal_claim() {
+    // Arrange
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let case = domain_ingress_cases()
+        .into_iter()
+        .find(|case| case.domain == "rpc")
+        .expect("RPC request case");
+    let request_id = crate::protocol::rpc_codec::extract_request_correlation_id(&case.payload)
+        .expect("RPC request UUID");
+    let session_id = 6_700;
+    let router = Arc::new(crate::runtime::Router::new());
+    let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
+    router.register(
+        crate::runtime::routing::RouteAddress::new(
+            RouteFamily::new(1),
+            crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+        ),
+        Arc::new(CapturingInboxSink {
+            frames: client_frames.clone(),
+        }),
+    );
+    router.register_domain_pattern(
+        "rpc",
+        Arc::new(RpcReplyThenUnavailableSink {
+            router: router.clone(),
+            session_id,
+            request_id,
+        }),
+    );
+    let ingress = RuntimeIngress::new(false).with_router(router);
+
+    // Act
+    let decision = rt.block_on(async {
+        ingress
+            .on_open(make_session_info(session_id, TransportKind::Tcp))
+            .await
+            .expect("open session");
+        ingress
+            .on_frame(
+                session_id,
+                case.channel_id,
+                crate::protocol::tlv::MessageType::new(case.msg_type),
+                case.payload.clone(),
+                None,
+            )
+            .await
+    });
+
+    // Assert
+    assert_eq!(decision, IngressDecision::Accept);
+    let frames = client_frames.lock().unwrap();
+    assert_eq!(frames.len(), 1, "domain claim must suppress ingress duplicate");
+    assert_eq!(frames[0].msg_type, crate::protocol::tlv::MessageType::new(303));
+    assert_eq!(
+        synthesized_error_code(&case, &frames[0]),
+        u32::from(crate::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED)
+    );
 }
 
 impl MailboxSink for ReplyThenTimeoutSink {
