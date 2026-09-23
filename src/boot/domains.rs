@@ -321,7 +321,10 @@ impl DomainAdminPorts {
     pub(crate) fn kv_admin_scan_committed_rows(
         &self,
         request: &crate::domains::kv::sink::AdminKvRowsRequest<'_>,
-    ) -> Result<crate::domains::kv::sink::AdminKvRowsResult, String> {
+    ) -> Result<
+        crate::domains::kv::sink::AdminKvRowsResult,
+        crate::domains::kv::sink::AdminKvRowsError,
+    > {
         self.kv.admin_scan_committed_rows(request)
     }
 

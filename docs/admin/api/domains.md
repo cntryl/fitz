@@ -18,6 +18,11 @@ but open transactions shown here are current-process in-memory state only. They
 disappear on disconnect cleanup or broker restart and do not imply durable
 transaction recovery.
 
+For committed-row browsing, `cursor` is the base64 `next_cursor` from a prior
+page with the same `starts_with` prefix. Invalid encoding or a cursor outside
+that prefix is a client request error (`400`); an unavailable KV backend is
+reported as `503`. Neither result changes committed data.
+
 #### Get KV Resource
 ```
 GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}

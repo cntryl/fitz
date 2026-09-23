@@ -17,7 +17,9 @@ mod test_support;
 mod transactions;
 mod write_policy;
 
-pub(crate) use admin::{AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult};
+pub(crate) use admin::{
+    AdminKvPrefixScanResult, AdminKvRowsError, AdminKvRowsRequest, AdminKvRowsResult,
+};
 pub(super) use locks::KvResourceLockKey;
 pub(crate) use state::KvDomain;
 

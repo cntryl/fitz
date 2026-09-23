@@ -2,7 +2,10 @@
 
 use super::super::locks::KvResourceLockKey;
 use super::super::state::KvFamilyRuntime;
-use super::{AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult};
+use super::{
+    AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsError, AdminKvRowsRequest,
+    AdminKvRowsResult,
+};
 use crate::domains::kv::KvActor;
 
 impl KvFamilyRuntime<'_> {
@@ -47,20 +50,21 @@ impl KvFamilyRuntime<'_> {
     pub(super) fn admin_scan_committed_rows(
         &self,
         request: &AdminKvRowsRequest<'_>,
-    ) -> Result<AdminKvRowsResult, String> {
+    ) -> Result<AdminKvRowsResult, AdminKvRowsError> {
         let started_at = std::time::Instant::now();
         if let Some(cursor) = request.cursor {
             if !cursor.starts_with(request.starts_with) {
-                return Err("cursor must start with starts_with prefix".to_string());
+                return Err(AdminKvRowsError::InvalidCursorPrefix);
             }
         }
 
-        let column_family = KvActor::resolve_column_family(request.route_family)?;
+        let column_family = KvActor::resolve_column_family(request.route_family)
+            .map_err(AdminKvRowsError::Backend)?;
         let tx = self
             .core
             .store
             .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| AdminKvRowsError::Backend(error.to_string()))?;
         let resource_prefix =
             KvActor::realm_resource_prefix(request.realm, request.area, request.resource);
         let scoped_prefix = KvActor::encode_scoped_key(&resource_prefix, request.starts_with);
@@ -74,7 +78,8 @@ impl KvFamilyRuntime<'_> {
             &scoped_prefix,
             &scoped_start,
             request.limit.saturating_add(1),
-        )?;
+        )
+        .map_err(AdminKvRowsError::Backend)?;
         rows.retain(|item| {
             request
                 .cursor

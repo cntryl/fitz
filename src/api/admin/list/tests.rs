@@ -33,6 +33,20 @@ fn snapshot_runtime() -> Arc<Runtime> {
     ))
 }
 
+#[test]
+fn should_map_kv_rows_backend_error_to_service_unavailable_regardless_of_text() {
+    // Arrange
+    let error = crate::domains::kv::sink::AdminKvRowsError::Backend(
+        "route family storage read failed".to_string(),
+    );
+
+    // Act
+    let response = resource_inventory::kv_rows_error_response(&error);
+
+    // Assert
+    assert_eq!(response.status(), hyper::StatusCode::SERVICE_UNAVAILABLE);
+}
+
 fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();

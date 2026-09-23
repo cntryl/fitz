@@ -1,6 +1,6 @@
 use super::Runtime;
 use crate::boot::domains::DomainAdminPorts;
-use crate::domains::kv::sink::{AdminKvRowsRequest, AdminKvRowsResult};
+use crate::domains::kv::sink::{AdminKvRowsError, AdminKvRowsRequest, AdminKvRowsResult};
 use crate::domains::queue::{MessageId, QueueKey};
 use crate::domains::stream::sink::AdminStreamReadRequest;
 use crate::runtime::routing::RouteFamily;
@@ -169,12 +169,11 @@ impl Runtime {
     pub fn kv_scan_committed_rows(
         &self,
         request: &AdminKvRowsRequest<'_>,
-    ) -> Result<AdminKvRowsResult, String> {
-        let domains = self
-            .domain_admins
-            .read()
-            .clone()
-            .ok_or_else(|| "KV domain is not initialized".to_string())?;
+    ) -> Result<AdminKvRowsResult, AdminKvRowsError> {
+        let domains =
+            self.domain_admins.read().clone().ok_or_else(|| {
+                AdminKvRowsError::Backend("KV domain is not initialized".to_string())
+            })?;
         domains.kv_admin_scan_committed_rows(request)
     }
 

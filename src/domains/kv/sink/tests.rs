@@ -10,6 +10,7 @@ use bytes::{BufMut, Bytes};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+mod admin_row_errors;
 mod configuration;
 mod correctness;
 mod fault_injection;
