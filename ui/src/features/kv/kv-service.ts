@@ -1,6 +1,10 @@
 import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
+import {
+  routeFamilyRequest,
+  type RouteFamilyRequestOptions,
+} from "@/shared/navigation/route-family-request";
 import { mapKvCommittedValue, mapKvOverview, mapKvPrefixScan, mapKvRows } from "./kv-mappers";
 import type {
   KvCommittedResourceScope,
@@ -12,11 +16,11 @@ import type {
   KvRowsResult,
 } from "./kv-models";
 
-async function getOverview(options: ServiceRequestOptions = {}): Promise<KvOverview> {
-  const family = apiRouteFamilySegment();
+async function getOverview(options: RouteFamilyRequestOptions = {}): Promise<KvOverview> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listKvRealms(apiParams({ family }, options)),
-    apiv1.getKvStats(apiParams({ family }, options)),
+    apiv1.listKvRealms(apiParams({ family }, requestOptions)),
+    apiv1.getKvStats(apiParams({ family }, requestOptions)),
   ]);
 
   return mapKvOverview(
@@ -90,15 +94,16 @@ async function browseCommittedRows(
     limit?: number;
     startsWith?: string;
   },
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<KvRowsResult> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   return mapKvRows(
     unwrapResponse(
       await apiv1.browseKvCommittedRows(
         apiParamsQuery(
           {
             area: scope.area,
-            family: apiRouteFamilySegment(),
+            family,
             realm: scope.realm,
             resource: scope.resource,
           },
@@ -108,7 +113,7 @@ async function browseCommittedRows(
             limit: request.limit,
             starts_with: request.startsWith,
           },
-          options,
+          requestOptions,
         ),
       ),
       "Unable to browse committed KV rows",

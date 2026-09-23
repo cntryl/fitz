@@ -36,7 +36,8 @@ interface KvRowsQueryInput {
 
 const kvRowsQuery = defineQuery<KvRowsQueryInput, KvRowsResult>({
   key: ({ family, scope, state }) => kvRowsQueryKey(scope, state, family),
-  fetch: ({ scope, signal, state }) => kvService.browseCommittedRows(scope, state, { signal }),
+  fetch: ({ family, scope, signal, state }) =>
+    kvService.browseCommittedRows(scope, state, { routeFamily: family, signal }),
 });
 
 export function createKvRowsQuery(

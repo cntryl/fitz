@@ -70,12 +70,14 @@ interface QueueResourceComparisonQueryInput extends QueueResourceQueryInput {
 
 const queueResourceQuery = defineQuery<QueueResourceQueryInput, QueueResourceOverview>({
   key: ({ family, resourceRef }) => queueResourceQueryKey(resourceRef, family),
-  fetch: ({ resourceRef, signal }) => queueResourceService.getResource(resourceRef, { signal }),
+  fetch: ({ family, resourceRef, signal }) =>
+    queueResourceService.getResource(resourceRef, { routeFamily: family, signal }),
 });
 
 const queueResourceTimelineQuery = defineQuery<QueueResourceQueryInput, QueueResourceTimeline>({
   key: ({ family, resourceRef }) => queueResourceTimelineQueryKey(resourceRef, family),
-  fetch: ({ resourceRef, signal }) => queueResourceService.getTimeline(resourceRef, { signal }),
+  fetch: ({ family, resourceRef, signal }) =>
+    queueResourceService.getTimeline(resourceRef, { routeFamily: family, signal }),
 });
 
 const queueResourceComparisonQuery = defineQuery<
@@ -84,7 +86,7 @@ const queueResourceComparisonQuery = defineQuery<
 >({
   key: ({ againstResourceRef, family, resourceRef }) =>
     queueResourceComparisonQueryKey(resourceRef, againstResourceRef, family),
-  fetch: ({ againstResourceRef, resourceRef, signal }) =>
+  fetch: ({ againstResourceRef, family, resourceRef, signal }) =>
     queueResourceService.compareResource(
       resourceRef,
       {
@@ -93,7 +95,7 @@ const queueResourceComparisonQuery = defineQuery<
         realm: againstResourceRef.realm,
         resource: againstResourceRef.resource,
       },
-      { signal },
+      { routeFamily: family, signal },
     ),
 });
 

@@ -10,9 +10,7 @@ afterEach(() => {
 
 describe("family-scoped query binding", () => {
   it("keeps a cached family A inventory in family A when refreshed from a family B URL", async () => {
-    const { createResourceInventoryQuery } = await import(
-      "@/features/resource/resource-query"
-    );
+    const { createResourceInventoryQuery } = await import("@/features/resource/resource-query");
     const runtime = getDefaultDataRuntime();
     const keyForA = queryScope("resource").key("inventory", "kv", "7");
     const keyForB = queryScope("resource").key("inventory", "kv", "8");
@@ -36,6 +34,24 @@ describe("family-scoped query binding", () => {
     expect(mocks.apiv1.listKvResources).toHaveBeenLastCalledWith(
       expect.objectContaining({
         params: { area: "ops", family: "7", realm: "default" },
+      }),
+    );
+  });
+  it("keeps a Queue resource request in its captured family after navigation", async () => {
+    const { createQueueResourceQuery } = await import("@/features/queue/queue-resource-query");
+    window.history.pushState({}, "", "/admin/7/queue/default/ops/primary");
+    const queryA = createQueueResourceQuery({
+      area: "ops",
+      realm: "default",
+      resource: "primary",
+    });
+    window.history.pushState({}, "", "/admin/8/queue/default/ops/primary");
+
+    await queryA.refresh();
+
+    expect(mocks.apiv1.getQueueResource).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        params: { area: "ops", family: "7", realm: "default", resource: "primary" },
       }),
     );
   });

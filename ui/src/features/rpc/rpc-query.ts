@@ -49,12 +49,13 @@ export function rpcOperationQueryKey(
 
 const rpcOverviewQuery = defineQuery<{ family: string }, RpcOverview>({
   key: ({ family }) => rpcQueries.key("overview", family),
-  fetch: ({ signal }) => rpcService.getOverview({ signal }),
+  fetch: ({ family, signal }) => rpcService.getOverview({ routeFamily: family, signal }),
 });
 
 const rpcRealmQuery = defineQuery<{ family: string; realm: string }, RpcAreaInventory>({
   key: ({ family, realm }) => rpcRealmQueryKey(realm, family),
-  fetch: ({ realm, signal }) => rpcService.listRpcAreas(realm, { signal }),
+  fetch: ({ family, realm, signal }) =>
+    rpcService.listRpcAreas(realm, { routeFamily: family, signal }),
 });
 
 const rpcAreaQuery = defineQuery<
@@ -62,7 +63,8 @@ const rpcAreaQuery = defineQuery<
   RpcResourceInventory
 >({
   key: ({ area, family, realm }) => rpcAreaQueryKey(realm, area, family),
-  fetch: ({ area, realm, signal }) => rpcService.listRpcResources(realm, area, { signal }),
+  fetch: ({ area, family, realm, signal }) =>
+    rpcService.listRpcResources(realm, area, { routeFamily: family, signal }),
 });
 
 interface RpcResourceQueryInput {
@@ -74,8 +76,8 @@ interface RpcResourceQueryInput {
 
 const rpcResourceQuery = defineQuery<RpcResourceQueryInput, RpcResourceOperationRows>({
   key: ({ area, family, realm, resource }) => rpcResourceQueryKey(realm, area, resource, family),
-  fetch: ({ area, realm, resource, signal }) =>
-    rpcService.getResourceOperations(realm, area, resource, { signal }),
+  fetch: ({ area, family, realm, resource, signal }) =>
+    rpcService.getResourceOperations(realm, area, resource, { routeFamily: family, signal }),
 });
 
 interface RpcOperationQueryInput extends RpcResourceQueryInput {

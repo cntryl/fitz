@@ -47,12 +47,13 @@ export function streamResourceQueryKey(
 
 const streamOverviewQuery = defineQuery<{ family: string }, StreamOverview>({
   key: ({ family }) => streamQueries.key("overview", family),
-  fetch: ({ signal }) => streamService.getOverview({ signal }),
+  fetch: ({ family, signal }) => streamService.getOverview({ routeFamily: family, signal }),
 });
 
 const streamRealmQuery = defineQuery<{ family: string; realm: string }, StreamRealmRollup>({
   key: ({ family, realm }) => streamRealmQueryKey(realm, family),
-  fetch: ({ realm, signal }) => streamService.getRealmRollup(realm, { signal }),
+  fetch: ({ family, realm, signal }) =>
+    streamService.getRealmRollup(realm, { routeFamily: family, signal }),
 });
 
 const streamAreaQuery = defineQuery<
@@ -60,7 +61,8 @@ const streamAreaQuery = defineQuery<
   StreamAreaRollup
 >({
   key: ({ area, family, realm }) => streamAreaQueryKey(realm, area, family),
-  fetch: ({ area, realm, signal }) => streamService.getAreaRollup(realm, area, { signal }),
+  fetch: ({ area, family, realm, signal }) =>
+    streamService.getAreaRollup(realm, area, { routeFamily: family, signal }),
 });
 
 interface StreamResourceQueryInput {

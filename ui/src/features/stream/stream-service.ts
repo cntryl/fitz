@@ -2,6 +2,10 @@ import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import type { StreamRecordsResponse } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
+import {
+  routeFamilyRequest,
+  type RouteFamilyRequestOptions,
+} from "@/shared/navigation/route-family-request";
 import { mapStreamOverview } from "./stream-mappers";
 import type {
   StreamAreaRollup,
@@ -11,11 +15,11 @@ import type {
   StreamResourceView,
 } from "./stream-models";
 
-async function getOverview(options: ServiceRequestOptions = {}): Promise<StreamOverview> {
-  const family = apiRouteFamilySegment();
+async function getOverview(options: RouteFamilyRequestOptions = {}): Promise<StreamOverview> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listStreamRealms(apiParams({ family }, options)),
-    apiv1.getStreamStats(apiParams({ family }, options)),
+    apiv1.listStreamRealms(apiParams({ family }, requestOptions)),
+    apiv1.getStreamStats(apiParams({ family }, requestOptions)),
   ]);
 
   return mapStreamOverview(
@@ -77,17 +81,17 @@ async function readResourceRecords(
 
 async function getRealmRollup(
   realm: string,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<StreamRealmRollup> {
-  const family = apiRouteFamilySegment();
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [watermarks, areas] = await Promise.all([
-    apiv1.getStreamRealmWatermarks(apiParams({ family, realm }, options)),
-    apiv1.listStreamAreas(apiParams({ family, realm }, options)),
+    apiv1.getStreamRealmWatermarks(apiParams({ family, realm }, requestOptions)),
+    apiv1.listStreamAreas(apiParams({ family, realm }, requestOptions)),
   ]);
   const areaRows = await Promise.all(
     unwrapResponse(areas, "Unable to load stream areas").areas.map(async ({ area }) => {
       const resources = unwrapResponse(
-        await apiv1.listStreamResources(apiParams({ area, family, realm }, options)),
+        await apiv1.listStreamResources(apiParams({ area, family, realm }, requestOptions)),
         "Unable to load stream resources",
       ).resources;
 
@@ -115,12 +119,12 @@ async function getRealmRollup(
 async function getAreaRollup(
   realm: string,
   area: string,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<StreamAreaRollup> {
-  const family = apiRouteFamilySegment();
+  const { family, requestOptions } = routeFamilyRequest(options);
   const [watermarks, resources] = await Promise.all([
-    apiv1.getStreamAreaWatermarks(apiParams({ area, family, realm }, options)),
-    apiv1.listStreamResources(apiParams({ area, family, realm }, options)),
+    apiv1.getStreamAreaWatermarks(apiParams({ area, family, realm }, requestOptions)),
+    apiv1.listStreamResources(apiParams({ area, family, realm }, requestOptions)),
   ]);
   const watermarkDetail = unwrapResponse(watermarks, "Unable to load stream area watermarks");
 

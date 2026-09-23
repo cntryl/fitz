@@ -1,4 +1,7 @@
-import type { ServiceRequestOptions } from "@/shared/errors/api";
+import {
+  routeFamilyRequest,
+  type RouteFamilyRequestOptions,
+} from "@/shared/navigation/route-family-request";
 import {
   getResourceInventoryAdapter,
   type InventoryResourceEntry,
@@ -86,16 +89,17 @@ export function mapInventoryResource(entry: InventoryResourceEntry): ResourceInv
 
 export async function getResourceInventory(
   domain: DomainId,
-  options: ServiceRequestOptions = {},
+  options: RouteFamilyRequestOptions = {},
 ): Promise<ResourceInventory> {
+  const { family, requestOptions } = routeFamilyRequest(options);
   const adapter = getResourceInventoryAdapter(domain);
-  const realms = await adapter.listRealms(options);
+  const realms = await adapter.listRealms(family, requestOptions);
   const inventoryRealms = await mapWithConcurrency(realms, async ({ realm }) => {
-    const areas = await adapter.listAreas(realm, options);
+    const areas = await adapter.listAreas(realm, family, requestOptions);
     const inventoryAreas = await mapWithConcurrency(areas, async ({ area }) => {
-      const resourceEntries = (await adapter.listResources({ area, realm }, options)).map(
-        mapInventoryResource,
-      );
+      const resourceEntries = (
+        await adapter.listResources({ area, realm }, family, requestOptions)
+      ).map(mapInventoryResource);
 
       return {
         area,

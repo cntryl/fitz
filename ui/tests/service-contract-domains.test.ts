@@ -431,9 +431,7 @@ describe("service endpoint contracts", () => {
     }
 
     expect(mocks.apiv1.listKvRealms).toHaveBeenCalledWith(params({ family: "7" }));
-    expect(mocks.apiv1.listKvAreas).toHaveBeenCalledWith(
-      params({ family: "7", realm: "default" }),
-    );
+    expect(mocks.apiv1.listKvAreas).toHaveBeenCalledWith(params({ family: "7", realm: "default" }));
     expect(mocks.apiv1.listKvResources).toHaveBeenCalledWith(
       params({ area: "ops", family: "7", realm: "default" }),
     );
