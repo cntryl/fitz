@@ -629,7 +629,11 @@ impl DomainFrameDispatcher {
                     ));
                 }
                 Err(error) => {
-                    return Err(self.answer_unavailable_dispatch(error_frame, &error));
+                    return Err(self.answer_unavailable_dispatch(
+                        error_frame,
+                        &error,
+                        &reply_claim,
+                    ));
                 }
             }
         }

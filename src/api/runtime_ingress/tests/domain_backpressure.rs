@@ -344,8 +344,15 @@ fn should_suppress_unavailable_rpc_failure_after_domain_terminal_claim() {
     // Assert
     assert_eq!(decision, IngressDecision::Accept);
     let frames = client_frames.lock().unwrap();
-    assert_eq!(frames.len(), 1, "domain claim must suppress ingress duplicate");
-    assert_eq!(frames[0].msg_type, crate::protocol::tlv::MessageType::new(303));
+    assert_eq!(
+        frames.len(),
+        1,
+        "domain claim must suppress ingress duplicate"
+    );
+    assert_eq!(
+        frames[0].msg_type,
+        crate::protocol::tlv::MessageType::new(303)
+    );
     assert_eq!(
         synthesized_error_code(&case, &frames[0]),
         u32::from(crate::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED)

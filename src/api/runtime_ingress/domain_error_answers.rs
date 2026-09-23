@@ -102,6 +102,7 @@ impl DomainFrameDispatcher {
         &self,
         frame: DomainErrorFrame<'_>,
         error: &crate::runtime::router::RouteError,
+        reply_claim: &crate::runtime::envelope::ReplyClaim,
     ) -> IngressDecision {
         error!(
             session_id = frame.session_id,
@@ -109,6 +110,19 @@ impl DomainFrameDispatcher {
             error = %error,
             "Ingress: router.route failed for domain dispatch"
         );
+        // A domain may have already claimed and routed its terminal response
+        // before its actor/sink fails. The non-timeout error is not evidence
+        // that no reply escaped; honor the same one-terminal claim as timeout.
+        if !reply_claim.try_claim() {
+            warn!(
+                session_id = frame.session_id,
+                domain = frame.domain.as_str(),
+                error = %error,
+                outcome = "domain-response-won",
+                "Ingress: domain dispatch failed after its terminal response was claimed"
+            );
+            return IngressDecision::Accept;
+        }
         self.send_domain_error_frame(
             frame,
             Self::indeterminate_error_code(frame.domain),
