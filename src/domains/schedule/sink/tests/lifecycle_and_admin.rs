@@ -288,7 +288,7 @@ fn should_skip_run_now_delivery_when_command_expires_while_queued() {
     let cursor = sink.round_robin_cursor_for_tests(family, route);
 
     // Assert
-    assert!(result.is_err_and(|error| error.contains("timed out")));
+    assert!(matches!(result, Err(ScheduleRunNowError::ReplyTimeout { .. })));
     assert_eq!(cursor, Some(0));
 }
 
