@@ -36,6 +36,19 @@ fn request_from_session_to_address(
         .expect("stream response")
 }
 
+fn context_for_family(context: &TestContext, family: RouteFamily) -> TestContext {
+    let (source, inbox) =
+        register_session_queue_sink(&context.router, family, TEST_CLIENT_SESSION_ID);
+    TestContext {
+        router: Arc::clone(&context.router),
+        family,
+        source,
+        inbox,
+        sink: Arc::clone(&context.sink),
+        admin_read_model: Arc::clone(&context.admin_read_model),
+    }
+}
+
 #[test]
 fn should_fail_closed_after_stream_actor_panic() {
     // Arrange
@@ -385,4 +398,297 @@ fn should_reject_global_realm_wildcard_for_concrete_stream_lookups() {
 
     // Assert
     assert!(errors.iter().all(|error| error.contains("concrete")));
+}
+
+#[test]
+fn should_refresh_admin_snapshot_after_second_family_commit() {
+    // Arrange
+    let context = setup_test_context();
+    let route = "stream://bench/events/orders";
+    seed_committed_stream_route(&context, route, 1, b"first-family");
+    context.sink.refresh_admin_snapshot_if_dirty();
+    assert_eq!(context.admin_read_model.streams(None).len(), 1);
+    let second_family = context_for_family(&context, RouteFamily::new(2));
+
+    // Act
+    seed_committed_stream_route(&second_family, route, 1, b"second-family");
+    assert_eq!(
+        stream_read_response(&second_family, route, 0, 1)
+            .records
+            .len(),
+        1
+    );
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let mut families = context
+        .admin_read_model
+        .streams(None)
+        .into_iter()
+        .map(|stream| stream.route_family)
+        .collect::<Vec<_>>();
+    families.sort_unstable();
+    let area_watermark = context
+        .admin_read_model
+        .stream_area_watermark("bench", "events")
+        .expect("shared area watermark");
+    let realm_watermark = context
+        .admin_read_model
+        .stream_realm_watermark("bench")
+        .expect("shared realm watermark");
+
+    // Assert
+    assert_eq!(families, [1, 2]);
+    assert_eq!(context.admin_read_model.stream_events_total(), 2);
+    assert_eq!(area_watermark.resource_count, 2);
+    assert_eq!(area_watermark.family_watermarks.len(), 2);
+    assert_eq!(realm_watermark.area_count, 1);
+    assert_eq!(realm_watermark.resource_count, 2);
+    assert_eq!(realm_watermark.family_watermarks.len(), 2);
+}
+
+#[test]
+fn should_refresh_healthy_family_admin_snapshot_after_first_family_fails() {
+    // Arrange
+    let context = setup_test_context();
+    seed_committed_stream_route(&context, "stream://bench/events/first", 1, b"first-family");
+    context.sink.refresh_admin_snapshot_if_dirty();
+    assert_eq!(context.admin_read_model.streams(None).len(), 1);
+    context
+        .sink
+        .panic_family_actor_for_failpoint(context.family);
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !context
+        .sink
+        .family_health_snapshot()
+        .failed_families
+        .contains(&context.family)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        context.sink.family_health_snapshot().failed_families,
+        vec![context.family]
+    );
+    let second_family = context_for_family(&context, RouteFamily::new(2));
+
+    // Act
+    seed_committed_stream_route(
+        &second_family,
+        "stream://bench/events/orders",
+        1,
+        b"second-family",
+    );
+    assert_eq!(
+        stream_read_response(&second_family, "stream://bench/events/orders", 0, 1)
+            .records
+            .len(),
+        1
+    );
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let streams = context.admin_read_model.streams(None);
+
+    // Assert
+    assert_eq!(streams.len(), 2);
+    assert!(streams.iter().any(|stream| stream.route_family == 1));
+    assert!(streams.iter().any(|stream| stream.route_family == 2));
+    assert_eq!(context.admin_read_model.stream_events_total(), 2);
+    assert_eq!(
+        context.sink.family_health_snapshot().healthy_families,
+        vec![RouteFamily::new(2)]
+    );
+}
+
+#[test]
+fn should_include_second_family_live_session_in_admin_projection() {
+    // Arrange
+    let context = setup_test_context();
+    let second_family = context_for_family(&context, RouteFamily::new(2));
+    let route = "stream://bench/events/orders";
+    seed_committed_stream_route(&second_family, route, 1, b"second-family");
+    let _active_session_id = begin_stream(&second_family, route);
+
+    // Act
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let stream = context
+        .admin_read_model
+        .streams(None)
+        .into_iter()
+        .find(|stream| stream.route_family == 2)
+        .expect("committed second-family stream");
+    let area_watermark = context
+        .admin_read_model
+        .stream_area_watermark("bench", "events")
+        .expect("second-family area watermark");
+    let realm_watermark = context
+        .admin_read_model
+        .stream_realm_watermark("bench")
+        .expect("second-family realm watermark");
+
+    // Assert
+    assert_eq!(stream.sessions_active, 1);
+    assert_eq!(area_watermark.family_watermarks.len(), 1);
+    assert_eq!(area_watermark.family_watermarks[0].family, 2);
+    assert_eq!(realm_watermark.family_watermarks.len(), 1);
+    assert_eq!(realm_watermark.family_watermarks[0].family, 2);
+}
+
+#[test]
+fn should_project_persisted_unprovisioned_family_into_admin_snapshot() {
+    // Arrange
+    let engine = crate::testkit::create_test_engine_with_cfs(vec![1, 2]);
+    let store = crate::domains::stream::StreamStore::new(Arc::clone(&engine));
+    store
+        .commit_records(crate::domains::stream::store::CommitRecordsParams {
+            family: 2,
+            realm: "bench",
+            area: "events",
+            resource: "orders",
+            expected_resource_next_offset: 0,
+            events: &[crate::domains::stream::store::EventPayload {
+                body: Bytes::from_static(b"persisted"),
+                metadata: None,
+                discriminator: None,
+            }],
+            ingest_metadata: None,
+            mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
+        })
+        .expect("commit family-2 history");
+    let read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = StreamDomain::new_with_storage_layout_and_families(
+        crate::storage::FitzStorageEngine::new(engine),
+        Arc::new(Router::new()),
+        Arc::clone(&read_model),
+        StreamStorageLayout::default(),
+        Some(&[RouteFamily::new(1)]),
+        StreamStorageWriteOptions::local(),
+    )
+    .expect("create family-1-only Stream domain");
+
+    // Act
+    sink.refresh_admin_snapshot_if_dirty();
+    let streams = read_model.streams(None);
+    let area_watermark = read_model.stream_area_watermark("bench", "events");
+    let realm_watermark = read_model.stream_realm_watermark("bench");
+
+    // Assert
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0].route_family, 2);
+    assert_eq!(read_model.stream_events_total(), 1);
+    let area_watermark = area_watermark.expect("family-2 area watermark");
+    assert_eq!(area_watermark.resource_count, 1);
+    assert_eq!(area_watermark.family_watermarks[0].family, 2);
+    let realm_watermark = realm_watermark.expect("family-2 realm watermark");
+    assert_eq!(realm_watermark.resource_count, 1);
+    assert_eq!(realm_watermark.family_watermarks[0].family, 2);
+}
+
+#[test]
+fn should_clear_failed_family_live_sessions_without_losing_committed_admin_row() {
+    // Arrange
+    let context = setup_test_context();
+    let route = "stream://bench/events/orders";
+    seed_committed_stream_route(&context, route, 1, b"persisted");
+    let _active_session_id = begin_stream(&context, route);
+    context.sink.refresh_admin_snapshot_if_dirty();
+    assert_eq!(context.admin_read_model.streams(None)[0].sessions_active, 1);
+    context
+        .sink
+        .panic_family_actor_for_failpoint(context.family);
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !context
+        .sink
+        .family_health_snapshot()
+        .failed_families
+        .contains(&context.family)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        context.sink.family_health_snapshot().failed_families,
+        vec![context.family]
+    );
+    let second_family = context_for_family(&context, RouteFamily::new(2));
+
+    // Act
+    seed_committed_stream_route(
+        &second_family,
+        "stream://bench/events/second",
+        1,
+        b"healthy-family",
+    );
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let first_family_stream = context
+        .admin_read_model
+        .streams(None)
+        .into_iter()
+        .find(|stream| stream.route_family == 1)
+        .expect("durable row from failed family");
+
+    // Assert
+    assert_eq!(first_family_stream.resource, "orders");
+    assert_eq!(first_family_stream.sessions_active, 0);
+    assert_eq!(context.admin_read_model.stream_events_total(), 2);
+}
+
+#[test]
+fn should_refresh_distinct_shard_family_admin_snapshot_while_peer_is_blocked() {
+    // Arrange
+    let context = setup_test_context();
+    let second_family_id = RouteFamily::new(2);
+    let ingress = context.sink.family_runtime.ingress();
+    if ingress.shard_for_family(context.family) == ingress.shard_for_family(second_family_id) {
+        // One worker cannot process another family while blocked.
+        return;
+    }
+    let second_family = context_for_family(&context, second_family_id);
+    seed_committed_stream_route(
+        &second_family,
+        "stream://bench/events/orders",
+        1,
+        b"second-family",
+    );
+    assert!(context.admin_read_model.streams(None).is_empty());
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    context
+        .sink
+        .block_family_actor_for_tests(context.family, entered_tx, release_rx);
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first-family actor should block");
+    let sink = Arc::clone(&context.sink);
+    let (started_tx, started_rx) = crossbeam_channel::bounded(1);
+
+    // Act
+    let refresh = std::thread::spawn(move || {
+        started_tx.send(()).expect("signal Stream admin refresh");
+        sink.refresh_admin_snapshot_if_dirty();
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("start Stream admin refresh");
+    let deadline = std::time::Instant::now() + Duration::from_millis(750);
+    let mut observed_early = false;
+    while std::time::Instant::now() < deadline {
+        if context
+            .admin_read_model
+            .streams(None)
+            .iter()
+            .any(|stream| stream.route_family == 2)
+        {
+            observed_early = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    release_tx.send(()).expect("release first-family actor");
+    refresh.join().expect("finish Stream admin refresh");
+
+    // Assert
+    assert!(
+        observed_early,
+        "second-family snapshot waited for first family"
+    );
+    assert_eq!(context.admin_read_model.stream_events_total(), 1);
 }

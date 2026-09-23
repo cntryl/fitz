@@ -7,6 +7,7 @@ use super::model::{
     u64_to_usize_saturating, AdminStreamReadRequest, StreamAreaSnapshot, StreamFamilyState,
     StreamLiveCounts, StreamRealmSnapshot,
 };
+use super::projection::StreamFamilyAdminSnapshot;
 use crate::domains::stream::{StreamClientResponseBody, StreamReadItem};
 use std::collections::BTreeMap;
 
@@ -153,8 +154,16 @@ impl StreamFamilyState {
         let mut area_snapshots: StreamAreaSnapshotMap = BTreeMap::new();
         let mut committed_events_total = 0usize;
 
-        let families = self.stream_store.column_family_ids()?;
-        for family_id in families {
+        let mut projection_families = vec![self.family.as_u64()];
+        if self.family == self.admin_unprovisioned_owner {
+            projection_families.extend(
+                self.stream_store
+                    .column_family_ids()?
+                    .into_iter()
+                    .filter(|id| !self.admin_provisioned_families.contains(id)),
+            );
+        }
+        for family_id in projection_families {
             let records = self.stream_store.list_resource_metadata(family_id)?;
             for crate::domains::stream::store::StreamAdminRecord {
                 realm,
@@ -312,23 +321,15 @@ impl StreamFamilyState {
         stream_area_watermarks: Vec<crate::control::admin::StreamAreaWatermarkDetail>,
         committed_events_total: usize,
     ) {
-        self.durable_metrics.observe_snapshot(
-            committed_events_total,
-            &stream_realm_watermarks,
-            &stream_area_watermarks,
+        self.admin_snapshot.projection.publish(
+            self.family.as_u64(),
+            StreamFamilyAdminSnapshot {
+                streams: streams.into_values().collect(),
+                realm_watermarks: stream_realm_watermarks,
+                area_watermarks: stream_area_watermarks,
+                committed_events_total,
+            },
         );
-        self.admin_snapshot
-            .read_model
-            .replace_streams(streams.into_values().collect());
-        self.admin_snapshot
-            .read_model
-            .replace_stream_realm_watermarks(stream_realm_watermarks);
-        self.admin_snapshot
-            .read_model
-            .replace_stream_area_watermarks(stream_area_watermarks);
-        self.admin_snapshot
-            .read_model
-            .replace_stream_events_total(committed_events_total);
     }
 
     pub(in crate::domains::stream::sink) fn live_counts(&mut self) -> StreamLiveCounts {
