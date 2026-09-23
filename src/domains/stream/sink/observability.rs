@@ -154,7 +154,16 @@ impl StreamFamilyState {
         let mut area_snapshots: StreamAreaSnapshotMap = BTreeMap::new();
         let mut committed_events_total = 0usize;
 
-        for &family_id in &self.admin_projection_families {
+        let mut projection_families = vec![self.family.as_u64()];
+        if self.family == self.admin_unprovisioned_owner {
+            projection_families.extend(
+                self.stream_store
+                    .column_family_ids()?
+                    .into_iter()
+                    .filter(|id| !self.admin_provisioned_families.contains(id)),
+            );
+        }
+        for family_id in projection_families {
             let records = self.stream_store.list_resource_metadata(family_id)?;
             for crate::domains::stream::store::StreamAdminRecord {
                 realm,

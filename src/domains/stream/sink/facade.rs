@@ -20,13 +20,10 @@ use std::time::{Duration, Instant};
 
 impl StreamFamilyState {
     fn new(config: &StreamDomainConfig, family: RouteFamily) -> Self {
-        let mut admin_projection_families = vec![family.as_u64()];
-        if family == config.admin_unprovisioned_owner {
-            admin_projection_families.extend(&config.admin_unprovisioned_families);
-        }
         Self {
             family,
-            admin_projection_families,
+            admin_provisioned_families: config.admin_provisioned_families.clone(),
+            admin_unprovisioned_owner: config.admin_unprovisioned_owner,
             stream_store: config.stream_store.clone(),
             actors: HashMap::new(),
             session_owners: HashMap::new(),
@@ -133,11 +130,6 @@ impl StreamDomain {
             .first()
             .copied()
             .ok_or_else(|| "no Stream route family is provisioned".to_string())?;
-        let admin_unprovisioned_families = stream_store
-            .column_family_ids()?
-            .into_iter()
-            .filter(|id| !family_families.iter().any(|family| family.as_u64() == *id))
-            .collect();
         let active = Arc::new(AtomicBool::new(true));
         let durable_metrics = Arc::new(StreamDurableMetrics::default());
         let config = StreamDomainConfig {
@@ -150,7 +142,7 @@ impl StreamDomain {
                 admin_read_model,
                 durable_metrics.clone(),
             )),
-            admin_unprovisioned_families,
+            admin_provisioned_families: family_families.iter().map(RouteFamily::as_u64).collect(),
             admin_unprovisioned_owner,
             sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
             metrics: None,
