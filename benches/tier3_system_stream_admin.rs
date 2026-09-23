@@ -1,8 +1,9 @@
 //! In-process Stream admin projection scaling characterization.
 //!
 //! Each dirty invocation alternates a real routed begin or rollback in stress's
-//! per-invocation setup; only the subsequent actor refresh is timed. The live
-//! state changes on every dirty refresh while durable cardinality stays fixed.
+//! per-invocation setup; the timed closure performs the subsequent actor refresh
+//! and measurement bookkeeping. The live state changes on every dirty
+//! refresh while durable cardinality stays fixed.
 
 use bytes::Bytes;
 use cntryl_stress::{stress, stress_main, LogicalUnit, OperationOutcome, StressContext};
@@ -186,7 +187,7 @@ fn measure_refresh(
     ctx.parameter("family_count", family_count);
     ctx.parameter("resources_per_family", resources_per_family);
     ctx.parameter("measurement_scope", "in_process_stream_domain");
-    ctx.metadata("timed_work", "admin_refresh_only");
+    ctx.metadata("timed_work", "admin_refresh_plus_measurement_bookkeeping");
     ctx.metadata(
         "dirty_setup",
         "routed_begin_or_rollback_excluded_per_invocation",

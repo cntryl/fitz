@@ -7,8 +7,11 @@ all-dirty-family admin refreshes at 4 families × 8 resources and 16 families ×
 alternates a routed append-session BEGIN and ROLLBACK on existing resources,
 changing the projected live-session count without growing durable history.
 The fixture verifies row count, committed-event count, and previously
-projected live-session count outside the timed operation. Only
-`refresh_admin_snapshot_if_dirty()` is timed.
+projected live-session count outside the timed operation. The timed closure
+performs `refresh_admin_snapshot_if_dirty()` plus measurement bookkeeping
+(a latency-ring write, counter increment, and outcome creation); the separately
+recorded invocation latency surrounds only the refresh call.
+The one-dirty scenario changes the first family on each invocation.
 
 ## Method and observations
 
@@ -21,7 +24,9 @@ Each run has one warmup and five
 measured samples per scenario. The figures below are medians across the three
 runs: `ns/op` and allocations use each run's measured-sample median; p99 is
 calculated from each run's recorded per-invocation latency samples, not the
-stress summary's across-sample p99.
+stress summary's across-sample p99. The benchmark retains at most the last
+65,536 invocation latencies per measured sample, so clean-path p99 describes
+that tail of invocations rather than every refresh in the sample.
 
 | Scenario | Families × resources | ns/op before → after | Invocation p99 ns before → after | Allocs/op before → after | Bytes/op before → after |
 | --- | ---: | ---: | ---: | ---: | ---: |
