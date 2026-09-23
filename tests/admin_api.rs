@@ -8,4 +8,5 @@ mod admin_api {
     mod queue_resource_actions;
     mod stream_notice_metrics;
     mod topology_sessions;
+    mod typed_admin_errors;
 }
