@@ -6,12 +6,14 @@ import {
 } from "@/shared/navigation/route-family-request";
 import {
   mapQueueResourceComparison,
-  mapQueueResourceOverview,
+  mapQueueInflight,
+  mapQueueResourceDetail,
   mapQueueResourceTimeline,
 } from "./queue-resource-mappers";
 import type {
   QueueResourceComparison,
-  QueueResourceOverview,
+  QueueInflightMessage,
+  QueueResourceDetail,
   QueueResourceRef,
   QueueResourceTimeline,
 } from "./queue-resource-models";
@@ -19,62 +21,32 @@ import type {
 async function getResource(
   resourceRef: QueueResourceRef,
   options: RouteFamilyRequestOptions = {},
-): Promise<QueueResourceOverview> {
+): Promise<QueueResourceDetail> {
   const { family, requestOptions } = routeFamilyRequest(options);
-  const [detailResponse, inflightResponse, deadLettersResponse, timelineResponse] =
-    await Promise.all([
-      apiv1.getQueueResource(
-        apiParams(
-          {
-            area: resourceRef.area,
-            family,
-            realm: resourceRef.realm,
-            resource: resourceRef.resource,
-          },
-          requestOptions,
-        ),
-      ),
-      apiv1.listQueueInflightEntries(
-        apiParams(
-          {
-            area: resourceRef.area,
-            family,
-            realm: resourceRef.realm,
-            resource: resourceRef.resource,
-          },
-          requestOptions,
-        ),
-      ),
-      apiv1.listQueueDeadLetters(
-        apiParams(
-          {
-            area: resourceRef.area,
-            family,
-            realm: resourceRef.realm,
-            resource: resourceRef.resource,
-          },
-          requestOptions,
-        ),
-      ),
-      apiv1.listQueueResourceEvents(
-        apiParamsQuery(
-          {
-            area: resourceRef.area,
-            family,
-            realm: resourceRef.realm,
-            resource: resourceRef.resource,
-          },
-          { limit: 8 },
-          requestOptions,
-        ),
-      ),
-    ]);
+  const response = await apiv1.getQueueResource(
+    apiParams(
+      { area: resourceRef.area, family, realm: resourceRef.realm, resource: resourceRef.resource },
+      requestOptions,
+    ),
+  );
 
-  return mapQueueResourceOverview(
-    unwrapResponse(detailResponse, "Unable to load queue resource"),
-    unwrapResponse(inflightResponse, "Unable to load queue inflight entries").inflight,
-    unwrapResponse(deadLettersResponse, "Unable to load queue dead-letter messages").messages,
-    unwrapResponse(timelineResponse, "Unable to load queue resource timeline"),
+  return mapQueueResourceDetail(unwrapResponse(response, "Unable to load queue resource"));
+}
+
+async function getInflight(
+  resourceRef: QueueResourceRef,
+  options: RouteFamilyRequestOptions = {},
+): Promise<QueueInflightMessage[]> {
+  const { family, requestOptions } = routeFamilyRequest(options);
+  const response = await apiv1.listQueueInflightEntries(
+    apiParams(
+      { area: resourceRef.area, family, realm: resourceRef.realm, resource: resourceRef.resource },
+      requestOptions,
+    ),
+  );
+
+  return unwrapResponse(response, "Unable to load queue inflight entries").inflight.map(
+    mapQueueInflight,
   );
 }
 
@@ -128,6 +100,7 @@ async function compareResource(
 // Services are the app contract boundary: no Askr resources and no FetchResult leaks.
 export const queueResourceService = {
   compareResource,
+  getInflight,
   getResource,
   getTimeline,
 };

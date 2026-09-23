@@ -156,13 +156,13 @@ export default function RpcOperationPage() {
               </Show>
               <DomainSummaryStrip
                 title="RPC operation metrics"
-                description="Live worker capacity and pending requests. Latency buckets are current observations; the API does not report a reset window for handled-call counters."
+                description="Live worker capacity and pending requests. Handled counts cover exact live registrations only; -- means wildcard workers prevent per-operation attribution. Latency buckets are current observations, not historical totals. The API does not report a reset window for handled counters."
                 items={[
                   { label: "Workers", value: detail.workers_registered },
                   { label: "Pending requests", value: detail.requests_pending },
                   {
-                    label: "Handled by live workers",
-                    value: detail.requests_handled_by_live_workers,
+                    label: "Handled by live workers (exact)",
+                    value: detail.requests_handled_by_live_workers ?? "--",
                   },
                   {
                     label: "Slowest average latency",

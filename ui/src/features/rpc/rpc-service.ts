@@ -115,33 +115,20 @@ async function getResourceOperations(
     await apiv1.getRpcResource(apiParams({ area, family, realm, resource }, requestOptions)),
     "Unable to load RPC resource",
   );
-  const rows = await Promise.all(
-    operations.operations.map(async ({ operation }) => {
-      const detail = unwrapResponse(
-        await apiv1.getRpcOperation(
-          apiParams({ area, family, operation, realm, resource }, requestOptions),
-        ),
-        `Unable to load RPC operation ${operation}`,
-      );
-
-      return {
-        averageLatencyMs:
-          detail.requests_handled_by_live_workers === 0
-            ? null
-            : detail.slowest_worker_average_latency_ms,
-        operation,
-        pendingRequests: detail.requests_pending,
-        requestsHandled: detail.requests_handled_by_live_workers,
-        workers: detail.workers_registered,
-      };
-    }),
-  );
 
   return {
     area,
-    operations: rows,
+    operations: operations.operations.map((entry) => ({
+      averageLatencyMs: entry.slowest_worker_average_latency_ms,
+      operation: entry.operation,
+      pendingRequests: entry.requests_pending,
+      requestsHandled: entry.requests_handled_by_live_workers,
+      workers: entry.workers_registered,
+    })),
     realm,
     resource,
+    totalPendingRequests: operations.requests_pending,
+    totalWorkers: operations.workers_registered,
   };
 }
 

@@ -15,9 +15,11 @@ import {
 } from "@/features/queue/queue-query";
 import {
   createQueueResourceQuery,
+  createQueueResourceInflightQuery,
   createQueueResourceTimelineQuery,
   createQueueResourceComparisonQuery,
   queueResourceQueryKey,
+  queueResourceInflightQueryKey,
   queueResourceTimelineQueryKey,
 } from "@/features/queue/queue-resource-query";
 import {
@@ -131,6 +133,8 @@ describe("Data query layer", () => {
     expect(QUEUE_OVERVIEW_KEY).toEqual(expect.any(String));
     expect(createQueueResourceQuery).toBeDefined();
     expect(typeof createQueueResourceQuery).toBe("function");
+    expect(createQueueResourceInflightQuery).toBeDefined();
+    expect(typeof createQueueResourceInflightQuery).toBe("function");
     expect(createQueueResourceTimelineQuery).toBeDefined();
     expect(typeof createQueueResourceTimelineQuery).toBe("function");
     expect(createQueueResourceComparisonQuery).toBeDefined();
@@ -149,6 +153,7 @@ describe("Data query layer", () => {
 
     expect(SESSION_QUERY_PREFIX.length).toBeGreaterThan(0);
     expect(queueResourceTimelineQueryKey(ref).startsWith(queueResourceQueryKey(ref))).toBe(true);
+    expect(queueResourceInflightQueryKey(ref).startsWith(queueResourceQueryKey(ref))).toBe(true);
     expect(queueDeadLettersQueryKey(ref).startsWith(queueDeadLettersQueryPrefix(ref))).toBe(true);
     expect(
       queueDeadLettersQueryKey(ref, { family: 4 }).startsWith(queueDeadLettersQueryPrefix(ref)),
@@ -158,6 +163,7 @@ describe("Data query layer", () => {
       queueRealmQueryKey(ref.realm),
       queueAreaQueryKey(ref.realm, ref.area),
       queueResourceQueryKey(ref),
+      queueResourceInflightQueryKey(ref),
       queueResourceTimelineQueryKey(ref),
       queueDeadLettersQueryPrefix(ref),
     ]);

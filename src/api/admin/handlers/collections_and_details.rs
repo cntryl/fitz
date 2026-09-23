@@ -130,6 +130,8 @@ pub(super) fn handle_resource_detail(
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
+            workers_registered: 0,
+            requests_pending: 0,
             operations: vec![],
         }),
         _ => super::not_found(),

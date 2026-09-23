@@ -1,12 +1,13 @@
 use super::{
-    collect_distinct_entries, collect_resource_refs, matches_family, parse_flexible_route,
-    parse_rpc_operation, AreaCollection, AreaEntry, Infallible, IntoResourceRef, KvByteValue,
-    KvCommittedPair, KvCommittedValueResponse, KvPrefixScanResponse, KvRowsResponse,
-    KvTransactionsList, LeaseResourceCollection, LeaseResourceEntry, NoticeResourceCollection,
-    NoticeResourceEntry, OperationCollection, OperationEntry, RealmCollection, RealmEntry,
-    ResourceCollection, ResourceEntry, ResourcePath, ResourceRef, Response, RpcResourceCollection,
-    RpcResourceEntry, Runtime, ScheduleResourceCollection, ScheduleResourceEntry, SessionsList,
-    StreamResourceCollection, StreamResourceEntry,
+    collect_distinct_entries, collect_resource_refs, matches_family, matches_operation_route,
+    parse_flexible_route, parse_rpc_operation, AreaCollection, AreaEntry, Infallible,
+    IntoResourceRef, KvByteValue, KvCommittedPair, KvCommittedValueResponse, KvPrefixScanResponse,
+    KvRowsResponse, KvTransactionsList, LeaseResourceCollection, LeaseResourceEntry,
+    NoticeResourceCollection, NoticeResourceEntry, OperationCollection, OperationEntry,
+    RealmCollection, RealmEntry, ResourceCollection, ResourceEntry, ResourcePath, ResourceRef,
+    Response, RpcOperationPath, RpcResourceCollection, RpcResourceEntry, Runtime,
+    ScheduleResourceCollection, ScheduleResourceEntry, SessionsList, StreamResourceCollection,
+    StreamResourceEntry,
 };
 use crate::api::admin::troubleshooting;
 use crate::domains::kv::sink::{AdminKvRowsError, AdminKvRowsRequest};
@@ -516,19 +517,86 @@ pub fn rpc_operations(
     path: &ResourcePath<'_>,
     family: Option<u64>,
 ) -> OperationCollection {
-    let operations = collect_distinct_entries(
-        rpc_live_routes(runtime, family)
-            .into_iter()
-            .filter_map(|route| parse_rpc_operation(&route))
-            .filter(|operation| operation.matches_resource_path(path))
-            .map(|operation| operation.operation),
-        |operation| OperationEntry { operation },
-    );
+    let workers = runtime
+        .rpc_list_workers(Some(path.realm))
+        .into_iter()
+        .filter(|worker| matches_family(family, worker.route_family))
+        .collect::<Vec<_>>();
+    let pending = runtime
+        .rpc_list_pending(Some(path.realm))
+        .into_iter()
+        .filter(|request| matches_family(family, request.route_family))
+        .collect::<Vec<_>>();
+    let operation_names = workers
+        .iter()
+        .map(|worker| worker.route.as_str())
+        .chain(pending.iter().map(|request| request.route.as_str()))
+        .filter_map(parse_rpc_operation)
+        .filter(|operation| operation.matches_resource_path(path))
+        .map(|operation| operation.operation)
+        .collect::<BTreeSet<_>>();
+    let mut matched_worker_indices = BTreeSet::new();
+    let operations = operation_names
+        .into_iter()
+        .map(|operation| {
+            let operation_path = RpcOperationPath {
+                realm: path.realm,
+                area: path.area,
+                resource: path.resource,
+                operation: &operation,
+            };
+            let matching_workers = workers
+                .iter()
+                .enumerate()
+                .filter(|(_, worker)| matches_operation_route(&worker.route, &operation_path))
+                .collect::<Vec<_>>();
+            matched_worker_indices.extend(matching_workers.iter().map(|(index, _)| *index));
+            let requests_pending = pending
+                .iter()
+                .filter(|request| matches_operation_route(&request.route, &operation_path))
+                .count();
+            let exact_route = format!(
+                "rpc://{}/{}/{}/{}",
+                path.realm, path.area, path.resource, operation
+            );
+            let attributable = matching_workers
+                .iter()
+                .all(|(_, worker)| !worker.route.contains('*') && worker.route == exact_route);
+            let requests_handled_by_live_workers = attributable.then(|| {
+                matching_workers.iter().fold(0u64, |total, (_, worker)| {
+                    total.saturating_add(worker.requests_handled)
+                })
+            });
+            let slowest_worker_average_latency_ms = if attributable
+                && matching_workers.iter().all(|(_, worker)| {
+                    worker.requests_handled == 0 || worker.average_latency_ms.is_finite()
+                }) {
+                matching_workers
+                    .iter()
+                    .filter(|(_, worker)| worker.requests_handled > 0)
+                    .map(|(_, worker)| worker.average_latency_ms.max(0.0))
+                    .reduce(f64::max)
+            } else {
+                None
+            };
+
+            OperationEntry {
+                operation,
+                workers_registered: matching_workers.len(),
+                requests_pending,
+                requests_handled_by_live_workers,
+                slowest_worker_average_latency_ms,
+            }
+        })
+        .collect::<Vec<_>>();
+    let requests_pending = operations.iter().map(|entry| entry.requests_pending).sum();
 
     OperationCollection {
         realm: path.realm.to_string(),
         area: path.area.to_string(),
         resource: path.resource.to_string(),
+        workers_registered: matched_worker_indices.len(),
+        requests_pending,
         operations,
     }
 }

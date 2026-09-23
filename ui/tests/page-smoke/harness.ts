@@ -79,6 +79,7 @@ vi.mock("@/features/queue/queue-query", () => ({
 
 vi.mock("@/features/queue/queue-resource-query", () => ({
   createQueueResourceQuery: () => mocks.queryStates.queueResource,
+  createQueueResourceInflightQuery: () => mocks.queryStates.queueInflight,
   createQueueResourceTimelineQuery: () => mocks.queryStates.queueTimeline,
 }));
 
@@ -235,7 +236,8 @@ export function resetQueries() {
   mocks.queryStates.queueDeadLetters = queryState.fresh([], queryOptions());
   mocks.queryStates.queueInventory = queryState.fresh(queueInventory, queryOptions());
   mocks.queryStates.queueRealm = queryState.fresh(queueRealmDetail, queryOptions());
-  mocks.queryStates.queueResource = queryState.fresh(queueResource, queryOptions());
+  mocks.queryStates.queueResource = queryState.fresh(queueResource.detail, queryOptions());
+  mocks.queryStates.queueInflight = queryState.fresh(queueResource.inflight, queryOptions());
   mocks.queryStates.queueTimeline = queryState.fresh(queueResource.timeline, queryOptions());
   mocks.queryStates.kv = queryState.fresh(kvOverview, queryOptions());
   mocks.queryStates.lease = queryState.fresh(leaseOverview, queryOptions());

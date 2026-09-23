@@ -290,6 +290,14 @@ The RPC resource and operation lists union worker and pending-only routes and re
 handled a request. `/all/` sums counts and takes the slowest available latency
 across accessible families.
 
+The resource operation collection reports distinct matching worker registrations
+and complete pending requests for the resource. Each operation row has complete
+matching-worker and pending counts. Handled-call and latency fields are based
+on currently live exact registrations only; they are null when a matching
+wildcard registration prevents attribution to one operation. Do not sum
+per-operation worker counts to obtain a distinct resource worker count, because
+one wildcard registration can match several operations.
+
 #### List Operations For A Resource
 ```
 GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations
@@ -300,7 +308,17 @@ GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations
   "realm": "prod",
   "area": "compute",
   "resource": "tasks",
-  "operations": [{ "operation": "heavy-task" }]
+  "workers_registered": 2,
+  "requests_pending": 1,
+  "operations": [
+    {
+      "operation": "heavy-task",
+      "workers_registered": 2,
+      "requests_pending": 1,
+      "requests_handled_by_live_workers": 1847,
+      "slowest_worker_average_latency_ms": 145.0
+    }
+  ]
 }
 ```
 
@@ -309,10 +327,11 @@ GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations
 GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}
 ```
 The counts are point-in-time in-memory values for the running broker process.
-`requests_handled_by_live_workers` sums complete counters from registrations
-currently live for this operation. It is not a historical total: disconnect
-cleanup and broker restart remove those counters. The call-search endpoint is
-bounded inspection evidence, not a source for these operation totals.
+`requests_handled_by_live_workers` is present but null when a matching wildcard
+registration prevents per-operation attribution. Otherwise it sums currently
+live exact-registration counters; disconnect cleanup and broker restart remove
+those counters. The call-search endpoint is bounded inspection evidence, not a
+source for resource or operation totals.
 
 **Response**:
 ```json

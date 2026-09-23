@@ -15,6 +15,8 @@ use bytes::Bytes;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod rpc_metrics;
+
 fn current_epoch_ms() -> u64 {
     u64::try_from(
         SystemTime::now()
@@ -599,6 +601,9 @@ fn should_include_pending_only_rpc_operation_in_resource_inventory() {
     // Assert
     assert_eq!(operations.operations.len(), 1);
     assert_eq!(operations.operations[0].operation, "run");
+    assert_eq!(operations.workers_registered, 0);
+    assert_eq!(operations.requests_pending, 1);
+    assert_eq!(operations.operations[0].requests_pending, 1);
 }
 
 #[test]
@@ -669,14 +674,19 @@ fn should_sum_handled_calls_from_live_rpc_workers_for_operation() {
     };
 
     // Act
-    let detail = rpc_operation_detail(&runtime, &path, Some(1));
+    let operations = rpc_operations(
+        &runtime,
+        &ResourcePath {
+            realm: path.realm,
+            area: path.area,
+            resource: path.resource,
+        },
+        Some(1),
+    );
 
     // Assert
     assert_eq!(
-        serde_json::to_value(detail)
-            .expect("serialize detail")
-            .get("requests_handled_by_live_workers")
-            .and_then(serde_json::Value::as_u64),
+        operations.operations[0].requests_handled_by_live_workers,
         Some(12)
     );
 }

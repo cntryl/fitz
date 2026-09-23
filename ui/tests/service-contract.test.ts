@@ -105,12 +105,17 @@ describe("service endpoint contracts", () => {
   });
   it("loads queue resource detail from the expected queue resource endpoints", async () => {
     const { queueResourceService } = await import("@/features/queue/queue-resource-service");
+    const { queueService } = await import("@/features/queue/queue-service");
 
-    await queueResourceService.getResource({
+    const resourceRef = {
       area: "ops",
       realm: "default",
       resource: "primary",
-    });
+    };
+    await queueResourceService.getResource(resourceRef);
+    await queueResourceService.getInflight(resourceRef);
+    await queueService.listDeadLetters(resourceRef);
+    await queueResourceService.getTimeline(resourceRef);
 
     const params = { area: "ops", family: "1", realm: "default", resource: "primary" };
     expect(mocks.apiv1.getQueueResource).toHaveBeenCalledWith({ params });

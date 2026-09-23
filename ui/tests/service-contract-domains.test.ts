@@ -377,9 +377,26 @@ describe("service endpoint contracts", () => {
       status: 200,
       data: {
         area: "ops",
-        operations: [{ operation: "GetStatus" }, { operation: "PendingOnly" }],
+        operations: [
+          {
+            operation: "GetStatus",
+            workers_registered: 2,
+            requests_pending: 150,
+            requests_handled_by_live_workers: 12,
+            slowest_worker_average_latency_ms: 12,
+          },
+          {
+            operation: "PendingOnly",
+            workers_registered: 0,
+            requests_pending: 1,
+            requests_handled_by_live_workers: 0,
+            slowest_worker_average_latency_ms: null,
+          },
+        ],
         realm: "default",
         resource: "primary",
+        workers_registered: 2,
+        requests_pending: 151,
       },
     });
     mocks.apiv1.searchRpcCalls.mockResolvedValue({
@@ -395,33 +412,12 @@ describe("service endpoint contracts", () => {
         route_family: 7,
       },
     });
-    mocks.apiv1.getRpcOperation
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        data: {
-          operation: "GetStatus",
-          workers_registered: 2,
-          requests_pending: 150,
-          requests_handled_by_live_workers: 12,
-          slowest_worker_average_latency_ms: 12,
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        data: {
-          operation: "PendingOnly",
-          workers_registered: 0,
-          requests_pending: 1,
-          requests_handled_by_live_workers: 0,
-          slowest_worker_average_latency_ms: 0,
-        },
-      });
     const result = await rpcService.getResourceOperations("default", "ops", "primary", {
       routeFamily: 7,
     });
 
+    expect(result.totalWorkers).toBe(2);
+    expect(result.totalPendingRequests).toBe(151);
     expect(result.operations).toEqual([
       {
         averageLatencyMs: 12,
@@ -439,15 +435,7 @@ describe("service endpoint contracts", () => {
       },
     ]);
     expect(mocks.apiv1.searchRpcCalls).not.toHaveBeenCalled();
-    expect(mocks.apiv1.getRpcOperation).toHaveBeenCalledWith(
-      params({
-        area: "ops",
-        family: "7",
-        operation: "GetStatus",
-        realm: "default",
-        resource: "primary",
-      }),
-    );
+    expect(mocks.apiv1.getRpcOperation).not.toHaveBeenCalled();
   });
   it("keeps RPC call inspection requests within the documented limit", async () => {
     const { rpcService } = await import("@/features/rpc/rpc-service");

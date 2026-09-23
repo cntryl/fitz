@@ -7,7 +7,11 @@ import {
   queueOverviewQueryKey,
   queueRealmQueryKey,
 } from "./queue-query";
-import { queueResourceQueryKey, queueResourceTimelineQueryKey } from "./queue-resource-query";
+import {
+  queueResourceInflightQueryKey,
+  queueResourceQueryKey,
+  queueResourceTimelineQueryKey,
+} from "./queue-resource-query";
 
 export function affectedQueueKeys(resourceRef: QueueResourceRef) {
   return [
@@ -15,6 +19,7 @@ export function affectedQueueKeys(resourceRef: QueueResourceRef) {
     queueRealmQueryKey(resourceRef.realm),
     queueAreaQueryKey(resourceRef.realm, resourceRef.area),
     queueResourceQueryKey(resourceRef),
+    queueResourceInflightQueryKey(resourceRef),
     queueResourceTimelineQueryKey(resourceRef),
     queueDeadLettersQueryPrefix(resourceRef),
   ];

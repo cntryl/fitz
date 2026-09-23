@@ -303,6 +303,8 @@ export const rpcResource = {
   ],
   realm: "default",
   resource: "primary",
+  totalPendingRequests: 1,
+  totalWorkers: 2,
 };
 
 export const rpcOperation = {

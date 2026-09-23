@@ -358,9 +358,19 @@ beforeEach(() => {
     status: 200,
     data: {
       area: "ops",
-      operations: [{ operation: "GetStatus" }],
+      operations: [
+        {
+          operation: "GetStatus",
+          workers_registered: 2,
+          requests_pending: 1,
+          requests_handled_by_live_workers: 9,
+          slowest_worker_average_latency_ms: 12,
+        },
+      ],
       realm: "default",
       resource: "primary",
+      workers_registered: 2,
+      requests_pending: 1,
     },
   });
   mocks.apiv1.getRpcOperation.mockResolvedValue({

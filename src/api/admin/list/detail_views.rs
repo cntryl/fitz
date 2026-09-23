@@ -310,9 +310,18 @@ pub fn rpc_operation_detail(
         })
         .collect::<Vec<_>>();
     let latency_summary = troubleshooting::summarize_rpc_worker_latency(workers.iter());
-    let requests_handled_by_live_workers = workers.iter().fold(0u64, |total, worker| {
-        total.saturating_add(worker.requests_handled)
-    });
+    let exact_route = format!(
+        "rpc://{}/{}/{}/{}",
+        path.realm, path.area, path.resource, path.operation
+    );
+    let requests_handled_by_live_workers = workers
+        .iter()
+        .all(|worker| worker.route == exact_route)
+        .then(|| {
+            workers.iter().fold(0u64, |total, worker| {
+                total.saturating_add(worker.requests_handled)
+            })
+        });
     RpcOperationDetail::from_counts(
         path,
         workers.len(),

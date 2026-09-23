@@ -135,54 +135,57 @@ describe("admin page smoke tests", () => {
     expect(headers).toEqual(["Offset", "Created", "Body", "Action"]);
   });
   it("uses tables for queue message state and a list for timeline evidence", async () => {
-    mocks.queryStates.queueResource = queryState.fresh(
+    mocks.queryStates.queueDeadLetters = queryState.fresh(
+      [
+        {
+          area: "ops",
+          attempts: 2,
+          deadLetteredAt: "2026-05-21T13:05:00Z",
+          family: 1,
+          messageId: 42,
+          realm: "default",
+          reason: "handler failed",
+          resource: "primary",
+        },
+      ],
+      queryOptions(),
+    );
+    mocks.queryStates.queueInflight = queryState.fresh(
+      [
+        {
+          area: "ops",
+          attempts: 1,
+          expiresAt: "2026-05-21T13:06:00Z",
+          family: 1,
+          inflightToken: "token-1",
+          messageId: 41,
+          realm: "default",
+          resource: "primary",
+          sessionId: "session-1",
+        },
+      ],
+      queryOptions(),
+    );
+    mocks.queryStates.queueTimeline = queryState.fresh(
       {
-        ...queueResource,
-        deadLetters: [
+        ...queueResource.timeline,
+        events: [
           {
-            area: "ops",
-            attempts: 2,
-            deadLetteredAt: "2026-05-21T13:05:00Z",
-            family: 1,
-            messageId: 42,
-            realm: "default",
-            reason: "handler failed",
-            resource: "primary",
-          },
-        ],
-        inflight: [
-          {
+            ageSeconds: 2,
             area: "ops",
             attempts: 1,
-            expiresAt: "2026-05-21T13:06:00Z",
-            family: 1,
-            inflightToken: "token-1",
+            correlationId: "correlation-1",
+            kind: "transition" as const,
             messageId: 41,
+            observedAt: "2026-05-21T13:00:00Z",
+            operation: "Peek",
+            ownerSession: "session-1",
             realm: "default",
             resource: "primary",
-            sessionId: "session-1",
+            summary: "Queue worker activity observed.",
+            workerSession: "worker-1",
           },
         ],
-        timeline: {
-          ...queueResource.timeline,
-          events: [
-            {
-              ageSeconds: 2,
-              area: "ops",
-              attempts: 1,
-              correlationId: "correlation-1",
-              kind: "transition" as const,
-              messageId: 41,
-              observedAt: "2026-05-21T13:00:00Z",
-              operation: "Peek",
-              ownerSession: "session-1",
-              realm: "default",
-              resource: "primary",
-              summary: "Queue worker activity observed.",
-              workerSession: "worker-1",
-            },
-          ],
-        },
       },
       queryOptions(),
     );
@@ -208,10 +211,7 @@ describe("admin page smoke tests", () => {
   });
   it("keeps queue backlog and dead-letter actions usable when the timeline fails", async () => {
     const timelineRetry = vi.fn(async () => undefined);
-    mocks.queryStates.queueResource = queryState.fresh(
-      { ...queueResource, ...queueResource.detail },
-      queryOptions(),
-    );
+    mocks.queryStates.queueResource = queryState.fresh(queueResource.detail, queryOptions());
     mocks.queryStates.queueInflight = queryState.fresh(
       [
         {
@@ -259,28 +259,29 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Current values");
     expect(root.querySelector('table[aria-label="Inflight queue messages"]')).toBeTruthy();
     expect(root.querySelector('table[aria-label="Dead-letter queue messages"]')).toBeTruthy();
-    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent === "Replay")).toBe(true);
+    expect(
+      Array.from(root.querySelectorAll("button")).some((button) => button.textContent === "Replay"),
+    ).toBe(true);
     expect(root.textContent).toContain("Timeline read failed");
-    const retry = root.querySelector<HTMLButtonElement>("#queue-timeline-state button");
+    const retry = Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Retry",
+    );
     expect(retry?.textContent).toContain("Retry");
     retry?.click();
     expect(timelineRetry).toHaveBeenCalledTimes(1);
   });
   it("opens an accessible queue dead-letter confirmation dialog", async () => {
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
-    mocks.queryStates.queueResource = queryState.fresh(
-      {
-        ...queueResource,
-        deadLetters: [
-          {
-            attempts: 2,
-            deadLetteredAt: "2026-05-21T13:05:00Z",
-            family: 1,
-            messageId: 42,
-            reason: "handler failed",
-          },
-        ],
-      },
+    mocks.queryStates.queueDeadLetters = queryState.fresh(
+      [
+        {
+          attempts: 2,
+          deadLetteredAt: "2026-05-21T13:05:00Z",
+          family: 1,
+          messageId: 42,
+          reason: "handler failed",
+        },
+      ],
       queryOptions(),
     );
 

@@ -691,9 +691,26 @@ export function resourceDetail(
 
   return {
     area,
-    operations: [{ operation: "ReconcileInvoice" }, { operation: "RefreshProjection" }],
+    operations: [
+      {
+        operation: "ReconcileInvoice",
+        workers_registered: 1,
+        requests_pending: 3,
+        requests_handled_by_live_workers: 1480,
+        slowest_worker_average_latency_ms: 84.2,
+      },
+      {
+        operation: "RefreshProjection",
+        workers_registered: 0,
+        requests_pending: 1,
+        requests_handled_by_live_workers: 0,
+        slowest_worker_average_latency_ms: null,
+      },
+    ],
     realm,
     resource,
+    workers_registered: 1,
+    requests_pending: 4,
   };
 }
 

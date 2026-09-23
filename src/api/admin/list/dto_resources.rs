@@ -313,12 +313,18 @@ pub struct OperationCollection {
     pub realm: String,
     pub area: String,
     pub resource: String,
+    pub workers_registered: usize,
+    pub requests_pending: usize,
     pub operations: Vec<OperationEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationEntry {
     pub operation: String,
+    pub workers_registered: usize,
+    pub requests_pending: usize,
+    pub requests_handled_by_live_workers: Option<u64>,
+    pub slowest_worker_average_latency_ms: Option<f64>,
 }
 
 /// Point-in-time live in-memory RPC state for a single operation on the
@@ -331,7 +337,7 @@ pub struct RpcOperationDetail {
     pub operation: String,
     pub workers_registered: usize,
     pub requests_pending: usize,
-    pub requests_handled_by_live_workers: u64,
+    pub requests_handled_by_live_workers: Option<u64>,
     pub slowest_worker_average_latency_ms: f64,
     pub worker_latency_buckets: RpcLatencyBuckets,
     pub diagnostics: DiagnosticSnapshot,
@@ -576,7 +582,7 @@ impl RpcOperationDetail {
         path: &RpcOperationPath<'_>,
         workers_registered: usize,
         requests_pending: usize,
-        requests_handled_by_live_workers: u64,
+        requests_handled_by_live_workers: Option<u64>,
         slowest_worker_average_latency_ms: f64,
         worker_latency_buckets: RpcLatencyBuckets,
     ) -> Self {
