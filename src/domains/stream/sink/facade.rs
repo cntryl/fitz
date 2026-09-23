@@ -20,6 +20,13 @@ use std::time::{Duration, Instant};
 
 impl StreamFamilyState {
     fn new(config: &StreamDomainConfig, family: RouteFamily) -> Self {
+        let dirty = Arc::clone(
+            config
+                .admin_dirty_flags
+                .get(&family)
+                .expect("provisioned Stream family has admin dirty flag"),
+        );
+        dirty.store(true, Ordering::Release);
         Self {
             family,
             admin_provisioned_families: config.admin_provisioned_families.clone(),
@@ -34,7 +41,7 @@ impl StreamFamilyState {
             next_session_id: config.next_session_id.clone(),
             cursor_integrity_key: config.cursor_integrity_key.clone(),
             router: config.router.clone(),
-            admin_snapshot: AdminSnapshotState::new(config.admin_projection.clone(), true),
+            admin_snapshot: AdminSnapshotState::new(config.admin_projection.clone(), dirty),
             sync_write_mode: config.sync_write_mode,
             metrics: config.metrics.clone(),
             live_gauges: config.live_gauges.clone(),
@@ -133,6 +140,13 @@ impl StreamDomain {
             .ok_or_else(|| "no Stream route family is provisioned".to_string())?;
         let active = Arc::new(AtomicBool::new(true));
         let durable_metrics = Arc::new(StreamDurableMetrics::default());
+        let admin_dirty_flags = Arc::new(
+            family_families
+                .iter()
+                .copied()
+                .map(|family| (family, Arc::new(AtomicBool::new(true))))
+                .collect(),
+        );
         let config = StreamDomainConfig {
             stream_store,
             next_session_id: Arc::new(AtomicU64::new(1)),
@@ -143,6 +157,7 @@ impl StreamDomain {
                 admin_read_model,
                 durable_metrics.clone(),
             )),
+            admin_dirty_flags,
             admin_provisioned_families: family_families.iter().map(RouteFamily::as_u64).collect(),
             admin_unprovisioned_owner,
             sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
@@ -550,6 +565,7 @@ impl StreamDomain {
         self.send_admin_snapshot_commands(
             StreamDomainCommand::RefreshAdminSnapshotIfDirty,
             "refresh_if_dirty",
+            true,
         );
     }
 
@@ -565,19 +581,38 @@ impl StreamDomain {
 
     #[cfg(test)]
     pub(super) fn sync_admin_snapshot(&self) {
-        self.send_admin_snapshot_commands(StreamDomainCommand::SyncAdminSnapshot, "sync");
+        self.send_admin_snapshot_commands(StreamDomainCommand::SyncAdminSnapshot, "sync", false);
     }
 
     fn send_admin_snapshot_commands(
         &self,
         build_command: fn(crossbeam_channel::Sender<()>) -> StreamDomainCommand,
         operation: &'static str,
+        only_dirty: bool,
     ) {
-        let mut pending = Vec::with_capacity(self.family_families.len());
+        let mut pending = Vec::new();
         for family in self.family_families.iter().copied() {
+            if only_dirty
+                && !self
+                    .config
+                    .admin_dirty_flags
+                    .get(&family)
+                    .expect("provisioned Stream family has admin dirty flag")
+                    .load(Ordering::Acquire)
+            {
+                if !self.family_runtime.is_family_running(family) {
+                    self.report_admin_snapshot_failure(family, operation, "family actor stopped");
+                }
+                continue;
+            }
             let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
             match self.dispatch_family_control(Some(family), build_command(reply_tx)) {
-                Ok(()) => pending.push((family, reply_rx)),
+                Ok(()) => {
+                    if pending.is_empty() {
+                        pending.reserve_exact(self.family_families.len());
+                    }
+                    pending.push((family, reply_rx));
+                }
                 Err(error) => self.report_admin_snapshot_failure(family, operation, &error),
             }
         }

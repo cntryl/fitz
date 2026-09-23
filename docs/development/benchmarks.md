@@ -11,6 +11,9 @@ Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier 4 write
 
 The family-ownership migration's locked before/after results are recorded in
 the [SOLID remediation benchmark report](solid-remediation-benchmark-report.md).
+The multi-family Stream admin refresh characterization and its clean-family
+fast-path results are in the
+[Stream admin refresh report](stream-admin-refresh-characterization.md).
 
 ## Philosophy
 

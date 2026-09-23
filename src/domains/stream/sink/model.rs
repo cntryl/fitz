@@ -329,26 +329,27 @@ impl SubscriptionRegistry {
 
 pub(super) struct AdminSnapshotState {
     pub(super) projection: Arc<super::projection::StreamAdminProjection>,
-    pub(super) dirty: AtomicBool,
+    pub(super) dirty: Arc<AtomicBool>,
 }
 
 impl AdminSnapshotState {
     pub(super) fn new(
         projection: Arc<super::projection::StreamAdminProjection>,
-        dirty: bool,
+        dirty: Arc<AtomicBool>,
     ) -> Self {
-        Self {
-            projection,
-            dirty: AtomicBool::new(dirty),
-        }
+        Self { projection, dirty }
     }
 
     pub(super) fn mark_dirty(&self) {
-        self.dirty.store(true, Ordering::Relaxed);
+        self.dirty.store(true, Ordering::Release);
     }
 
-    pub(super) fn take_dirty(&self) -> bool {
-        self.dirty.swap(false, Ordering::AcqRel)
+    pub(super) fn is_dirty(&self) -> bool {
+        self.dirty.load(Ordering::Acquire)
+    }
+
+    pub(super) fn clear_dirty(&self) {
+        self.dirty.store(false, Ordering::Release);
     }
 }
 
@@ -494,6 +495,7 @@ pub(super) struct StreamDomainConfig {
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
     pub(super) router: Arc<Router>,
     pub(super) admin_projection: Arc<super::projection::StreamAdminProjection>,
+    pub(super) admin_dirty_flags: Arc<HashMap<RouteFamily, Arc<AtomicBool>>>,
     pub(super) admin_provisioned_families: Vec<u64>,
     pub(super) admin_unprovisioned_owner: RouteFamily,
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,

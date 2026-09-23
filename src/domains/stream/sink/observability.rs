@@ -53,7 +53,7 @@ impl StreamFamilyState {
     }
 
     pub(in crate::domains::stream::sink) fn refresh_admin_snapshot_if_dirty(&mut self) {
-        if self.admin_snapshot.take_dirty() {
+        if self.admin_snapshot.is_dirty() {
             self.sync_admin_snapshot();
         }
     }
@@ -95,16 +95,19 @@ impl StreamFamilyState {
     }
 
     pub(in crate::domains::stream::sink) fn sync_admin_snapshot(&mut self) {
-        if let Err(error) = self.try_sync_admin_snapshot() {
-            self.admin_snapshot.mark_dirty();
-            self.counter_inc(
-                crate::domains::stream::metrics::METRIC_ADMIN_PROJECTION_FAILURES_TOTAL,
-            );
-            tracing::warn!(
-                domain = "stream",
-                error,
-                "Stream admin projection refresh failed; retaining prior snapshot"
-            );
+        match self.try_sync_admin_snapshot() {
+            Ok(()) => self.admin_snapshot.clear_dirty(),
+            Err(error) => {
+                self.admin_snapshot.mark_dirty();
+                self.counter_inc(
+                    crate::domains::stream::metrics::METRIC_ADMIN_PROJECTION_FAILURES_TOTAL,
+                );
+                tracing::warn!(
+                    domain = "stream",
+                    error,
+                    "Stream admin projection refresh failed; retaining prior snapshot"
+                );
+            }
         }
     }
 

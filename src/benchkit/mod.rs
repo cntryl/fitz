@@ -9,6 +9,7 @@ pub mod queue;
 pub mod runtime;
 pub mod storage;
 pub mod stream;
+pub mod stream_admin;
 pub mod transport;
 
 #[cfg(any(test, feature = "benchkit"))]
@@ -35,6 +36,7 @@ pub use stream::{
     create_bench_event_payloads, create_bench_stream_actor, create_bench_stream_actor_with_layout,
     create_local_bench_stream_actor, create_local_bench_stream_actor_with_layout,
 };
+pub use stream_admin::{create_bench_stream_admin_sink, StreamAdminBench};
 pub use transport::{
     build_kv_begin, build_kv_commit, build_kv_put, build_kv_rollback,
     build_lease_acquire_immediate, build_lease_extend, build_lease_query, build_lease_release,
@@ -45,7 +47,7 @@ pub use transport::{
     build_schedule_create_batch, build_stream_append, build_stream_append_with_metadata,
     build_stream_begin, build_stream_commit, build_stream_get_metadata, build_stream_last,
     build_stream_read, build_stream_read_with_cursor, build_stream_read_with_limit,
-    build_stream_read_with_snapshot_cursor, build_stream_subscribe,
+    build_stream_read_with_snapshot_cursor, build_stream_rollback, build_stream_subscribe,
     count_stream_read_records_from_payload, ensure_schedule_ok, extract_single_tlv_field,
     parse_kv_response, parse_kv_tx_id, parse_lease_extend_token_response, parse_lease_response,
     parse_lease_token_response, parse_notice_delivery, parse_notice_response,
