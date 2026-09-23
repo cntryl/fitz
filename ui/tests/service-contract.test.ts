@@ -121,6 +121,17 @@ describe("service endpoint contracts", () => {
       query: { limit: 8 },
     });
   });
+  it("keeps queue resource detail available when timeline inspection fails", async () => {
+    const { queueResourceService } = await import("@/features/queue/queue-resource-service");
+    mocks.apiv1.listQueueResourceEvents.mockRejectedValueOnce(new Error("Timeline read failed"));
+
+    await expect(
+      queueResourceService.getResource({ area: "ops", realm: "default", resource: "primary" }),
+    ).resolves.toMatchObject({ messagesReady: 3 });
+
+    expect(mocks.apiv1.getQueueResource).toHaveBeenCalledTimes(1);
+    expect(mocks.apiv1.listQueueResourceEvents).not.toHaveBeenCalled();
+  });
   it("loads queue drill-down rollups from queue-specific endpoints", async () => {
     const { queueService } = await import("@/features/queue/queue-service");
 

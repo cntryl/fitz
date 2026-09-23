@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
 import { queryState, submit, type } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
@@ -205,6 +205,66 @@ describe("admin page smoke tests", () => {
     const timeline = root.querySelector('ul[aria-label="Queue resource timeline"]');
     expect(timeline?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
     expect(root.querySelector("#queue-timeline [data-slot='table']")).toBeNull();
+  });
+  it("keeps queue backlog and dead-letter actions usable when the timeline fails", async () => {
+    const timelineRetry = vi.fn(async () => undefined);
+    mocks.queryStates.queueResource = queryState.fresh(
+      { ...queueResource, ...queueResource.detail },
+      queryOptions(),
+    );
+    mocks.queryStates.queueInflight = queryState.fresh(
+      [
+        {
+          area: "ops",
+          attempts: 1,
+          expiresAt: "2026-05-21T13:06:00Z",
+          family: 1,
+          inflightToken: "token-1",
+          messageId: 41,
+          realm: "default",
+          resource: "primary",
+          sessionId: "session-1",
+        },
+      ],
+      queryOptions(),
+    );
+    mocks.queryStates.queueDeadLetters = queryState.fresh(
+      [
+        {
+          area: "ops",
+          attempts: 2,
+          deadLetteredAt: "2026-05-21T13:05:00Z",
+          family: 1,
+          messageId: 42,
+          realm: "default",
+          reason: "handler failed",
+          resource: "primary",
+        },
+      ],
+      queryOptions(),
+    );
+    mocks.queryStates.queueTimeline = queryState.error(
+      new Error("Timeline read failed"),
+      undefined,
+      { refresh: timelineRetry },
+    );
+
+    const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
+    const root = await mountRoute(
+      "/queue/default/ops/primary",
+      "/queue/{realm}/{area}/{resource}",
+      QueueResourcePage,
+    );
+
+    expect(root.textContent).toContain("Current values");
+    expect(root.querySelector('table[aria-label="Inflight queue messages"]')).toBeTruthy();
+    expect(root.querySelector('table[aria-label="Dead-letter queue messages"]')).toBeTruthy();
+    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent === "Replay")).toBe(true);
+    expect(root.textContent).toContain("Timeline read failed");
+    const retry = root.querySelector<HTMLButtonElement>("#queue-timeline-state button");
+    expect(retry?.textContent).toContain("Retry");
+    retry?.click();
+    expect(timelineRetry).toHaveBeenCalledTimes(1);
   });
   it("opens an accessible queue dead-letter confirmation dialog", async () => {
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
