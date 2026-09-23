@@ -154,45 +154,46 @@ impl StreamFamilyState {
         let mut area_snapshots: StreamAreaSnapshotMap = BTreeMap::new();
         let mut committed_events_total = 0usize;
 
-        let family_id = self.family.as_u64();
-        let records = self.stream_store.list_resource_metadata(family_id)?;
-        for crate::domains::stream::store::StreamAdminRecord {
-            realm,
-            area,
-            resource,
-            next_offset,
-            committed_size_bytes,
-        } in records
-        {
-            committed_events_total =
-                committed_events_total.saturating_add(u64_to_usize_saturating(next_offset));
-            let last_offset = next_offset.saturating_sub(1);
-            streams.insert(
-                (family_id, realm.clone(), area.clone(), resource.clone()),
-                crate::control::admin::StreamInfo::snapshot(
-                    crate::control::admin::StreamInfoSnapshot {
-                        route_family: family_id,
-                        realm: &realm,
-                        area: &area,
-                        resource: &resource,
-                        offset: last_offset,
-                        watermark: last_offset,
-                        size_bytes: committed_size_bytes,
-                        sessions_active: 0,
-                    },
-                ),
-            );
+        for &family_id in &self.admin_projection_families {
+            let records = self.stream_store.list_resource_metadata(family_id)?;
+            for crate::domains::stream::store::StreamAdminRecord {
+                realm,
+                area,
+                resource,
+                next_offset,
+                committed_size_bytes,
+            } in records
+            {
+                committed_events_total =
+                    committed_events_total.saturating_add(u64_to_usize_saturating(next_offset));
+                let last_offset = next_offset.saturating_sub(1);
+                streams.insert(
+                    (family_id, realm.clone(), area.clone(), resource.clone()),
+                    crate::control::admin::StreamInfo::snapshot(
+                        crate::control::admin::StreamInfoSnapshot {
+                            route_family: family_id,
+                            realm: &realm,
+                            area: &area,
+                            resource: &resource,
+                            offset: last_offset,
+                            watermark: last_offset,
+                            size_bytes: committed_size_bytes,
+                            sessions_active: 0,
+                        },
+                    ),
+                );
 
-            let realm_snapshot = realm_snapshots.entry(realm.clone()).or_default();
-            realm_snapshot.areas.insert(area.clone());
-            realm_snapshot.resource_count = realm_snapshot.resource_count.saturating_add(1);
-            realm_snapshot.families.insert(family_id);
+                let realm_snapshot = realm_snapshots.entry(realm.clone()).or_default();
+                realm_snapshot.areas.insert(area.clone());
+                realm_snapshot.resource_count = realm_snapshot.resource_count.saturating_add(1);
+                realm_snapshot.families.insert(family_id);
 
-            let area_snapshot = area_snapshots
-                .entry((realm.clone(), area.clone()))
-                .or_default();
-            area_snapshot.resource_count = area_snapshot.resource_count.saturating_add(1);
-            area_snapshot.families.insert(family_id);
+                let area_snapshot = area_snapshots
+                    .entry((realm.clone(), area.clone()))
+                    .or_default();
+                area_snapshot.resource_count = area_snapshot.resource_count.saturating_add(1);
+                area_snapshot.families.insert(family_id);
+            }
         }
 
         Ok((

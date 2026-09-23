@@ -427,6 +427,7 @@ impl StreamFamilyRuntime {
 
 pub(super) struct StreamFamilyState {
     pub(super) family: RouteFamily,
+    pub(super) admin_projection_families: Vec<u64>,
     pub(super) stream_store: Arc<StreamStore>,
     pub(super) actors: HashMap<StreamResourceScope, StreamActor>,
     pub(super) session_owners: HashMap<u64, StreamSessionOwner>,
@@ -491,6 +492,8 @@ pub(super) struct StreamDomainConfig {
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
     pub(super) router: Arc<Router>,
     pub(super) admin_projection: Arc<super::projection::StreamAdminProjection>,
+    pub(super) admin_unprovisioned_families: Vec<u64>,
+    pub(super) admin_unprovisioned_owner: RouteFamily,
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     pub(super) metrics: Option<StreamMetrics>,
     pub(super) durable_metrics: Arc<StreamDurableMetrics>,

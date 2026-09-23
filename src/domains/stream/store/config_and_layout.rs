@@ -14,6 +14,18 @@ fn u64_to_u32_saturating(value: u64) -> u32 {
 }
 
 impl StreamStore {
+    pub(crate) fn column_family_ids(&self) -> Result<Vec<u64>, String> {
+        self.db
+            .list_column_families()
+            .map(|families| {
+                families
+                    .into_iter()
+                    .map(|family| u64::from(family.id()))
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
+    }
+
     #[cfg(test)]
     pub(crate) fn delete_compact_resource_page_for_tests(
         &self,

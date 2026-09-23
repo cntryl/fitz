@@ -16,11 +16,17 @@ use crate::runtime::{CleanedUpSessions, DeliveryError, Router};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 impl StreamFamilyState {
     fn new(config: &StreamDomainConfig, family: RouteFamily) -> Self {
+        let mut admin_projection_families = vec![family.as_u64()];
+        if family == config.admin_unprovisioned_owner {
+            admin_projection_families.extend(&config.admin_unprovisioned_families);
+        }
         Self {
             family,
+            admin_projection_families,
             stream_store: config.stream_store.clone(),
             actors: HashMap::new(),
             session_owners: HashMap::new(),
@@ -121,6 +127,17 @@ impl StreamDomain {
         getrandom::fill(&mut cursor_integrity_key)
             .map_err(|error| format!("generate Stream cursor integrity key failed: {error}"))?;
 
+        let family_families =
+            provisioned_families.map_or_else(|| vec![RouteFamily::new(1)], <[RouteFamily]>::to_vec);
+        let admin_unprovisioned_owner = family_families
+            .first()
+            .copied()
+            .ok_or_else(|| "no Stream route family is provisioned".to_string())?;
+        let admin_unprovisioned_families = stream_store
+            .column_family_ids()?
+            .into_iter()
+            .filter(|id| !family_families.iter().any(|family| family.as_u64() == *id))
+            .collect();
         let active = Arc::new(AtomicBool::new(true));
         let durable_metrics = Arc::new(StreamDurableMetrics::default());
         let config = StreamDomainConfig {
@@ -133,13 +150,13 @@ impl StreamDomain {
                 admin_read_model,
                 durable_metrics.clone(),
             )),
+            admin_unprovisioned_families,
+            admin_unprovisioned_owner,
             sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
             metrics: None,
             durable_metrics,
             active: active.clone(),
         };
-        let family_families =
-            provisioned_families.map_or_else(|| vec![RouteFamily::new(1)], <[RouteFamily]>::to_vec);
         let family_runtime = Self::spawn_family_runtime(&config, &family_families)?;
         Ok(Self {
             config,
@@ -559,18 +576,41 @@ impl StreamDomain {
         build_command: fn(crossbeam_channel::Sender<()>) -> StreamDomainCommand,
         operation: &'static str,
     ) {
+        let mut pending = Vec::with_capacity(self.family_families.len());
         for family in self.family_families.iter().copied() {
-            if let Err(error) = self.dispatch_family_command(Some(family), operation, build_command)
-            {
-                tracing::warn!(
-                    domain = "stream",
-                    family = family.id(),
-                    error = %error,
-                    operation,
-                    "Stream admin snapshot command failed"
-                );
+            let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+            match self.dispatch_family_control(Some(family), build_command(reply_tx)) {
+                Ok(()) => pending.push((family, reply_rx)),
+                Err(error) => self.report_admin_snapshot_failure(family, operation, &error),
             }
         }
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        for (family, reply_rx) in pending {
+            if let Err(error) = reply_rx.recv_deadline(deadline) {
+                self.report_admin_snapshot_failure(family, operation, &error.to_string());
+            }
+        }
+    }
+
+    fn report_admin_snapshot_failure(
+        &self,
+        family: RouteFamily,
+        operation: &'static str,
+        error: &str,
+    ) {
+        if !self.family_runtime.is_family_running(family) {
+            self.config
+                .admin_projection
+                .clear_failed_family_live_sessions(family.as_u64());
+        }
+        tracing::warn!(
+            domain = "stream",
+            family = family.id(),
+            error,
+            operation,
+            "Stream admin snapshot command failed"
+        );
     }
 
     pub fn append_session_count(&self) -> usize {

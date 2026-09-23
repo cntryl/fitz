@@ -38,7 +38,27 @@ impl StreamAdminProjection {
     pub(super) fn publish(&self, family: u64, snapshot: StreamFamilyAdminSnapshot) {
         let mut families = self.families.lock();
         families.insert(family, snapshot);
+        self.publish_merged(&families);
+    }
 
+    pub(super) fn clear_failed_family_live_sessions(&self, family: u64) {
+        let mut families = self.families.lock();
+        let Some(snapshot) = families.get_mut(&family) else {
+            return;
+        };
+        let mut changed = false;
+        for stream in &mut snapshot.streams {
+            if stream.route_family == family && stream.sessions_active != 0 {
+                stream.sessions_active = 0;
+                changed = true;
+            }
+        }
+        if changed {
+            self.publish_merged(&families);
+        }
+    }
+
+    fn publish_merged(&self, families: &BTreeMap<u64, StreamFamilyAdminSnapshot>) {
         let mut streams = Vec::new();
         let mut realm_watermarks: BTreeMap<String, StreamRealmWatermarkDetail> = BTreeMap::new();
         let mut area_watermarks: BTreeMap<(String, String), StreamAreaWatermarkDetail> =
