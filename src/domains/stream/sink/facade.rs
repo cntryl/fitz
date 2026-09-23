@@ -607,7 +607,12 @@ impl StreamDomain {
             }
             let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
             match self.dispatch_family_control(Some(family), build_command(reply_tx)) {
-                Ok(()) => pending.push((family, reply_rx)),
+                Ok(()) => {
+                    if pending.is_empty() {
+                        pending.reserve_exact(self.family_families.len());
+                    }
+                    pending.push((family, reply_rx));
+                }
                 Err(error) => self.report_admin_snapshot_failure(family, operation, &error),
             }
         }
