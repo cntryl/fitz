@@ -487,6 +487,11 @@ the in-process router accepts it; this is not a consumer acknowledgement or dura
 `notify_failures` counts router handoff rejections, while `ack_failures` counts failures to persist
 the Schedule-owned claim acknowledgement after handoff attempts. Read the two independently.
 
+The admin `runScheduleNow` action is an ephemeral live handoff. A `503` reply
+timeout says the outcome may be unknown, so inspect consumers before trying
+again. An enqueue rejection or disconnected reply channel is also a `503`, but
+is reported as its own cause rather than inferred from message wording.
+
 The Schedule resource list reports enabled definitions as `schedules_active`,
 durable `pending_claims`, and the earliest enabled `next_run`. Disabled-only
 resources remain listed with a null `next_run`; pending-only resources are also

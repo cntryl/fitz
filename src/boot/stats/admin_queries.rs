@@ -414,11 +414,14 @@ impl Runtime {
         family: RouteFamily,
         route: String,
         timeout: std::time::Duration,
-    ) -> Result<Option<crate::domains::schedule::sink::ScheduleRunNowResult>, String> {
+    ) -> Result<
+        Option<crate::domains::schedule::sink::ScheduleRunNowResult>,
+        crate::domains::schedule::sink::ScheduleRunNowError,
+    > {
         self.domain_admins
             .read()
             .as_ref()
-            .ok_or_else(|| "Schedule domain is not initialized".to_string())?
+            .ok_or(crate::domains::schedule::sink::ScheduleRunNowError::DomainUnavailable)?
             .schedule_run_now(family, route, timeout)
     }
 

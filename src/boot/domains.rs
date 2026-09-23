@@ -453,7 +453,10 @@ impl DomainAdminPorts {
         family: crate::runtime::routing::RouteFamily,
         route: String,
         timeout: std::time::Duration,
-    ) -> Result<Option<crate::domains::schedule::sink::ScheduleRunNowResult>, String> {
+    ) -> Result<
+        Option<crate::domains::schedule::sink::ScheduleRunNowResult>,
+        crate::domains::schedule::sink::ScheduleRunNowError,
+    > {
         self.schedule.run_now(family, route, timeout)
     }
 
