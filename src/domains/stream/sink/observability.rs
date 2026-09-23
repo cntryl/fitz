@@ -24,22 +24,7 @@ impl StreamFamilyState {
 
     pub(in crate::domains::stream::sink) fn refresh_metrics_gauges(&mut self) {
         let counts = self.live_counts();
-
-        if let Some(metrics) = &mut self.metrics {
-            metrics.set_stream_count(counts.streams);
-            metrics.set_subscription_count(counts.subscriptions);
-            metrics.set_append_session_count(counts.append_sessions);
-        } else {
-            crate::observability::gauge_set("fitz_stream_active_gauge", counts.streams as u64);
-            crate::observability::gauge_set(
-                "fitz_stream_subscriptions_gauge",
-                counts.subscriptions as u64,
-            );
-            crate::observability::gauge_set(
-                "fitz_stream_append_sessions_active",
-                counts.append_sessions as u64,
-            );
-        }
+        self.live_gauges.publish_family(self.family, counts);
     }
 
     pub(in crate::domains::stream::sink) fn counter_inc(&mut self, name: &str) {

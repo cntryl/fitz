@@ -431,6 +431,7 @@ fn stream_read_response(
 mod correctness;
 mod fault_injection;
 mod global_reads;
+mod live_gauges;
 mod realm_reads;
 mod sink_dispatch;
 mod watermark_wiring;

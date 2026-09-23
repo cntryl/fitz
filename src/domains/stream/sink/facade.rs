@@ -37,6 +37,7 @@ impl StreamFamilyState {
             admin_snapshot: AdminSnapshotState::new(config.admin_projection.clone(), true),
             sync_write_mode: config.sync_write_mode,
             metrics: config.metrics.clone(),
+            live_gauges: config.live_gauges.clone(),
             durable_metrics: config.durable_metrics.clone(),
             active: config.active.clone(),
         }
@@ -146,6 +147,7 @@ impl StreamDomain {
             admin_unprovisioned_owner,
             sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
             metrics: None,
+            live_gauges: Arc::new(super::live_gauges::StreamLiveGaugeCoordinator::new(None)),
             durable_metrics,
             active: active.clone(),
         };
@@ -244,6 +246,9 @@ impl StreamDomain {
     ) -> Self {
         self.family_runtime.stop();
         self.config.metrics = Some(StreamMetrics::new(collector));
+        self.config.live_gauges = Arc::new(super::live_gauges::StreamLiveGaugeCoordinator::new(
+            self.config.metrics.clone(),
+        ));
         self.rebuild_actor();
         self
     }
@@ -595,6 +600,7 @@ impl StreamDomain {
             self.config
                 .admin_projection
                 .clear_failed_family_live_sessions(family.as_u64());
+            self.config.live_gauges.clear_family(family);
         }
         tracing::warn!(
             domain = "stream",
