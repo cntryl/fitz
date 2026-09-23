@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod actor_delivery;
+mod admin_observation;
 mod routing_watch_and_admin;
 use routing_watch_and_admin::*;
 mod cleanup_and_eviction;
