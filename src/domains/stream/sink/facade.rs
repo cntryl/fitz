@@ -18,8 +18,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 impl StreamFamilyState {
-    fn new(config: &StreamDomainConfig) -> Self {
+    fn new(config: &StreamDomainConfig, family: RouteFamily) -> Self {
         Self {
+            family,
             stream_store: config.stream_store.clone(),
             actors: HashMap::new(),
             session_owners: HashMap::new(),
@@ -30,7 +31,7 @@ impl StreamFamilyState {
             next_session_id: config.next_session_id.clone(),
             cursor_integrity_key: config.cursor_integrity_key.clone(),
             router: config.router.clone(),
-            admin_snapshot: AdminSnapshotState::new(config.admin_read_model.clone(), true),
+            admin_snapshot: AdminSnapshotState::new(config.admin_projection.clone(), true),
             sync_write_mode: config.sync_write_mode,
             metrics: config.metrics.clone(),
             durable_metrics: config.durable_metrics.clone(),
@@ -121,16 +122,20 @@ impl StreamDomain {
             .map_err(|error| format!("generate Stream cursor integrity key failed: {error}"))?;
 
         let active = Arc::new(AtomicBool::new(true));
+        let durable_metrics = Arc::new(StreamDurableMetrics::default());
         let config = StreamDomainConfig {
             stream_store,
             next_session_id: Arc::new(AtomicU64::new(1)),
             next_subscription_id: Arc::new(AtomicU64::new(1)),
             cursor_integrity_key: Arc::new(cursor_integrity_key),
             router,
-            admin_read_model,
+            admin_projection: Arc::new(super::projection::StreamAdminProjection::new(
+                admin_read_model,
+                durable_metrics.clone(),
+            )),
             sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
             metrics: None,
-            durable_metrics: Arc::new(StreamDurableMetrics::default()),
+            durable_metrics,
             active: active.clone(),
         };
         let family_families =
@@ -155,7 +160,9 @@ impl StreamDomain {
             crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric_and_idle(
                 pool,
                 config.active.clone(),
-                move |_family| StreamFamilyRuntime::new(StreamFamilyState::new(&family_config)),
+                move |family| {
+                    StreamFamilyRuntime::new(StreamFamilyState::new(&family_config, family))
+                },
                 |state, family, _lane, command| match command {
                     StreamDomainCommand::Deliver(envelope, reply) => {
                         let result = if *envelope.destination().family() == family {
@@ -526,7 +533,7 @@ impl StreamDomain {
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
-        self.send_admin_snapshot_command(
+        self.send_admin_snapshot_commands(
             StreamDomainCommand::RefreshAdminSnapshotIfDirty,
             "refresh_if_dirty",
         );
@@ -544,21 +551,25 @@ impl StreamDomain {
 
     #[cfg(test)]
     pub(super) fn sync_admin_snapshot(&self) {
-        self.send_admin_snapshot_command(StreamDomainCommand::SyncAdminSnapshot, "sync");
+        self.send_admin_snapshot_commands(StreamDomainCommand::SyncAdminSnapshot, "sync");
     }
 
-    fn send_admin_snapshot_command(
+    fn send_admin_snapshot_commands(
         &self,
         build_command: fn(crossbeam_channel::Sender<()>) -> StreamDomainCommand,
         operation: &'static str,
     ) {
-        if let Err(error) = self.dispatch_family_command(None, operation, build_command) {
-            tracing::warn!(
-                domain = "stream",
-                error = %error,
-                operation,
-                "Stream admin snapshot command failed"
-            );
+        for family in self.family_families.iter().copied() {
+            if let Err(error) = self.dispatch_family_command(Some(family), operation, build_command)
+            {
+                tracing::warn!(
+                    domain = "stream",
+                    family = family.id(),
+                    error = %error,
+                    operation,
+                    "Stream admin snapshot command failed"
+                );
+            }
         }
     }
 

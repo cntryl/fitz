@@ -7,6 +7,7 @@ use super::model::{
     u64_to_usize_saturating, AdminStreamReadRequest, StreamAreaSnapshot, StreamFamilyState,
     StreamLiveCounts, StreamRealmSnapshot,
 };
+use super::projection::StreamFamilyAdminSnapshot;
 use crate::domains::stream::{StreamClientResponseBody, StreamReadItem};
 use std::collections::BTreeMap;
 
@@ -153,47 +154,45 @@ impl StreamFamilyState {
         let mut area_snapshots: StreamAreaSnapshotMap = BTreeMap::new();
         let mut committed_events_total = 0usize;
 
-        let families = self.stream_store.column_family_ids()?;
-        for family_id in families {
-            let records = self.stream_store.list_resource_metadata(family_id)?;
-            for crate::domains::stream::store::StreamAdminRecord {
-                realm,
-                area,
-                resource,
-                next_offset,
-                committed_size_bytes,
-            } in records
-            {
-                committed_events_total =
-                    committed_events_total.saturating_add(u64_to_usize_saturating(next_offset));
-                let last_offset = next_offset.saturating_sub(1);
-                streams.insert(
-                    (family_id, realm.clone(), area.clone(), resource.clone()),
-                    crate::control::admin::StreamInfo::snapshot(
-                        crate::control::admin::StreamInfoSnapshot {
-                            route_family: family_id,
-                            realm: &realm,
-                            area: &area,
-                            resource: &resource,
-                            offset: last_offset,
-                            watermark: last_offset,
-                            size_bytes: committed_size_bytes,
-                            sessions_active: 0,
-                        },
-                    ),
-                );
+        let family_id = self.family.as_u64();
+        let records = self.stream_store.list_resource_metadata(family_id)?;
+        for crate::domains::stream::store::StreamAdminRecord {
+            realm,
+            area,
+            resource,
+            next_offset,
+            committed_size_bytes,
+        } in records
+        {
+            committed_events_total =
+                committed_events_total.saturating_add(u64_to_usize_saturating(next_offset));
+            let last_offset = next_offset.saturating_sub(1);
+            streams.insert(
+                (family_id, realm.clone(), area.clone(), resource.clone()),
+                crate::control::admin::StreamInfo::snapshot(
+                    crate::control::admin::StreamInfoSnapshot {
+                        route_family: family_id,
+                        realm: &realm,
+                        area: &area,
+                        resource: &resource,
+                        offset: last_offset,
+                        watermark: last_offset,
+                        size_bytes: committed_size_bytes,
+                        sessions_active: 0,
+                    },
+                ),
+            );
 
-                let realm_snapshot = realm_snapshots.entry(realm.clone()).or_default();
-                realm_snapshot.areas.insert(area.clone());
-                realm_snapshot.resource_count = realm_snapshot.resource_count.saturating_add(1);
-                realm_snapshot.families.insert(family_id);
+            let realm_snapshot = realm_snapshots.entry(realm.clone()).or_default();
+            realm_snapshot.areas.insert(area.clone());
+            realm_snapshot.resource_count = realm_snapshot.resource_count.saturating_add(1);
+            realm_snapshot.families.insert(family_id);
 
-                let area_snapshot = area_snapshots
-                    .entry((realm.clone(), area.clone()))
-                    .or_default();
-                area_snapshot.resource_count = area_snapshot.resource_count.saturating_add(1);
-                area_snapshot.families.insert(family_id);
-            }
+            let area_snapshot = area_snapshots
+                .entry((realm.clone(), area.clone()))
+                .or_default();
+            area_snapshot.resource_count = area_snapshot.resource_count.saturating_add(1);
+            area_snapshot.families.insert(family_id);
         }
 
         Ok((
@@ -312,23 +311,15 @@ impl StreamFamilyState {
         stream_area_watermarks: Vec<crate::control::admin::StreamAreaWatermarkDetail>,
         committed_events_total: usize,
     ) {
-        self.durable_metrics.observe_snapshot(
-            committed_events_total,
-            &stream_realm_watermarks,
-            &stream_area_watermarks,
+        self.admin_snapshot.projection.publish(
+            self.family.as_u64(),
+            StreamFamilyAdminSnapshot {
+                streams: streams.into_values().collect(),
+                realm_watermarks: stream_realm_watermarks,
+                area_watermarks: stream_area_watermarks,
+                committed_events_total,
+            },
         );
-        self.admin_snapshot
-            .read_model
-            .replace_streams(streams.into_values().collect());
-        self.admin_snapshot
-            .read_model
-            .replace_stream_realm_watermarks(stream_realm_watermarks);
-        self.admin_snapshot
-            .read_model
-            .replace_stream_area_watermarks(stream_area_watermarks);
-        self.admin_snapshot
-            .read_model
-            .replace_stream_events_total(committed_events_total);
     }
 
     pub(in crate::domains::stream::sink) fn live_counts(&mut self) -> StreamLiveCounts {

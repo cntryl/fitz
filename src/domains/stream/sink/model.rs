@@ -328,17 +328,17 @@ impl SubscriptionRegistry {
 }
 
 pub(super) struct AdminSnapshotState {
-    pub(super) read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    pub(super) projection: Arc<super::projection::StreamAdminProjection>,
     pub(super) dirty: AtomicBool,
 }
 
 impl AdminSnapshotState {
     pub(super) fn new(
-        read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        projection: Arc<super::projection::StreamAdminProjection>,
         dirty: bool,
     ) -> Self {
         Self {
-            read_model,
+            projection,
             dirty: AtomicBool::new(dirty),
         }
     }
@@ -426,6 +426,7 @@ impl StreamFamilyRuntime {
 }
 
 pub(super) struct StreamFamilyState {
+    pub(super) family: RouteFamily,
     pub(super) stream_store: Arc<StreamStore>,
     pub(super) actors: HashMap<StreamResourceScope, StreamActor>,
     pub(super) session_owners: HashMap<u64, StreamSessionOwner>,
@@ -489,7 +490,7 @@ pub(super) struct StreamDomainConfig {
     pub(super) next_subscription_id: Arc<AtomicU64>,
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
     pub(super) router: Arc<Router>,
-    pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    pub(super) admin_projection: Arc<super::projection::StreamAdminProjection>,
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     pub(super) metrics: Option<StreamMetrics>,
     pub(super) durable_metrics: Arc<StreamDurableMetrics>,

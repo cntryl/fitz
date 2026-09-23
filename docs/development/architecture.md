@@ -573,7 +573,7 @@ Current Notice behavior is intentionally ephemeral:
 - Persistence: committed records, metadata, and watermarks are durable; live append sessions and subscriptions are ephemeral.
 - Cleanup: disconnect aborts append sessions and drops live subscriptions without restoring them on reconnect.
 - `RouteFamily`/`realm`: committed history is partitioned by exact `RouteFamily`, while realm and area indexes stay explicit storage keys rather than family aliases.
-- Admin path: read-model projections and watermark views flow through `Runtime::stream_list_*`; committed record inspection uses `Runtime::stream_read_resource_records()`.
+- Admin path: a normal admin refresh asks each provisioned family worker to project its own committed rows, watermarks, and live-session overlay; a shared coordinator merges the latest successful family snapshots without letting one family's refresh erase another's rows. A failed family retains its last published observation while healthy families can refresh. Read-model projections and watermark views flow through `Runtime::stream_list_*`; committed record inspection uses `Runtime::stream_read_resource_records()`. Raw metrics scrapes remain passive and do not trigger projection work.
 
 #### RPC
 - Actor owner: `RpcDomain` dispatches normal and control work through a `FamilyActorPoolRuntime`; each family worker serializes registrations, pending calls, response assembly, timeout sweeps, cleanup, live counts, and admin snapshot updates.
