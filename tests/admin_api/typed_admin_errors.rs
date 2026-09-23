@@ -43,3 +43,25 @@ async fn should_report_unavailable_kv_admin_domain_as_service_unavailable() {
     // Assert
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[tokio::test]
+#[serial]
+async fn should_report_kv_store_transaction_failure_as_service_unavailable() {
+    // Arrange
+    let (runtime, _store) = queue_runtime_with_domains();
+    let cookie = login_cookie(runtime.clone()).await;
+    let request = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/2/kv/realms/prod/areas/app/resources/users/rows?starts_with=user%3A")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(request, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
