@@ -231,10 +231,16 @@ impl QueueProjectionState {
     }
 }
 
+#[cfg(test)]
+type QueueBeforePublishHook = Arc<dyn Fn(u32) + Send + Sync>;
+
 pub(crate) struct QueueAdminProjection {
     read_model: Arc<AdminReadModel>,
     family_states: Mutex<BTreeMap<u32, QueueProjectionState>>,
     dirty_families: Mutex<HashSet<u32>>,
+    publication: Mutex<()>,
+    #[cfg(test)]
+    before_publish: Mutex<Option<QueueBeforePublishHook>>,
 }
 
 impl QueueAdminProjection {
@@ -243,6 +249,9 @@ impl QueueAdminProjection {
             read_model,
             family_states: Mutex::new(BTreeMap::new()),
             dirty_families: Mutex::new(HashSet::new()),
+            publication: Mutex::new(()),
+            #[cfg(test)]
+            before_publish: Mutex::new(None),
         }
     }
 
@@ -258,11 +267,20 @@ impl QueueAdminProjection {
         F: FnOnce() -> QueueProjectionState,
     {
         if self.dirty_families.lock().remove(&family.id()) {
-            let combined = {
-                let mut states = self.family_states.lock();
-                states.insert(family.id(), build_state());
-                QueueProjectionState::combine(states.values().cloned())
-            };
+            self.family_states.lock().insert(family.id(), build_state());
+            #[cfg(test)]
+            let hook = self.before_publish.lock().clone();
+            #[cfg(test)]
+            if let Some(hook) = hook {
+                hook(family.id());
+            }
+
+            // A later family may update the cache before this publisher runs.
+            // Recombine under the publication fence so a delayed publisher
+            // cannot apply an older multi-family snapshot last.
+            let _publication = self.publication.lock();
+            let combined =
+                QueueProjectionState::combine(self.family_states.lock().values().cloned());
             self.apply(combined);
         }
     }
@@ -419,5 +437,66 @@ mod tests {
         assert_eq!(queues.len(), 2);
         assert_eq!(queues[0].resource, "first");
         assert_eq!(queues[1].resource, "second");
+    }
+
+    #[test]
+    fn should_keep_latest_family_rows_when_older_projection_publishes_last() {
+        // Arrange
+        let read_model = AdminReadModel::new();
+        let projection = Arc::new(QueueAdminProjection::new(read_model.clone()));
+        let first_family = RouteFamily::new(7);
+        let second_family = RouteFamily::new(8);
+        let (paused_tx, paused_rx) = crossbeam_channel::bounded(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+        *projection.before_publish.lock() = Some(Arc::new(move |family| {
+            if family == first_family.id() {
+                paused_tx.send(()).expect("pause first-family publication");
+                release_rx.recv().expect("release first-family publication");
+            }
+        }));
+        projection.mark_dirty(first_family);
+        projection.mark_dirty(second_family);
+        let first_projection = Arc::clone(&projection);
+        let mut second_entry = projection_entry("shared", "jobs", "second");
+        second_entry.key.family = second_family;
+
+        // Act
+        let first_refresh = std::thread::spawn(move || {
+            first_projection.refresh_if_dirty(first_family, || {
+                QueueProjectionState::from_entries(vec![projection_entry(
+                    "shared", "jobs", "first",
+                )])
+            });
+        });
+        paused_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("first-family combined state reached publication boundary");
+        projection.refresh_if_dirty(second_family, || {
+            QueueProjectionState::from_entries(vec![second_entry])
+        });
+        release_tx.send(()).expect("release older publication");
+        first_refresh
+            .join()
+            .expect("finish first-family publication");
+        let queues = read_model.queues(None);
+        let inflight = read_model.queue_inflight(None);
+        let dead_letters = read_model.queue_dead_letters(None);
+
+        // Assert
+        assert_eq!(
+            queues.iter().map(|row| row.family).collect::<Vec<_>>(),
+            [7, 8]
+        );
+        assert_eq!(
+            inflight.iter().map(|row| row.family).collect::<Vec<_>>(),
+            [7, 8]
+        );
+        assert_eq!(
+            dead_letters
+                .iter()
+                .map(|row| row.family)
+                .collect::<Vec<_>>(),
+            [7, 8]
+        );
     }
 }
