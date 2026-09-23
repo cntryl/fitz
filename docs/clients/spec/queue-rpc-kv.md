@@ -362,7 +362,8 @@ Response (status=1):
 
 `correlation_id` is always exactly 16 bytes (UUID), with no length prefix.
 Successful REQUEST submission produces **no immediate broker success frame**.
-Every broker failure for a REQUEST with a readable UUID is one terminal
+Every deliverable broker admission or domain failure for a REQUEST with a
+readable UUID is one terminal
 RESPONSE (303), decoded with the RESPONSE layout below: the same UUID,
 `sequence=0`, `stream_end=1`, and a standard RPC error body
 `[u8 status=1][u32 BE code][u32 BE message_len][message UTF-8]` in its
@@ -382,6 +383,9 @@ sent an optional `CORRELATE` record. RPC's UUID is its sole reply identity.
 Malformed REQUEST payloads with a readable UUID can also receive terminal
 303/code 6010 (`RPC request parse failed`). Without all 16 UUID bytes, the
 broker cannot identify a terminal RPC reply and may close the session.
+If the caller session or inbox has already disappeared, the broker cannot
+deliver a terminal reply; the caller treats that connection loss as an
+indeterminate outcome, not as a retryable rejection.
 See [the compatibility and rollout plan](../rpc-request-failure-rollout.md)
 for the prior uncorrelated 302 ingress-error behavior and mixed-version handling.
 
