@@ -235,6 +235,7 @@ pub(crate) struct QueueAdminProjection {
     read_model: Arc<AdminReadModel>,
     family_states: Mutex<BTreeMap<u32, QueueProjectionState>>,
     dirty_families: Mutex<HashSet<u32>>,
+    publication: Mutex<()>,
     #[cfg(test)]
     before_publish: Mutex<Option<Arc<dyn Fn(u32) + Send + Sync>>>,
 }
@@ -245,6 +246,7 @@ impl QueueAdminProjection {
             read_model,
             family_states: Mutex::new(BTreeMap::new()),
             dirty_families: Mutex::new(HashSet::new()),
+            publication: Mutex::new(()),
             #[cfg(test)]
             before_publish: Mutex::new(None),
         }
@@ -262,17 +264,20 @@ impl QueueAdminProjection {
         F: FnOnce() -> QueueProjectionState,
     {
         if self.dirty_families.lock().remove(&family.id()) {
-            let combined = {
-                let mut states = self.family_states.lock();
-                states.insert(family.id(), build_state());
-                QueueProjectionState::combine(states.values().cloned())
-            };
+            self.family_states.lock().insert(family.id(), build_state());
             #[cfg(test)]
             let hook = self.before_publish.lock().clone();
             #[cfg(test)]
             if let Some(hook) = hook {
                 hook(family.id());
             }
+
+            // A later family may update the cache before this publisher runs.
+            // Recombine under the publication fence so a delayed publisher
+            // cannot apply an older multi-family snapshot last.
+            let _publication = self.publication.lock();
+            let combined =
+                QueueProjectionState::combine(self.family_states.lock().values().cloned());
             self.apply(combined);
         }
     }
