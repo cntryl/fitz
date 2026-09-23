@@ -1,8 +1,8 @@
 name: Containers
 
 on:
-  # Keep the moving development images synchronized with protected main. Stable
-  # SemVer tags remain an explicit release operation below.
+  # Main verifies both container architectures without publishing. Publishing
+  # remains an explicit operation through workflow_dispatch/workflow_call.
   push:
     branches:
       - main
@@ -28,12 +28,51 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  build_only:
+    name: Build ${{ matrix.platform }} without publishing
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set platform pair
+        id: platform
+        run: echo "platform_pair=${{ matrix.platform }}" | tr '/' '-' >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build container without publishing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: false
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=${{ steps.platform.outputs.platform_pair }}
+          cache-to: type=gha,mode=min,scope=${{ steps.platform.outputs.platform_pair }}
+
   version:
+    if: github.event_name != 'push'
     uses: ./.github/workflows/version.yml
 
   validate:
     name: Validate publish request
     needs: version
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -94,7 +133,7 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}
     needs: validate
-    if: ${{ needs.validate.outputs.reuse != 'true' }}
+    if: ${{ github.event_name != 'push' && needs.validate.outputs.reuse != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -159,7 +198,7 @@ jobs:
       - version
       - validate
       - build
-    if: ${{ always() && needs.validate.result == 'success' && (needs.validate.outputs.reuse == 'true' || needs.build.result == 'success') }}
+    if: ${{ github.event_name != 'push' && always() && needs.validate.result == 'success' && (needs.validate.outputs.reuse == 'true' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
