@@ -33,6 +33,12 @@ async function searchCalls(
   request: RpcCallSearchRequest,
   options: ServiceRequestOptions = {},
 ): Promise<RpcCallObservationList> {
+  const limit =
+    request.limit === undefined
+      ? undefined
+      : Number.isFinite(request.limit)
+        ? Math.max(1, Math.min(100, Math.floor(request.limit)))
+        : 50;
   return unwrapResponse(
     await apiv1.searchRpcCalls(
       apiParamsQuery(
@@ -40,7 +46,7 @@ async function searchCalls(
         {
           area: request.area,
           correlation_id: request.correlationId,
-          limit: request.limit,
+          limit,
           operation: request.operation,
           q: request.query,
           realm: request.realm,
@@ -109,31 +115,31 @@ async function getResourceOperations(
     await apiv1.getRpcResource(apiParams({ area, family, realm, resource }, requestOptions)),
     "Unable to load RPC resource",
   );
-  const calls = unwrapResponse(
-    await apiv1.searchRpcCalls(
-      apiParamsQuery({ family }, { area, limit: 200, realm, resource }, requestOptions),
-    ),
-    "Unable to load RPC call evidence",
-  ).observations;
-
-  return {
-    area,
-    operations: operations.operations.map(({ operation }) => {
-      const rows = calls.filter((row) => row.operation === operation);
-      const workers = rows.filter((row) => row.state === "worker_registered");
-      const pending = rows.filter((row) => row.state === "pending");
+  const rows = await Promise.all(
+    operations.operations.map(async ({ operation }) => {
+      const detail = unwrapResponse(
+        await apiv1.getRpcOperation(
+          apiParams({ area, family, operation, realm, resource }, requestOptions),
+        ),
+        `Unable to load RPC operation ${operation}`,
+      );
 
       return {
         averageLatencyMs:
-          workers.length === 0
+          detail.requests_handled_by_live_workers === 0
             ? null
-            : Math.max(...workers.map((row) => row.average_latency_ms ?? 0)),
+            : detail.slowest_worker_average_latency_ms,
         operation,
-        pendingRequests: pending.length,
-        requestsHandled: workers.reduce((sum, row) => sum + (row.requests_handled ?? 0), 0),
-        workers: workers.length,
+        pendingRequests: detail.requests_pending,
+        requestsHandled: detail.requests_handled_by_live_workers,
+        workers: detail.workers_registered,
       };
     }),
+  );
+
+  return {
+    area,
+    operations: rows,
     realm,
     resource,
   };

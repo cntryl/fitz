@@ -331,6 +331,7 @@ pub struct RpcOperationDetail {
     pub operation: String,
     pub workers_registered: usize,
     pub requests_pending: usize,
+    pub requests_handled_by_live_workers: u64,
     pub slowest_worker_average_latency_ms: f64,
     pub worker_latency_buckets: RpcLatencyBuckets,
     pub diagnostics: DiagnosticSnapshot,
@@ -575,6 +576,7 @@ impl RpcOperationDetail {
         path: &RpcOperationPath<'_>,
         workers_registered: usize,
         requests_pending: usize,
+        requests_handled_by_live_workers: u64,
         slowest_worker_average_latency_ms: f64,
         worker_latency_buckets: RpcLatencyBuckets,
     ) -> Self {
@@ -585,6 +587,7 @@ impl RpcOperationDetail {
             operation: path.operation.to_string(),
             workers_registered,
             requests_pending,
+            requests_handled_by_live_workers,
             slowest_worker_average_latency_ms,
             worker_latency_buckets,
             diagnostics: troubleshooting::rpc_operation_diagnostics(

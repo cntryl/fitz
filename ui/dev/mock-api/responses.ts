@@ -324,6 +324,7 @@ export function rpcOperation(
     operation,
     realm,
     requests_pending: 4,
+    requests_handled_by_live_workers: 1480,
     resource,
     slowest_worker_average_latency_ms: 184.2,
     worker_latency_buckets: { over_100ms: 1, under_100ms: 3, under_25ms: 7, under_5ms: 12 },

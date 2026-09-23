@@ -449,6 +449,26 @@ describe("service endpoint contracts", () => {
       }),
     );
   });
+  it("keeps RPC call inspection requests within the documented limit", async () => {
+    const { rpcService } = await import("@/features/rpc/rpc-service");
+
+    await rpcService.searchCalls({ limit: 200, routeFamily: 7 });
+
+    expect(mocks.apiv1.searchRpcCalls).toHaveBeenCalledWith(
+      paramsQuery(
+        { family: "7" },
+        {
+          area: undefined,
+          correlation_id: undefined,
+          limit: 100,
+          operation: undefined,
+          q: undefined,
+          realm: undefined,
+          resource: undefined,
+        },
+      ),
+    );
+  });
   it("keeps RPC operation detail and call evidence in the requested family", async () => {
     const { rpcService } = await import("@/features/rpc/rpc-service");
 

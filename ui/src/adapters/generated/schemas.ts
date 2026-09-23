@@ -731,6 +731,7 @@ export type RpcOperationDetail = {
   "operation": string;
   "workers_registered": number;
   "requests_pending": number;
+  "requests_handled_by_live_workers": number;
   "slowest_worker_average_latency_ms": number;
   "worker_latency_buckets": RpcLatencyBuckets;
   "diagnostics": DiagnosticSnapshot;

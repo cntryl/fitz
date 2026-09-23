@@ -39,7 +39,7 @@ function decodeParam(value: string | undefined) {
 
 function parseLimit(value: string | null) {
   const parsed = Number(value ?? 50);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(200, Math.floor(parsed))) : 50;
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(100, Math.floor(parsed))) : 50;
 }
 
 function formatLatency(value: number | null | undefined) {
@@ -160,6 +160,10 @@ export default function RpcOperationPage() {
                 items={[
                   { label: "Workers", value: detail.workers_registered },
                   { label: "Pending requests", value: detail.requests_pending },
+                  {
+                    label: "Handled by live workers",
+                    value: detail.requests_handled_by_live_workers,
+                  },
                   {
                     label: "Slowest average latency",
                     value: formatLatency(detail.slowest_worker_average_latency_ms),

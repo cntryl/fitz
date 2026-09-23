@@ -6046,6 +6046,7 @@ components:
           operation,
           workers_registered,
           requests_pending,
+          requests_handled_by_live_workers,
           slowest_worker_average_latency_ms,
           worker_latency_buckets,
           diagnostics,
@@ -6061,6 +6062,10 @@ components:
         requests_pending:
           type: integer
           description: Live in-memory pending requests waiting for a worker on this broker process. Not durable across disconnect or restart.
+        requests_handled_by_live_workers:
+          type: integer
+          format: int64
+          description: Terminal requests handled by registrations currently live for this exact operation on this broker process. This is not a historical total; counts disappear with worker registration cleanup or broker restart.
         slowest_worker_average_latency_ms:
           type: number
           description: Slowest average latency observed among live workers for this exact RPC operation on the current broker process.

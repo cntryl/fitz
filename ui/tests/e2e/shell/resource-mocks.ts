@@ -268,6 +268,7 @@ export async function mockResourceDetailApis(
           operation: decodeURIComponent(segments[10] ?? "GetStatus"),
           realm: scope.realm,
           requests_pending: 1,
+          requests_handled_by_live_workers: 9,
           resource: scope.resource,
           slowest_worker_average_latency_ms: 12,
           worker_latency_buckets: {

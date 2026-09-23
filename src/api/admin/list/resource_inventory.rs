@@ -488,11 +488,25 @@ pub fn notice_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceR
 
 #[must_use]
 pub fn rpc_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef> {
+    rpc_live_routes(runtime, family)
+        .into_iter()
+        .filter_map(|route| parse_flexible_route(&route))
+        .collect()
+}
+
+fn rpc_live_routes(runtime: &Runtime, family: Option<u64>) -> Vec<String> {
     runtime
         .rpc_list_workers(None)
         .into_iter()
-        .filter(|item| matches_family(family, item.route_family))
-        .filter_map(|item| parse_flexible_route(&item.route))
+        .map(|worker| (worker.route_family, worker.route))
+        .chain(
+            runtime
+                .rpc_list_pending(None)
+                .into_iter()
+                .map(|pending| (pending.route_family, pending.route)),
+        )
+        .filter(|(route_family, _)| matches_family(family, *route_family))
+        .map(|(_, route)| route)
         .collect()
 }
 
@@ -503,11 +517,9 @@ pub fn rpc_operations(
     family: Option<u64>,
 ) -> OperationCollection {
     let operations = collect_distinct_entries(
-        runtime
-            .rpc_list_workers(None)
+        rpc_live_routes(runtime, family)
             .into_iter()
-            .filter(|worker| matches_family(family, worker.route_family))
-            .filter_map(|worker| parse_rpc_operation(&worker.route))
+            .filter_map(|route| parse_rpc_operation(&route))
             .filter(|operation| operation.matches_resource_path(path))
             .map(|operation| operation.operation),
         |operation| OperationEntry { operation },

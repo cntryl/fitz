@@ -47,7 +47,7 @@ const rpcOperationColumns: readonly DomainOperationMetricColumn<RpcOperationRow>
   },
   {
     id: "handled",
-    header: "Handled",
+    header: "Handled by live workers",
     width: "12%",
     cell: (row) => formatNumber(row.requestsHandled),
     sortValue: (row) => row.requestsHandled,
@@ -121,16 +121,17 @@ export default function RpcResourcePage() {
             <DomainSummaryStrip
               id="rpc-resource-rollup"
               class="domain-inventory-summary"
+              description="Complete per-operation counts. Handled counts cover currently registered workers only, not historical traffic."
               items={[
                 { label: "Operations", value: formatNumber(data?.operations.length ?? 0) },
                 { label: "Workers", value: formatNumber(totalWorkers) },
                 { label: "Pending", value: formatNumber(pendingRequests) },
-                { label: "Handled", value: formatNumber(requestsHandled) },
+                { label: "Handled by live workers", value: formatNumber(requestsHandled) },
               ]}
             />
             <DomainOperationTable<RpcOperationRow>
               domain="rpc"
-              description="Live operation evidence: workers, handled calls, latency, and in-memory pending request evidence."
+              description="Live operation totals from complete summaries; workers, handled calls, latency, and in-memory pending request evidence."
               emptyDescription="No RPC operations are currently visible for this resource."
               metricColumns={rpcOperationColumns}
               rows={data?.operations ?? []}
