@@ -27,7 +27,6 @@ impl QueueFamilyState {
     }
 
     pub(super) fn refresh_admin_snapshot_if_dirty(&mut self) {
-        self.sweep_idle_actors();
         let projection = self.projection.clone();
         projection.refresh_if_dirty(self.route_family, || self.collect_projection_state());
     }

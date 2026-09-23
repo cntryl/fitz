@@ -270,10 +270,6 @@ impl QueueFamilyState {
         }
     }
 
-    pub(super) fn sweep_idle_actors(&mut self) {
-        self.sweep_idle_actors_at(Instant::now());
-    }
-
     pub(super) fn maybe_sweep_idle_actors(&mut self) {
         let now = Instant::now();
 

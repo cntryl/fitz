@@ -616,7 +616,7 @@ fn should_include_delayed_messages_in_queue_admin_snapshot() {
 }
 
 #[test]
-fn should_evict_idle_queue_actor_without_losing_committed_state() {
+fn should_restore_committed_queue_when_reserving_after_runtime_eviction() {
     // Arrange
     let family = RouteFamily::new(1);
     let sender_session_id = 7;
@@ -657,8 +657,8 @@ fn should_evict_idle_queue_actor_without_losing_committed_state() {
         .expect("enqueue response");
     assert_eq!(sink.actor_count_for_tests(), 1);
 
-    // Act
     force_actor_idle(&sink, queue_route, family);
+    sink.sweep_runtime_state_at(Instant::now());
     sink.refresh_admin_snapshot_if_dirty();
     assert!(
         sink.actors_are_empty_for_tests(),
@@ -669,6 +669,7 @@ fn should_evict_idle_queue_actor_without_losing_committed_state() {
         "cold queue should disappear from warm admin snapshot"
     );
 
+    // Act
     sink.deliver(Envelope::from_route(
         worker_address,
         queue_address,
@@ -690,9 +691,8 @@ fn should_evict_idle_queue_actor_without_losing_committed_state() {
         .expect("reserve response frame after eviction");
     assert_eq!(receive_response_message_count(&reserve_frame), 1);
 
-    sink.refresh_admin_snapshot_if_dirty();
-
     // Assert
+    sink.refresh_admin_snapshot_if_dirty();
     assert_eq!(sink.actor_count_for_tests(), 1);
     assert_eq!(admin_read_model.queues(None)[0].messages_inflight, 1);
 }
@@ -774,9 +774,10 @@ fn should_prune_empty_queue_identity_when_actor_is_evicted() {
     assert_success(&complete);
     assert_eq!(sink.known_queue_count_for_tests(), 1);
 
-    // Act
     force_actor_idle(&sink, queue_route, family);
-    sink.refresh_admin_snapshot_if_dirty();
+
+    // Act
+    sink.sweep_runtime_state_at(Instant::now());
 
     // Assert
     assert!(sink.actors_are_empty_for_tests());
@@ -841,9 +842,10 @@ fn should_not_evict_idle_queue_actor_with_live_inflight() {
         .try_recv()
         .expect("reserve response");
 
-    // Act
     force_actor_idle(&sink, queue_route, family);
-    sink.refresh_admin_snapshot_if_dirty();
+
+    // Act
+    sink.sweep_runtime_state_at(Instant::now());
 
     // Assert
     assert_eq!(

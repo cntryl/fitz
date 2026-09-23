@@ -558,7 +558,7 @@ Current Notice behavior is intentionally ephemeral:
 - Persistence: durable backlog and dead-letter records live in storage; inflight reservations, watch subscriptions, and fast-flush state are ephemeral.
 - Cleanup: disconnect cleanup is enqueued on the Queue family control lane, which clears worker reservations and watch state without implying durable ownership continuity or hidden worker recovery.
 - `RouteFamily`/`realm`: queue data is isolated by exact `RouteFamily`, while `realm` remains an application-defined namespace inside the queue route.
-- Admin path: live queue snapshots flow through `Runtime::queue_list_*` and the family-published `AdminReadModel`; dead-letter replay and purge use explicit family-targeted commands behind the Queue admin facade.
+- Admin path: live queue snapshots flow through `Runtime::queue_list_*` and the family-published `AdminReadModel`. Snapshot refresh observes the last runtime-processed state; it does not run due-work or idle sweeps. Dead-letter replay and purge use explicit family-targeted commands behind the Queue admin facade.
 
 #### Notice
 - Actor owner: `NoticeDomain` dispatches through a `FamilyActorPoolRuntime`; each family worker owns its subscriptions, cleanup guards, route counters, fanout coordination, live counts, and admin snapshot updates. `NoticeRouteActor` remains a focused matching/fanout state-machine model.
