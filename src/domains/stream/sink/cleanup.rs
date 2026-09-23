@@ -23,7 +23,6 @@ impl StreamFamilyState {
         families.retain(|_, state| !state.is_empty());
         let _ = families;
         self.remove_pending_notifications_for_session(session_id);
-        self.refresh_metrics_gauges();
     }
 
     pub(in crate::domains::stream::sink) fn cleanup_session(&mut self, session_id: u64) {
@@ -54,5 +53,6 @@ impl StreamFamilyState {
             self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
             self.admin_snapshot.mark_dirty();
         }
+        self.refresh_metrics_gauges();
     }
 }

@@ -1,6 +1,7 @@
 mod cleanup;
 mod delivery;
 mod facade;
+mod live_gauges;
 mod mailbox_sink_impl;
 mod model;
 mod observability;

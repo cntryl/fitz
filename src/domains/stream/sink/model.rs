@@ -440,6 +440,7 @@ pub(super) struct StreamFamilyState {
     pub(super) admin_snapshot: AdminSnapshotState,
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     pub(super) metrics: Option<StreamMetrics>,
+    pub(super) live_gauges: Arc<super::live_gauges::StreamLiveGaugeCoordinator>,
     pub(super) durable_metrics: Arc<StreamDurableMetrics>,
     pub(super) active: Arc<AtomicBool>,
 }
@@ -497,6 +498,7 @@ pub(super) struct StreamDomainConfig {
     pub(super) admin_unprovisioned_owner: RouteFamily,
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     pub(super) metrics: Option<StreamMetrics>,
+    pub(super) live_gauges: Arc<super::live_gauges::StreamLiveGaugeCoordinator>,
     pub(super) durable_metrics: Arc<StreamDurableMetrics>,
     pub(super) active: Arc<AtomicBool>,
 }
