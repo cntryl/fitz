@@ -632,6 +632,40 @@ fn should_clear_failed_family_live_sessions_without_losing_committed_admin_row()
 }
 
 #[test]
+fn should_not_wait_for_clean_stream_family_actor_on_admin_refresh() {
+    // Arrange
+    let context = setup_test_context();
+    seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"seed");
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    context
+        .sink
+        .block_family_actor_for_tests(context.family, entered_tx, release_rx);
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("clean Stream actor should block");
+    let sink = Arc::clone(&context.sink);
+    let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+
+    // Act
+    let refresh = std::thread::spawn(move || {
+        sink.refresh_admin_snapshot_if_dirty();
+        done_tx.send(()).expect("report admin refresh completion");
+    });
+    let completed_while_blocked = done_rx.recv_timeout(Duration::from_millis(500)).is_ok();
+    release_tx.send(()).expect("release Stream actor");
+    refresh.join().expect("finish Stream admin refresh");
+
+    // Assert
+    assert!(
+        completed_while_blocked,
+        "clean refresh waited for family actor"
+    );
+    assert_eq!(context.admin_read_model.streams(None).len(), 1);
+}
+
+#[test]
 fn should_refresh_distinct_shard_family_admin_snapshot_while_peer_is_blocked() {
     // Arrange
     let context = setup_test_context();

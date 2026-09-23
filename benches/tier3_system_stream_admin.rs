@@ -172,6 +172,7 @@ fn setup(
     sink.refresh();
     let expected_rows = family_count * resources_per_family;
     assert_eq!(sink.snapshot_counts(), (expected_rows, expected_rows));
+    assert_eq!(sink.sessions_active_total(), 0);
     (router, sink, clients)
 }
 
@@ -203,16 +204,18 @@ fn measure_refresh(
         "refresh_stream_admin_snapshot",
         LogicalUnit::new("admin_refresh"),
         || {
-            assert_eq!(sink.snapshot_counts(), (expected_rows, expected_rows));
-            assert_eq!(
-                sink.sessions_active_total(),
-                clients
-                    .iter()
-                    .filter(|client| client.active_session_id.is_some())
-                    .count()
-            );
-            for client in clients.iter_mut().take(writes_per_refresh) {
-                client.touch_next_dirty(&router);
+            if writes_per_refresh != 0 {
+                assert_eq!(sink.snapshot_counts(), (expected_rows, expected_rows));
+                assert_eq!(
+                    sink.sessions_active_total(),
+                    clients
+                        .iter()
+                        .filter(|client| client.active_session_id.is_some())
+                        .count()
+                );
+                for client in clients.iter_mut().take(writes_per_refresh) {
+                    client.touch_next_dirty(&router);
+                }
             }
         },
         |()| {
