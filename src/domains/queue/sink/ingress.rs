@@ -6,6 +6,7 @@ use super::model::{PendingQueueReserve, QueueFamilyState};
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::queue::{QueueClientFrame, QueueClientRequest};
 use crate::runtime::routing::RouteFamily;
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope};
 use std::time::{Duration, Instant};
 
@@ -84,22 +85,6 @@ impl QueueFamilyState {
                 Ok(())
             }
         }
-    }
-
-    fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
-        // `QueueFamilyState::cleanup_session` runs inline rather than through an
-        // actor command, so there is no reply deadline to surface here.
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            // Mark first so an older normal-lane request that cleanup jumped
-            // over cannot recreate a subscription or pending reserve for
-            // this session below. `cleanup.rs` is the sole source of truth
-            // for cleaned-up-session state.
-            self.mark_cleaned_up_session(cleanup.session_id);
-            self.cleanup_session(cleanup.session_id);
-            return true;
-        }
-
-        false
     }
 
     fn ensure_active(&mut self) -> Result<(), DeliveryError> {

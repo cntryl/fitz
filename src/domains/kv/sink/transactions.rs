@@ -5,6 +5,7 @@ use super::state::{
     KvAdminTransactionUpdate, KvCommitNotification, KvFamilyRuntime, KvOperationOutcome,
 };
 use crate::domains::kv::{KvError, KvResponse};
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope};
 
 impl KvFamilyRuntime<'_> {

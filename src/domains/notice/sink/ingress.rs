@@ -5,6 +5,7 @@
 use super::{test_client_channel_from_protocol, FrameContext};
 use super::{Envelope, NoticeFamilyState, NoticeMetrics};
 use crate::runtime::DeliveryError;
+use crate::runtime::SessionScoped as _;
 use std::time::Instant;
 
 impl NoticeFamilyState {

@@ -9,6 +9,7 @@ use super::{
 };
 #[cfg(test)]
 use super::{Route, RouteAddress};
+use crate::runtime::SessionScoped as _;
 
 impl super::super::model::StreamFamilyRuntime {
     pub(in crate::domains::stream::sink) fn deliver_envelope(
@@ -63,7 +64,7 @@ impl super::super::model::StreamFamilyRuntime {
                         | crate::domains::stream::protocol::StreamMessage::Rollback { .. }
                 )
         );
-        if session_mutation && self.core.cleaned_up_sessions.contains(meta.session_id) {
+        if session_mutation && self.core.is_cleaned_up_session(meta.session_id) {
             let response = StreamFamilyState::stream_error_response("session has been cleaned up");
             self.core
                 .route_stream_response(envelope, meta, &response, request_started);
@@ -87,15 +88,6 @@ impl super::super::model::StreamFamilyRuntime {
 }
 
 impl StreamFamilyState {
-    fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.cleanup_session(cleanup.session_id);
-            return true;
-        }
-
-        false
-    }
-
     fn ensure_active(&mut self) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);

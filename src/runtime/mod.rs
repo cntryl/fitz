@@ -46,7 +46,7 @@ pub mod supervision;
 
 // Re-export commonly used types
 pub use actor::{Actor, ActorError, ActorId, ActorRef, ActorState, Context, SendError};
-pub use cleanup_guard::CleanedUpSessions;
+pub use cleanup_guard::{session_cleanup_id, CleanedUpSessions, SessionScoped};
 pub use client_frame::{ClientChannel, ClientFrameMeta, EncodedClientFrame};
 pub use clock::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,

@@ -462,3 +462,34 @@ fn should_keep_family_state_directly_worker_owned() {
         "family state must be directly owned by its worker: {violations:?}"
     );
 }
+
+#[test]
+fn should_keep_session_cleanup_protocol_owned_by_runtime() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    collect_rust_files(&workspace.join("src/domains"), &mut files);
+
+    // Act
+    let offenders = files
+        .iter()
+        .filter_map(|path| {
+            let source = production_source(std::fs::read_to_string(path).ok()?);
+            let hand_rolled = source.contains("payload::<crate::runtime::SessionCleanup>")
+                || source.contains("cleaned_up_sessions.mark(")
+                || source.contains("cleaned_up_sessions.contains(");
+            hand_rolled.then(|| {
+                path.strip_prefix(workspace)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "domains must use runtime::SessionScoped / session_cleanup_id: {offenders:?}"
+    );
+}

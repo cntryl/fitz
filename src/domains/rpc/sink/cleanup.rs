@@ -1,10 +1,7 @@
-//! Session/worker disconnect cleanup and stale queued-request rejection.
+//! Session and worker disconnect cleanup.
 //!
-//! `SessionCleanup` is delivered on the high-priority mailbox lane, so it can
-//! pass an older, already-queued normal-lane request from the same session.
-//! Remembering the cleaned-up session lets that stale request fail instead of
-//! silently recreating a worker registration or pending request for a session
-//! that is already gone and will never be cleaned up again.
+//! The cleanup protocol (mark-before-release, stale-request rejection) is
+//! owned by [`crate::runtime::SessionScoped`]; this file only releases state.
 
 use super::response_forwarder::RpcResponseForwarder;
 use super::state_model::{
@@ -12,27 +9,20 @@ use super::state_model::{
     RPC_WORKER_NOT_FOUND_ERROR,
 };
 use crate::runtime::routing::RouteAddress;
-use crate::runtime::Envelope;
+use crate::runtime::{CleanedUpSessions, SessionScoped};
+
+impl SessionScoped for RpcFamilyRuntime<'_> {
+    fn cleaned_up_sessions(&mut self) -> &mut CleanedUpSessions {
+        &mut self.core.cleaned_up_sessions
+    }
+
+    fn release_session_resources(&mut self, session_id: u64) {
+        let cleanup_result = self.apply_session_cleanup(session_id);
+        self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
+    }
+}
 
 impl RpcFamilyRuntime<'_> {
-    pub(super) fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
-        self.core.cleaned_up_sessions.contains(session_id)
-    }
-
-    pub(super) fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            // Mark first so an older normal-lane request that cleanup jumped
-            // over cannot recreate a worker registration or pending request
-            // for this session below.
-            self.core.cleaned_up_sessions.mark(cleanup.session_id);
-            let cleanup_result = self.apply_session_cleanup(cleanup.session_id);
-            self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
-            return true;
-        }
-
-        false
-    }
-
     pub(super) fn apply_session_cleanup(&mut self, session_id: u64) -> RpcSessionCleanupResult {
         let cleanup_result = {
             let state = &mut self.core.state;

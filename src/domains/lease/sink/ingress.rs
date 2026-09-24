@@ -4,6 +4,7 @@
 use super::model::{LeaseAcquireRequest, LeaseFamilyRuntime};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope};
 
 pub(super) enum LeaseRequestView<'a> {

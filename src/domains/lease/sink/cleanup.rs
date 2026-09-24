@@ -1,33 +1,19 @@
-//! Disconnect cleanup and stale queued-request rejection state.
+//! Release of Lease session state on disconnect.
 //!
-//! `SessionCleanup` is delivered on the high-priority mailbox lane, so it can
-//! pass an older, already-queued normal-lane request from the same session.
-//! Remembering the cleaned-up session lets that stale request fail instead of
-//! silently recreating a lease/waiter/subscription for a session that is
-//! already gone and will never be cleaned up again.
+//! The cleanup protocol (mark-before-release, stale-request rejection) is
+//! owned by [`crate::runtime::SessionScoped`]; this file only releases state.
 
 use super::model::LeaseFamilyRuntime;
+use crate::runtime::{CleanedUpSessions, SessionScoped};
 use std::time::Instant;
 
-impl LeaseFamilyRuntime<'_> {
-    pub(super) fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
-        self.core.cleaned_up_sessions.contains(session_id)
-    }
-
-    pub(super) fn handle_cleanup_envelope(&mut self, envelope: &crate::runtime::Envelope) -> bool {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.cleanup_session(cleanup.session_id);
-            return true;
-        }
-
-        false
+impl SessionScoped for LeaseFamilyRuntime<'_> {
+    fn cleaned_up_sessions(&mut self) -> &mut CleanedUpSessions {
+        &mut self.core.cleaned_up_sessions
     }
 
     /// Drops session waiters before ownership and grants released keys in FIFO order.
-    pub fn cleanup_session(&mut self, session_id: u64) {
-        // Mark first so an older normal-lane request that cleanup jumped over
-        // cannot recreate a lease, waiter, or subscription for this session.
-        self.core.cleaned_up_sessions.mark(session_id);
+    fn release_session_resources(&mut self, session_id: u64) {
         let now = Instant::now();
         let tracked_keys = self
             .core
@@ -67,7 +53,9 @@ impl LeaseFamilyRuntime<'_> {
         );
         self.refresh_metrics_gauges();
     }
+}
 
+impl LeaseFamilyRuntime<'_> {
     /// Removes every queued waiter owned by the session before empty queues are dropped.
     pub(in crate::domains::lease::sink) fn remove_session_waiters(
         &mut self,

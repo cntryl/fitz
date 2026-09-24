@@ -3,6 +3,8 @@
 
 use super::model::{QueueDomain, QueueDomainCommand, QueueFamilyRuntime};
 use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
+#[cfg(test)]
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -88,10 +90,8 @@ impl QueueDomain {
         // (retryable) rather than accepted then timed out. Control-plane work
         // bypasses the window - cleanup arrives on the normal lane yet must
         // never be rationed by client load. See `admit_client_delivery`.
-        let is_control_plane = high_priority
-            || envelope
-                .payload::<crate::runtime::SessionCleanup>()
-                .is_some();
+        let is_control_plane =
+            high_priority || crate::runtime::session_cleanup_id(&envelope).is_some();
         let admission = if is_control_plane {
             None
         } else {
