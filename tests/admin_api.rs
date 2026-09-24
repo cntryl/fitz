@@ -6,6 +6,8 @@ mod admin_api {
     mod domain_inventory;
     mod metrics_primary;
     mod queue_resource_actions;
+    mod schedule_run_now_contract;
+    mod stream_metrics_contract;
     mod stream_notice_metrics;
     mod topology_sessions;
     mod typed_admin_errors;

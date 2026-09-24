@@ -8,6 +8,7 @@ use std::time::Duration;
 
 pub mod body;
 mod domains;
+pub mod golden;
 pub mod midge;
 pub mod notice;
 pub mod operator_seed;
