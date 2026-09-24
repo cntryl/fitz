@@ -1,0 +1,17 @@
+kv 109 registration=true pattern=true literal=true
+kv 110 registration=true pattern=true literal=true
+queue 202 registration=false pattern=true literal=false
+queue 207 registration=true pattern=true literal=true
+queue 208 registration=true pattern=true literal=true
+notice 501 registration=true pattern=true literal=true
+stream 604 registration=false pattern=true literal=false
+stream 607 registration=true pattern=true literal=true
+stream 608 registration=true pattern=true literal=true
+rpc 300 registration=true pattern=true literal=true
+rpc 301 registration=true pattern=true literal=true
+lease 407 registration=true pattern=true literal=true
+lease 408 registration=true pattern=true literal=true
+lease 410 registration=true pattern=true literal=true
+schedule 703 registration=true pattern=true literal=true
+schedule 704 registration=true pattern=true literal=true
+

@@ -1,0 +1,9 @@
+Kv 103 Idempotent
+Kv 108 Idempotent
+Stream 604 Idempotent
+Stream 605 Idempotent
+Stream 606 Idempotent
+Queue 204 Context-Dependent (message_id+token)
+Lease 403 Idempotent
+Schedule 702 Idempotent
+

@@ -509,6 +509,11 @@ mod tests {
             published_event.route.as_str(),
             "stream://realm1/area1/*/watermark"
         );
+        let payload = std::str::from_utf8(&published_event.payload).expect("utf8 payload");
+        assert_eq!(
+            crate::testkit::golden::mask_json_number(payload, "ts"),
+            r#"{"previous":0,"ts":<n>,"watermark":3}"#
+        );
     }
 
     #[test]

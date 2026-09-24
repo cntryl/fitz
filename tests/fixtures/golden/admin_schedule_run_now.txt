@@ -1,0 +1,9 @@
+all prod/areas/jobs/resources/billing/operations/send => 400 {"error":"Route family path segment must be concrete for this endpoint"}
+1 prod/areas/jobs/resources/billing/operations/send => 200 {"route_family":1,"route":"schedule://prod/jobs/billing/send","delivery_mode":"broadcast","triggered_at":"<s>","outcome":"no_live_subscriptions","matched_subscriptions":0,"attempted_handoffs":0,"accepted_handoffs":0}
+1 prod/areas/jobs/resources/billing/operations/missing => 404 {"error":"Schedule definition not found"}
+1 prod/areas/jobs/resources/bill%2Fing/operations/send => 400 {"error":"schedule route must be schedule://{realm}/{area}/{resource}/{operation}"}
+1 prod/areas/jobs/resources/%2A/operations/send => 400 {"error":"schedule route must not contain wildcards"}
+1 prod/areas/jobs/resources/bill%zzing/operations/send => 400 {"error":"Schedule route path contains invalid percent encoding"}
+1 prod/areas/jobs/resources/bill%FFing/operations/send => 400 {"error":"Schedule route path contains invalid UTF-8"}
+1 prod/areas/jobs/resources/%20/operations/send => 404 {"error":"Schedule definition not found"}
+
