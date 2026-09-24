@@ -463,6 +463,20 @@ fn should_keep_family_state_directly_worker_owned() {
     );
 }
 
+/// Whether an `impl SessionScoped` block redefines a provided protocol method.
+fn overrides_session_protocol(compact: &str) -> bool {
+    compact.split("implSessionScopedfor").skip(1).any(|block| {
+        let body = block.split("impl").next().unwrap_or(block);
+        [
+            "fncleanup_session(",
+            "fnhandle_cleanup_envelope(",
+            "fnis_cleaned_up_session(",
+        ]
+        .iter()
+        .any(|provided| body.contains(provided))
+    })
+}
+
 #[test]
 fn should_keep_session_cleanup_protocol_owned_by_runtime() {
     // Arrange
@@ -475,9 +489,14 @@ fn should_keep_session_cleanup_protocol_owned_by_runtime() {
         .iter()
         .filter_map(|path| {
             let source = production_source(std::fs::read_to_string(path).ok()?);
-            let hand_rolled = source.contains("payload::<crate::runtime::SessionCleanup>")
-                || source.contains("cleaned_up_sessions.mark(")
-                || source.contains("cleaned_up_sessions.contains(");
+            let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+            let hand_rolled = (compact.contains(".payload::<")
+                && compact.contains("SessionCleanup>"))
+                || compact.contains("cleaned_up_sessions.mark(")
+                || compact.contains("cleaned_up_sessions.contains(")
+                || compact.contains("CleanedUpSessions::mark(")
+                || compact.contains("CleanedUpSessions::contains(")
+                || overrides_session_protocol(&compact);
             hand_rolled.then(|| {
                 path.strip_prefix(workspace)
                     .unwrap_or(path)
