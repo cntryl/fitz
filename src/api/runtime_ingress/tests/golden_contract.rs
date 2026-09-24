@@ -22,8 +22,22 @@ const ROUTES: &[&str] = &[
     "*/*/*",
     "acme/lock*/db",
     "acme/locks/db-migration/trailing",
+    "acme/*/users",
+    "*/app/users",
+    "*/app/*",
+    "*/*/users",
+    "acme/app/users#read",
+    "acme/app/users#*",
+    "acme/**#read",
+    "ACME/App/Users",
+    "acme/app/us%2Fers",
+    "acme/app/users/",
+    "acme//users",
+    "acme/app/users ",
     "",
 ];
+
+const FOREIGN_PREFIXES: &[&str] = &["queue://", "kv://", "kv:/", "KV://", "://"];
 
 #[test]
 fn should_keep_pattern_registration_message_table_stable() {
@@ -35,10 +49,11 @@ fn should_keep_pattern_registration_message_table_stable() {
         for id in 0..=999_u16 {
             let registration = is_subscription_registration_message(domain, id);
             let pattern = is_pattern_authorization_target(domain, id, "acme/*/x");
-            if registration || pattern {
+            let literal = is_pattern_authorization_target(domain, id, "acme/app/x");
+            if registration || pattern || literal {
                 let _ = writeln!(
                     actual,
-                    "{} {id} registration={registration} pattern={pattern}",
+                    "{} {id} registration={registration} pattern={pattern} literal={literal}",
                     domain.as_str()
                 );
             }
@@ -64,6 +79,11 @@ fn should_keep_auth_route_canonicalization_stable() {
                 let result = canonicalize_dispatch_route_str(domain, &candidate);
                 let _ = writeln!(actual, "{} {candidate:?} => {result:?}", domain.as_str());
             }
+        }
+        for prefix in FOREIGN_PREFIXES {
+            let candidate = format!("{prefix}acme/app/users");
+            let result = canonicalize_dispatch_route_str(domain, &candidate);
+            let _ = writeln!(actual, "{} {candidate:?} => {result:?}", domain.as_str());
         }
     }
 

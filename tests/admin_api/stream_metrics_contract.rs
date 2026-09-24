@@ -1,32 +1,14 @@
 //! Golden contract for admin Stream metrics shape.
 //!
 //! Metric values are process-global and vary between tests, so this pins the
-//! stats JSON key paths and exported `fitz_stream_*` series names only.
+//! stats JSON key paths exactly and requires the `fitz_stream_*` series the
+//! admin exporter emits without traffic. Series that other tests register
+//! may also appear; they are allowed but not required.
 
 use super::common::*;
-use fitz::testkit::golden::assert_golden;
+use fitz::testkit::golden::{assert_golden, assert_golden_subset};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
-
-const STREAM_COUNTERS: &[&str] = &[
-    "fitz_stream_admin_projection_failures_total",
-    "fitz_stream_append_conflicts_total",
-    "fitz_stream_append_sessions_ended_total",
-    "fitz_stream_append_sessions_started_total",
-    "fitz_stream_failure_total",
-    "fitz_stream_family_failed_closed_total",
-    "fitz_stream_maintenance_attempts_total",
-    "fitz_stream_maintenance_buckets_compacted_total",
-    "fitz_stream_maintenance_failures_total",
-    "fitz_stream_maintenance_retries_total",
-    "fitz_stream_notify_drops_total",
-    "fitz_stream_operations_total",
-    "fitz_stream_publish_family_mismatch_total",
-    "fitz_stream_requests_total",
-    "fitz_stream_response_drops_total",
-    "fitz_stream_success_total",
-    "fitz_stream_watermark_coordination_drops_total",
-];
 
 fn json_key_paths(value: &serde_json::Value, prefix: &str, out: &mut BTreeSet<String>) {
     if let serde_json::Value::Object(map) = value {
@@ -63,11 +45,6 @@ async fn should_keep_admin_stream_metrics_shape_stable() {
     let (runtime, store) = queue_runtime_with_domains();
     seed_stream_snapshot_data(store);
     seed_stream_watermark_lag_data(&runtime);
-    let metrics = fitz::boot::observability::metrics();
-    for counter in STREAM_COUNTERS {
-        metrics.counter_add(counter, 0);
-    }
-    metrics.histogram_observe_ms("fitz_stream_latency_ms", 1);
     let cookie = login_cookie(runtime.clone()).await;
     let mut stats_keys = BTreeSet::new();
     let mut actual = String::new();
@@ -84,12 +61,11 @@ async fn should_keep_admin_stream_metrics_shape_stable() {
         .map(str::to_string)
         .collect();
     for key in &stats_keys {
-        let _ = writeln!(actual, "stats {key}");
+        let _ = writeln!(actual, "{key}");
     }
-    for name in &series {
-        let _ = writeln!(actual, "series {name}");
-    }
+    let series = series.into_iter().collect::<Vec<_>>().join("\n");
 
     // Assert
-    assert_golden("admin_stream_metrics_shape", &actual);
+    assert_golden("admin_stream_stats_keys", &actual);
+    assert_golden_subset("admin_stream_series", &series);
 }

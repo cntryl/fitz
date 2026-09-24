@@ -15,6 +15,9 @@ fn fixture_path(name: &str) -> PathBuf {
 
 /// Assert `actual` matches the committed golden fixture `name`.
 ///
+/// Trailing whitespace at the end of the whole output is ignored; every
+/// interior byte, including per-line whitespace, must match.
+///
 /// # Panics
 ///
 /// Panics when the fixture is missing or differs from `actual`.
@@ -54,18 +57,50 @@ pub fn mask_json_number(json: &str, key: &str) -> String {
     let (head, tail) = json
         .split_once(&marker)
         .unwrap_or_else(|| panic!("missing JSON key {key} in {json}"));
-    let rest = tail.trim_start_matches(|c: char| c.is_ascii_digit());
+    let rest = tail.trim_start_matches(|c: char| c.is_ascii_digit() || "-+.eE".contains(c));
     format!("{head}{marker}<n>{rest}")
 }
 
-/// Replace the string value of `"key":"..."` in compact JSON with `<s>`,
-/// leaving the JSON unchanged when `key` is absent.
+/// Replace the string value of `"key":"..."` in compact JSON with `<s>`.
+/// JSON without `"key"` is returned unchanged.
+///
+/// # Panics
+///
+/// Panics when `"key"` is present but its value is not a JSON string.
 #[must_use]
 pub fn mask_json_string(json: &str, key: &str) -> String {
     let marker = format!("\"{key}\":\"");
     let Some((head, tail)) = json.split_once(&marker) else {
+        assert!(
+            !json.contains(&format!("\"{key}\":")),
+            "JSON key {key} is not a string in {json}"
+        );
         return json.to_string();
     };
     let rest = tail.split_once('"').map_or("", |(_, rest)| rest);
     format!("{head}{marker}<s>\"{rest}")
+}
+
+/// Assert every line of golden fixture `name` appears in `actual`.
+///
+/// For process-global state (such as metrics) where unrelated tests may add
+/// entries, this pins the required set without depending on test order.
+///
+/// # Panics
+///
+/// Panics when the fixture is missing or any fixture line is absent.
+pub fn assert_golden_subset(name: &str, actual: &str) {
+    let path = fixture_path(name);
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("missing golden fixture {}: {error}", path.display()));
+    let present: std::collections::BTreeSet<&str> = actual.lines().collect();
+    let missing: Vec<&str> = expected
+        .lines()
+        .filter(|line| !line.is_empty() && !present.contains(line))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "golden contract `{name}` lost entries ({}): {missing:?}\n--- actual\n{actual}",
+        path.display()
+    );
 }
