@@ -3,9 +3,7 @@ use super::{
     Response, Runtime,
 };
 use crate::api::admin::auth::AdminPrincipal;
-use crate::domains::schedule::sink::{
-    ScheduleRunNowError, ScheduleRunNowOutcome, ScheduleRunNowResult,
-};
+use crate::domains::schedule::{ScheduleRunNowError, ScheduleRunNowOutcome, ScheduleRunNowResult};
 use crate::runtime::routing::RouteFamily;
 use chrono::Utc;
 use percent_encoding::percent_decode_str;
@@ -79,11 +77,6 @@ fn handle_hierarchical_post_blocking(
                 "schedule://{}/{}/{}/{}",
                 decoded[0], decoded[1], decoded[2], decoded[3]
             );
-            if let Err(error) =
-                crate::domains::schedule::protocol::validate_concrete_schedule_route(&route)
-            {
-                return super::super::error_response(hyper::StatusCode::BAD_REQUEST, &error);
-            }
             let result = runtime.schedule_run_now(
                 RouteFamily::try_from(family).expect("validated route family"),
                 route.clone(),
@@ -122,6 +115,9 @@ fn handle_hierarchical_post_blocking(
 }
 
 fn schedule_run_now_error_response(error: &ScheduleRunNowError) -> Response {
+    if let ScheduleRunNowError::InvalidRoute(message) = error {
+        return super::super::error_response(hyper::StatusCode::BAD_REQUEST, message);
+    }
     let message = match error {
         ScheduleRunNowError::ReplyTimeout { .. } => format!(
             "Schedule run-now outcome may be unknown; inspect consumers before triggering again: {error}"
@@ -152,7 +148,26 @@ fn decode_schedule_path_segment(value: &str) -> Result<Cow<'_, str>, &'static st
 #[cfg(test)]
 mod run_now_error_tests {
     use super::*;
-    use crate::domains::schedule::sink::ScheduleRunNowError;
+
+    #[tokio::test]
+    async fn should_report_invalid_run_now_route_as_bad_request() {
+        // Arrange
+        let error =
+            ScheduleRunNowError::InvalidRoute("schedule route must not contain wildcards".into());
+
+        // Act
+        let response = schedule_run_now_error_response(&error);
+
+        // Assert
+        assert_eq!(response.status(), hyper::StatusCode::BAD_REQUEST);
+        let body = crate::testkit::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        assert_eq!(
+            body.as_ref(),
+            br#"{"error":"schedule route must not contain wildcards"}"#
+        );
+    }
 
     #[tokio::test]
     async fn should_warn_of_unknown_run_now_outcome_for_typed_reply_timeout() {

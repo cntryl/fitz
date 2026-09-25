@@ -164,3 +164,13 @@ pub use protocol::{
     QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage,
     MAX_RESERVE_BATCH_SIZE,
 };
+
+/// Canonicalize a Queue route for authorization against its
+/// `realm/area/resource` identity; deeper segments are dropped.
+///
+/// # Errors
+///
+/// Returns a message when the route lacks three non-empty segments.
+pub(crate) fn canonical_auth_route(route: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    crate::runtime::auth_route::canonical_triplet_route("queue", route, false)
+}

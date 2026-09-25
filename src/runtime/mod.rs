@@ -23,6 +23,7 @@
 pub mod actor;
 #[cfg(test)]
 mod actor_lifecycle;
+pub(crate) mod auth_route;
 pub mod cleanup_guard;
 pub mod client_frame;
 pub mod clock;

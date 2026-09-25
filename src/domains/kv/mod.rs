@@ -63,3 +63,12 @@ pub use protocol::{
     KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvError, KvMessage,
     KvNotification, KvPair, KvResourceScope, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
 };
+
+/// Canonicalize a KV route for authorization: exactly `realm/area/resource`.
+///
+/// # Errors
+///
+/// Returns a message when the route is not an exact non-empty triplet.
+pub(crate) fn canonical_auth_route(route: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    crate::runtime::auth_route::canonical_triplet_route("kv", route, true)
+}

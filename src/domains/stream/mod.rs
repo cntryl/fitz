@@ -62,5 +62,6 @@ pub use protocol::{
     StreamError, StreamFilterClause, StreamFilterSet, StreamFilteredReason, StreamMessage,
     StreamMetadata, StreamReadItem, StreamRecord, StreamSubscriptionFailure,
 };
+pub(crate) use route_grammar::canonical_auth_route;
 pub use store::StreamStorageLayout;
 pub(crate) use store::StreamStore;

@@ -319,6 +319,7 @@ impl ScheduleDomain {
         route: String,
         timeout: std::time::Duration,
     ) -> Result<Option<super::model::ScheduleRunNowResult>, super::model::ScheduleRunNowError> {
+        super::validate_run_now_route(&route)?;
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let deadline = Instant::now()
             .checked_add(timeout)

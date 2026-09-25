@@ -512,3 +512,76 @@ fn should_keep_session_cleanup_protocol_owned_by_runtime() {
         "domains must use runtime::SessionScoped / session_cleanup_id: {offenders:?}"
     );
 }
+
+fn production_sources_under(workspace: &Path, directory: &str) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    collect_rust_files(&workspace.join(directory), &mut files);
+    files
+        .iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(workspace).unwrap_or(path);
+            let is_test_file = relative.file_name().is_some_and(|name| name == "tests.rs")
+                || relative
+                    .components()
+                    .any(|part| part.as_os_str() == "tests");
+            if is_test_file {
+                return None;
+            }
+            let source = production_source(std::fs::read_to_string(path).ok()?);
+            Some((relative.display().to_string(), source))
+        })
+        .collect()
+}
+
+#[test]
+fn should_keep_auth_route_grammar_owned_by_domains() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sources = production_sources_under(workspace, "src/api/runtime_ingress");
+
+    // Act
+    let offenders = sources
+        .iter()
+        .filter(|(_, source)| {
+            source.contains("route_grammar::")
+                || source.contains("auth_route::")
+                || source.contains("route_triplet(")
+                || source.contains("route_exact_triplet(")
+                || source.contains("fn canonicalize_stream_route_str")
+                || source.contains("fn canonicalize_lease_route_str")
+                || source.contains("fn canonicalize_triplet_route_str")
+        })
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "ingress must call each domain's canonical_auth_route: {offenders:?}"
+    );
+}
+
+#[test]
+fn should_keep_schedule_run_now_validation_owned_by_schedule() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = production_sources_under(workspace, "src/api/admin");
+    sources.extend(production_sources_under(workspace, "src/boot"));
+
+    // Act
+    let offenders = sources
+        .iter()
+        .filter(|(_, source)| {
+            source.contains("validate_concrete_schedule_route")
+                || source.contains("schedule::sink::ScheduleRunNow")
+                || source.contains("schedule::sink::{")
+        })
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "admin/boot must use the schedule domain's public run-now API: {offenders:?}"
+    );
+}

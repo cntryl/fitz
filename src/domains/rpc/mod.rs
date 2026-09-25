@@ -63,3 +63,15 @@ pub use protocol::{
     RpcClientResponse, RpcClientResponseBody, RpcDecodeError, RpcMessage, RpcRequest, RpcResponse,
     RpcWorkerRequestDelivery,
 };
+
+/// Canonicalize an RPC route for authorization: scheme-qualified as given.
+///
+/// # Errors
+///
+/// Never fails; the `Result` matches the other domains' canonicalizers.
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn canonical_auth_route(route: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    Ok(crate::runtime::auth_route::scheme_prefixed_route(
+        "rpc", route,
+    ))
+}

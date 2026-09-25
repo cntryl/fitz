@@ -3,6 +3,7 @@ use super::{AuthorizationPolicy, DispatchDomain, DomainAuthorizationSpec};
 use super::{Bytes, ChannelId};
 
 type AuthRouteExtractor = for<'a> fn(u16, &'a [u8]) -> Result<Option<&'a str>, String>;
+type AuthRouteCanonicalizer = for<'a> fn(&'a str) -> Result<std::borrow::Cow<'a, str>, String>;
 type RequestEnvelopeBuilder = fn(
     crate::runtime::DomainKind,
     crate::dispatch::DomainEnvelopeBuildRequest,
@@ -38,6 +39,7 @@ pub(crate) struct IngressDomainDescriptor {
     /// backoff", and a fatal code contradicts it.
     pub(super) backpressure_error_code: u16,
     extract_auth_route: AuthRouteExtractor,
+    canonical_auth_route: AuthRouteCanonicalizer,
     build_request_envelope: RequestEnvelopeBuilder,
 }
 
@@ -64,6 +66,14 @@ impl IngressDomainDescriptor {
         payload: &'a [u8],
     ) -> Result<Option<&'a str>, String> {
         (self.extract_auth_route)(msg_type, payload)
+    }
+
+    /// Canonicalize a route with the owning domain's auth-route grammar.
+    pub(super) fn canonical_auth_route<'a>(
+        &self,
+        route: &'a str,
+    ) -> Result<std::borrow::Cow<'a, str>, String> {
+        (self.canonical_auth_route)(route)
     }
 
     pub(crate) fn build_request_envelope(
@@ -137,6 +147,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         backpressure_error_code: crate::protocol::error_codes::kv::ERR_BUSY,
         indeterminate_error_code: crate::protocol::error_codes::kv::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::kv_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::kv::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
@@ -145,6 +156,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         backpressure_error_code: crate::protocol::error_codes::queue::ERR_QUEUE_FULL,
         indeterminate_error_code: crate::protocol::error_codes::queue::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::queue::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
@@ -153,6 +165,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         backpressure_error_code: crate::protocol::error_codes::notice::ERR_BUSY,
         indeterminate_error_code: crate::protocol::error_codes::notice::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::notice_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::notice::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
@@ -161,6 +174,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         backpressure_error_code: crate::protocol::error_codes::stream::ERR_BUSY,
         indeterminate_error_code: crate::protocol::error_codes::stream::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::stream_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::stream::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
@@ -169,6 +183,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         backpressure_error_code: crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
         indeterminate_error_code: crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::rpc::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
@@ -177,6 +192,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         backpressure_error_code: crate::protocol::error_codes::lease::ERR_QUEUE_FULL,
         indeterminate_error_code: crate::protocol::error_codes::lease::ERR_TIMEOUT,
         extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::lease::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
@@ -185,6 +201,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         backpressure_error_code: crate::protocol::error_codes::schedule::ERR_BACKEND_ERROR,
         indeterminate_error_code: crate::protocol::error_codes::schedule::ERR_TIMEOUT,
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::schedule::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
 ];
