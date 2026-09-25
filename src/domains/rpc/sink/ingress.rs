@@ -5,6 +5,7 @@ use super::state_model::{
     RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RPC_MSG_TYPE_REQUEST,
 };
 use crate::domains::rpc::protocol::{RpcClientRequest, RpcClientResponseBody, RpcMessage};
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope};
 use std::time::Instant;
 

@@ -1,12 +1,13 @@
 //! Mailbox-lane routing and the domain actor's message loop.
 
 use super::model::{ScheduleDomain, ScheduleDomainCommand, ScheduleDomainRuntime};
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope, FamilyActorLane, MailboxSink};
 
 impl MailboxSink for ScheduleDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self.cleanup_session(cleanup.session_id);
+        if let Some(session_id) = crate::runtime::session_cleanup_id(&envelope) {
+            return self.cleanup_session(session_id);
         }
         let family = *envelope.destination().family();
         self.try_send(
@@ -17,8 +18,8 @@ impl MailboxSink for ScheduleDomain {
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self.cleanup_session(cleanup.session_id);
+        if let Some(session_id) = crate::runtime::session_cleanup_id(&envelope) {
+            return self.cleanup_session(session_id);
         }
         let family = *envelope.destination().family();
         self.try_send(
@@ -38,8 +39,7 @@ impl ScheduleDomainRuntime<'_> {
                 }
             }
             ScheduleDomainCommand::CleanupSession(session_id, reply) => {
-                self.core.cleaned_up_sessions.mark(session_id);
-                self.unsubscribe_all(session_id);
+                self.cleanup_session(session_id);
                 let _ = reply.send(());
             }
             ScheduleDomainCommand::ReadLiveCounts(reply) => {

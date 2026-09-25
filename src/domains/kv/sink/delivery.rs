@@ -2,6 +2,7 @@
 
 use super::state::KvFamilyRuntime;
 use crate::domains::kv::{KvClientFrame, KvClientRequest};
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope};
 
 impl KvFamilyRuntime<'_> {

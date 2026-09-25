@@ -1,13 +1,10 @@
-//! Disconnect cleanup and stale queued-request rejection state.
+//! Release of Schedule session state on disconnect.
 //!
-//! `SessionCleanup` is delivered on the high-priority mailbox lane, so it can
-//! pass an older, already-queued normal-lane request from the same session.
-//! Remembering the cleaned-up session lets that stale request fail instead of
-//! silently recreating a subscription for a session that is already gone and
-//! will never be cleaned up again.
+//! The cleanup protocol (mark-before-release, stale-request rejection) is
+//! owned by [`crate::runtime::SessionScoped`]; this file only releases state.
 
 use super::model::{ScheduleDomain, ScheduleDomainCommand, ScheduleDomainRuntime};
-use crate::runtime::Envelope;
+use crate::runtime::{CleanedUpSessions, SessionScoped};
 
 impl ScheduleDomain {
     /// Remove every Schedule subscription owned by one disconnected session.
@@ -39,24 +36,21 @@ impl ScheduleDomain {
     }
 }
 
+impl SessionScoped for ScheduleDomainRuntime<'_> {
+    fn cleaned_up_sessions(&mut self) -> &mut CleanedUpSessions {
+        &mut self.core.cleaned_up_sessions
+    }
+
+    fn release_session_resources(&mut self, session_id: u64) {
+        self.unsubscribe_all(session_id);
+    }
+}
+
 impl ScheduleDomainRuntime<'_> {
-    pub(super) fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
-        self.core.cleaned_up_sessions.contains(session_id)
-    }
-
-    pub(super) fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            // Mark first so an older normal-lane request that cleanup jumped
-            // over cannot recreate a subscription for this session below.
-            self.core.cleaned_up_sessions.mark(cleanup.session_id);
-            self.unsubscribe_all(cleanup.session_id);
-            return true;
-        }
-
-        false
-    }
-
     /// Remove every Schedule subscription owned by one session.
+    ///
+    /// Shared by disconnect cleanup and the client-initiated `UnsubscribeAll`
+    /// request, which does not mark the session cleaned up.
     pub(super) fn unsubscribe_all(&mut self, session_id: u64) {
         self.core
             .subscriptions

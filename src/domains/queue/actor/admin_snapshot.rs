@@ -147,56 +147,6 @@ impl QueueActor {
         dead_letters
     }
 
-    /// Drop any live inflight entries owned by a disconnected session and return the
-    /// accepted messages to the ready queue. The inflight ownership itself is
-    /// ephemeral and is not durably recovered.
-    pub fn cleanup_session_inflight(&mut self, session_id: u64) -> usize {
-        let released: Vec<_> = self
-            .inflight
-            .iter()
-            .filter_map(|(id, inflight)| {
-                (inflight.owner_session_id == Some(session_id)).then_some(*id)
-            })
-            .collect();
-
-        for id in released.iter().copied() {
-            self.inflight.remove(&id);
-            if let Some(record) = self.records.get_mut(&id) {
-                record.state = QueueState::Ready;
-                record.visible_at_ms = 0;
-                record.inflight_token = None;
-                record.inflight_expires_at_ms = None;
-            }
-            self.push_ready(id);
-        }
-
-        released.len()
-    }
-
-    /// Return one reservation to ready work only when its session and token
-    /// still identify the exact delivery that could not reach the client.
-    pub fn release_undelivered_reservation(
-        &mut self,
-        session_id: u64,
-        id: MessageId,
-        token: u64,
-    ) -> bool {
-        if !self.inflight.get(&id).is_some_and(|inflight| {
-            inflight.owner_session_id == Some(session_id) && inflight.token == token
-        }) {
-            return false;
-        }
-        self.inflight.remove(&id);
-        if let Some(record) = self.records.get_mut(&id) {
-            record.state = QueueState::Ready;
-            record.visible_at_ms = 0;
-            record.inflight_token = None;
-            record.inflight_expires_at_ms = None;
-        }
-        self.push_ready(id);
-        true
-    }
-
     #[must_use]
     pub fn ready_contains(&self, id: MessageId) -> bool {
         self.ready.iter().any(|entry| entry.id == id)

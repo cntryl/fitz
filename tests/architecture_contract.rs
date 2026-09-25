@@ -462,3 +462,53 @@ fn should_keep_family_state_directly_worker_owned() {
         "family state must be directly owned by its worker: {violations:?}"
     );
 }
+
+/// Whether an `impl SessionScoped` block redefines a provided protocol method.
+fn overrides_session_protocol(compact: &str) -> bool {
+    compact.split("implSessionScopedfor").skip(1).any(|block| {
+        let body = block.split("impl").next().unwrap_or(block);
+        [
+            "fncleanup_session(",
+            "fnhandle_cleanup_envelope(",
+            "fnis_cleaned_up_session(",
+        ]
+        .iter()
+        .any(|provided| body.contains(provided))
+    })
+}
+
+#[test]
+fn should_keep_session_cleanup_protocol_owned_by_runtime() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    collect_rust_files(&workspace.join("src/domains"), &mut files);
+
+    // Act
+    let offenders = files
+        .iter()
+        .filter_map(|path| {
+            let source = production_source(std::fs::read_to_string(path).ok()?);
+            let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+            let hand_rolled = (compact.contains(".payload::<")
+                && compact.contains("SessionCleanup>"))
+                || compact.contains("cleaned_up_sessions.mark(")
+                || compact.contains("cleaned_up_sessions.contains(")
+                || compact.contains("CleanedUpSessions::mark(")
+                || compact.contains("CleanedUpSessions::contains(")
+                || overrides_session_protocol(&compact);
+            hand_rolled.then(|| {
+                path.strip_prefix(workspace)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "domains must use runtime::SessionScoped / session_cleanup_id: {offenders:?}"
+    );
+}

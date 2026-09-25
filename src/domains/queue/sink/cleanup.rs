@@ -1,28 +1,22 @@
-//! Disconnect cleanup and stale queued-request rejection state.
+//! Release of Queue session state on disconnect.
 //!
-//! `SessionCleanup` is delivered on the control-plane mailbox lane (see
-//! `deliver_to_actor`'s `is_control_plane` check in `mailbox.rs`), so it can
-//! pass an older, already-queued normal-lane request from the same session.
-//! Remembering the cleaned-up session lets that stale request fail instead
-//! of silently recreating a subscription or pending reserve for a session
-//! that is already gone and will never be cleaned up again.
+//! The cleanup protocol (mark-before-release, stale-request rejection) is
+//! owned by [`crate::runtime::SessionScoped`]; this file only releases state.
+//! Cleanup bypasses client admission (see `deliver_to_actor` in `mailbox.rs`).
 
 use super::model::QueueFamilyState;
+use crate::runtime::{CleanedUpSessions, SessionScoped};
 use std::time::Instant;
 
-impl QueueFamilyState {
-    pub(super) fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
-        self.cleaned_up_sessions.contains(session_id)
-    }
-
-    pub(super) fn mark_cleaned_up_session(&mut self, session_id: u64) {
-        self.cleaned_up_sessions.mark(session_id);
+impl SessionScoped for QueueFamilyState {
+    fn cleaned_up_sessions(&mut self) -> &mut CleanedUpSessions {
+        &mut self.cleaned_up_sessions
     }
 
     /// Drop all live queue inflight entries owned by the disconnected session and return
     /// those accepted messages to the ready queue. Inflight ownership is
     /// broker-local runtime state only.
-    pub(in crate::domains::queue::sink) fn cleanup_session(&mut self, session_id: u64) {
+    fn release_session_resources(&mut self, session_id: u64) {
         self.pending_reserves
             .retain(|pending| pending.meta.session_id != session_id);
         let mut released_any = false;

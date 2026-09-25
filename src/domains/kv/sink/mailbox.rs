@@ -2,12 +2,13 @@
 
 use super::commands::KvDomainCommand;
 use super::state::{KvDomain, KvFamilyRuntime};
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink};
 
 impl MailboxSink for KvDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self.cleanup_session(cleanup.session_id);
+        if let Some(session_id) = crate::runtime::session_cleanup_id(&envelope) {
+            return self.cleanup_session(session_id);
         }
         let family = *envelope.destination().family();
         self.try_send(
@@ -18,8 +19,8 @@ impl MailboxSink for KvDomain {
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self.cleanup_session(cleanup.session_id);
+        if let Some(session_id) = crate::runtime::session_cleanup_id(&envelope) {
+            return self.cleanup_session(session_id);
         }
         let family = *envelope.destination().family();
         self.try_send(

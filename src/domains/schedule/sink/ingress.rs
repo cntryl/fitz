@@ -4,6 +4,7 @@
 use super::model::ScheduleDomainRuntime;
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope};
 
 impl ScheduleDomainRuntime<'_> {

@@ -1,13 +1,13 @@
 //! Mailbox-lane routing and the family runtime's command loop.
 
 use super::model::{LeaseDomain, LeaseDomainCommand, LeaseFamilyRuntime};
+use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink};
 
 impl MailboxSink for LeaseDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self
-                .cleanup_family_session(*envelope.destination().family(), cleanup.session_id);
+        if let Some(session_id) = crate::runtime::session_cleanup_id(&envelope) {
+            return self.cleanup_family_session(*envelope.destination().family(), session_id);
         }
         let family = *envelope.destination().family();
         self.enqueue(
@@ -18,9 +18,8 @@ impl MailboxSink for LeaseDomain {
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self
-                .cleanup_family_session(*envelope.destination().family(), cleanup.session_id);
+        if let Some(session_id) = crate::runtime::session_cleanup_id(&envelope) {
+            return self.cleanup_family_session(*envelope.destination().family(), session_id);
         }
         let family = *envelope.destination().family();
         self.enqueue(

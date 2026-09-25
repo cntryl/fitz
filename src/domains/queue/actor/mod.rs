@@ -658,6 +658,7 @@ mod constructors_validation;
 mod dead_letter_admin;
 mod dlq;
 mod enqueue;
+mod inflight_release;
 mod recovery_state;
 mod reserve_and_ack;
 mod startup_reconciliation;

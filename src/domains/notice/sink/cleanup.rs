@@ -1,34 +1,26 @@
-//! Disconnect cleanup and stale queued-request rejection state.
+//! Release of Notice session state on disconnect.
 //!
-//! `SessionCleanup` is delivered on the high-priority mailbox lane, so it can
-//! pass an older, already-queued normal-lane request from the same session.
-//! Remembering the cleaned-up session lets that stale request fail instead of
-//! silently recreating a subscription for a session that is already gone and
-//! will never be cleaned up again.
+//! The cleanup protocol (mark-before-release, stale-request rejection) is
+//! owned by [`crate::runtime::SessionScoped`]; this file only releases state.
 
-use super::{model::usize_to_u64, Envelope, NoticeFamilyState};
+use super::{model::usize_to_u64, NoticeFamilyState};
+use crate::runtime::{CleanedUpSessions, SessionScoped};
+
+impl SessionScoped for NoticeFamilyState {
+    fn cleaned_up_sessions(&mut self) -> &mut CleanedUpSessions {
+        &mut self.cleaned_up_sessions
+    }
+
+    fn release_session_resources(&mut self, session_id: u64) {
+        self.unsubscribe_all_for_session(session_id);
+    }
+}
 
 impl NoticeFamilyState {
-    pub(super) fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
-        self.cleaned_up_sessions.contains(session_id)
-    }
-
-    pub(super) fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            // Mark first so an older normal-lane request that cleanup jumped
-            // over cannot recreate a subscription for this session below.
-            self.cleaned_up_sessions.mark(cleanup.session_id);
-            self.unsubscribe_all_for_session(cleanup.session_id);
-            return true;
-        }
-
-        false
-    }
-
     /// Remove every Notice subscription owned by one session.
     ///
-    /// Shared by disconnect cleanup (`handle_cleanup_envelope`, which marks
-    /// the session cleaned-up first) and the client-initiated
+    /// Shared by disconnect cleanup (`release_session_resources`, which runs
+    /// after the session is marked cleaned up) and the client-initiated
     /// `UnsubscribeAll` request (which does not - a still-connected client is
     /// free to subscribe again afterward).
     pub(super) fn unsubscribe_all_for_session(&mut self, session_id: u64) -> usize {
