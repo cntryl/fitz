@@ -415,13 +415,16 @@ impl Runtime {
         route: String,
         timeout: std::time::Duration,
     ) -> Result<
-        Option<crate::domains::schedule::sink::ScheduleRunNowResult>,
-        crate::domains::schedule::sink::ScheduleRunNowError,
+        Option<crate::domains::schedule::ScheduleRunNowResult>,
+        crate::domains::schedule::ScheduleRunNowError,
     > {
+        // Validate before the availability check so an invalid route is
+        // reported as such even while the domain is still starting.
+        crate::domains::schedule::validate_run_now_route(&route)?;
         self.domain_admins
             .read()
             .as_ref()
-            .ok_or(crate::domains::schedule::sink::ScheduleRunNowError::DomainUnavailable)?
+            .ok_or(crate::domains::schedule::ScheduleRunNowError::DomainUnavailable)?
             .schedule_run_now(family, route, timeout)
     }
 

@@ -31,4 +31,19 @@ pub use protocol::{
     ScheduleCreateEntry, ScheduleDef, ScheduleDeliveryMode, ScheduleFailure,
     ScheduleFailureCategory, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
 };
+pub(crate) use sink::{
+    validate_run_now_route, ScheduleRunNowError, ScheduleRunNowOutcome, ScheduleRunNowResult,
+};
 pub(crate) use store::ScheduleStore;
+
+/// Canonicalize a Schedule route for authorization: scheme-qualified as given.
+///
+/// # Errors
+///
+/// Never fails; the `Result` matches the other domains' canonicalizers.
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn canonical_auth_route(route: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    Ok(crate::runtime::auth_route::scheme_prefixed_route(
+        "schedule", route,
+    ))
+}

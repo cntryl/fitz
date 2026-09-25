@@ -209,11 +209,15 @@ pub(crate) struct ScheduleRunNowResult {
     pub(crate) outcome: ScheduleRunNowOutcome,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ScheduleRunNowError {
+    /// The route is not a concrete `schedule://realm/area/resource/operation`.
+    InvalidRoute(String),
     DomainUnavailable,
     Enqueue(crate::runtime::DeliveryError),
-    ReplyTimeout { timeout: std::time::Duration },
+    ReplyTimeout {
+        timeout: std::time::Duration,
+    },
     ReplyDisconnected,
     CommandExpired,
 }
@@ -233,6 +237,7 @@ impl ScheduleRunNowError {
 impl std::fmt::Display for ScheduleRunNowError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidRoute(message) => formatter.write_str(message),
             Self::DomainUnavailable => formatter.write_str("Schedule domain is not initialized"),
             Self::Enqueue(error) => write!(formatter, "schedule run-now enqueue failed: {error}"),
             Self::ReplyTimeout { timeout } => write!(
