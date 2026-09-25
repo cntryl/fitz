@@ -202,7 +202,10 @@ impl KvFamilyRuntime<'_> {
             );
             KvOperationOutcome::new(
                 response,
-                KvAdminTransactionUpdate::Upsert(transaction),
+                KvAdminTransactionUpdate::Upsert {
+                    session_id,
+                    transaction,
+                },
                 None,
             )
         } else {

@@ -180,10 +180,12 @@ impl AdminReadModel {
         collect_slice_matches(&transactions, |item| matches_realm(realm, &item.realm))
     }
 
+    #[cfg(test)]
     pub(crate) fn kv_transaction_count(&self) -> usize {
         self.kv_transactions.read().len()
     }
 
+    #[cfg(test)]
     pub(crate) fn kv_transaction_count_for_resource(
         &self,
         route_family: u64,

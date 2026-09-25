@@ -123,6 +123,6 @@ impl KvDomain {
     /// Return the number of live KV transactions, or zero if the actor does not reply.
     #[must_use]
     pub fn active_transaction_count(&self) -> usize {
-        self.config.projection.active_transaction_count()
+        self.config.active_transactions.count()
     }
 }

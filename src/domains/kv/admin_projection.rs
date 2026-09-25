@@ -112,21 +112,6 @@ impl KvAdminProjection {
             .remove_kv_transactions_for_session(session_id);
     }
 
-    pub(crate) fn active_transaction_count(&self) -> usize {
-        self.read_model.kv_transaction_count()
-    }
-
-    pub(crate) fn active_transactions_for_resource(
-        &self,
-        family_id: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-    ) -> usize {
-        self.read_model
-            .kv_transaction_count_for_resource(family_id, realm, area, resource)
-    }
-
     pub(crate) fn record_read_latency(&self, key: &KvResourceLockKey, latency_ms: f64) {
         self.latencies
             .lock()

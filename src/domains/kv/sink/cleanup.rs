@@ -31,6 +31,9 @@ impl SessionScoped for KvFamilyRuntime<'_> {
             session = session_id,
             "All KV transactions, resource locks, watches, and admin state released for session"
         );
+        self.core
+            .active_transactions
+            .remove_session(session_id, self.core.metrics.as_ref());
         self.core.projection.remove_session_transactions(session_id);
         self.refresh_metrics_gauges();
     }

@@ -64,6 +64,9 @@ impl KvFamilyRuntime<'_> {
             .map(|actor| actor.expire_idle_transactions(self.core.idle_transaction_ttl));
         for tx_id in expired.unwrap_or_default() {
             self.core
+                .active_transactions
+                .remove(session_id, tx_id, self.core.metrics.as_ref());
+            self.core
                 .resource_locks
                 .retain(|_, owner| !owner.is_owned_by(session_id, tx_id));
             self.core.projection.remove_transaction(session_id, tx_id);
@@ -103,6 +106,11 @@ impl KvFamilyRuntime<'_> {
             actor.rollback_transaction(owner.tx_id);
         }
         self.core.resource_locks.remove(resource_key);
+        self.core.active_transactions.remove(
+            owner.session_id,
+            owner.tx_id,
+            self.core.metrics.as_ref(),
+        );
         self.core
             .projection
             .remove_transaction(owner.session_id, owner.tx_id);
