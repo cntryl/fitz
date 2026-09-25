@@ -716,3 +716,29 @@ fn should_keep_per_domain_tables_free_of_positional_and_message_id_quirks() {
         "per-domain facts belong in DomainDescriptor / IngressDomainDescriptor: {offenders:?}"
     );
 }
+
+#[test]
+fn should_keep_storage_facade_from_leaking_the_raw_engine() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = production_source(
+        std::fs::read_to_string(workspace.join("src/storage.rs")).expect("read storage facade"),
+    );
+    let flat: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    // Act
+    let leaks = [
+        "fninner(",
+        "fnclone_inner(",
+        "implAsRef<cntryl_midge::Engine>",
+    ]
+    .into_iter()
+    .filter(|leak| flat.contains(leak))
+    .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        leaks.is_empty(),
+        "FitzStorageEngine must expose operations, not the Midge engine: {leaks:?}"
+    );
+}
