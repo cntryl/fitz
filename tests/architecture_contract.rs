@@ -769,13 +769,20 @@ fn should_require_ingress_implementors_to_choose_session_observation() {
     let flat: String = source.chars().filter(|c| !c.is_whitespace()).collect();
 
     // Act
+    // Each method must be declared without a body, whatever its parameter names.
     let silent_defaults = [
-        "fnget_session_info(&self,_session_id:u64)->Option<SessionInfo>{",
-        "fnrecord_frame_received(&self,_session_id:u64){}",
-        "fnrecord_frame_sent(&self,_session_id:u64){}",
+        ("fnget_session_info(", "->Option<SessionInfo>;"),
+        ("fnrecord_frame_received(", ";"),
+        ("fnrecord_frame_sent(", ";"),
     ]
     .into_iter()
-    .filter(|default| flat.contains(default))
+    .filter(|(declaration, required_end)| {
+        flat.split(declaration).nth(1).is_none_or(|rest| {
+            let signature_end = rest.find(')').map_or(rest.len(), |index| index + 1);
+            !rest[signature_end..].starts_with(required_end)
+        })
+    })
+    .map(|(declaration, _)| declaration)
     .collect::<Vec<_>>();
 
     // Assert
