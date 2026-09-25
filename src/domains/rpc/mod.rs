@@ -64,7 +64,7 @@ pub use protocol::{
     RpcWorkerRequestDelivery,
 };
 
-/// Canonicalize a RPC route for authorization: scheme-qualified as given.
+/// Canonicalize an RPC route for authorization: scheme-qualified as given.
 ///
 /// # Errors
 ///

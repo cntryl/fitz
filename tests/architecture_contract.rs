@@ -544,6 +544,9 @@ fn should_keep_auth_route_grammar_owned_by_domains() {
         .iter()
         .filter(|(_, source)| {
             source.contains("route_grammar::")
+                || source.contains("auth_route::")
+                || source.contains("route_triplet(")
+                || source.contains("route_exact_triplet(")
                 || source.contains("fn canonicalize_stream_route_str")
                 || source.contains("fn canonicalize_lease_route_str")
                 || source.contains("fn canonicalize_triplet_route_str")
