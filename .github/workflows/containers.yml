@@ -1,11 +1,12 @@
 name: Containers
 
 on:
-  # Keep the moving development images synchronized with protected main. Stable
+  # Keep moving branch images synchronized with their source branches. Stable
   # SemVer tags remain an explicit release operation below.
   push:
     branches:
       - main
+      - develop
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -218,6 +219,9 @@ jobs:
           if [[ "${REF}" == "refs/heads/main" ]]; then
             tags+=(-t "${image}:main" -t "${image}:latest")
             inspect_tag="latest"
+          elif [[ "${REF}" == "refs/heads/develop" ]]; then
+            tags+=(-t "${image}:develop")
+            inspect_tag="develop"
           fi
 
           sources=()
@@ -226,7 +230,9 @@ jobs:
           done
 
           if [[ -n "${semver_tag}" ]]; then
-            inspect_tag="${SEMVER}"
+            if [[ -z "${inspect_tag}" ]]; then
+              inspect_tag="${SEMVER}"
+            fi
             docker buildx imagetools create --dry-run "${sources[@]}" > /tmp/proposed-manifest.json
 
             if docker buildx imagetools inspect --raw "${semver_tag}" > /tmp/published-manifest.json 2>/dev/null; then
