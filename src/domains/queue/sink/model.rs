@@ -1,9 +1,12 @@
+use super::actor_registry::QueueActorRegistry;
+use super::maintenance_clock::QueueMaintenanceClock;
+use super::reservation_book::ReservationBook;
 use crate::domains::queue::{
     projection::QueueAdminProjection, MessageId, QueueActorLiveCounts, QueueKey, QueueMetrics,
 };
 use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::runtime::{DeliveryError, Envelope, Router};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -74,16 +77,8 @@ pub(super) struct QueueFamilyState {
     pub(super) queue_write_policy: crate::domains::WritePolicy,
     /// Deduplication store shared by warm actors created through this sink.
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-    /// Per-queue actors keyed by `QueueKey`
-    pub(super) actors: HashMap<crate::domains::queue::QueueKey, WarmQueueActor>,
-    /// Round-robin actor keys used to bound idle-sweep work per tick.
-    pub(super) idle_sweep_keys: VecDeque<crate::domains::queue::QueueKey>,
-    /// Durable and live queue identities available to wildcard reserve selectors.
-    pub(super) known_queue_keys: HashSet<crate::domains::queue::QueueKey>,
-    /// Startup inventory failure surfaced by wildcard reserve on infallible constructors.
-    pub(super) inventory_error: Option<String>,
-    /// Bounded, allocation-free rotation seed for fair wildcard reserve starts.
-    pub(super) wildcard_reserve_sequence: AtomicU64,
+    pub(super) actor_registry: QueueActorRegistry,
+    pub(super) reservation_book: ReservationBook,
     /// Queue-local watch subscriptions scoped to this broker process.
     pub(super) families: HashMap<u64, RoutedSubscriptionSet<QueueSubscription>>,
     /// Sessions disconnect cleanup has already run for; guards against a
@@ -92,8 +87,6 @@ pub(super) struct QueueFamilyState {
     pub(super) cleaned_up_sessions: crate::runtime::CleanedUpSessions,
     pub(super) next_sub_id: AtomicU64,
     pub(super) ready_states: HashMap<crate::domains::queue::QueueKey, bool>,
-    /// FIFO long-poll RESERVE requests waiting for a matching ready message.
-    pub(super) pending_reserves: VecDeque<PendingQueueReserve>,
     /// Router for routing response envelopes back
     pub(super) router: Arc<Router>,
     pub(super) projection: Arc<QueueAdminProjection>,
@@ -102,11 +95,8 @@ pub(super) struct QueueFamilyState {
     pub(super) runtime_sweep_pending: Arc<AtomicBool>,
     #[cfg(test)]
     pub(super) panic_next_runtime_sweep: AtomicBool,
-    pub(super) next_idle_sweep_at: Instant,
-    pub(super) next_dedup_sweep_at: Instant,
+    pub(super) maintenance_clock: QueueMaintenanceClock,
     pub(super) dirty_fast_flush_families: HashSet<u32>,
-    pub(super) fast_flush_interval: Option<Duration>,
-    pub(super) next_fast_flush_at: Instant,
 }
 
 pub(super) enum QueueDomainCommand {

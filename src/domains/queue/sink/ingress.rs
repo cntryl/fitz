@@ -214,7 +214,7 @@ impl QueueFamilyState {
                     let deadline = Instant::now()
                         .checked_add(Duration::from_secs(wait_seconds))
                         .unwrap_or_else(Instant::now);
-                    self.pending_reserves.push_back(PendingQueueReserve {
+                    self.reservation_book.enqueue(PendingQueueReserve {
                         envelope: envelope.clone_for_deferred_reply(),
                         meta,
                         request_started,

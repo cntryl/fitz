@@ -1,9 +1,6 @@
 //! Per-queue warm actor lifecycle: lookup, idle sweep, fast flush, dead-letter ops.
 
-use super::model::{
-    QueueFamilyState, WarmQueueActor, QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL,
-    QUEUE_IDLE_SWEEP_BATCH_SIZE, QUEUE_IDLE_SWEEP_INTERVAL,
-};
+use super::model::{QueueFamilyState, QUEUE_ACTOR_IDLE_TTL, QUEUE_IDLE_SWEEP_BATCH_SIZE};
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -35,21 +32,7 @@ impl QueueFamilyState {
         family: crate::runtime::routing::RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
     ) -> Vec<crate::domains::queue::QueueKey> {
-        let mut keys = self
-            .known_queue_keys
-            .iter()
-            .filter(|key| key.family == family)
-            .filter(|key| pattern.matches(&Self::queue_ready_route(key)))
-            .cloned()
-            .collect::<Vec<_>>();
-        keys.sort_by(|left, right| {
-            (&left.realm, &left.area, &left.resource).cmp(&(
-                &right.realm,
-                &right.area,
-                &right.resource,
-            ))
-        });
-        keys
+        self.reservation_book.matching_keys(family, pattern)
     }
 
     pub(super) fn matching_queue_key_count(
@@ -57,11 +40,7 @@ impl QueueFamilyState {
         family: crate::runtime::routing::RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
     ) -> usize {
-        self.known_queue_keys
-            .iter()
-            .filter(|key| key.family == family)
-            .filter(|key| pattern.matches(&Self::queue_ready_route(key)))
-            .count()
+        self.reservation_book.matching_key_count(family, pattern)
     }
 
     pub(super) fn inventory_existing_queue_keys(
@@ -146,7 +125,7 @@ impl QueueFamilyState {
 
     pub(super) fn fast_flush_enabled(&mut self) -> bool {
         self.queue_write_policy == crate::domains::WritePolicy::BestEffort
-            && self.fast_flush_interval.is_some()
+            && self.maintenance_clock.fast_flush_enabled()
     }
 
     pub(super) fn mark_fast_flush_dirty(
@@ -159,24 +138,10 @@ impl QueueFamilyState {
     }
 
     pub(super) fn maybe_flush_dirty_fast_families_at(&mut self, now: Instant) {
-        let Some(interval) = self.fast_flush_interval else {
-            return;
-        };
         if self.queue_write_policy != crate::domains::WritePolicy::BestEffort {
             return;
         }
-
-        let should_flush = {
-            let next_fast_flush_at = &mut self.next_fast_flush_at;
-            if now < *next_fast_flush_at {
-                false
-            } else {
-                *next_fast_flush_at = now + interval;
-                true
-            }
-        };
-
-        if should_flush {
+        if self.maintenance_clock.fast_flush_due(now) {
             self.flush_dirty_fast_families();
         }
     }
@@ -220,17 +185,7 @@ impl QueueFamilyState {
     }
 
     pub(super) fn maybe_cleanup_dedup_at(&mut self, now: Instant) {
-        let should_cleanup = {
-            let next_dedup_sweep_at = &mut self.next_dedup_sweep_at;
-            if now < *next_dedup_sweep_at {
-                false
-            } else {
-                *next_dedup_sweep_at = now + QUEUE_DEDUP_SWEEP_INTERVAL;
-                true
-            }
-        };
-
-        if should_cleanup {
+        if self.maintenance_clock.dedup_sweep_due(now) {
             self.dedup_store.cleanup();
         }
     }
@@ -243,42 +198,20 @@ impl QueueFamilyState {
     where
         F: FnOnce(&mut crate::domains::queue::QueueActor) -> R,
     {
-        use std::collections::hash_map::Entry;
-
-        let now = Instant::now();
-        match self.actors.entry(key.clone()) {
-            Entry::Occupied(mut entry) => {
-                entry.get_mut().last_used = now;
-                Ok((operation(&mut entry.get_mut().actor), false))
-            }
-            Entry::Vacant(entry) => {
-                let actor = crate::domains::queue::QueueActor::try_new_with_write_policy(
-                    key.family,
-                    key.clone(),
-                    self.store.clone(),
-                    None,
-                    self.dedup_store.clone(),
-                    self.queue_write_policy,
-                )?;
-                let warm_actor = entry.insert(WarmQueueActor {
-                    actor,
-                    last_used: now,
-                });
-                self.idle_sweep_keys.push_back(key.clone());
-                Ok((operation(&mut warm_actor.actor), true))
-            }
-        }
+        self.actor_registry.with_actor(
+            key,
+            &self.store,
+            &self.dedup_store,
+            self.queue_write_policy,
+            operation,
+        )
     }
 
     pub(super) fn maybe_sweep_idle_actors(&mut self) {
         let now = Instant::now();
 
-        {
-            let next_idle_sweep_at = &mut self.next_idle_sweep_at;
-            if now < *next_idle_sweep_at {
-                return;
-            }
-            *next_idle_sweep_at = now + QUEUE_IDLE_SWEEP_INTERVAL;
+        if !self.maintenance_clock.idle_sweep_due(now) {
+            return;
         }
 
         self.sweep_idle_actors_at(now);
@@ -290,15 +223,13 @@ impl QueueFamilyState {
         let mut removed_keys = Vec::new();
         let mut empty_removed_keys = Vec::new();
         let mut dirty_families = HashSet::new();
-        let sweep_keys = {
-            let idle_sweep_keys = &mut self.idle_sweep_keys;
-            let count = idle_sweep_keys.len().min(QUEUE_IDLE_SWEEP_BATCH_SIZE);
-            idle_sweep_keys.drain(..count).collect::<Vec<_>>()
-        };
+        let sweep_keys = self
+            .actor_registry
+            .take_idle_sweep_batch(QUEUE_IDLE_SWEEP_BATCH_SIZE);
 
         for key in sweep_keys {
             let (last_used, counts, due_work_changed) = {
-                let Some(warm_actor) = self.actors.get_mut(&key) else {
+                let Some(warm_actor) = self.actor_registry.get_mut(&key) else {
                     continue;
                 };
                 let last_used = warm_actor.last_used;
@@ -319,11 +250,11 @@ impl QueueFamilyState {
             let should_keep =
                 idle_for < QUEUE_ACTOR_IDLE_TTL || counts.delayed > 0 || counts.inflight > 0;
             if should_keep {
-                self.idle_sweep_keys.push_back(key);
+                self.actor_registry.requeue_idle_key(key);
                 continue;
             }
 
-            let removed = self.actors.remove(&key).is_some();
+            let removed = self.actor_registry.remove(&key).is_some();
             if removed {
                 changed = true;
                 removed_keys.push(key.clone());
@@ -331,7 +262,7 @@ impl QueueFamilyState {
                     empty_removed_keys.push(key);
                 }
             } else {
-                self.idle_sweep_keys.push_back(key);
+                self.actor_registry.requeue_idle_key(key);
             }
         }
 
@@ -342,9 +273,8 @@ impl QueueFamilyState {
             }
         }
         if !empty_removed_keys.is_empty() {
-            let known_queue_keys = &mut self.known_queue_keys;
             for key in empty_removed_keys {
-                known_queue_keys.remove(&key);
+                self.reservation_book.remove_key(&key);
             }
         }
         for family in dirty_families {
@@ -381,9 +311,9 @@ impl QueueFamilyState {
         }
 
         if created_actor && counts.total() == 0 {
-            self.actors.remove(key);
+            self.actor_registry.remove(key);
             self.ready_states.remove(key);
-            self.known_queue_keys.remove(key);
+            self.reservation_book.remove_key(key);
             self.mark_admin_snapshot_dirty();
         }
 
@@ -411,9 +341,9 @@ impl QueueFamilyState {
         }
 
         if created_actor && counts.total() == 0 {
-            self.actors.remove(key);
+            self.actor_registry.remove(key);
             self.ready_states.remove(key);
-            self.known_queue_keys.remove(key);
+            self.reservation_book.remove_key(key);
             self.mark_admin_snapshot_dirty();
         }
 

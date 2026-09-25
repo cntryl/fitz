@@ -182,6 +182,7 @@ fn should_not_wake_parked_reserve_during_queue_admin_refresh() {
 
     // Assert
     assert!(consumer_mailbox.receiver().try_recv().is_err());
-    let pending = sink.inspect_family_for_tests(family, |state| state.pending_reserves.len());
+    let pending =
+        sink.inspect_family_for_tests(family, |state| state.reservation_book.pending_count());
     assert_eq!(pending, 1);
 }

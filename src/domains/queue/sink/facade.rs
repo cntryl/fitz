@@ -1,13 +1,15 @@
+#[cfg(test)]
+use super::model::QUEUE_ACTOR_IDLE_TTL;
 use super::model::{
     QueueDomain, QueueDomainCommand, QueueDomainConfig, QueueFamilyRuntime, QueueFamilyState,
     QueueLiveCounts,
 };
-#[cfg(test)]
-use super::model::{WarmQueueActor, QUEUE_ACTOR_IDLE_TTL};
+use super::reservation_book::ReservationBook;
+use super::{actor_registry::QueueActorRegistry, maintenance_clock::QueueMaintenanceClock};
 use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
 use crate::domains::queue::{projection::QueueAdminProjection, QueueMetrics};
 use crate::runtime::Router;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -29,23 +31,22 @@ impl QueueFamilyState {
             store: config.store.clone(),
             queue_write_policy: config.queue_write_policy,
             dedup_store: config.dedup_store.clone(),
-            actors: HashMap::new(),
-            idle_sweep_keys: VecDeque::new(),
-            known_queue_keys: config
-                .known_queue_keys
-                .iter()
-                .filter(|key| key.family == family)
-                .cloned()
-                .collect(),
-            inventory_error: config.inventory_error.clone(),
-            wildcard_reserve_sequence: AtomicU64::new(0),
+            actor_registry: QueueActorRegistry::default(),
+            reservation_book: ReservationBook::new(
+                config
+                    .known_queue_keys
+                    .iter()
+                    .filter(|key| key.family == family)
+                    .cloned()
+                    .collect(),
+                config.inventory_error.clone(),
+            ),
             families: HashMap::new(),
             cleaned_up_sessions: crate::runtime::CleanedUpSessions::new(
                 crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
             ),
             next_sub_id: AtomicU64::new(1),
             ready_states: HashMap::new(),
-            pending_reserves: VecDeque::new(),
             router: config.router.clone(),
             projection: config.projection.clone(),
             metrics: config.metrics.clone(),
@@ -53,13 +54,11 @@ impl QueueFamilyState {
             runtime_sweep_pending: config.runtime_sweep_pending[&family.id()].clone(),
             #[cfg(test)]
             panic_next_runtime_sweep: AtomicBool::new(false),
-            next_idle_sweep_at: Instant::now(),
-            next_dedup_sweep_at: Instant::now(),
+            maintenance_clock: QueueMaintenanceClock::new(
+                Instant::now(),
+                config.fast_flush_interval,
+            ),
             dirty_fast_flush_families: HashSet::new(),
-            fast_flush_interval: config.fast_flush_interval,
-            next_fast_flush_at: config
-                .fast_flush_interval
-                .map_or_else(Instant::now, |interval| Instant::now() + interval),
         }
     }
 }
@@ -311,7 +310,7 @@ impl QueueDomain {
         for family in &self.route_families {
             let error = error.clone();
             self.inspect_family_for_tests(*family, move |state| {
-                state.inventory_error = Some(error);
+                state.reservation_book.set_inventory_error(error);
             });
         }
     }
@@ -335,15 +334,17 @@ impl QueueDomain {
     pub(super) fn actor_count_for_tests(&self) -> usize {
         self.route_families
             .iter()
-            .map(|family| self.inspect_family_for_tests(*family, |state| state.actors.len()))
+            .map(|family| {
+                self.inspect_family_for_tests(*family, |state| state.actor_registry.len())
+            })
             .sum()
     }
 
     #[cfg(test)]
     pub(super) fn actors_are_empty_for_tests(&self) -> bool {
-        self.route_families
-            .iter()
-            .all(|family| self.inspect_family_for_tests(*family, |state| state.actors.is_empty()))
+        self.route_families.iter().all(|family| {
+            self.inspect_family_for_tests(*family, |state| state.actor_registry.is_empty())
+        })
     }
 
     #[cfg(test)]
@@ -351,7 +352,9 @@ impl QueueDomain {
         self.route_families
             .iter()
             .map(|family| {
-                self.inspect_family_for_tests(*family, |state| state.known_queue_keys.len())
+                self.inspect_family_for_tests(*family, |state| {
+                    state.reservation_book.known_key_count()
+                })
             })
             .sum()
     }
@@ -363,7 +366,7 @@ impl QueueDomain {
     ) -> bool {
         let key = key.clone();
         self.inspect_family_for_tests(key.family, move |state| {
-            state.known_queue_keys.contains(&key)
+            state.reservation_book.contains_key(&key)
         })
     }
 
@@ -374,15 +377,8 @@ impl QueueDomain {
         actor: crate::domains::queue::QueueActor,
     ) {
         self.inspect_family_for_tests(key.family, move |state| {
-            state.known_queue_keys.insert(key.clone());
-            state.actors.insert(
-                key.clone(),
-                WarmQueueActor {
-                    actor,
-                    last_used: Instant::now(),
-                },
-            );
-            state.idle_sweep_keys.push_back(key);
+            state.reservation_book.insert_key(key.clone());
+            state.actor_registry.insert_for_tests(key, actor);
         });
     }
 
@@ -398,7 +394,12 @@ impl QueueDomain {
         )
         .expect("queue key");
         self.inspect_family_for_tests(family, move |state| {
-            state.actors[&key].actor.admin_snapshot()
+            state
+                .actor_registry
+                .get_mut(&key)
+                .expect("warm queue actor")
+                .actor
+                .admin_snapshot()
         })
     }
 
@@ -414,7 +415,10 @@ impl QueueDomain {
         )
         .expect("queue key");
         self.inspect_family_for_tests(family, move |state| {
-            let warm_actor = state.actors.get_mut(&key).expect("warm queue actor");
+            let warm_actor = state
+                .actor_registry
+                .get_mut(&key)
+                .expect("warm queue actor");
             warm_actor.last_used = Instant::now()
                 .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
                 .expect("idle deadline should remain representable");
@@ -465,7 +469,9 @@ impl QueueDomain {
     #[cfg(test)]
     pub(super) fn set_next_dedup_sweep_at_for_tests(&self, now: Instant) {
         for family in &self.route_families {
-            self.inspect_family_for_tests(*family, move |state| state.next_dedup_sweep_at = now);
+            self.inspect_family_for_tests(*family, move |state| {
+                state.maintenance_clock.set_next_dedup_sweep_at(now);
+            });
         }
     }
 
