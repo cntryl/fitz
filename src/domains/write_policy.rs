@@ -21,7 +21,7 @@ impl WritePolicy {
     /// data committed under `self`: cloud policies keep cloud persistence
     /// asynchronously, local policies buffer the WAL.
     #[must_use]
-    pub const fn buffered_companion(self) -> Self {
+    pub(crate) const fn buffered_companion(self) -> Self {
         match self {
             Self::CloudAsync | Self::CloudStrict => Self::CloudAsync,
             Self::Sync | Self::Buffered | Self::BestEffort => Self::Buffered,
