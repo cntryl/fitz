@@ -97,10 +97,7 @@ pub(super) fn parse_provisioned_family_scope(
 }
 
 pub(super) fn is_admin_domain_scheme(value: &str) -> bool {
-    matches!(
-        value,
-        "kv" | "queue" | "stream" | "lease" | "schedule" | "notice" | "rpc"
-    )
+    crate::runtime::DomainKind::from_scheme(value).is_some()
 }
 
 pub(super) fn parse_family_scope(

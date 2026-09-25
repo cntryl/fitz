@@ -656,3 +656,63 @@ fn should_keep_domain_metric_keys_out_of_admin_transport() {
         "admin must read domain metric snapshots, not domain metric keys: {offenders:?}"
     );
 }
+
+#[test]
+fn should_keep_per_domain_tables_free_of_positional_and_message_id_quirks() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = Vec::new();
+    for directory in [
+        "src/api",
+        "src/runtime",
+        "src/dispatch",
+        "src/boot",
+        "src/protocol",
+    ] {
+        sources.extend(production_sources_under(workspace, directory));
+    }
+    let quirks = [
+        "DOMAIN_DESCRIPTORS[0]",
+        "DOMAIN_DESCRIPTORS[6]",
+        "(DispatchDomain::Schedule,703",
+        "msg_type.as_u16()==302",
+        "msg_type.as_u16()!=706",
+    ];
+
+    // Act
+    let offenders = sources
+        .iter()
+        .filter_map(|(path, source)| {
+            let flat: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+            let mut found = quirks
+                .iter()
+                .filter(|quirk| flat.contains(*quirk))
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            // A `"kv" =>` match arm (after `{`, `,` or `}`) is a per-domain
+            // table keyed by scheme string; `scheme == "kv" =>` guards are not.
+            let schemes = [
+                "kv", "queue", "notice", "stream", "rpc", "lease", "schedule",
+            ];
+            let lists_every_scheme_as_arm = schemes.iter().all(|scheme| {
+                let quoted = format!("\"{scheme}\"");
+                let as_arm = ["{", ",", "}", "|"].iter().any(|before| {
+                    ["=>", "|"]
+                        .iter()
+                        .any(|after| flat.contains(&format!("{before}{quoted}{after}")))
+                });
+                as_arm || flat.contains(&format!("|{quoted})"))
+            });
+            if lists_every_scheme_as_arm {
+                found.push("scheme-string match arm".to_string());
+            }
+            (!found.is_empty()).then(|| format!("{path}: {found:?}"))
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "per-domain facts belong in DomainDescriptor / IngressDomainDescriptor: {offenders:?}"
+    );
+}

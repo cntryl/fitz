@@ -631,15 +631,29 @@ pub fn handle_family_troubleshooting(_runtime: &Runtime, _family: u64) -> Respon
 pub fn handle_domain_stats(runtime: &Runtime, domain: &str, family: Option<u64>) -> Response {
     if let Some(family) = family {
         let stats = build_family_stats(runtime, family);
-        return match domain {
-            "kv" => crate::api::admin::json_response(stats.domains.kv),
-            "stream" => crate::api::admin::json_response(stats.domains.stream),
-            "notice" => crate::api::admin::json_response(stats.domains.notice),
-            "queue" => crate::api::admin::json_response(stats.domains.queue),
-            "rpc" => crate::api::admin::json_response(stats.domains.rpc),
-            "lease" => crate::api::admin::json_response(stats.domains.lease),
-            "schedule" => crate::api::admin::json_response(stats.domains.schedule),
-            _ => crate::api::admin::not_found(),
+        return match crate::runtime::DomainKind::from_scheme(domain) {
+            Some(crate::runtime::DomainKind::Kv) => {
+                crate::api::admin::json_response(stats.domains.kv)
+            }
+            Some(crate::runtime::DomainKind::Stream) => {
+                crate::api::admin::json_response(stats.domains.stream)
+            }
+            Some(crate::runtime::DomainKind::Notice) => {
+                crate::api::admin::json_response(stats.domains.notice)
+            }
+            Some(crate::runtime::DomainKind::Queue) => {
+                crate::api::admin::json_response(stats.domains.queue)
+            }
+            Some(crate::runtime::DomainKind::Rpc) => {
+                crate::api::admin::json_response(stats.domains.rpc)
+            }
+            Some(crate::runtime::DomainKind::Lease) => {
+                crate::api::admin::json_response(stats.domains.lease)
+            }
+            Some(crate::runtime::DomainKind::Schedule) => {
+                crate::api::admin::json_response(stats.domains.schedule)
+            }
+            None => crate::api::admin::not_found(),
         };
     }
 
@@ -653,15 +667,15 @@ pub fn handle_domain_stats(runtime: &Runtime, domain: &str, family: Option<u64>)
         schedule,
         ..
     } = troubleshooting::build_troubleshooting_snapshot(runtime);
-    match domain {
-        "kv" => handle_kv_stats(runtime, kv),
-        "stream" => handle_stream_stats(runtime, stream),
-        "notice" => handle_notice_stats(runtime, notice),
-        "queue" => handle_queue_stats(runtime, queue),
-        "rpc" => handle_rpc_stats(runtime, rpc),
-        "lease" => handle_lease_stats(runtime, lease),
-        "schedule" => handle_schedule_stats(runtime, schedule),
-        _ => crate::api::admin::not_found(),
+    match crate::runtime::DomainKind::from_scheme(domain) {
+        Some(crate::runtime::DomainKind::Kv) => handle_kv_stats(runtime, kv),
+        Some(crate::runtime::DomainKind::Stream) => handle_stream_stats(runtime, stream),
+        Some(crate::runtime::DomainKind::Notice) => handle_notice_stats(runtime, notice),
+        Some(crate::runtime::DomainKind::Queue) => handle_queue_stats(runtime, queue),
+        Some(crate::runtime::DomainKind::Rpc) => handle_rpc_stats(runtime, rpc),
+        Some(crate::runtime::DomainKind::Lease) => handle_lease_stats(runtime, lease),
+        Some(crate::runtime::DomainKind::Schedule) => handle_schedule_stats(runtime, schedule),
+        None => crate::api::admin::not_found(),
     }
 }
 

@@ -113,20 +113,26 @@ pub(super) fn handle_resource_detail(
         resource,
     };
 
-    match scheme {
-        "kv" => super::json_response(list::kv_detail(runtime.as_ref(), &path, queue_family)),
-        "queue" => super::json_response(list::queue_detail(runtime.as_ref(), &path, queue_family)),
-        "stream" => {
+    match crate::runtime::DomainKind::from_scheme(scheme) {
+        Some(crate::runtime::DomainKind::Kv) => {
+            super::json_response(list::kv_detail(runtime.as_ref(), &path, queue_family))
+        }
+        Some(crate::runtime::DomainKind::Queue) => {
+            super::json_response(list::queue_detail(runtime.as_ref(), &path, queue_family))
+        }
+        Some(crate::runtime::DomainKind::Stream) => {
             super::json_response(list::stream_detail(runtime.as_ref(), &path, queue_family))
         }
-        "lease" => super::json_response(list::lease_detail(runtime.as_ref(), &path, queue_family)),
-        "schedule" => {
+        Some(crate::runtime::DomainKind::Lease) => {
+            super::json_response(list::lease_detail(runtime.as_ref(), &path, queue_family))
+        }
+        Some(crate::runtime::DomainKind::Schedule) => {
             super::json_response(list::schedule_detail(runtime.as_ref(), &path, queue_family))
         }
-        "notice" => {
+        Some(crate::runtime::DomainKind::Notice) => {
             super::json_response(list::notice_detail(runtime.as_ref(), &path, queue_family))
         }
-        "rpc" => super::json_response(list::OperationCollection {
+        Some(crate::runtime::DomainKind::Rpc) => super::json_response(list::OperationCollection {
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
@@ -134,7 +140,7 @@ pub(super) fn handle_resource_detail(
             requests_pending: 0,
             operations: vec![],
         }),
-        _ => super::not_found(),
+        None => super::not_found(),
     }
 }
 
@@ -143,15 +149,15 @@ pub(super) fn resources_for_scheme(
     runtime: &Runtime,
     family: Option<u64>,
 ) -> Vec<list::ResourceRef> {
-    match scheme {
-        "kv" => list::kv_resources(runtime, family),
-        "queue" => list::queue_resources(runtime, family),
-        "stream" => list::stream_resources(runtime, family),
-        "lease" => list::lease_resources(runtime, family),
-        "schedule" => list::schedule_resources(runtime, family),
-        "notice" => list::notice_resources(runtime, family),
-        "rpc" => list::rpc_resources(runtime, family),
-        _ => vec![],
+    match crate::runtime::DomainKind::from_scheme(scheme) {
+        Some(crate::runtime::DomainKind::Kv) => list::kv_resources(runtime, family),
+        Some(crate::runtime::DomainKind::Queue) => list::queue_resources(runtime, family),
+        Some(crate::runtime::DomainKind::Stream) => list::stream_resources(runtime, family),
+        Some(crate::runtime::DomainKind::Lease) => list::lease_resources(runtime, family),
+        Some(crate::runtime::DomainKind::Schedule) => list::schedule_resources(runtime, family),
+        Some(crate::runtime::DomainKind::Notice) => list::notice_resources(runtime, family),
+        Some(crate::runtime::DomainKind::Rpc) => list::rpc_resources(runtime, family),
+        None => vec![],
     }
 }
 

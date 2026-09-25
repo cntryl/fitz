@@ -489,15 +489,29 @@ fn handle_resource_events(
         resource,
     };
 
-    match scheme {
-        "kv" => list::kv_events_for_resource(runtime.as_ref(), &path, family, limit),
-        "queue" => list::queue_events_for_resource(runtime.as_ref(), &path, family, limit),
-        "stream" => list::stream_events_for_resource(runtime.as_ref(), &path, family, limit),
-        "lease" => list::lease_events_for_resource(runtime.as_ref(), &path, family, limit),
-        "schedule" => list::schedule_events_for_resource(runtime.as_ref(), &path, family, limit),
-        "notice" => list::notice_events_for_resource(runtime.as_ref(), &path, family, limit),
-        "rpc" => list::rpc_events_for_resource(runtime.as_ref(), &path, family, limit),
-        _ => not_found(),
+    match crate::runtime::DomainKind::from_scheme(scheme) {
+        Some(crate::runtime::DomainKind::Kv) => {
+            list::kv_events_for_resource(runtime.as_ref(), &path, family, limit)
+        }
+        Some(crate::runtime::DomainKind::Queue) => {
+            list::queue_events_for_resource(runtime.as_ref(), &path, family, limit)
+        }
+        Some(crate::runtime::DomainKind::Stream) => {
+            list::stream_events_for_resource(runtime.as_ref(), &path, family, limit)
+        }
+        Some(crate::runtime::DomainKind::Lease) => {
+            list::lease_events_for_resource(runtime.as_ref(), &path, family, limit)
+        }
+        Some(crate::runtime::DomainKind::Schedule) => {
+            list::schedule_events_for_resource(runtime.as_ref(), &path, family, limit)
+        }
+        Some(crate::runtime::DomainKind::Notice) => {
+            list::notice_events_for_resource(runtime.as_ref(), &path, family, limit)
+        }
+        Some(crate::runtime::DomainKind::Rpc) => {
+            list::rpc_events_for_resource(runtime.as_ref(), &path, family, limit)
+        }
+        None => not_found(),
     }
 }
 
@@ -600,57 +614,57 @@ fn handle_resource_compare(
         resource: &against_resource,
     };
 
-    let comparison = match scheme {
-        "kv" => list::kv_compare_detail(
+    let comparison = match crate::runtime::DomainKind::from_scheme(scheme) {
+        Some(crate::runtime::DomainKind::Kv) => list::kv_compare_detail(
             runtime.as_ref(),
             path,
             family,
             &against_path,
             against_family,
         ),
-        "queue" => list::queue_compare_detail(
+        Some(crate::runtime::DomainKind::Queue) => list::queue_compare_detail(
             runtime.as_ref(),
             path,
             family,
             &against_path,
             against_family,
         ),
-        "stream" => list::stream_compare_detail(
+        Some(crate::runtime::DomainKind::Stream) => list::stream_compare_detail(
             runtime.as_ref(),
             path,
             family,
             &against_path,
             against_family,
         ),
-        "lease" => list::lease_compare_detail(
+        Some(crate::runtime::DomainKind::Lease) => list::lease_compare_detail(
             runtime.as_ref(),
             path,
             family,
             &against_path,
             against_family,
         ),
-        "schedule" => list::schedule_compare_detail(
+        Some(crate::runtime::DomainKind::Schedule) => list::schedule_compare_detail(
             runtime.as_ref(),
             path,
             family,
             &against_path,
             against_family,
         ),
-        "notice" => list::notice_compare_detail(
+        Some(crate::runtime::DomainKind::Notice) => list::notice_compare_detail(
             runtime.as_ref(),
             path,
             family,
             &against_path,
             against_family,
         ),
-        "rpc" => list::rpc_compare_detail(
+        Some(crate::runtime::DomainKind::Rpc) => list::rpc_compare_detail(
             runtime.as_ref(),
             path,
             family,
             &against_path,
             against_family,
         ),
-        _ => return not_found(),
+        None => return not_found(),
     };
 
     json_response(comparison)
