@@ -8,8 +8,23 @@ use super::model::ScheduleRunNowError;
 ///
 /// Returns [`ScheduleRunNowError::InvalidRoute`] with the grammar violation.
 pub(crate) fn validate_run_now_route(route: &str) -> Result<(), ScheduleRunNowError> {
-    crate::domains::schedule::protocol::validate_concrete_schedule_route(route)
-        .map_err(ScheduleRunNowError::InvalidRoute)
+    let parsed = crate::domains::schedule::protocol::parse_concrete_schedule_route(route)
+        .map_err(ScheduleRunNowError::InvalidRoute)?;
+    if [
+        parsed.realm.as_str(),
+        parsed.area.as_str(),
+        parsed.resource.as_str(),
+        parsed.operation.as_str(),
+    ]
+    .iter()
+    .any(|segment| segment.trim().is_empty())
+    {
+        return Err(ScheduleRunNowError::InvalidRoute(
+            "schedule route segments must not be whitespace-only".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -31,6 +46,27 @@ mod tests {
                 "schedule route must not contain wildcards".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn should_reject_whitespace_only_run_now_route_segments_as_invalid() {
+        // Arrange
+        let routes = [
+            "schedule:// /jobs/resource/send",
+            "schedule://prod/ /resource/send",
+            "schedule://prod/jobs/ /send",
+            "schedule://prod/jobs/resource/ ",
+        ];
+
+        // Act
+        let results = routes.map(validate_run_now_route);
+
+        // Assert
+        assert!(results.iter().all(|result| matches!(
+            result,
+            Err(ScheduleRunNowError::InvalidRoute(message))
+                if message == "schedule route segments must not be whitespace-only"
+        )));
     }
 
     #[test]

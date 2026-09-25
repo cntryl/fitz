@@ -142,6 +142,23 @@ fn should_parse_concrete_schedule_route_given_valid_route() {
 }
 
 #[test]
+fn should_preserve_whitespace_only_schedule_route_segments_for_wire_compatibility() {
+    // Arrange
+    let input = "schedule://acme/billing/ /send";
+
+    // Act
+    let route = parse_concrete_schedule_route(input);
+
+    // Assert
+    assert_eq!(
+        route
+            .expect("wire route acceptance remains unchanged")
+            .resource,
+        " "
+    );
+}
+
+#[test]
 fn should_reject_concrete_schedule_route_given_missing_operation() {
     // Arrange
     let input = "schedule://acme/billing/invoice";
