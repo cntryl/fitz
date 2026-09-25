@@ -278,21 +278,25 @@ impl RpcFamilyRuntime<'_> {
                 worker.average_latency_ms(),
             ))
         }));
-        pending.extend(state.queued.iter().map(|(correlation_key, queued)| {
-            crate::control::admin::RpcPendingRequest::snapshot(
-                queued.caller_inbox_addr.family().as_u64(),
-                &correlation_key.correlation_id,
-                queued.request.route.as_str(),
-                &queued.submitted_at_rfc3339(),
-                queued.age_seconds(snapshot_now),
-                None,
-            )
-        }));
         pending.extend(
             state
                 .pending
+                .iter_queued()
+                .map(|(correlation_key, queued)| {
+                    crate::control::admin::RpcPendingRequest::snapshot(
+                        queued.caller_inbox_addr.family().as_u64(),
+                        &correlation_key.correlation_id,
+                        queued.request.route.as_str(),
+                        &queued.submitted_at_rfc3339(),
+                        queued.age_seconds(snapshot_now),
+                        None,
+                    )
+                }),
+        );
+        pending.extend(
+            state
                 .pending
-                .iter()
+                .iter_pending()
                 .map(|(correlation_key, pending)| {
                     crate::control::admin::RpcPendingRequest::snapshot(
                         pending.worker_addr.family().as_u64(),
