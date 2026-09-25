@@ -60,8 +60,8 @@ impl<'a> DomainErrorFrame<'a> {
             domain: dispatch.domain,
             router: dispatch.router,
             correlation: dispatch.correlation,
-            rpc_request_id: if dispatch.domain == DispatchDomain::Rpc
-                && dispatch.msg_type.as_u16() == 302
+            rpc_request_id: if crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(dispatch.domain)
+                .answers_with_terminal_reply(dispatch.msg_type.as_u16())
             {
                 crate::protocol::rpc_codec::extract_request_correlation_id(
                     dispatch.payload.as_bytes(),
@@ -258,7 +258,9 @@ impl DomainFrameDispatcher {
     ) -> Result<(), IngressDecision> {
         self.send_domain_error_frame(
             DomainErrorFrame::for_dispatch(dispatch),
-            if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
+            if crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(dispatch.domain)
+                .answers_with_terminal_reply(dispatch.msg_type.as_u16())
+            {
                 rpc_submit_code
             } else {
                 domain_code
@@ -330,8 +332,8 @@ impl DomainFrameDispatcher {
             correlation,
             rpc_request_id,
         } = frame;
-        let (response_type, payload, frame_correlation) = if domain == DispatchDomain::Rpc
-            && msg_type.as_u16() == 302
+        let (response_type, payload, frame_correlation) = if crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(domain)
+            .answers_with_terminal_reply(msg_type.as_u16())
         {
             let Some(request_id) = rpc_request_id else {
                 return Err(IngressDecision::Close(
@@ -665,7 +667,9 @@ impl DomainFrameDispatcher {
                     domain = dispatch.domain.as_str(),
                     "Ingress: failed to derive route for authorization"
                 );
-                if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
+                if crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(dispatch.domain)
+                    .answers_with_terminal_reply(dispatch.msg_type.as_u16())
+                {
                     return self.send_domain_error_frame(
                         DomainErrorFrame::for_dispatch(&dispatch),
                         crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
@@ -748,7 +752,7 @@ impl DomainFrameDispatcher {
                 Ok((AuthorizationTargets::Single(route), access))
             }
             AuthorizationPolicy::MultiRouteScoped(access) => {
-                if domain != DispatchDomain::Schedule || msg_type.as_u16() != 706 {
+                if !crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(domain).is_multi_route(msg_type.as_u16()) {
                     return Err(
                         "multi-route authorization is only supported for schedule batch create"
                             .to_string(),

@@ -112,31 +112,17 @@ pub(super) fn is_pattern_authorization_target(
     target: &str,
 ) -> bool {
     is_subscription_registration_message(domain, msg_type)
-        || (matches!(
-            (domain, msg_type),
-            (DispatchDomain::Queue, 202) | (DispatchDomain::Stream, 604)
-        ) && target.contains('*'))
+        || (ingress_descriptor(domain).is_wildcard_selector(msg_type) && target.contains('*'))
 }
 
-/// Message types whose route is a pattern rather than an exact route: a
-/// retained registration (`SUBSCRIBE`/`UNSUBSCRIBE`/`WATCH`/`REGISTER`) or a
-/// one-shot patterned read (Lease `LIST`). Both need the same compile +
-/// containment treatment so authorization cannot accept a selector the sink
-/// would interpret differently (routing-design.md §4).
-///
-/// This table is message-type routing, not domain policy: the grammar each
-/// pattern must satisfy comes from the domain descriptor.
 fn is_subscription_registration(domain: DispatchDomain, msg_type: u16) -> bool {
-    matches!(
-        (domain, msg_type),
-        (DispatchDomain::Kv, 109 | 110)
-            | (DispatchDomain::Queue, 207 | 208)
-            | (DispatchDomain::Stream, 607 | 608)
-            | (DispatchDomain::Lease, 407 | 408 | 410)
-            | (DispatchDomain::Schedule, 703 | 704)
-            | (DispatchDomain::Notice, 501)
-            | (DispatchDomain::Rpc, 300 | 301)
-    )
+    ingress_descriptor(domain).is_pattern_registration(msg_type)
+}
+
+fn ingress_descriptor(
+    domain: DispatchDomain,
+) -> &'static crate::api::runtime_ingress::domain_registry::IngressDomainDescriptor {
+    crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(domain)
 }
 
 pub(super) enum AuthorizationTargets<'a> {

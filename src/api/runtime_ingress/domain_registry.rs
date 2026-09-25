@@ -41,6 +41,17 @@ pub(crate) struct IngressDomainDescriptor {
     extract_auth_route: AuthRouteExtractor,
     canonical_auth_route: AuthRouteCanonicalizer,
     build_request_envelope: RequestEnvelopeBuilder,
+    /// Messages whose route is a retained registration pattern
+    /// (`SUBSCRIBE`/`UNSUBSCRIBE`/`WATCH`/`REGISTER`) or a one-shot patterned
+    /// read (Lease `LIST`); authorization compiles them as patterns.
+    pattern_registration_message_ids: &'static [u16],
+    /// Messages whose route is a pattern only when it carries a wildcard.
+    wildcard_selector_message_ids: &'static [u16],
+    /// Messages authorized against every route in a batch payload.
+    multi_route_message_ids: &'static [u16],
+    /// Messages with no success ACK whose broker-synthesized failures are
+    /// answered as a terminal reply keyed by the request's own id.
+    terminal_reply_message_ids: &'static [u16],
 }
 
 /// API-edge policy lookup keyed by the canonical [`DomainKind`] inventory.
@@ -76,6 +87,22 @@ impl IngressDomainDescriptor {
         (self.canonical_auth_route)(route)
     }
 
+    pub(super) fn is_pattern_registration(&self, msg_type: u16) -> bool {
+        self.pattern_registration_message_ids.contains(&msg_type)
+    }
+
+    pub(super) fn is_wildcard_selector(&self, msg_type: u16) -> bool {
+        self.wildcard_selector_message_ids.contains(&msg_type)
+    }
+
+    pub(super) fn is_multi_route(&self, msg_type: u16) -> bool {
+        self.multi_route_message_ids.contains(&msg_type)
+    }
+
+    pub(super) fn answers_with_terminal_reply(&self, msg_type: u16) -> bool {
+        self.terminal_reply_message_ids.contains(&msg_type)
+    }
+
     pub(crate) fn build_request_envelope(
         &self,
         request: DomainEnvelopeBuildRequest,
@@ -87,21 +114,13 @@ impl IngressDomainDescriptor {
 impl IngressDomainPolicy {
     #[cfg(test)]
     pub(super) fn all() -> &'static [IngressDomainDescriptor; 7] {
-        &INGRESS_DOMAIN_DESCRIPTORS
+        INGRESS_DOMAIN_DESCRIPTORS
     }
 
     pub(super) fn descriptor_for_domain(
         domain: DispatchDomain,
     ) -> &'static IngressDomainDescriptor {
-        match domain {
-            DispatchDomain::Kv => &INGRESS_DOMAIN_DESCRIPTORS[0],
-            DispatchDomain::Queue => &INGRESS_DOMAIN_DESCRIPTORS[1],
-            DispatchDomain::Notice => &INGRESS_DOMAIN_DESCRIPTORS[2],
-            DispatchDomain::Stream => &INGRESS_DOMAIN_DESCRIPTORS[3],
-            DispatchDomain::Rpc => &INGRESS_DOMAIN_DESCRIPTORS[4],
-            DispatchDomain::Lease => &INGRESS_DOMAIN_DESCRIPTORS[5],
-            DispatchDomain::Schedule => &INGRESS_DOMAIN_DESCRIPTORS[6],
-        }
+        &INGRESS_DOMAIN_DESCRIPTORS[domain.index()]
     }
 
     pub(super) fn dispatch_spec_for_msg_type(
@@ -140,7 +159,7 @@ impl IngressDomainPolicy {
     }
 }
 
-static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
+const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Kv.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::kv::ERR_UNAUTHORIZED,
@@ -149,6 +168,10 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         extract_auth_route: crate::protocol::kv_codec::extract_auth_route,
         canonical_auth_route: crate::domains::kv::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[109, 110],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Queue.descriptor(),
@@ -158,6 +181,10 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
         canonical_auth_route: crate::domains::queue::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[207, 208],
+        wildcard_selector_message_ids: &[202],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Notice.descriptor(),
@@ -167,6 +194,10 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         extract_auth_route: crate::protocol::notice_codec::extract_auth_route,
         canonical_auth_route: crate::domains::notice::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[501],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Stream.descriptor(),
@@ -176,6 +207,10 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         extract_auth_route: crate::protocol::stream_codec::extract_auth_route,
         canonical_auth_route: crate::domains::stream::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[607, 608],
+        wildcard_selector_message_ids: &[604],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Rpc.descriptor(),
@@ -185,6 +220,10 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
         canonical_auth_route: crate::domains::rpc::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[300, 301],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[302],
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Lease.descriptor(),
@@ -194,6 +233,10 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
         canonical_auth_route: crate::domains::lease::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[407, 408, 410],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Schedule.descriptor(),
@@ -203,8 +246,20 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
         canonical_auth_route: crate::domains::schedule::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[703, 704],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[706],
+        terminal_reply_message_ids: &[],
     },
 ];
+
+const _: () = {
+    let mut index = 0;
+    while index < INGRESS_DOMAIN_DESCRIPTORS.len() {
+        assert!(INGRESS_DOMAIN_DESCRIPTORS[index].manifest.kind as usize == index);
+        index += 1;
+    }
+};
 
 fn manifest_authorization_policy(
     authorization: crate::protocol::manifest::ManifestAuthorization,

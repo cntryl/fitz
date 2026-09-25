@@ -613,20 +613,32 @@ fn build_resource_detail_value(
         resource: &request.resource,
     };
 
-    match request.scheme.as_str() {
-        "kv" => serialize_tool_output(tool_name, kv_detail(runtime, &path, None)),
-        "queue" => serialize_tool_output(
+    match crate::runtime::DomainKind::from_scheme(&request.scheme) {
+        Some(crate::runtime::DomainKind::Kv) => {
+            serialize_tool_output(tool_name, kv_detail(runtime, &path, None))
+        }
+        Some(crate::runtime::DomainKind::Queue) => serialize_tool_output(
             tool_name,
             queue_detail(runtime, &path, request.queue_family),
         ),
-        "stream" => serialize_tool_output(tool_name, stream_detail(runtime, &path, None)),
-        "lease" => serialize_tool_output(tool_name, lease_detail(runtime, &path, None)),
-        "schedule" => serialize_tool_output(tool_name, schedule_detail(runtime, &path, None)),
-        "notice" => serialize_tool_output(tool_name, notice_detail(runtime, &path, None)),
-        "rpc" => serialize_tool_output(tool_name, rpc_operations(runtime, &path, None)),
-        other => Err(McpToolError::InvalidArguments {
+        Some(crate::runtime::DomainKind::Stream) => {
+            serialize_tool_output(tool_name, stream_detail(runtime, &path, None))
+        }
+        Some(crate::runtime::DomainKind::Lease) => {
+            serialize_tool_output(tool_name, lease_detail(runtime, &path, None))
+        }
+        Some(crate::runtime::DomainKind::Schedule) => {
+            serialize_tool_output(tool_name, schedule_detail(runtime, &path, None))
+        }
+        Some(crate::runtime::DomainKind::Notice) => {
+            serialize_tool_output(tool_name, notice_detail(runtime, &path, None))
+        }
+        Some(crate::runtime::DomainKind::Rpc) => {
+            serialize_tool_output(tool_name, rpc_operations(runtime, &path, None))
+        }
+        None => Err(McpToolError::InvalidArguments {
             tool_name: tool_name.to_string(),
-            reason: format!("unsupported resource scheme: {other}"),
+            reason: format!("unsupported resource scheme: {}", request.scheme),
         }),
     }
 }
@@ -654,12 +666,12 @@ fn build_resource_timeline_value(
     };
     let read_model = runtime.admin_read_model();
 
-    match request.scheme.as_str() {
-        "kv" => serialize_tool_output(
+    match crate::runtime::DomainKind::from_scheme(&request.scheme) {
+        Some(crate::runtime::DomainKind::Kv) => serialize_tool_output(
             tool_name,
             kv_resource_timeline(&read_model.kv_transactions(None), &path, limit),
         ),
-        "queue" => serialize_tool_output(
+        Some(crate::runtime::DomainKind::Queue) => serialize_tool_output(
             tool_name,
             queue_resource_timeline(
                 &read_model.queues(None),
@@ -670,15 +682,15 @@ fn build_resource_timeline_value(
                 limit,
             ),
         ),
-        "stream" => serialize_tool_output(
+        Some(crate::runtime::DomainKind::Stream) => serialize_tool_output(
             tool_name,
             stream_resource_timeline(&read_model.streams(None), &path, limit),
         ),
-        "lease" => serialize_tool_output(
+        Some(crate::runtime::DomainKind::Lease) => serialize_tool_output(
             tool_name,
             lease_resource_timeline(&read_model.leases(None), &path, limit),
         ),
-        "notice" => serialize_tool_output(
+        Some(crate::runtime::DomainKind::Notice) => serialize_tool_output(
             tool_name,
             notice_resource_timeline(
                 &read_model.notice_subscriptions(None, None),
@@ -687,7 +699,7 @@ fn build_resource_timeline_value(
                 limit,
             ),
         ),
-        "rpc" => serialize_tool_output(
+        Some(crate::runtime::DomainKind::Rpc) => serialize_tool_output(
             tool_name,
             rpc_resource_timeline(
                 &read_model.rpc_workers(None),
@@ -696,7 +708,7 @@ fn build_resource_timeline_value(
                 limit,
             ),
         ),
-        "schedule" => serialize_tool_output(
+        Some(crate::runtime::DomainKind::Schedule) => serialize_tool_output(
             tool_name,
             schedule_resource_timeline(
                 &read_model.schedules(None),
@@ -710,9 +722,9 @@ fn build_resource_timeline_value(
                 limit,
             ),
         ),
-        other => Err(McpToolError::InvalidArguments {
+        None => Err(McpToolError::InvalidArguments {
             tool_name: tool_name.to_string(),
-            reason: format!("unsupported resource scheme: {other}"),
+            reason: format!("unsupported resource scheme: {}", request.scheme),
         }),
     }
 }

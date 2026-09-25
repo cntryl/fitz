@@ -372,16 +372,8 @@ pub fn client_dispatch(message_type: MessageType) -> Result<Option<ClientDispatc
         return Ok(None);
     }
 
-    let domain = match entry.domain {
-        "kv" => DomainKind::Kv,
-        "queue" => DomainKind::Queue,
-        "notice" => DomainKind::Notice,
-        "stream" => DomainKind::Stream,
-        "rpc" => DomainKind::Rpc,
-        "lease" => DomainKind::Lease,
-        "schedule" => DomainKind::Schedule,
-        _ => return Err("manifest domain has no runtime dispatch adapter"),
-    };
+    let domain = DomainKind::from_scheme(entry.domain)
+        .ok_or("manifest domain has no runtime dispatch adapter")?;
 
     Ok(Some(ClientDispatch {
         domain,

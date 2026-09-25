@@ -6,15 +6,17 @@ use crate::runtime::{MailboxSink, Router};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
+/// Discriminants index [`DOMAIN_DESCRIPTORS`]; a compile-time check below
+/// fails the build if the table order drifts from them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DomainKind {
-    Kv,
-    Queue,
-    Rpc,
-    Lease,
-    Notice,
-    Stream,
-    Schedule,
+    Kv = 0,
+    Queue = 1,
+    Notice = 2,
+    Stream = 3,
+    Rpc = 4,
+    Lease = 5,
+    Schedule = 6,
 }
 
 impl DomainKind {
@@ -58,17 +60,21 @@ impl DomainKind {
         self.descriptor().inbound_route()
     }
 
+    /// Position of this kind in per-domain tables.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Resolve a domain from its route scheme (`"kv"`, `"queue"`, ...).
+    #[must_use]
+    pub fn from_scheme(scheme: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == scheme)
+    }
+
     #[must_use]
     pub const fn descriptor(self) -> &'static DomainDescriptor {
-        match self {
-            Self::Kv => &DOMAIN_DESCRIPTORS[0],
-            Self::Queue => &DOMAIN_DESCRIPTORS[1],
-            Self::Notice => &DOMAIN_DESCRIPTORS[2],
-            Self::Stream => &DOMAIN_DESCRIPTORS[3],
-            Self::Rpc => &DOMAIN_DESCRIPTORS[4],
-            Self::Lease => &DOMAIN_DESCRIPTORS[5],
-            Self::Schedule => &DOMAIN_DESCRIPTORS[6],
-        }
+        &DOMAIN_DESCRIPTORS[self.index()]
     }
 }
 
@@ -141,7 +147,7 @@ impl DomainDescriptor {
     }
 }
 
-const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
+const DOMAIN_DESCRIPTORS: &[DomainDescriptor; 7] = &[
     DomainDescriptor {
         kind: DomainKind::Kv,
         scheme: "kv",
@@ -206,6 +212,14 @@ const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         wildcard_registrations_allowed: true,
     },
 ];
+
+const _: () = {
+    let mut index = 0;
+    while index < DOMAIN_DESCRIPTORS.len() {
+        assert!(DOMAIN_DESCRIPTORS[index].kind as usize == index);
+        index += 1;
+    }
+};
 
 fn kv_inbound_route() -> &'static Route {
     static ROUTE: Lazy<Route> = Lazy::new(|| Route::new("kv://inbound"));
@@ -281,6 +295,32 @@ fn schedule_cleanup_route() -> &'static Route {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn should_resolve_domain_kind_from_scheme() {
+        // Arrange
+        let schemes = DomainKind::ALL.map(DomainKind::as_str);
+
+        // Act
+        let resolved = schemes.map(DomainKind::from_scheme);
+
+        // Assert
+        assert_eq!(resolved, DomainKind::ALL.map(Some));
+        assert_eq!(DomainKind::from_scheme("control"), None);
+        assert_eq!(DomainKind::from_scheme("KV"), None);
+    }
+
+    #[test]
+    fn should_index_descriptor_table_by_kind() {
+        // Arrange
+        let kinds = DomainKind::ALL;
+
+        // Act
+        let table_kinds = kinds.map(|kind| DOMAIN_DESCRIPTORS[kind.index()].kind);
+
+        // Assert
+        assert_eq!(table_kinds, kinds);
+    }
 
     #[test]
     fn should_define_exactly_one_descriptor_for_every_domain_kind() {
