@@ -3,9 +3,9 @@ use super::model::StreamReadExecution;
 #[cfg(test)]
 use super::model::STREAM_ACTOR_REPLY_TIMEOUT;
 use super::model::{
-    AdminSnapshotState, AdminStreamReadRequest, AdminStreamReadRequestOwned,
-    StreamAdminReadCommand, StreamDomain, StreamDomainCommand, StreamDomainConfig,
-    StreamFamilyRuntime, StreamFamilyState, StreamLiveCounts, SubscriptionRegistry,
+    AdminStreamReadRequest, AdminStreamReadRequestOwned, StreamAdminReadCommand, StreamDomain,
+    StreamDomainCommand, StreamDomainConfig, StreamFamilyRuntime, StreamFamilyState,
+    StreamLiveCounts, SubscriptionRegistry,
 };
 use crate::domains::stream::metrics::StreamDurableMetrics;
 use crate::domains::stream::{StreamMetrics, StreamReadItem, StreamStorageLayout};
@@ -33,7 +33,7 @@ impl StreamFamilyState {
             admin_unprovisioned_owner: config.admin_unprovisioned_owner,
             stream_store: config.stream_store.clone(),
             actors: HashMap::new(),
-            session_owners: HashMap::new(),
+            session_owners: super::session_owners::StreamSessionOwners::default(),
             cleaned_up_sessions: CleanedUpSessions::new(
                 crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
             ),
@@ -41,11 +41,14 @@ impl StreamFamilyState {
             next_session_id: config.next_session_id.clone(),
             cursor_integrity_key: config.cursor_integrity_key.clone(),
             router: config.router.clone(),
-            admin_snapshot: AdminSnapshotState::new(config.admin_projection.clone(), dirty),
+            observability: super::observability_state::StreamObservability::new(
+                config.admin_projection.clone(),
+                dirty,
+                config.live_gauges.clone(),
+                config.durable_metrics.clone(),
+            ),
             sync_write_mode: config.sync_write_mode,
             metrics: config.metrics.clone(),
-            live_gauges: config.live_gauges.clone(),
-            durable_metrics: config.durable_metrics.clone(),
             active: config.active.clone(),
         }
     }
