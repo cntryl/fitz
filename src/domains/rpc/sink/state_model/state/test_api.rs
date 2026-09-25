@@ -33,7 +33,7 @@ impl RpcState {
         &mut self,
         registration_id: RpcRegistrationId,
     ) {
-        if let Some(family) = self.release_slot(registration_id, None) {
+        if let Some(family) = self.registrations.release_slot(registration_id, None) {
             self.enqueue_eligible_routes_for_family(family);
         }
     }
@@ -43,7 +43,10 @@ impl RpcState {
         registration_id: RpcRegistrationId,
         latency_us: u64,
     ) {
-        if let Some(family) = self.release_slot(registration_id, Some(latency_us)) {
+        if let Some(family) = self
+            .registrations
+            .release_slot(registration_id, Some(latency_us))
+        {
             self.enqueue_eligible_routes_for_family(family);
         }
     }
@@ -78,15 +81,8 @@ impl RpcState {
         let family = *request.caller_inbox_addr.family();
         self.ensure_route_state_for_family(family, &route)
             .enqueue_request(correlation_id);
-        let key = RpcCorrelationKey {
-            family,
-            correlation_id,
-        };
-        self.queued_expirations.push(ExpiringPendingRequest {
-            expires_at: request.expires_at,
-            key,
-        });
-        self.queued.insert(key, request);
+        self.pending
+            .track_queued_for_family(family, correlation_id, request);
         self.mark_route_ready_if_eligible(family, &route);
     }
 
