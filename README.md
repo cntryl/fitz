@@ -52,7 +52,8 @@ docker run --rm \
   ghcr.io/cntryl/fitz:latest
 ```
 
-`latest` and `main` are rebuilt automatically from every push to `main`. For a
+`latest` and `main` are rebuilt automatically from every push to `main`, and
+`develop` from every push to `develop`. For a
 reproducible deployment, use an immutable SemVer image such as
 `ghcr.io/cntryl/fitz:0.1.0`; publish one by dispatching the `Publish` workflow
 from `main` after the release checks pass.
