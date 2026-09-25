@@ -1,6 +1,9 @@
 use super::*;
 use crate::api::runtime_ingress::domain_frame_dispatcher::DomainFrameDispatcher;
 
+#[path = "domain_backpressure_stream.rs"]
+mod stream;
+
 struct AlwaysBackpressuredSink;
 
 impl MailboxSink for AlwaysBackpressuredSink {

@@ -24,9 +24,13 @@ jobs:
     timeout-minutes: 2
     env:
       PR_HEAD_REF: ${{ github.head_ref }}
+      PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      BASE_REPOSITORY: ${{ github.repository }}
     steps:
-      - name: Require develop as the promotion source
-        run: test "$PR_HEAD_REF" = develop
+      - name: Require this repository's develop as the promotion source
+        run: |
+          test "$PR_HEAD_REF" = develop
+          test "$PR_HEAD_REPOSITORY" = "$BASE_REPOSITORY"
 
   backend:
     runs-on: ubuntu-latest
