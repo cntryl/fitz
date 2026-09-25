@@ -309,9 +309,10 @@ impl WriteLifecycleState {
             }
 
             let (code, message) = stream_error(&response);
-            if !fitz::benchkit::stream_response::is_retryable_stream_commit_error(code) {
-                panic!("Stream commit failed: code {code}: {message}; raw: {response:?}");
-            }
+            assert!(
+                fitz::benchkit::stream_response::is_retryable_stream_commit_error(code),
+                "Stream commit failed: code {code}: {message}; raw: {response:?}"
+            );
             attempts += 1;
             assert!(attempts < 1_000, "Stream commit retry limit exceeded");
             tokio::task::yield_now().await;
