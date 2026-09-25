@@ -585,3 +585,74 @@ fn should_keep_schedule_run_now_validation_owned_by_schedule() {
         "admin/boot must use the schedule domain's public run-now API: {offenders:?}"
     );
 }
+
+#[test]
+fn should_import_domains_only_through_their_public_modules() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = production_sources_under(workspace, "src/api");
+    sources.extend(production_sources_under(workspace, "src/boot"));
+    let domains = [
+        "kv", "lease", "notice", "queue", "rpc", "schedule", "stream",
+    ];
+
+    // Act
+    let offenders = sources
+        .iter()
+        .filter(|(_, source)| {
+            // Flatten `use` trees so `domains::{kv::{sink::X}}` and
+            // `use crate::domains::kv; kv::sink::X` read as plain paths.
+            let flat: String = source
+                .chars()
+                .filter(|c| !c.is_whitespace() && !matches!(c, '{' | '}' | ','))
+                .collect();
+            domains.iter().any(|domain| {
+                ["sink", "store"].iter().any(|internal| {
+                    let path = format!("{domain}::{internal}");
+                    flat.match_indices(&path).any(|(index, _)| {
+                        let before = flat[..index].chars().next_back();
+                        let after = flat[index + path.len()..].chars().next();
+                        !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                            && !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                    })
+                })
+            })
+        })
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "api/boot must import domain types from the domain module, not sink/store: {offenders:?}"
+    );
+}
+
+#[test]
+fn should_keep_domain_metric_keys_out_of_admin_transport() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sources = production_sources_under(workspace, "src/api");
+
+    // Act
+    let offenders = sources
+        .iter()
+        .filter(|(_, source)| {
+            let flat: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+            [
+                "kv", "lease", "notice", "queue", "rpc", "schedule", "stream",
+            ]
+            .iter()
+            .any(|domain| {
+                flat.contains(&format!("{domain}::metrics::")) && flat.contains("METRIC_")
+            }) || flat.contains("metrics::*")
+        })
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "admin must read domain metric snapshots, not domain metric keys: {offenders:?}"
+    );
+}

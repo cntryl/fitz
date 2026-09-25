@@ -26,6 +26,7 @@
 pub mod metrics;
 pub mod protocol;
 pub(crate) mod sink;
+pub(crate) use sink::NoticeDomain;
 
 pub use metrics::NoticeMetrics;
 pub use protocol::{

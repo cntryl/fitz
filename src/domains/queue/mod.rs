@@ -152,6 +152,7 @@ pub mod metrics;
 pub mod projection;
 pub mod protocol;
 pub(crate) mod sink;
+pub(crate) use sink::QueueDomain;
 
 pub use crate::runtime::clock::{Clock, SystemClock};
 pub(crate) use actor::QueueActor;

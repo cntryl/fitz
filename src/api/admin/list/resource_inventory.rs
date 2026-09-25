@@ -10,7 +10,7 @@ use super::{
     StreamResourceEntry,
 };
 use crate::api::admin::troubleshooting;
-use crate::domains::kv::sink::{AdminKvRowsError, AdminKvRowsRequest};
+use crate::domains::kv::admin::{AdminKvRowsError, AdminKvRowsRequest};
 use crate::runtime::routing::RouteFamily;
 use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet};

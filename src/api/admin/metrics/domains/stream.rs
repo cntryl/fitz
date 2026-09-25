@@ -14,7 +14,8 @@ pub(super) fn append_metrics_with_collector(
     metrics: &crate::observability::metrics::MetricsCollector,
 ) {
     let durable = runtime.stream_durable_metrics_snapshot();
-    append_core_metrics(output, runtime, durable.as_ref(), metrics);
+    let gauges = crate::domains::stream::metrics::StreamLiveGauges::read(metrics);
+    append_core_metrics(output, runtime, durable.as_ref(), gauges);
     append_lag_bucket_metrics(output, runtime, durable.as_ref());
     append_watermark_metrics(output, runtime, durable.as_ref());
 }
@@ -23,15 +24,11 @@ fn append_core_metrics(
     output: &mut String,
     runtime: &Runtime,
     durable: Option<&crate::domains::stream::metrics::StreamDurableMetricsSnapshot>,
-    metrics: &crate::observability::metrics::MetricsCollector,
+    gauges: crate::domains::stream::metrics::StreamLiveGauges,
 ) {
     output.push_str("# HELP fitz_stream_active Active streams\n");
     output.push_str("# TYPE fitz_stream_active gauge\n");
-    let _ = writeln!(
-        output,
-        "fitz_stream_active {}",
-        metrics.gauge_get(crate::domains::stream::metrics::METRIC_ACTIVE_GAUGE)
-    );
+    let _ = writeln!(output, "fitz_stream_active {}", gauges.active);
     output.push('\n');
 
     output.push_str("# HELP fitz_stream_response_drops_total Total Stream responses dropped by this broker process\n# TYPE fitz_stream_response_drops_total counter\n");
@@ -49,7 +46,7 @@ fn append_core_metrics(
     let _ = writeln!(
         output,
         "fitz_stream_append_sessions_active {}",
-        metrics.gauge_get(crate::domains::stream::metrics::METRIC_APPEND_SESSIONS_GAUGE)
+        gauges.append_sessions_active
     );
     output.push('\n');
 
@@ -103,7 +100,7 @@ fn append_core_metrics(
     let _ = writeln!(
         output,
         "fitz_stream_subscriptions_active {}",
-        metrics.gauge_get(crate::domains::stream::metrics::METRIC_SUBSCRIPTIONS_GAUGE)
+        gauges.subscriptions_active
     );
     output.push('\n');
 
