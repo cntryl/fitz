@@ -505,5 +505,8 @@ pub(super) struct StreamDomainConfig {
     pub(super) active: Arc<AtomicBool>,
 }
 
-/// How long synchronous callers wait for a family actor's delivery outcome.
+/// Control and admin callers retain a short family-actor reply deadline.
 pub(super) const STREAM_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Normal client commands may wait behind durable synchronous Stream commits.
+pub(super) const STREAM_CLIENT_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(4);

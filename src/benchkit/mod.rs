@@ -10,6 +10,7 @@ pub mod runtime;
 pub mod storage;
 pub mod stream;
 pub mod stream_admin;
+pub mod stream_response;
 pub mod transport;
 
 #[cfg(any(test, feature = "benchkit"))]
