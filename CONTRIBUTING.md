@@ -31,6 +31,12 @@ cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```
 
+## Branch Flow
+
+- Open feature pull requests against `develop`. The `ci.yml` workflow runs focused Rust and UI checks there.
+- Promote `develop` to `main` with a pull request after the full Backend and Frontend workflows pass.
+- Squash feature pull requests into `develop`. Merge promotion pull requests with a merge commit so later promotions retain ancestry.
+
 ## Running Locally
 
 The broker code lives under `src/`. Integration tests in `tests/` spawn broker components in-process. The repository compose files are for local development and publish ports on loopback.

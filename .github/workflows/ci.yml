@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - develop
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  develop-backend:
+    name: develop-backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUST_LOG: "off"
+      RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Lint GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Update Rust toolchain
+        run: rustup update stable
+
+      - name: Install lld linker
+        run: |
+          sudo grep -RIl 'dl.google.com/linux/chrome' /etc/apt/sources.list.d \
+            | xargs -r sudo rm -f
+          sudo apt-get update
+          sudo apt-get install -y lld
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci"
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: Cargo clippy pedantic
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
+
+      - name: Run library tests
+        env:
+          FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
+        run: cargo test --locked --lib
+
+      - name: Check architecture contracts
+        run: cargo test --locked --test architecture_contract
+
+  develop-frontend:
+    name: develop-frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm ci
+
+      - name: Check generated adapters
+        run: npm run check:generated
+
+      - name: UI format check
+        run: npm run fmt:check
+
+      - name: UI lint
+        run: npm run lint
+
+      - name: UI type check
+        run: npm run type-check
+
+      - name: UI tests
+        run: npm run test -- --run
+
+      - name: UI build
+        run: npm run build
