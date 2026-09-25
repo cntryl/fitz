@@ -31,7 +31,7 @@ Use this checklist before approving a Fitz release.
 ## Promote the release candidate
 
 1. Open a pull request from `develop` to `main` only when the release is ready.
-2. Confirm the `promotion-source`, `backend`, and `frontend` checks passed on the exact pull request head.
+2. Confirm `promotion-source`, `backend`, `frontend`, and all three CodeQL language checks passed on the exact pull request head.
 3. Merge with a merge commit to preserve ancestry for the next release promotion. This update to `main` starts the `Containers` workflow below.
 
 ## Publish
