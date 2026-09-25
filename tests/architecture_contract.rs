@@ -716,3 +716,45 @@ fn should_keep_per_domain_tables_free_of_positional_and_message_id_quirks() {
         "per-domain facts belong in DomainDescriptor / IngressDomainDescriptor: {offenders:?}"
     );
 }
+
+#[test]
+fn should_keep_storage_facade_from_leaking_the_raw_engine() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = production_source(
+        std::fs::read_to_string(workspace.join("src/storage.rs")).expect("read storage facade"),
+    );
+    let flat: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    // Act
+    let mut leaks = [
+        "fninner(",
+        "fnclone_inner(",
+        "implAsRef<",
+        "implDeref",
+        "implstd::ops::Deref",
+        "implFrom<FitzStorageEngine>",
+        "pub(crate)inner:",
+        "pubinner:",
+    ]
+    .into_iter()
+    .filter(|leak| flat.contains(leak))
+    .map(ToString::to_string)
+    .collect::<Vec<_>>();
+    // Any method returning the engine type (by any path or alias) is a leak.
+    for (index, _) in flat.match_indices("->") {
+        let return_type: String = flat[index + 2..]
+            .chars()
+            .take_while(|c| *c != '{' && *c != ';')
+            .collect();
+        if return_type.contains("Engine") && !return_type.contains("FitzStorageEngine") {
+            leaks.push(format!("returns {return_type}"));
+        }
+    }
+
+    // Assert
+    assert!(
+        leaks.is_empty(),
+        "FitzStorageEngine must expose operations, not the Midge engine: {leaks:?}"
+    );
+}

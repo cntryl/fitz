@@ -4,13 +4,27 @@ pub(super) use crate::domains::stream::storage::{encode_offset_counter_key, Offs
 pub(super) use crate::testkit::create_test_engine_with_cfs;
 pub(super) use bytes::Bytes;
 
-pub(super) fn read_layout_marker(
-    engine: &cntryl_midge::Engine,
-    family: u32,
-) -> Option<StreamStorageLayout> {
-    let txn = engine
-        .begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
-        .expect("begin read tx");
+/// Read-only transaction source shared by the raw test engine and the facade.
+pub(super) trait ReadTx {
+    fn read_tx(&self, family: u32) -> cntryl_midge::Transaction;
+}
+
+impl ReadTx for cntryl_midge::Engine {
+    fn read_tx(&self, family: u32) -> cntryl_midge::Transaction {
+        self.begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
+            .expect("begin read tx")
+    }
+}
+
+impl ReadTx for crate::storage::FitzStorageEngine {
+    fn read_tx(&self, family: u32) -> cntryl_midge::Transaction {
+        self.begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
+            .expect("begin read tx")
+    }
+}
+
+pub(super) fn read_layout_marker(engine: &impl ReadTx, family: u32) -> Option<StreamStorageLayout> {
+    let txn = engine.read_tx(family);
     txn.get(&encode_stream_layout_marker_key())
         .expect("read layout marker")
         .map(|bytes| {
@@ -20,13 +34,8 @@ pub(super) fn read_layout_marker(
         })
 }
 
-pub(super) fn read_layout_marker_bytes(
-    engine: &cntryl_midge::Engine,
-    family: u32,
-) -> Option<Bytes> {
-    let txn = engine
-        .begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
-        .expect("begin read tx");
+pub(super) fn read_layout_marker_bytes(engine: &impl ReadTx, family: u32) -> Option<Bytes> {
+    let txn = engine.read_tx(family);
     txn.get(&encode_stream_layout_marker_key())
         .expect("read layout marker")
 }
@@ -224,7 +233,7 @@ pub(super) fn should_preserve_session_given_commit_route_family_mismatch() {
         "ERR_SESSION_ROUTE_FAMILY_MISMATCH"
     );
     assert_eq!(store.session_event_count(session_id), Some(1));
-    assert_eq!(read_layout_marker(store.db.as_ref(), 2), None);
+    assert_eq!(read_layout_marker(&store.db, 2), None);
     let commit = store
         .commit_session(1, session_id, 0, 0, 0, StreamWriteMode::Buffered)
         .expect("commit preserved session in original family");

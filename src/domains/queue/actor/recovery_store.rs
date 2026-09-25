@@ -13,7 +13,7 @@ use crate::domains::WritePolicy;
 
 #[derive(Clone)]
 pub struct QueueStore {
-    engine: Arc<cntryl_midge::Engine>,
+    engine: crate::storage::FitzStorageEngine,
 }
 
 pub(crate) struct QueueTransaction(cntryl_midge::Transaction);
@@ -61,7 +61,9 @@ impl QueueStoreError {
 
 impl QueueStore {
     pub(crate) fn new(engine: Arc<cntryl_midge::Engine>) -> Self {
-        Self { engine }
+        Self {
+            engine: crate::storage::FitzStorageEngine::new(engine),
+        }
     }
 
     pub(crate) fn begin(
@@ -109,7 +111,7 @@ impl From<Arc<cntryl_midge::Engine>> for QueueStore {
 
 impl From<crate::storage::FitzStorageEngine> for QueueStore {
     fn from(engine: crate::storage::FitzStorageEngine) -> Self {
-        Self::new(engine.clone_inner())
+        Self { engine }
     }
 }
 

@@ -19,14 +19,6 @@ impl FitzStorageEngine {
         Self { inner }
     }
 
-    pub(crate) fn inner(&self) -> &cntryl_midge::Engine {
-        self.inner.as_ref()
-    }
-
-    pub(crate) fn clone_inner(&self) -> Arc<cntryl_midge::Engine> {
-        self.inner.clone()
-    }
-
     pub(crate) fn list_column_families(
         &self,
     ) -> cntryl_midge::MidgeResult<Vec<cntryl_midge::ColumnFamilyHandle>> {
@@ -40,11 +32,12 @@ impl FitzStorageEngine {
     ) -> cntryl_midge::MidgeResult<cntryl_midge::Transaction> {
         self.inner.begin_tx(family, mode)
     }
-}
 
-impl AsRef<cntryl_midge::Engine> for FitzStorageEngine {
-    fn as_ref(&self) -> &cntryl_midge::Engine {
-        self.inner()
+    pub(crate) fn flush_cf(
+        &self,
+        family: &cntryl_midge::ColumnFamilyHandle,
+    ) -> cntryl_midge::MidgeResult<()> {
+        self.inner.flush_cf(family)
     }
 }
 
