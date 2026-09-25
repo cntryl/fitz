@@ -68,6 +68,13 @@ Operator tooling should not call `/admin/sessions/{id}/close` or
 - `GET /api/v1/sessions` - Active sessions.
 - `GET /api/v1/{family}/sessions` - Active sessions for one authorized family.
 
+Family-scoped troubleshooting (and the `diagnostics` block of family-scoped
+stats and topology) analyzes only state that carries the requested route
+family. Broker-wide counters, latency histograms, and router saturation are not
+attributable to a family and are excluded, so a family with no hotspots reports
+`healthy` with reduced confidence rather than the full confidence of the global
+check.
+
 ### Domain Routes
 Domain routes use `/api/v1/{domain}/...` for aggregate reads. A concrete route
 family can be selected with `/api/v1/{route_family}/{domain}/...`; wildcard
