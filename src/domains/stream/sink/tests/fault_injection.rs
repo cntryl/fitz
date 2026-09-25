@@ -8,6 +8,42 @@ use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Mailbox;
 
+#[test]
+fn should_wait_for_accepted_stream_command_past_one_second() {
+    // Arrange
+    let context = setup_test_context();
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    context
+        .sink
+        .block_family_actor_for_tests(context.family, entered_tx, release_rx);
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Stream family actor should block");
+    let (result_tx, result_rx) = crossbeam_channel::bounded(1);
+
+    // Act
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let result = context.sink.deliver(Envelope::new(
+                RouteAddress::new(context.family, Route::new("stream://cleanup")),
+                crate::runtime::SessionCleanup { session_id: 7 },
+            ));
+            result_tx
+                .send(result)
+                .expect("report Stream command result");
+        });
+        std::thread::sleep(Duration::from_millis(1_250));
+        release_tx.send(()).expect("release Stream family actor");
+        let result = result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("Stream command should return");
+
+        // Assert
+        assert_eq!(result, Ok(()));
+    });
+}
+
 struct FaultHarness {
     sink: StreamDomain,
     destination: RouteAddress,

@@ -18,13 +18,13 @@ type StreamAreaSnapshotMap = BTreeMap<(String, String), StreamAreaSnapshot>;
 
 impl StreamFamilyState {
     pub(in crate::domains::stream::sink) fn mark_admin_snapshot_dirty(&mut self) {
-        self.admin_snapshot.mark_dirty();
+        self.observability.mark_dirty();
         self.refresh_metrics_gauges();
     }
 
     pub(in crate::domains::stream::sink) fn refresh_metrics_gauges(&mut self) {
         let counts = self.live_counts();
-        self.live_gauges.publish_family(self.family, counts);
+        self.observability.publish_family(self.family, counts);
     }
 
     pub(in crate::domains::stream::sink) fn counter_inc(&mut self, name: &str) {
@@ -53,7 +53,7 @@ impl StreamFamilyState {
     }
 
     pub(in crate::domains::stream::sink) fn refresh_admin_snapshot_if_dirty(&mut self) {
-        if self.admin_snapshot.is_dirty() {
+        if self.observability.is_dirty() {
             self.sync_admin_snapshot();
         }
     }
@@ -96,9 +96,9 @@ impl StreamFamilyState {
 
     pub(in crate::domains::stream::sink) fn sync_admin_snapshot(&mut self) {
         match self.try_sync_admin_snapshot() {
-            Ok(()) => self.admin_snapshot.clear_dirty(),
+            Ok(()) => self.observability.clear_dirty(),
             Err(error) => {
-                self.admin_snapshot.mark_dirty();
+                self.observability.mark_dirty();
                 self.counter_inc(
                     crate::domains::stream::metrics::METRIC_ADMIN_PROJECTION_FAILURES_TOTAL,
                 );
@@ -309,7 +309,7 @@ impl StreamFamilyState {
         stream_area_watermarks: Vec<crate::control::admin::StreamAreaWatermarkDetail>,
         committed_events_total: usize,
     ) {
-        self.admin_snapshot.projection.publish(
+        self.observability.publish_admin(
             self.family.as_u64(),
             StreamFamilyAdminSnapshot {
                 streams: streams.into_values().collect(),
