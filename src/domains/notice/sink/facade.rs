@@ -2,12 +2,11 @@
 
 use super::{
     DeliveryError, Envelope, NoticeDomain, NoticeDomainCommand, NoticeDomainConfig,
-    NoticeFamilyRuntime, NoticeFamilyState, NoticeMetrics,
+    NoticeFamilyRuntime, NoticeFamilyState, NoticeMetrics, NOTICE_ACTOR_REPLY_TIMEOUT,
 };
 use crate::runtime::routing::RouteFamily;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
 impl NoticeDomain {
     pub fn new(
@@ -178,7 +177,7 @@ impl NoticeDomain {
         }
         replies.into_iter().fold((0, 0), |totals, reply| {
             let counts = reply
-                .recv_timeout(Duration::from_secs(1))
+                .recv_timeout(NOTICE_ACTOR_REPLY_TIMEOUT)
                 .expect("receive Notice state-count query");
             (totals.0 + counts.0, totals.1 + counts.1)
         })
@@ -213,7 +212,7 @@ impl NoticeDomain {
 
         replies.into_iter().try_fold(0_usize, |total, reply| {
             reply
-                .recv_timeout(Duration::from_secs(1))
+                .recv_timeout(NOTICE_ACTOR_REPLY_TIMEOUT)
                 .map(|count| total.saturating_add(count))
                 .map_err(|_| DeliveryError::Timeout)
         })
@@ -247,7 +246,7 @@ impl NoticeDomain {
 
         replies.into_iter().try_fold(0_usize, |total, reply| {
             reply
-                .recv_timeout(Duration::from_secs(1))
+                .recv_timeout(NOTICE_ACTOR_REPLY_TIMEOUT)
                 .map(|count| total.saturating_add(count))
                 .map_err(|_| DeliveryError::Timeout)
         })
@@ -274,8 +273,8 @@ impl NoticeDomain {
         self.try_send(family, lane, command)?;
 
         reply_rx
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap_or(Err(DeliveryError::Timeout))
+            .recv_timeout(NOTICE_ACTOR_REPLY_TIMEOUT)
+            .unwrap_or_else(|error| Err(crate::runtime::reply_wait::map_reply_wait_error(error)))
     }
 
     #[cfg(test)]

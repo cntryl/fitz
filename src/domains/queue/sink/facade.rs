@@ -238,13 +238,14 @@ impl QueueDomain {
         let pool = crate::runtime::FamilyActorPool::new(route_families)
             .expect("validated Queue family actor pool configuration");
         let family_config = config.clone();
-        crate::runtime::FamilyActorPoolRuntime::spawn(
+        crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
             pool,
             active,
             move |family| QueueFamilyRuntime {
                 core: QueueFamilyState::new(&family_config, family),
             },
             |actor, _, _, command| actor.receive_command(command),
+            crate::domains::queue::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
         )
     }
 

@@ -597,6 +597,12 @@ Response (error):
   [bytes]  error_msg
 ```
 
+The broker authorizes BEGIN by its mode, so it decodes the whole payload before
+dispatch. A BEGIN that cannot be decoded (truncated fields, an invalid route,
+mode, or durability, or bytes after `durability`) closes the connection with an
+`authorization parse failed` reason instead of receiving an error response.
+Clients MUST NOT retry the same malformed frame.
+
 #### PUT Request
 
 ```

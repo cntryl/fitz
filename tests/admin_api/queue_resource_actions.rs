@@ -457,3 +457,47 @@ async fn should_return_rpc_events_with_worker_registration_and_pending_transitio
         event["kind"] == "transition" && event["correlation_id"] == "corr-abc-123"
     }));
 }
+
+async fn rpc_resource_detail(family: u64) -> serde_json::Value {
+    let runtime = test_runtime();
+    seed_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+    let response = fitz::api::admin::handlers::handle_request(
+        hyper::http::Request::builder()
+            .method(Method::GET)
+            .uri(format!(
+                "/api/v1/{family}/rpc/realms/prod/areas/api/resources/users"
+            ))
+            .header(COOKIE, cookie)
+            .body(Body::default())
+            .unwrap(),
+        runtime,
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&body::to_bytes(response.into_body()).await.unwrap()).unwrap()
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_registered_rpc_operations_in_resource_detail() {
+    // Act
+    let payload = rpc_resource_detail(1).await;
+
+    // Assert
+    assert_eq!(payload["workers_registered"], 1);
+    assert_eq!(payload["requests_pending"], 1);
+    assert_eq!(payload["operations"][0]["operation"], "get");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_exclude_other_family_rpc_operations_from_resource_detail() {
+    // Act
+    let payload = rpc_resource_detail(2).await;
+
+    // Assert
+    assert_eq!(payload["workers_registered"], 0);
+    assert!(payload["operations"].as_array().unwrap().is_empty());
+}
