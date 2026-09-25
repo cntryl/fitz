@@ -43,7 +43,10 @@ pub(crate) struct IngressDomainDescriptor {
     build_request_envelope: RequestEnvelopeBuilder,
     /// Messages whose route is a retained registration pattern
     /// (`SUBSCRIBE`/`UNSUBSCRIBE`/`WATCH`/`REGISTER`) or a one-shot patterned
-    /// read (Lease `LIST`); authorization compiles them as patterns.
+    /// read (Lease `LIST`). Authorization compiles and containment-checks them
+    /// as patterns so it cannot accept a selector the sink would interpret
+    /// differently (routing-design.md §4); the grammar itself comes from the
+    /// domain descriptor.
     pattern_registration_message_ids: &'static [u16],
     /// Messages whose route is a pattern only when it carries a wildcard.
     wildcard_selector_message_ids: &'static [u16],

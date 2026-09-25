@@ -60,7 +60,7 @@ impl<'a> DomainErrorFrame<'a> {
             domain: dispatch.domain,
             router: dispatch.router,
             correlation: dispatch.correlation,
-            rpc_request_id: if crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(dispatch.domain)
+            rpc_request_id: if super::types_and_helpers::ingress_descriptor(dispatch.domain)
                 .answers_with_terminal_reply(dispatch.msg_type.as_u16())
             {
                 crate::protocol::rpc_codec::extract_request_correlation_id(
@@ -159,24 +159,15 @@ impl DomainFrameDispatcher {
     }
 
     fn unauthorized_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
-            domain,
-        )
-        .unauthorized_error_code
+        super::types_and_helpers::ingress_descriptor(domain).unauthorized_error_code
     }
 
     pub(super) fn backpressure_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
-            domain,
-        )
-        .backpressure_error_code
+        super::types_and_helpers::ingress_descriptor(domain).backpressure_error_code
     }
 
     pub(super) fn indeterminate_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
-            domain,
-        )
-        .indeterminate_error_code
+        super::types_and_helpers::ingress_descriptor(domain).indeterminate_error_code
     }
 
     fn encode_domain_error_body(code: u16, message: &str) -> Bytes {
@@ -258,7 +249,7 @@ impl DomainFrameDispatcher {
     ) -> Result<(), IngressDecision> {
         self.send_domain_error_frame(
             DomainErrorFrame::for_dispatch(dispatch),
-            if crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(dispatch.domain)
+            if super::types_and_helpers::ingress_descriptor(dispatch.domain)
                 .answers_with_terminal_reply(dispatch.msg_type.as_u16())
             {
                 rpc_submit_code
@@ -332,40 +323,41 @@ impl DomainFrameDispatcher {
             correlation,
             rpc_request_id,
         } = frame;
-        let (response_type, payload, frame_correlation) = if crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(domain)
-            .answers_with_terminal_reply(msg_type.as_u16())
-        {
-            let Some(request_id) = rpc_request_id else {
-                return Err(IngressDecision::Close(
+        let (response_type, payload, frame_correlation) =
+            if super::types_and_helpers::ingress_descriptor(domain)
+                .answers_with_terminal_reply(msg_type.as_u16())
+            {
+                let Some(request_id) = rpc_request_id else {
+                    return Err(IngressDecision::Close(
                     "rpc submit error correlation extraction failed: RPC request payload too short for correlation_id".to_string(),
                 ));
-            };
-            // REQUEST has no success ACK. All broker-synthesized failures use
-            // the RPC UUID in a terminal RESPONSE, never frame correlation.
-            (
-                crate::protocol::tlv::MessageType::new(303),
-                Self::encode_rpc_terminal_error_payload(&request_id, domain_code, message),
-                None,
-            )
-        } else if (600..=608).contains(&msg_type.0) {
-            (
-                msg_type,
-                crate::protocol::stream_codec::encode_error_response_into(
-                    &mut crate::protocol::payload_codec::PayloadEncoder::new(),
-                    msg_type.0,
-                    domain_code,
-                    message,
+                };
+                // REQUEST has no success ACK. All broker-synthesized failures use
+                // the RPC UUID in a terminal RESPONSE, never frame correlation.
+                (
+                    crate::protocol::tlv::MessageType::new(303),
+                    Self::encode_rpc_terminal_error_payload(&request_id, domain_code, message),
+                    None,
                 )
-                .into(),
-                correlation,
-            )
-        } else {
-            (
-                msg_type,
-                Self::encode_domain_error_body(domain_code, message),
-                correlation,
-            )
-        };
+            } else if (600..=608).contains(&msg_type.0) {
+                (
+                    msg_type,
+                    crate::protocol::stream_codec::encode_error_response_into(
+                        &mut crate::protocol::payload_codec::PayloadEncoder::new(),
+                        msg_type.0,
+                        domain_code,
+                        message,
+                    )
+                    .into(),
+                    correlation,
+                )
+            } else {
+                (
+                    msg_type,
+                    Self::encode_domain_error_body(domain_code, message),
+                    correlation,
+                )
+            };
         let response_ctx = crate::protocol::frame_context::FrameContext::new(
             session_id,
             channel_id,
@@ -537,10 +529,7 @@ impl DomainFrameDispatcher {
             route_family,
             self.cached_session_inbox_route(session_id),
         );
-        let descriptor =
-            crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
-                domain,
-            );
+        let descriptor = super::types_and_helpers::ingress_descriptor(domain);
         (addr, source, descriptor)
     }
 
@@ -667,7 +656,7 @@ impl DomainFrameDispatcher {
                     domain = dispatch.domain.as_str(),
                     "Ingress: failed to derive route for authorization"
                 );
-                if crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(dispatch.domain)
+                if super::types_and_helpers::ingress_descriptor(dispatch.domain)
                     .answers_with_terminal_reply(dispatch.msg_type.as_u16())
                 {
                     return self.send_domain_error_frame(
@@ -752,7 +741,9 @@ impl DomainFrameDispatcher {
                 Ok((AuthorizationTargets::Single(route), access))
             }
             AuthorizationPolicy::MultiRouteScoped(access) => {
-                if !crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(domain).is_multi_route(msg_type.as_u16()) {
+                if !super::types_and_helpers::ingress_descriptor(domain)
+                    .is_multi_route(msg_type.as_u16())
+                {
                     return Err(
                         "multi-route authorization is only supported for schedule batch create"
                             .to_string(),

@@ -119,7 +119,7 @@ fn is_subscription_registration(domain: DispatchDomain, msg_type: u16) -> bool {
     ingress_descriptor(domain).is_pattern_registration(msg_type)
 }
 
-fn ingress_descriptor(
+pub(super) fn ingress_descriptor(
     domain: DispatchDomain,
 ) -> &'static crate::api::runtime_ingress::domain_registry::IngressDomainDescriptor {
     crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(domain)
