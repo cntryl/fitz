@@ -17,11 +17,10 @@ impl SessionScoped for QueueFamilyState {
     /// those accepted messages to the ready queue. Inflight ownership is
     /// broker-local runtime state only.
     fn release_session_resources(&mut self, session_id: u64) {
-        self.pending_reserves
-            .retain(|pending| pending.meta.session_id != session_id);
+        self.reservation_book.remove_session(session_id);
         let mut released_any = false;
         let mut released_counts = Vec::new();
-        for (key, warm_actor) in &mut self.actors {
+        for (key, warm_actor) in self.actor_registry.iter_mut() {
             if warm_actor.actor.cleanup_session_inflight(session_id) > 0 {
                 released_any = true;
                 released_counts.push((key.clone(), warm_actor.actor.live_counts()));
