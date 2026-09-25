@@ -39,6 +39,9 @@ Use this checklist before approving a Fitz release.
 1. Every push to `main` automatically runs `Containers` and updates the
    moving `ghcr.io/cntryl/fitz:main` and `:latest` multi-architecture aliases.
    A green run must report both `linux/amd64` and `linux/arm64` in its manifest.
+   Every push to `develop` likewise updates the moving
+   `ghcr.io/cntryl/fitz:develop` alias for integration testing; never deploy it
+   as a release.
 2. Dispatch the `Publish` workflow from `main` only for a stable release. Its
    called `Containers` workflow uses `version.yml` to calculate the release
    SemVer. Repeating the same publish for the same source SHA is idempotent:
