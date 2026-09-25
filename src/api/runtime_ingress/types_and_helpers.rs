@@ -287,9 +287,7 @@ pub trait Ingress: Send + Sync {
     ) -> IngressDecision;
 
     /// Get current session info for transports that need to observe auth-driven updates.
-    fn get_session_info(&self, _session_id: u64) -> Option<SessionInfo> {
-        None
-    }
+    fn get_session_info(&self, session_id: u64) -> Option<SessionInfo>;
 
     /// Get the current route family for a session without cloning full session metadata.
     fn get_route_family(&self, session_id: u64) -> Option<crate::runtime::routing::RouteFamily> {
@@ -298,10 +296,10 @@ pub trait Ingress: Send + Sync {
     }
 
     /// Record that the transport accepted a frame from the wire for this session.
-    fn record_frame_received(&self, _session_id: u64) {}
+    fn record_frame_received(&self, session_id: u64);
 
     /// Record that the transport wrote a frame to the wire for this session.
-    fn record_frame_sent(&self, _session_id: u64) {}
+    fn record_frame_sent(&self, session_id: u64);
 
     /// Called when the transport closes the connection
     async fn on_close(&self, session_id: u64, reason: CloseReason);

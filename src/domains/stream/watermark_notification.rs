@@ -6,6 +6,20 @@ use crate::runtime::context::TimerId;
 use crate::runtime::DomainPublishEvent;
 use std::time::Duration;
 
+/// Encode the watermark notification body published to
+/// `stream://…/watermark` subscribers.
+pub(super) fn watermark_payload(previous: u64, watermark: u64) -> bytes::Bytes {
+    let payload_json = serde_json::json!({
+        "previous": previous,
+        "watermark": watermark,
+        "ts": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    });
+    bytes::Bytes::from(payload_json.to_string())
+}
+
 pub(super) struct WatermarkNotification {
     pending: Option<DomainPublishEvent>,
     timer: Option<TimerId>,
@@ -69,5 +83,26 @@ impl WatermarkNotification {
     #[cfg(test)]
     pub(super) const fn has_pending(&self) -> bool {
         self.pending.is_some()
+    }
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::watermark_payload;
+
+    #[test]
+    fn should_encode_watermark_payload_with_stable_field_layout() {
+        // Arrange
+        let (previous, watermark) = (4, 9);
+
+        // Act
+        let payload = watermark_payload(previous, watermark);
+
+        // Assert
+        let text = std::str::from_utf8(&payload).expect("utf8 payload");
+        assert_eq!(
+            crate::testkit::golden::mask_json_number(text, "ts"),
+            r#"{"previous":4,"ts":<n>,"watermark":9}"#
+        );
     }
 }

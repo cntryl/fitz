@@ -758,3 +758,29 @@ fn should_keep_storage_facade_from_leaking_the_raw_engine() {
         "FitzStorageEngine must expose operations, not the Midge engine: {leaks:?}"
     );
 }
+
+#[test]
+fn should_require_ingress_implementors_to_choose_session_observation() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(workspace.join("src/api/runtime_ingress/types_and_helpers.rs"))
+            .expect("read ingress trait");
+    let flat: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    // Act
+    let silent_defaults = [
+        "fnget_session_info(&self,_session_id:u64)->Option<SessionInfo>{",
+        "fnrecord_frame_received(&self,_session_id:u64){}",
+        "fnrecord_frame_sent(&self,_session_id:u64){}",
+    ]
+    .into_iter()
+    .filter(|default| flat.contains(default))
+    .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        silent_defaults.is_empty(),
+        "Ingress must not silently default session observation: {silent_defaults:?}"
+    );
+}

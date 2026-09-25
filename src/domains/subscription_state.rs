@@ -5,8 +5,6 @@ use std::collections::{HashMap, HashSet};
 
 /// Per-session wildcard registration cap shared by every wildcard-capable domain.
 pub(crate) const MAX_WILDCARD_REGISTRATIONS_PER_SESSION: usize = 128;
-/// Total Notice registration cap for one ephemeral session.
-pub(crate) const MAX_NOTICE_REGISTRATIONS_PER_SESSION: usize = 1_024;
 
 pub(crate) fn wildcard_registration_limit_reached(
     pattern: &Pattern,

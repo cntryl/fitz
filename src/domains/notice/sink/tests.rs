@@ -1,12 +1,11 @@
+use super::validation::MAX_NOTICE_REGISTRATIONS_PER_SESSION;
 use super::*;
 use crate::control::admin::{NoticeRouteInfo, NoticeSubscription as AdminNoticeSubscription};
 use crate::dispatch::protocol::frame::ChannelId;
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::dispatch::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::dispatch::protocol::tlv::MessageType;
-use crate::domains::subscription_state::{
-    MAX_NOTICE_REGISTRATIONS_PER_SESSION, MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
-};
+use crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION;
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Router;

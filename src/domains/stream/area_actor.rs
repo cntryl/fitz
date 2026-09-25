@@ -1,6 +1,5 @@
 //! Area actor: mints area-level offsets and tracks watermarks
 
-use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -206,16 +205,15 @@ impl AreaActor {
         }
 
         let route = Route::new(format!("stream://{}/{}/*/watermark", self.realm, self.area));
-        let payload_json = serde_json::json!({
-            "previous": previous_watermark,
-            "watermark": current_watermark,
-            "ts": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        });
         self.notification.queue(
-            DomainPublishEvent::new(self.family_id, route, Bytes::from(payload_json.to_string())),
+            DomainPublishEvent::new(
+                self.family_id,
+                route,
+                super::watermark_notification::watermark_payload(
+                    previous_watermark,
+                    current_watermark,
+                ),
+            ),
             ctx,
         );
     }

@@ -1,9 +1,11 @@
 use super::model::NoticeSubscription;
 use crate::domains::notice::NoticeResponse;
 use crate::domains::subscription_state::{
-    RoutedSubscriptionSet, MAX_NOTICE_REGISTRATIONS_PER_SESSION,
-    MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+    RoutedSubscriptionSet, MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
 };
+
+/// Total Notice registration cap for one ephemeral session.
+pub(crate) const MAX_NOTICE_REGISTRATIONS_PER_SESSION: usize = 1_024;
 
 pub(super) fn subscription_limit_error(
     state: &RoutedSubscriptionSet<NoticeSubscription>,
