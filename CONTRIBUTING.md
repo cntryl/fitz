@@ -34,7 +34,8 @@ cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D
 ## Branch Flow
 
 - Open feature pull requests against `develop`. The `ci.yml` workflow runs focused Rust and UI checks there.
-- Promote `develop` to `main` with a pull request after the full Backend and Frontend workflows pass.
+- Promote `develop` to `main` only when preparing a release. The promotion pull request must pass the full Backend and Frontend workflows.
+- CodeQL runs only on pull requests targeting `main`.
 - Squash feature pull requests into `develop`. Merge promotion pull requests with a merge commit so later promotions retain ancestry.
 
 ## Running Locally

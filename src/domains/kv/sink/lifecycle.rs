@@ -20,6 +20,7 @@ impl KvFamilyState {
             ),
             router: config.router.clone(),
             projection: config.projection.clone(),
+            active_transactions: config.active_transactions.clone(),
             metrics: config.metrics.clone(),
             sync_write_policy: config.sync_write_policy,
             buffered_write_policy: config.buffered_write_policy,
@@ -64,6 +65,7 @@ impl KvDomain {
             projection: Arc::new(
                 crate::domains::kv::admin_projection::KvAdminProjection::new(admin_read_model),
             ),
+            active_transactions: Arc::default(),
             metrics: None,
             sync_write_policy: crate::domains::WritePolicy::Sync,
             buffered_write_policy: crate::domains::WritePolicy::Buffered,

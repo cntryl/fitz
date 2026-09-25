@@ -534,11 +534,10 @@ fn should_bound_idle_actor_sweep_work_per_tick() {
     }
     let now = Instant::now();
     sink.inspect_family_for_tests(family, move |state| {
-        for warm_actor in state.actors.values_mut() {
-            warm_actor.last_used = now
-                .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
-                .expect("idle deadline");
-        }
+        state.actor_registry.age_all_for_tests(
+            now.checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
+                .expect("idle deadline"),
+        );
     });
 
     // Act
