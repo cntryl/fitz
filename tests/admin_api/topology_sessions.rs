@@ -112,8 +112,9 @@ async fn should_isolate_family_admin_read_surfaces_and_global_authority() {
     assert_eq!(stats["domains"]["queue"]["requests_total"], 0);
     assert_eq!(
         stats["diagnostics"]["incident_summary"]["status"],
-        "healthy"
+        "stalled"
     );
+    assert_eq!(stats["diagnostics"]["top_bottleneck"]["family"], 1);
     assert_eq!(denied_family.status(), StatusCode::FORBIDDEN);
     assert_eq!(denied_global.status(), StatusCode::FORBIDDEN);
 }

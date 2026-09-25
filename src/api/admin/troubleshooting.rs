@@ -2,6 +2,7 @@ mod analysis_kv_stream_notice;
 mod analysis_lease_schedule;
 mod analysis_queue_rpc;
 mod comparison;
+mod family_snapshot;
 mod model;
 mod resource_diagnostics;
 mod resource_timeline_model;
@@ -31,6 +32,7 @@ pub use comparison::{
     ResourceComparison, ResourceComparisonMetrics, ResourceComparisonScope, ResourceComparisonSide,
     TroubleshootingSnapshot,
 };
+pub(crate) use family_snapshot::build_family_troubleshooting;
 pub(crate) use model::RECENT_WINDOW_SECS;
 pub use model::{
     DiagnosisLabel, DiagnosticHotspot, DiagnosticSeverity, DiagnosticSnapshot, DiagnosticTrend,
@@ -73,22 +75,4 @@ pub(crate) fn saturating_usize(value: u64) -> usize {
 
 pub(crate) fn healthy_domain_diagnostics() -> DomainDiagnostics {
     DomainDiagnostics::healthy()
-}
-
-pub(crate) fn healthy_global_diagnostics() -> GlobalTroubleshootingDiagnostics {
-    GlobalTroubleshootingDiagnostics {
-        incident_summary: IncidentSummary {
-            status: IncidentStatus::Healthy,
-            title: "Family-scoped telemetry is healthy".to_string(),
-            likely_bottleneck: None,
-            severity: DiagnosticSeverity::Informational,
-            confidence: 1.0,
-            explanation: "Only attributable family state is included in this response.".to_string(),
-            recommended_next_query: None,
-            suggested_next_queries: Vec::new(),
-        },
-        top_bottleneck: None,
-        last_significant_transition_at: None,
-        hotspots: Vec::new(),
-    }
 }

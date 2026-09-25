@@ -153,6 +153,43 @@ fn should_report_timeout_when_notice_family_is_alive_but_busy() {
 }
 
 #[test]
+fn should_report_actor_stopped_when_notice_family_drops_pending_reply() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sink = NoticeDomain::new(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Notice family should block");
+
+    // Act
+    // The cleanup reply waits on the normal lane behind the block. The panic
+    // is queued on the control lane, so it runs first once the family is
+    // released and the family fails closed with the cleanup reply unsent.
+    let result = std::thread::scope(|scope| {
+        let pending = scope.spawn(|| {
+            sink.deliver(Envelope::new(
+                RouteAddress::new(family, Route::new("notice://cleanup")),
+                crate::runtime::SessionCleanup { session_id: 7 },
+            ))
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        sink.panic_family_for_tests(family);
+        release_tx.send(()).expect("release Notice family");
+        pending.join().expect("pending cleanup delivery")
+    });
+
+    // Assert
+    assert!(!sink.is_family_running(family));
+    assert_eq!(result, Err(DeliveryError::ActorStopped));
+}
+
+#[test]
 fn should_refresh_notice_admin_from_passive_family_observation() {
     // Arrange
     let family = RouteFamily::new(1);

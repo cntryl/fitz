@@ -15,6 +15,7 @@ pub const METRIC_INFLIGHT_GAUGE: &str = "fitz_queue_inflight_gauge";
 /// counted as a success and nothing counted the loss.
 pub const METRIC_RESPONSE_ROUTE_FAILURES_TOTAL: &str = "fitz_queue_response_route_failures_total";
 pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_queue_notify_drops_total";
+pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_queue_family_failed_closed_total";
 
 // Operation-specific counters
 pub const METRIC_ENQUEUE_TOTAL: &str = "fitz_queue_enqueue_total";
