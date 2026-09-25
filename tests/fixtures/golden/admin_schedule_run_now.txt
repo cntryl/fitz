@@ -5,5 +5,4 @@ all prod/areas/jobs/resources/billing/operations/send => 400 {"error":"Route fam
 1 prod/areas/jobs/resources/%2A/operations/send => 400 {"error":"schedule route must not contain wildcards"}
 1 prod/areas/jobs/resources/bill%zzing/operations/send => 400 {"error":"Schedule route path contains invalid percent encoding"}
 1 prod/areas/jobs/resources/bill%FFing/operations/send => 400 {"error":"Schedule route path contains invalid UTF-8"}
-1 prod/areas/jobs/resources/%20/operations/send => 404 {"error":"Schedule definition not found"}
-
+1 prod/areas/jobs/resources/%20/operations/send => 400 {"error":"schedule route segments must not be whitespace-only"}
