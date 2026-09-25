@@ -321,32 +321,32 @@ pub struct ReadResourceParams<'a> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ReadAreaParams<'a> {
-    pub(crate) family: u64,
-    pub(crate) realm: &'a str,
-    pub(crate) area: &'a str,
-    pub(crate) from_offset: u64,
-    pub(crate) limit: u64,
-    pub(crate) max_bytes: Option<usize>,
+    pub(super) family: u64,
+    pub(super) realm: &'a str,
+    pub(super) area: &'a str,
+    pub(super) from_offset: u64,
+    pub(super) limit: u64,
+    pub(super) max_bytes: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct ReadRealmPostingParams<'a> {
-    pub(crate) family: u64,
-    pub(crate) realm: &'a str,
-    pub(crate) resource: &'a str,
-    pub(crate) from_offset: u64,
-    pub(crate) limit: u64,
-    pub(crate) max_bytes: Option<usize>,
+    pub(super) family: u64,
+    pub(super) realm: &'a str,
+    pub(super) resource: &'a str,
+    pub(super) from_offset: u64,
+    pub(super) limit: u64,
+    pub(super) max_bytes: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct ReadGlobalPostingParams<'a> {
-    pub(crate) family: u64,
-    pub(crate) from_offset: u64,
-    pub(crate) limit: u64,
-    pub(crate) max_bytes: Option<usize>,
-    pub(crate) area: Option<&'a str>,
-    pub(crate) resource: Option<&'a str>,
+    pub(super) family: u64,
+    pub(super) from_offset: u64,
+    pub(super) limit: u64,
+    pub(super) max_bytes: Option<usize>,
+    pub(super) area: Option<&'a str>,
+    pub(super) resource: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]

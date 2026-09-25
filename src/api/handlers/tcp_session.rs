@@ -450,6 +450,14 @@ mod tests {
         async fn on_close(&self, _session_id: u64, reason: CloseReason) {
             self.closes.lock().unwrap().push(reason);
         }
+
+        fn get_session_info(&self, _session_id: u64) -> Option<SessionInfo> {
+            None
+        }
+
+        fn record_frame_received(&self, _session_id: u64) {}
+
+        fn record_frame_sent(&self, _session_id: u64) {}
     }
 
     #[tokio::test]

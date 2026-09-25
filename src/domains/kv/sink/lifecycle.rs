@@ -120,15 +120,7 @@ impl KvDomain {
     #[must_use]
     #[cfg(test)]
     pub fn with_sync_write_policy(self, write_policy: crate::domains::WritePolicy) -> Self {
-        let buffered = if matches!(
-            write_policy,
-            crate::domains::WritePolicy::CloudAsync | crate::domains::WritePolicy::CloudStrict
-        ) {
-            crate::domains::WritePolicy::CloudAsync
-        } else {
-            crate::domains::WritePolicy::Buffered
-        };
-        self.with_write_policies(write_policy, buffered)
+        self.with_write_policies(write_policy, write_policy.buffered_companion())
     }
 
     #[must_use]

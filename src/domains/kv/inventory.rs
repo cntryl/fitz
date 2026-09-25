@@ -10,9 +10,9 @@ const STORAGE_BYTES_RANGE: std::ops::Range<usize> = 10..18;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct KvInventoryEstimate {
-    pub(crate) estimated_record_count: u64,
-    pub(crate) estimated_storage_bytes: u64,
-    pub(crate) estimate_complete: bool,
+    pub(super) estimated_record_count: u64,
+    pub(super) estimated_storage_bytes: u64,
+    pub(super) estimate_complete: bool,
 }
 
 impl Default for KvInventoryEstimate {

@@ -38,14 +38,7 @@ impl KvActor {
     ) -> crate::domains::WritePolicy {
         // Inventory estimates are best-effort admin bookkeeping, so we avoid
         // imposing stronger durability than required for user data writes.
-        if matches!(
-            committed,
-            crate::domains::WritePolicy::CloudAsync | crate::domains::WritePolicy::CloudStrict
-        ) {
-            crate::domains::WritePolicy::CloudAsync
-        } else {
-            crate::domains::WritePolicy::Buffered
-        }
+        committed.buffered_companion()
     }
 
     pub(super) fn apply_inventory_delta(

@@ -370,10 +370,10 @@ struct ReadyEntry {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct QueueActorLiveCounts {
-    pub(crate) ready: usize,
-    pub(crate) delayed: usize,
-    pub(crate) inflight: usize,
-    pub(crate) dead_letters: usize,
+    pub(super) ready: usize,
+    pub(super) delayed: usize,
+    pub(super) inflight: usize,
+    pub(super) dead_letters: usize,
 }
 
 impl QueueActorLiveCounts {
