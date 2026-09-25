@@ -32,9 +32,9 @@ impl QueueFamilyState {
     }
 
     pub(super) fn collect_projection_state(&mut self) -> QueueProjectionState {
-        let actors = &self.actors;
         let families = &self.families;
-        let entries = actors
+        let entries = self
+            .actor_registry
             .iter()
             .map(|(key, warm_actor)| {
                 let ready_route = Self::queue_ready_route(key);
@@ -55,10 +55,9 @@ impl QueueFamilyState {
     }
 
     pub(super) fn live_counts(&mut self) -> QueueLiveCounts {
-        let actors = &self.actors;
         let mut counts = QueueLiveCounts::default();
 
-        for warm_actor in actors.values() {
+        for warm_actor in self.actor_registry.values() {
             let actor_counts = warm_actor.actor.live_counts();
             counts.ready = counts.ready.saturating_add(actor_counts.ready);
             counts.delayed = counts.delayed.saturating_add(actor_counts.delayed);

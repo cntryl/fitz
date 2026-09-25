@@ -80,7 +80,7 @@ impl QueueFamilyState {
         concrete_route: &crate::runtime::routing::Route,
         now: Instant,
     ) {
-        let mut pending = std::mem::take(&mut self.pending_reserves);
+        let mut pending = self.reservation_book.take_pending();
         let mut still_waiting = VecDeque::new();
         while let Some(reserve) = pending.pop_front() {
             if reserve.deadline <= now {
@@ -118,11 +118,11 @@ impl QueueFamilyState {
                 self.finish_pending_reserve(&reserve, outcome);
             }
         }
-        self.pending_reserves.append(&mut still_waiting);
+        self.reservation_book.restore_pending(&mut still_waiting);
     }
 
     pub(in crate::domains::queue::sink) fn expire_pending_reserves_at(&mut self, now: Instant) {
-        let mut pending = std::mem::take(&mut self.pending_reserves);
+        let mut pending = self.reservation_book.take_pending();
         let mut still_waiting = VecDeque::new();
         while let Some(reserve) = pending.pop_front() {
             if reserve.deadline > now {
@@ -133,6 +133,6 @@ impl QueueFamilyState {
             self.route_queue_response(&reserve.envelope, reserve.meta, &response);
             self.record_operation_metrics(reserve.request_started, &response, QueueOpKind::Receive);
         }
-        self.pending_reserves.append(&mut still_waiting);
+        self.reservation_book.restore_pending(&mut still_waiting);
     }
 }

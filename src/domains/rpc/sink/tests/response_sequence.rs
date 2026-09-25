@@ -48,9 +48,21 @@ fn should_retain_pending_request_before_stream_end_given_rpc_pending_table() {
             // The lookup does not move the cursor: delivery can still fail,
             // and advancing first is what lets a dropped chunk pass as
             // contiguous.
-            assert_eq!(pending.pending[&seq_key].next_expected_seq, 0);
+            assert_eq!(
+                pending
+                    .get_pending(&seq_key)
+                    .expect("tracked pending")
+                    .next_expected_seq,
+                0
+            );
             assert!(pending.commit_response_delivery(RouteFamily::new(1), &correlation_id, false));
-            assert_eq!(pending.pending[&seq_key].next_expected_seq, 1);
+            assert_eq!(
+                pending
+                    .get_pending(&seq_key)
+                    .expect("tracked pending")
+                    .next_expected_seq,
+                1
+            );
         }
         other => panic!("expected non-terminal response handling, found {other:?}"),
     }

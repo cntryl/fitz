@@ -3,8 +3,8 @@ name: CI Backend
 on:
   workflow_dispatch:
   pull_request:
-    paths-ignore:
-      - "ui/**"
+    branches:
+      - main
   push:
     branches:
       - main
@@ -17,6 +17,21 @@ permissions:
   contents: read
 
 jobs:
+  promotion-source:
+    name: promotion-source
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      PR_HEAD_REF: ${{ github.head_ref }}
+      PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      BASE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Require this repository's develop as the promotion source
+        run: |
+          test "$PR_HEAD_REF" = develop
+          test "$PR_HEAD_REPOSITORY" = "$BASE_REPOSITORY"
+
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 20

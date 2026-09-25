@@ -132,14 +132,9 @@ pub(super) fn handle_resource_detail(
         Some(crate::runtime::DomainKind::Notice) => {
             super::json_response(list::notice_detail(runtime.as_ref(), &path, queue_family))
         }
-        Some(crate::runtime::DomainKind::Rpc) => super::json_response(list::OperationCollection {
-            realm: realm.to_string(),
-            area: area.to_string(),
-            resource: resource.to_string(),
-            workers_registered: 0,
-            requests_pending: 0,
-            operations: vec![],
-        }),
+        Some(crate::runtime::DomainKind::Rpc) => {
+            super::json_response(list::rpc_operations(runtime.as_ref(), &path, queue_family))
+        }
         None => super::not_found(),
     }
 }

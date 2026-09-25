@@ -4,17 +4,9 @@ on:
   push:
     branches:
       - main
-    paths:
-      - .github/workflows/ci-frontend.yml
-      - Dockerfile
-      - public/openapi.yml
-      - ui/**
   pull_request:
-    paths:
-      - .github/workflows/ci-frontend.yml
-      - Dockerfile
-      - public/openapi.yml
-      - ui/**
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:

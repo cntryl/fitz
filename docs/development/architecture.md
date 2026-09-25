@@ -554,7 +554,7 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: passive transaction views flow through the family-published `AdminReadModel`; exact live counts and committed value/inventory reads use family-targeted command/reply queries behind the KV admin facade.
 
 #### Queue
-- Actor owner: `QueueDomain` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each family worker directly owns one `QueueFamilyState`, serializing delivery, cleanup, sweeps, admin mutations, watch state, projections, reservation state, retry bookkeeping, and durable dead-letter transitions.
+- Actor owner: `QueueDomain` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each family worker directly owns one `QueueFamilyState`, serializing delivery, cleanup, sweeps, admin mutations, watch state, projections, reservation state, retry bookkeeping, and durable dead-letter transitions. The family state groups warm actors and idle rotation in `QueueActorRegistry`, wildcard inventory and waiting reservations in `ReservationBook`, and maintenance deadlines in `QueueMaintenanceClock`; all three remain on the same synchronous worker.
 - Persistence: durable backlog and dead-letter records live in storage; inflight reservations, watch subscriptions, and fast-flush state are ephemeral.
 - Cleanup: disconnect cleanup is enqueued on the Queue family control lane, which clears worker reservations and watch state without implying durable ownership continuity or hidden worker recovery.
 - `RouteFamily`/`realm`: queue data is isolated by exact `RouteFamily`, while `realm` remains an application-defined namespace inside the queue route.
@@ -570,6 +570,7 @@ Current Notice behavior is intentionally ephemeral:
 #### Stream
 - Actor owner: `StreamDomain` owns a `FamilyActorPoolRuntime`; every provisioned route family creates its `StreamFamilyState` on the owning worker, and both client and control commands execute serially through that family. Resource, area, and realm sequencing state is held directly by that family while committed history and recovery remain `StreamStore` authoritative.
 - Current runtime boundary: `StreamDomain` is the crate-private delivery adapter for client Stream frames and family-targeted control/admin commands.
+- Reply deadline: normal client commands wait up to four seconds for the family actor so queued synchronous disk commits can finish; control and admin commands retain a one-second wait. A deadline after admission reports an indeterminate outcome and does not authorize an automatic COMMIT retry.
 - Persistence: committed records, metadata, and watermarks are durable; live append sessions and subscriptions are ephemeral.
 - Cleanup: disconnect aborts append sessions and drops live subscriptions without restoring them on reconnect.
 - `RouteFamily`/`realm`: committed history is partitioned by exact `RouteFamily`, while realm and area indexes stay explicit storage keys rather than family aliases.

@@ -56,7 +56,7 @@ impl StreamFamilyRuntime {
         }
         let router = self.watermark_router.clone();
         let store = self.core.stream_store.clone();
-        let metrics = self.core.durable_metrics.clone();
+        let metrics = self.core.observability.durable_metrics();
         let coordinator = self
             .watermark_coordinators
             .area
@@ -107,7 +107,7 @@ impl StreamFamilyRuntime {
         }
         let router = self.watermark_router.clone();
         let store = self.core.stream_store.clone();
-        let metrics = self.core.durable_metrics.clone();
+        let metrics = self.core.observability.durable_metrics();
         let coordinator = self
             .watermark_coordinators
             .realm

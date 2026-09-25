@@ -4,6 +4,9 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// How long synchronous callers wait for a family actor's reply.
+pub(super) const NOTICE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
+
 pub(super) type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
 pub(super) type NoticeMatchedRoutePatterns = SmallVec<[Arc<str>; 8]>;
 pub(super) type NoticeRouteStatsKey = (crate::runtime::routing::RouteFamily, Arc<str>);

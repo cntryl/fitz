@@ -16,6 +16,10 @@ const DOMAIN_DISPATCH_BACKPRESSURE_POLICY: DomainDispatchBackpressurePolicy =
         retry_delay: Duration::from_micros(50),
     };
 
+/// Bound Stream blocking-task admission while commands wait behind synchronous
+/// storage commits. Tokio's blocking-pool limit can vary by runtime.
+pub(super) const STREAM_DISPATCH_CONCURRENCY: usize = 64;
+
 #[derive(Clone, Copy)]
 struct DomainDispatchBackpressurePolicy {
     wait_budget: Duration,
@@ -78,6 +82,7 @@ pub(super) struct DomainFrameDispatcher {
     pub(super) router: Option<std::sync::Arc<crate::runtime::Router>>,
     pub(super) registry: super::session_registry::SessionRegistry,
     pub(super) auth_required: bool,
+    pub(super) stream_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl RuntimeIngress {
@@ -533,6 +538,65 @@ impl DomainFrameDispatcher {
         (addr, source, descriptor)
     }
 
+    async fn route_client_domain(
+        &self,
+        router: &crate::runtime::Router,
+        domain: DispatchDomain,
+        envelope: crate::runtime::Envelope,
+    ) -> Result<(), crate::runtime::router::RouteError> {
+        if domain != DispatchDomain::Stream {
+            return router.route_to_domain(domain.as_str(), envelope);
+        }
+
+        let destination = envelope.destination().clone();
+        let permit = match self.stream_dispatch_permits.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(tokio::sync::TryAcquireError::NoPermits) => {
+                return Err(crate::runtime::router::RouteError::DeliveryFailed(
+                    destination,
+                    crate::runtime::DeliveryError::MailboxFull {
+                        capacity: STREAM_DISPATCH_CONCURRENCY,
+                        current_len: STREAM_DISPATCH_CONCURRENCY,
+                    },
+                ));
+            }
+            Err(tokio::sync::TryAcquireError::Closed) => {
+                return Err(crate::runtime::router::RouteError::DeliveryFailed(
+                    destination,
+                    crate::runtime::DeliveryError::ActorStopped,
+                ));
+            }
+        };
+
+        let blocking_router = self
+            .router
+            .as_ref()
+            .expect("domain dispatch requires an attached router")
+            .clone();
+        match tokio::task::spawn_blocking(move || {
+            // Retain admission until the synchronous sink returns, even if
+            // the awaiting client task is cancelled after enqueue.
+            let _permit = permit;
+            blocking_router.route_to_domain(domain.as_str(), envelope)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "Ingress: Stream dispatch blocking task failed after handoff"
+                );
+                // Handoff may have enqueued the command; this must not become
+                // a retryable pre-enqueue rejection.
+                Err(crate::runtime::router::RouteError::DeliveryFailed(
+                    destination,
+                    crate::runtime::DeliveryError::ActorStopped,
+                ))
+            }
+        }
+    }
+
     async fn dispatch_domain_frame(
         &self,
         dispatch: DomainDispatchRequest<'_>,
@@ -580,7 +644,7 @@ impl DomainFrameDispatcher {
             );
 
             let dispatch_start = Instant::now();
-            let dispatch_result = router.route_to_domain(domain.as_str(), envelope);
+            let dispatch_result = self.route_client_domain(router, domain, envelope).await;
             if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
                 collector.histogram_observe_us(
                     obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
@@ -778,37 +842,12 @@ impl DomainFrameDispatcher {
         }
     }
 
+    /// Authorize BEGIN by the mode the KV codec itself decodes, so ingress can
+    /// never admit a BEGIN the domain would reject as malformed.
     pub(super) fn kv_begin_access(payload: &[u8]) -> Result<crate::auth::Access, String> {
-        if payload.len() < 6 {
-            return Err("BEGIN payload too short".to_string());
-        }
-
-        let route_len =
-            u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
-        let mode_offset = 4 + route_len;
-
-        if mode_offset > payload.len() {
-            return Err("BEGIN route overflow".to_string());
-        }
-
-        if mode_offset >= payload.len() {
-            return Err("BEGIN mode byte missing".to_string());
-        }
-
-        let access = match payload[mode_offset] {
-            0 => crate::auth::Access::Read,
-            1 => crate::auth::Access::Write,
-            _ => return Err("Invalid transaction mode".to_string()),
-        };
-
-        let durability_offset = mode_offset + 1;
-        if durability_offset >= payload.len() {
-            return Err("BEGIN durability byte missing".to_string());
-        }
-
-        match payload[durability_offset] {
-            0 | 1 => Ok(access),
-            value => Err(format!("Invalid durability mode: {value}")),
-        }
+        Ok(match crate::protocol::kv_codec::begin_mode(payload)? {
+            crate::domains::kv::TxMode::ReadOnly => crate::auth::Access::Read,
+            crate::domains::kv::TxMode::ReadWrite => crate::auth::Access::Write,
+        })
     }
 }

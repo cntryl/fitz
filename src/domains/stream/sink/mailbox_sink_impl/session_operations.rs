@@ -234,11 +234,7 @@ impl StreamFamilyState {
         stream_session_id: u64,
     ) -> Option<StreamSessionOwner> {
         self.session_owners
-            .get(&stream_session_id)
-            .filter(|owner| {
-                owner.owner_session_id == owner_session_id && owner.key.family == family_id
-            })
-            .cloned()
+            .for_owner(stream_session_id, owner_session_id, family_id)
     }
 
     fn handle_append_operation(
@@ -324,9 +320,9 @@ impl StreamFamilyState {
         };
         match commit_result {
             Ok(commit) => {
-                self.session_owners.remove(&session_id);
+                self.session_owners.remove(session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
-                self.durable_metrics.record_events(commit.batch_size);
+                self.observability.record_events(commit.batch_size);
                 let watermark_commit = WatermarkCommit {
                     family: owner.key.family,
                     realm: owner.key.realm.clone(),
@@ -388,7 +384,7 @@ impl StreamFamilyState {
         };
         match rollback_result {
             Ok(()) => {
-                self.session_owners.remove(&session_id);
+                self.session_owners.remove(session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
                 self.handle_visibility_advance(meta.route_family);
                 (

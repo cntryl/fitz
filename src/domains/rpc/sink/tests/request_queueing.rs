@@ -693,8 +693,7 @@ fn should_detach_caller_pending_given_rpc_session_cleanup() {
     assert_eq!(caller_cleanup.pending_len, 1);
     let detached_pending = state
         .pending
-        .pending
-        .get(&RpcCorrelationKey {
+        .get_pending(&RpcCorrelationKey {
             family,
             correlation_id: detached_correlation_id,
         })
@@ -741,7 +740,7 @@ fn should_remove_queued_request_given_rpc_session_cleanup() {
     assert_eq!(caller_cleanup.detached_callers, 0);
     assert_eq!(caller_cleanup.removed_pending, 1);
     assert_eq!(caller_cleanup.pending_len, 0);
-    assert!(state.queued.is_empty());
+    assert_eq!(state.pending.queued_len(), 0);
     assert!(!state.contains_correlation(&queued_correlation_id));
     assert_eq!(state.route_count(), 0);
 }

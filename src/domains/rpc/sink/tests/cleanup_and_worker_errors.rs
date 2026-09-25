@@ -97,16 +97,18 @@ fn should_remove_only_matching_pending_given_worker_unsubscribe() {
         removed_correlation_id
     );
     assert!(
-        !state.pending.pending.contains_key(&RpcCorrelationKey {
-            family,
-            correlation_id: removed_correlation_id,
-        }),
+        state
+            .pending
+            .get_pending(&RpcCorrelationKey {
+                family,
+                correlation_id: removed_correlation_id,
+            })
+            .is_none(),
         "removed worker pending should no longer be tracked"
     );
     let retained_pending = state
         .pending
-        .pending
-        .get(&RpcCorrelationKey {
+        .get_pending(&RpcCorrelationKey {
             family,
             correlation_id: retained_correlation_id,
         })
