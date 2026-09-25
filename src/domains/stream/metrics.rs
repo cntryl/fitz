@@ -222,9 +222,51 @@ impl StreamMetrics {
     }
 }
 
+/// Live Stream gauges published by the domain, read as one snapshot so
+/// admin rendering never depends on the domain's metric key names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StreamLiveGauges {
+    pub(crate) active: u64,
+    pub(crate) append_sessions_active: u64,
+    pub(crate) subscriptions_active: u64,
+}
+
+impl StreamLiveGauges {
+    #[must_use]
+    pub(crate) fn read(metrics: &MetricsCollector) -> Self {
+        Self {
+            active: metrics.gauge_get(METRIC_ACTIVE_GAUGE),
+            append_sessions_active: metrics.gauge_get(METRIC_APPEND_SESSIONS_GAUGE),
+            subscriptions_active: metrics.gauge_get(METRIC_SUBSCRIPTIONS_GAUGE),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_snapshot_live_gauges_from_collector() {
+        // Arrange
+        let metrics = MetricsCollector::default();
+        metrics.gauge_set(METRIC_ACTIVE_GAUGE, 3);
+        metrics.gauge_set(METRIC_APPEND_SESSIONS_GAUGE, 2);
+        metrics.gauge_set(METRIC_SUBSCRIPTIONS_GAUGE, 5);
+
+        // Act
+        let gauges = StreamLiveGauges::read(&metrics);
+
+        // Assert
+        assert_eq!(
+            (
+                gauges.active,
+                gauges.append_sessions_active,
+                gauges.subscriptions_active
+            ),
+            (3, 2, 5)
+        );
+    }
 
     #[test]
     fn should_not_regress_durable_metrics_given_an_older_admin_snapshot() {

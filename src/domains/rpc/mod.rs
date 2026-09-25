@@ -56,6 +56,7 @@ pub mod metrics;
 pub mod projection;
 pub mod protocol;
 pub(crate) mod sink;
+pub(crate) use sink::RpcDomain;
 
 pub use metrics::RpcMetrics;
 pub use protocol::{

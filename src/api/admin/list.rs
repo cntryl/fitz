@@ -13,7 +13,7 @@ use crate::api::admin::troubleshooting::{
 };
 use crate::api::http::Response;
 use crate::boot::Runtime;
-use crate::domains::stream::sink::AdminStreamReadRequest;
+use crate::domains::stream::admin::AdminStreamReadRequest;
 use crate::runtime::routing::{route_quad, route_triplet, RouteFamily};
 use std::collections::HashMap;
 use std::convert::Infallible;

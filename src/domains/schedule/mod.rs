@@ -32,7 +32,8 @@ pub use protocol::{
     ScheduleFailureCategory, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
 };
 pub(crate) use sink::{
-    validate_run_now_route, ScheduleRunNowError, ScheduleRunNowOutcome, ScheduleRunNowResult,
+    validate_run_now_route, ScheduleDomain, ScheduleRunNowError, ScheduleRunNowOutcome,
+    ScheduleRunNowResult, DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
 };
 pub(crate) use store::ScheduleStore;
 

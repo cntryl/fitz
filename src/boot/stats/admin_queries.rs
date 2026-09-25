@@ -1,8 +1,8 @@
 use super::Runtime;
 use crate::boot::domains::DomainAdminPorts;
-use crate::domains::kv::sink::{AdminKvRowsError, AdminKvRowsRequest, AdminKvRowsResult};
+use crate::domains::kv::admin::{AdminKvRowsError, AdminKvRowsRequest, AdminKvRowsResult};
 use crate::domains::queue::{MessageId, QueueKey};
-use crate::domains::stream::sink::AdminStreamReadRequest;
+use crate::domains::stream::admin::AdminStreamReadRequest;
 use crate::runtime::routing::RouteFamily;
 use chrono::{DateTime, Utc};
 
@@ -151,7 +151,7 @@ impl Runtime {
         resource: &str,
         key_prefix: &[u8],
         limit: usize,
-    ) -> Result<crate::domains::kv::sink::AdminKvPrefixScanResult, String> {
+    ) -> Result<crate::domains::kv::admin::AdminKvPrefixScanResult, String> {
         let domains = self
             .domain_admins
             .read()

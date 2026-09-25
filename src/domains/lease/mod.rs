@@ -33,6 +33,7 @@
 pub mod metrics;
 pub mod protocol;
 pub(crate) mod sink;
+pub(crate) use sink::LeaseDomain;
 
 pub use metrics::LeaseMetrics;
 pub use protocol::{

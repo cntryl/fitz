@@ -54,6 +54,14 @@ pub(crate) mod metrics;
 mod protocol;
 mod scan_wire_budget;
 pub(crate) mod sink;
+pub(crate) use sink::KvDomain;
+
+/// Admin read port: request/response types for operator KV inspection.
+pub(crate) mod admin {
+    pub(crate) use super::sink::{
+        AdminKvPrefixScanResult, AdminKvRowsError, AdminKvRowsRequest, AdminKvRowsResult,
+    };
+}
 mod store;
 mod watch_registry;
 pub(crate) mod write_policy;

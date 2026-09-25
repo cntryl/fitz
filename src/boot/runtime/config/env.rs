@@ -88,7 +88,7 @@ pub(super) fn kv_idle_transaction_ttl_seconds_from_env() -> (u64, Option<String>
 pub(super) fn schedule_preload_timeout_seconds_from_env() -> (u64, Option<String>) {
     positive_u64_from_env(
         ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS,
-        crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT.as_secs(),
+        crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT.as_secs(),
         "second count",
     )
 }

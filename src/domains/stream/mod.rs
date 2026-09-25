@@ -43,6 +43,13 @@ pub(crate) mod metrics;
 pub mod protocol;
 pub(crate) mod route_grammar;
 pub(crate) mod sink;
+pub(crate) use sink::StreamDomain;
+pub(crate) use sink::StreamStorageWriteOptions;
+
+/// Admin read port: request types for operator Stream inspection.
+pub(crate) mod admin {
+    pub(crate) use super::sink::AdminStreamReadRequest;
+}
 pub(crate) mod storage;
 pub(crate) mod store;
 

@@ -5,13 +5,13 @@ use crate::runtime::{DomainKind, MailboxSink, Router};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
 
-use crate::domains::kv::sink::KvDomain;
-use crate::domains::lease::sink::LeaseDomain;
-use crate::domains::notice::sink::NoticeDomain;
-use crate::domains::queue::sink::QueueDomain;
-use crate::domains::rpc::sink::RpcDomain;
-use crate::domains::schedule::sink::ScheduleDomain;
-use crate::domains::stream::sink::StreamDomain;
+use crate::domains::kv::KvDomain;
+use crate::domains::lease::LeaseDomain;
+use crate::domains::notice::NoticeDomain;
+use crate::domains::queue::QueueDomain;
+use crate::domains::rpc::RpcDomain;
+use crate::domains::schedule::ScheduleDomain;
+use crate::domains::stream::StreamDomain;
 use crate::runtime::routing::RouteFamily;
 
 #[derive(Clone)]
@@ -313,17 +313,17 @@ impl DomainAdminPorts {
         resource: &str,
         key_prefix: &[u8],
         limit: usize,
-    ) -> Result<crate::domains::kv::sink::AdminKvPrefixScanResult, String> {
+    ) -> Result<crate::domains::kv::admin::AdminKvPrefixScanResult, String> {
         self.kv
             .admin_scan_committed_prefix(family, realm, area, resource, key_prefix, limit)
     }
 
     pub(crate) fn kv_admin_scan_committed_rows(
         &self,
-        request: &crate::domains::kv::sink::AdminKvRowsRequest<'_>,
+        request: &crate::domains::kv::admin::AdminKvRowsRequest<'_>,
     ) -> Result<
-        crate::domains::kv::sink::AdminKvRowsResult,
-        crate::domains::kv::sink::AdminKvRowsError,
+        crate::domains::kv::admin::AdminKvRowsResult,
+        crate::domains::kv::admin::AdminKvRowsError,
     > {
         self.kv.admin_scan_committed_rows(request)
     }
@@ -366,7 +366,7 @@ impl DomainAdminPorts {
 
     pub(crate) fn stream_admin_read_resource_records(
         &self,
-        request: &crate::domains::stream::sink::AdminStreamReadRequest<'_>,
+        request: &crate::domains::stream::admin::AdminStreamReadRequest<'_>,
     ) -> Result<
         (
             Vec<crate::domains::stream::protocol::StreamReadItem>,
@@ -504,7 +504,7 @@ fn create_stream_sink(
             admin_read_model.clone(),
             options.stream_storage_layout,
             Some(route_families),
-            crate::domains::stream::sink::StreamStorageWriteOptions::new(
+            crate::domains::stream::StreamStorageWriteOptions::new(
                 options.request_sync_write_policy,
                 options.request_buffered_write_policy,
             ),
@@ -671,8 +671,7 @@ mod tests {
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
-            schedule_preload_timeout:
-                crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
+            schedule_preload_timeout: crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
         }
     }
 
@@ -690,8 +689,7 @@ mod tests {
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
-            schedule_preload_timeout:
-                crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
+            schedule_preload_timeout: crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
         }
     }
 

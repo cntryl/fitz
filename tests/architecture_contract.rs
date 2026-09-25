@@ -585,3 +585,55 @@ fn should_keep_schedule_run_now_validation_owned_by_schedule() {
         "admin/boot must use the schedule domain's public run-now API: {offenders:?}"
     );
 }
+
+#[test]
+fn should_import_domains_only_through_their_public_modules() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = production_sources_under(workspace, "src/api");
+    sources.extend(production_sources_under(workspace, "src/boot"));
+    let internal_modules = ["::sink::", "::sink;", "::store::", "::store;"];
+
+    // Act
+    let offenders = sources
+        .iter()
+        .filter(|(_, source)| {
+            source.match_indices("domains::").any(|(index, _)| {
+                let rest = &source[index + "domains::".len()..];
+                let domain_end = rest
+                    .find(|c: char| !(c.is_ascii_lowercase() || c == '_'))
+                    .unwrap_or(rest.len());
+                internal_modules
+                    .iter()
+                    .any(|module| rest[domain_end..].starts_with(module))
+            })
+        })
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "api/boot must import domain types from the domain module, not sink/store: {offenders:?}"
+    );
+}
+
+#[test]
+fn should_keep_domain_metric_keys_out_of_admin_transport() {
+    // Arrange
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sources = production_sources_under(workspace, "src/api");
+
+    // Act
+    let offenders = sources
+        .iter()
+        .filter(|(_, source)| source.contains("::metrics::METRIC_"))
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        offenders.is_empty(),
+        "admin must read domain metric snapshots, not domain metric keys: {offenders:?}"
+    );
+}

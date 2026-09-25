@@ -159,7 +159,7 @@ impl Runtime {
                 stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
                 kv_idle_transaction_ttl: Duration::from_mins(5),
                 schedule_preload_timeout:
-                    crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
+                    crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
             },
         )
         .expect("setup domains");
