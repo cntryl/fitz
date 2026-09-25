@@ -1,6 +1,6 @@
 use super::model::{
     StreamDomain, StreamDomainCommand, StreamFamilyState, StreamReadExecution, StreamSubscription,
-    STREAM_ACTOR_REPLY_TIMEOUT, STREAM_OPERATIONS_TOTAL,
+    STREAM_ACTOR_REPLY_TIMEOUT, STREAM_CLIENT_ACTOR_REPLY_TIMEOUT, STREAM_OPERATIONS_TOTAL,
 };
 use super::session_owners::StreamSessionOwner;
 use crate::dispatch::protocol::payload_codec::PayloadEncoder;
@@ -49,8 +49,13 @@ impl StreamDomain {
             .try_enqueue(family, lane, command)
             .map_err(crate::runtime::family_actor_enqueue_error_to_delivery_error)?;
 
+        let reply_timeout = if high_priority {
+            STREAM_ACTOR_REPLY_TIMEOUT
+        } else {
+            STREAM_CLIENT_ACTOR_REPLY_TIMEOUT
+        };
         reply_rx
-            .recv_timeout(STREAM_ACTOR_REPLY_TIMEOUT)
+            .recv_timeout(reply_timeout)
             .unwrap_or_else(|error| Err(crate::runtime::reply_wait::map_reply_wait_error(error)))
     }
 }
