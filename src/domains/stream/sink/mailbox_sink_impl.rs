@@ -1,7 +1,8 @@
 use super::model::{
-    StreamDomain, StreamDomainCommand, StreamFamilyState, StreamReadExecution, StreamSessionOwner,
-    StreamSubscription, STREAM_ACTOR_REPLY_TIMEOUT, STREAM_OPERATIONS_TOTAL,
+    StreamDomain, StreamDomainCommand, StreamFamilyState, StreamReadExecution, StreamSubscription,
+    STREAM_ACTOR_REPLY_TIMEOUT, STREAM_OPERATIONS_TOTAL,
 };
+use super::session_owners::StreamSessionOwner;
 use crate::dispatch::protocol::payload_codec::PayloadEncoder;
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;

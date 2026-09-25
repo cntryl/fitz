@@ -53,10 +53,10 @@ impl SessionScoped for StreamFamilyState {
         if !removed_sessions.is_empty() {
             let removed_count = super::model::usize_to_u64_saturating(removed_sessions.len());
             for stream_session_id in removed_sessions {
-                self.session_owners.remove(&stream_session_id);
+                self.session_owners.remove(stream_session_id);
             }
             self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
-            self.admin_snapshot.mark_dirty();
+            self.observability.mark_dirty();
         }
         self.refresh_metrics_gauges();
     }

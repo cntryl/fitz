@@ -5,7 +5,7 @@ use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionS
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::{CleanedUpSessions, DeliveryError, Envelope, MailboxSink, Router};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -305,12 +305,6 @@ impl StreamResourceScope {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct StreamSessionOwner {
-    pub(super) key: StreamResourceScope,
-    pub(super) owner_session_id: u64,
-}
-
 pub(super) struct SubscriptionRegistry {
     pub(super) families: HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>,
     pub(super) next_id: Arc<AtomicU64>,
@@ -324,32 +318,6 @@ impl SubscriptionRegistry {
             next_id,
             pending: Vec::new(),
         }
-    }
-}
-
-pub(super) struct AdminSnapshotState {
-    pub(super) projection: Arc<super::projection::StreamAdminProjection>,
-    pub(super) dirty: Arc<AtomicBool>,
-}
-
-impl AdminSnapshotState {
-    pub(super) fn new(
-        projection: Arc<super::projection::StreamAdminProjection>,
-        dirty: Arc<AtomicBool>,
-    ) -> Self {
-        Self { projection, dirty }
-    }
-
-    pub(super) fn mark_dirty(&self) {
-        self.dirty.store(true, Ordering::Release);
-    }
-
-    pub(super) fn is_dirty(&self) -> bool {
-        self.dirty.load(Ordering::Acquire)
-    }
-
-    pub(super) fn clear_dirty(&self) {
-        self.dirty.store(false, Ordering::Release);
     }
 }
 
@@ -432,17 +400,15 @@ pub(super) struct StreamFamilyState {
     pub(super) admin_unprovisioned_owner: RouteFamily,
     pub(super) stream_store: Arc<StreamStore>,
     pub(super) actors: HashMap<StreamResourceScope, StreamActor>,
-    pub(super) session_owners: HashMap<u64, StreamSessionOwner>,
+    pub(super) session_owners: super::session_owners::StreamSessionOwners,
     pub(super) cleaned_up_sessions: CleanedUpSessions,
     pub(super) subscriptions: SubscriptionRegistry,
     pub(super) next_session_id: Arc<AtomicU64>,
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
     pub(super) router: Arc<Router>,
-    pub(super) admin_snapshot: AdminSnapshotState,
+    pub(super) observability: super::observability_state::StreamObservability,
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     pub(super) metrics: Option<StreamMetrics>,
-    pub(super) live_gauges: Arc<super::live_gauges::StreamLiveGaugeCoordinator>,
-    pub(super) durable_metrics: Arc<StreamDurableMetrics>,
     pub(super) active: Arc<AtomicBool>,
 }
 
