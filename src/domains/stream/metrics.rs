@@ -222,7 +222,7 @@ impl StreamMetrics {
     }
 }
 
-/// Live Stream gauges published by the domain, read as one snapshot so
+/// Live Stream gauges published by the domain, read together so
 /// admin rendering never depends on the domain's metric key names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StreamLiveGauges {
