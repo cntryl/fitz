@@ -205,7 +205,12 @@ fn family_attributable_samples(runtime: &Runtime, family: u64) -> Vec<Structured
             "fitz_stream_active",
             "gauge",
             "Active streams attributable to this route family",
-            count(streams.len()),
+            count(
+                streams
+                    .iter()
+                    .filter(|stream| stream.committed_event_count > 0)
+                    .count(),
+            ),
         ),
         sample(
             "fitz_stream_append_sessions_active",

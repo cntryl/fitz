@@ -48,11 +48,19 @@ impl StreamAdminProjection {
         };
         let mut changed = false;
         for stream in &mut snapshot.streams {
-            if stream.route_family == family && stream.sessions_active != 0 {
+            if stream.route_family == family
+                && (stream.sessions_active != 0 || stream.subscriptions_active != 0)
+            {
                 stream.sessions_active = 0;
+                stream.subscriptions_active = 0;
                 changed = true;
             }
         }
+        let previous_len = snapshot.streams.len();
+        snapshot
+            .streams
+            .retain(|stream| stream.route_family != family || stream.committed_event_count > 0);
+        changed |= snapshot.streams.len() != previous_len;
         if changed {
             self.publish_merged(&families);
         }

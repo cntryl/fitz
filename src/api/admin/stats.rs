@@ -489,7 +489,10 @@ pub(crate) fn build_family_stats(runtime: &Runtime, family: u64) -> GlobalStats 
                 diagnostics: healthy.clone(),
             },
             stream: StreamStats {
-                streams_active: streams.len(),
+                streams_active: streams
+                    .iter()
+                    .filter(|stream| stream.committed_event_count > 0)
+                    .count(),
                 append_sessions_active: streams.iter().map(|stream| stream.sessions_active).sum(),
                 events_total: 0,
                 requests_total: 0,

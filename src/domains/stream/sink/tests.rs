@@ -428,6 +428,7 @@ fn stream_read_response(
     decode_stream_read_payload(&data)
 }
 
+mod active_subscriptions;
 mod correctness;
 mod fault_injection;
 mod global_reads;

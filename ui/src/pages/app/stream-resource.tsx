@@ -183,6 +183,11 @@ export default function StreamResourcePage() {
                 value: data.detail.sessions_active,
                 caption: "Live append sessions",
               },
+              {
+                label: "Active subscriptions",
+                value: data.detail.subscriptions_active,
+                caption: "Live subscriptions; resets on disconnect cleanup or broker restart",
+              },
             ]}
           />
         ) : null}

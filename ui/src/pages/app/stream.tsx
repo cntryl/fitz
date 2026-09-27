@@ -28,6 +28,13 @@ const streamMetricColumns: readonly DomainResourceMetricColumn[] = [
     cell: (row) => formatNumber(row.sessionsActive ?? 0),
     sortValue: (row) => row.sessionsActive,
   },
+  {
+    id: "subscriptions",
+    header: "Active subscriptions",
+    width: "18%",
+    cell: (row) => formatNumber(row.subscriptionsActive ?? 0),
+    sortValue: (row) => row.subscriptionsActive,
+  },
 ];
 
 type StreamPostureTone = "success" | "warning" | "danger" | "info";

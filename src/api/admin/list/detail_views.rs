@@ -170,7 +170,7 @@ pub fn stream_realm_watermark_detail(
         let streams = runtime
             .stream_list_streams(Some(realm))
             .into_iter()
-            .filter(|stream| stream.route_family == family)
+            .filter(|stream| stream.route_family == family && stream.committed_event_count > 0)
             .collect::<Vec<_>>();
         detail.area_count = streams
             .iter()
@@ -201,7 +201,11 @@ pub fn stream_area_watermark_detail(
         detail.resource_count = runtime
             .stream_list_streams(Some(realm))
             .into_iter()
-            .filter(|stream| stream.route_family == family && stream.area == area)
+            .filter(|stream| {
+                stream.route_family == family
+                    && stream.area == area
+                    && stream.committed_event_count > 0
+            })
             .count();
     }
 

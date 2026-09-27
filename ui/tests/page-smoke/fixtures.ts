@@ -477,6 +477,7 @@ export const streamResource = {
     realm: "default",
     resource: "events",
     sessions_active: 1,
+    subscriptions_active: 2,
     size_bytes: 128,
     watermark: 10,
   },

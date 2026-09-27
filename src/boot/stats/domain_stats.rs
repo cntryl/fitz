@@ -316,7 +316,13 @@ impl Runtime {
     #[must_use]
     pub fn stream_active(&self) -> usize {
         self.domain_admins.read().as_ref().map_or_else(
-            || self.admin_read_model.streams(None).len(),
+            || {
+                self.admin_read_model
+                    .streams(None)
+                    .into_iter()
+                    .filter(|stream| stream.committed_event_count > 0)
+                    .count()
+            },
             DomainAdminPorts::stream_count,
         )
     }

@@ -1032,6 +1032,7 @@ export type StreamResourceDetail = {
   "watermark": number;
   "size_bytes": number;
   "sessions_active": number;
+  "subscriptions_active": number;
   "diagnostics": DiagnosticSnapshot;
 };
 
@@ -1040,6 +1041,7 @@ export type StreamResourceEntry = {
   "committed_event_count": number;
   "size_bytes": number;
   "sessions_active": number;
+  "subscriptions_active": number;
 };
 
 export type StreamStats = {

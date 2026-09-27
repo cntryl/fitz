@@ -589,8 +589,15 @@ fn should_clear_failed_family_live_sessions_without_losing_committed_admin_row()
     let route = "stream://bench/events/orders";
     seed_committed_stream_route(&context, route, 1, b"persisted");
     let _active_session_id = begin_stream(&context, route);
+    let subscribe_frame = build_stream_subscribe(route);
+    let (message_type, payload) = extract_single_tlv_field(&subscribe_frame);
+    let _subscribe_response = request(&context, route, message_type, payload);
     context.sink.refresh_admin_snapshot_if_dirty();
     assert_eq!(context.admin_read_model.streams(None)[0].sessions_active, 1);
+    assert_eq!(
+        context.admin_read_model.streams(None)[0].subscriptions_active,
+        1
+    );
     context
         .sink
         .panic_family_actor_for_failpoint(context.family);
@@ -628,6 +635,7 @@ fn should_clear_failed_family_live_sessions_without_losing_committed_admin_row()
     // Assert
     assert_eq!(first_family_stream.resource, "orders");
     assert_eq!(first_family_stream.sessions_active, 0);
+    assert_eq!(first_family_stream.subscriptions_active, 0);
     assert_eq!(context.admin_read_model.stream_events_total(), 2);
 }
 

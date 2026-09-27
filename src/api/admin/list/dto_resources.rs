@@ -91,6 +91,7 @@ pub struct StreamResourceEntry {
     pub committed_event_count: u64,
     pub size_bytes: u64,
     pub sessions_active: usize,
+    pub subscriptions_active: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,12 +244,12 @@ pub struct QueueResourceDetail {
 }
 
 /// Stream resource detail derived from durable committed metadata plus live
-/// append-session counts for the current broker process.
+/// append-session and subscription counts for the current broker process.
 ///
 /// `offset`, `watermark`, and `size_bytes` survive restart because they come
-/// from committed stream metadata. `sessions_active` counts only currently live
-/// append sessions on this broker process and resets on disconnect cleanup or
-/// broker restart.
+/// from committed stream metadata. `sessions_active` and `subscriptions_active`
+/// count only live broker-local state and reset on disconnect cleanup or broker
+/// restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamResourceDetail {
     pub realm: String,
@@ -258,6 +259,7 @@ pub struct StreamResourceDetail {
     pub watermark: u64,
     pub size_bytes: u64,
     pub sessions_active: usize,
+    pub subscriptions_active: usize,
     pub diagnostics: DiagnosticSnapshot,
 }
 
@@ -468,6 +470,7 @@ impl StreamResourceDetail {
             watermark: item.watermark,
             size_bytes: item.size_bytes,
             sessions_active: item.sessions_active,
+            subscriptions_active: item.subscriptions_active,
             diagnostics,
         }
     }
@@ -481,6 +484,7 @@ impl StreamResourceDetail {
             watermark: 0,
             size_bytes: 0,
             sessions_active: 0,
+            subscriptions_active: 0,
             diagnostics: troubleshooting::stream_resource_diagnostics(0, 0, 0),
         }
     }

@@ -129,10 +129,12 @@ pub struct StreamInfo {
     pub realm: String,
     pub area: String,
     pub resource: String,
+    pub committed_event_count: u64,
     pub offset: u64,
     pub watermark: u64,
     pub size_bytes: u64,
     pub sessions_active: usize,
+    pub subscriptions_active: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -525,6 +527,7 @@ pub(crate) struct StreamInfoSnapshot<'a> {
     pub realm: &'a str,
     pub area: &'a str,
     pub resource: &'a str,
+    pub committed_event_count: u64,
     pub offset: u64,
     pub watermark: u64,
     pub size_bytes: u64,
@@ -562,10 +565,12 @@ impl StreamInfo {
             realm: snapshot.realm.to_string(),
             area: snapshot.area.to_string(),
             resource: snapshot.resource.to_string(),
+            committed_event_count: snapshot.committed_event_count,
             offset: snapshot.offset,
             watermark: snapshot.watermark,
             size_bytes: snapshot.size_bytes,
             sessions_active: snapshot.sessions_active,
+            subscriptions_active: 0,
         }
     }
 }
