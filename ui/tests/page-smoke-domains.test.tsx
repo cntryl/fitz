@@ -22,6 +22,62 @@ import {
 const mocks = pageSmokeMocks();
 
 describe("admin page smoke tests", () => {
+  it("shows active subscription counts in the stream resource inventory", async () => {
+    mocks.queryStates.inventory = queryState.fresh(
+      {
+        ...inventory,
+        realms: [
+          {
+            realm: "default",
+            areas: [
+              {
+                area: "events",
+                resources: ["idle", "orders"],
+                resourceEntries: [
+                  { resource: "idle", committedEventCount: 0, subscriptionsActive: 0 },
+                  { resource: "orders", committedEventCount: 12, subscriptionsActive: 3 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      queryOptions(),
+    );
+
+    const { default: StreamPage } = await import("@/pages/app/stream");
+    const root = await mountRoute(
+      "/admin/1/stream/default/events",
+      "/admin/{family}/stream/{realm}/{area}",
+      StreamPage,
+    );
+    const table = root.querySelector<HTMLTableElement>("#stream-inventory-table");
+
+    expect(root.textContent).toMatch(/Active subscriptions\s*3/);
+    expect(table?.querySelector('th[data-column-id="subscriptions"]')).toBeTruthy();
+    expect(
+      Array.from(table?.querySelectorAll('tbody td[data-column-id="subscriptions"]') ?? []).map(
+        (cell) => cell.textContent?.trim(),
+      ),
+    ).toEqual(["0", "3"]);
+    const sort = root.querySelector<HTMLButtonElement>(
+      'button[aria-label="Sort by Active subscriptions, not sorted"]',
+    );
+    expect(sort).toBeTruthy();
+    click(sort!);
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(
+      Array.from(
+        root
+          .querySelector<HTMLTableElement>("#stream-inventory-table")
+          ?.querySelectorAll('tbody td[data-column-id="subscriptions"]') ?? [],
+      ).map((cell) => cell.textContent?.trim()),
+    ).toEqual(["3", "0"]);
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+  });
+
   it("renders domain overview error states with page-specific framing", async () => {
     for (const page of domainOverviews) {
       resetQueries();
@@ -672,6 +728,8 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Stream resource");
     expect(text).toContain("From offset");
     expect(text).toContain("Committed metadata");
+    expect(text).toContain("Active subscriptions");
+    expect(text).toContain("Live subscriptions; resets on disconnect cleanup or broker restart");
     expect(text).not.toContain("stream://default/ops/events");
     expect(text).toContain('{"ok":true}');
     const recordsTable = root.querySelector('table[aria-label="Stream records"]');

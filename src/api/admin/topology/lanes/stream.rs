@@ -90,6 +90,11 @@ fn top_stream_resources(streams: &[StreamInfo]) -> Vec<TopologyScopedResource> {
                 count_u64("watermark", "Watermark", stream.watermark),
                 count_u64("size_bytes", "Size bytes", stream.size_bytes),
                 count_usize("sessions", "Sessions", stream.sessions_active),
+                count_usize(
+                    "subscriptions",
+                    "Subscriptions",
+                    stream.subscriptions_active,
+                ),
             ];
             scoped_resource(
                 "stream",
