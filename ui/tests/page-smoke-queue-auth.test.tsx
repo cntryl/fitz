@@ -1,12 +1,73 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { queryState, submit, type } from "@askrjs/askr/testing";
+import { click, queryState, submit, type } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
-import { queueInventory, queueResource } from "./page-smoke/fixtures";
+import { queueInventory, queueResource, queueResourceRow } from "./page-smoke/fixtures";
 
 const mocks = pageSmokeMocks();
 
 describe("admin page smoke tests", () => {
+  it("shows and sorts live subscription counts in queue inventory and scope rollups", async () => {
+    const { default: QueuePage } = await import("@/pages/app/queue");
+    mocks.queryStates.queueInventory = queryState.fresh(
+      {
+        ...queueInventory,
+        realms: [
+          {
+            realm: "default",
+            areas: [
+              {
+                area: "ops",
+                resources: ["unconsumed", "consumed"],
+                resourceEntries: [
+                  { ...queueResourceRow, resource: "unconsumed", subscriptionsActive: 0 },
+                  { ...queueResourceRow, resource: "consumed", subscriptionsActive: 3 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      queryOptions(),
+    );
+
+    const root = await mountRoute(
+      "/admin/1/queue/default/ops",
+      "/admin/{family}/queue/{realm}/{area}",
+      QueuePage,
+    );
+    const table = root.querySelector<HTMLTableElement>("#queue-inventory-table");
+
+    expect(root.textContent).toMatch(/Active subscriptions\s*3/);
+    expect(table?.querySelector('th[data-column-id="subscriptions"]')).toBeTruthy();
+    expect(
+      Array.from(table?.querySelectorAll('tbody td[data-column-id="subscriptions"]') ?? []).map(
+        (cell) => cell.textContent?.trim(),
+      ),
+    ).toEqual(["0", "3"]);
+
+    const sort = root.querySelector<HTMLButtonElement>(
+      'button[aria-label="Sort by Active subscriptions, not sorted"]',
+    );
+    expect(sort).toBeTruthy();
+    click(sort!);
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(
+      root.querySelector('button[aria-label="Sort by Active subscriptions, descending"]'),
+    ).toBeTruthy();
+    expect(
+      Array.from(
+        root
+          .querySelector<HTMLTableElement>("#queue-inventory-table")
+          ?.querySelectorAll('tbody td[data-column-id="subscriptions"]') ?? [],
+      ).map((cell) => cell.textContent?.trim()),
+    ).toEqual(["3", "0"]);
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+  });
+
   it("renders progressive queue links for overview, realm, and area routes", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
     mocks.queryStates.queueInventory = queryState.fresh(
