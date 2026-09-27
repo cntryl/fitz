@@ -27,7 +27,7 @@ Aggregation rules live in `domain-inventory-rollup.ts`: counts, sizes, and rates
 ## Domain Findings And Fixes
 
 - KV: The overview and inventory center current authoritative state. KV rows retain their real record, storage, transaction, and latency fields.
-- Queue: The overview frames Queue as durable work backlog with ready, delayed, inflight, and dead-letter pressure. Inventory rows show each queue's own ready, delayed, in-flight, dead-lettered, and oldest-backlog values, and realm and area rows roll those same columns up.
+- Queue: The overview frames Queue as durable work backlog with ready, delayed, inflight, and dead-letter pressure. Inventory rows show each queue's own ready, delayed, in-flight, dead-lettered, oldest-backlog, and active-subscription counts, and realm and area rows roll those same columns up. Active subscriptions are live route registrations, not durable consumer identity or a delivery guarantee.
 - Stream: The overview emphasizes durable history and replay lag. Inventory rows show committed events, storage, and append sessions.
 - Lease: The overview and resource pages make ephemeral ownership, TTL, waiters, and non-crash-safe continuity explicit. Inventory rows show active leases, waiters, and oldest lease age.
 - Notice: The overview calls out live ephemeral fanout and disconnect/restart loss. Inventory rows show subscriptions, publish rate, and delivered counts, and the operation tier shows the same two metrics per route under the same labels.

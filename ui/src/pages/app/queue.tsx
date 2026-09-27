@@ -92,6 +92,14 @@ export default function QueuePage() {
       cell: (row) => formatDurationSeconds(row.oldestBacklogAgeSeconds ?? 0),
       sortValue: (row) => row.oldestBacklogAgeSeconds,
     },
+    {
+      id: "subscriptions",
+      header: "Active subscriptions",
+      width: "16%",
+      cell: (row) => formatNumber(row.subscriptionsActive ?? 0),
+      sortValue: (row) => row.subscriptionsActive,
+      title: () => "Current live subscriptions matching this queue route.",
+    },
   ];
 
   return (
