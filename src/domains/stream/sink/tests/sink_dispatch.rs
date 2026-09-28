@@ -79,6 +79,14 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
             })
             .expect("commit maintenance fragment");
     }
+    context.sink.sync_admin_snapshot();
+    assert!(!context
+        .sink
+        .config
+        .admin_dirty_flags
+        .get(&context.family)
+        .expect("Stream family admin dirty flag")
+        .load(std::sync::atomic::Ordering::Acquire));
 
     // Act
     context.sink.run_maintenance_slice_for_tests(context.family);
@@ -105,6 +113,13 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
         .config
         .stream_store
         .has_pending_maintenance(context.family.as_u64()));
+    assert!(context
+        .sink
+        .config
+        .admin_dirty_flags
+        .get(&context.family)
+        .expect("Stream family admin dirty flag")
+        .load(std::sync::atomic::Ordering::Acquire));
     assert!(context.sink.is_actor_running());
 }
 

@@ -533,6 +533,37 @@ fn should_include_second_family_live_session_in_admin_projection() {
 }
 
 #[test]
+fn should_reuse_live_overlay_snapshot_and_refresh_after_commit() {
+    // Arrange
+    let context = setup_test_context();
+    let route = "stream://bench/events/orders";
+    seed_committed_stream_route(&context, route, 1, b"first");
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let session_id = begin_stream(&context, route);
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let live_snapshot = context.admin_read_model.streams(None);
+
+    // Act
+    let append_frame = build_stream_append(session_id, 1, b"second");
+    let (append_type, append_payload) = extract_single_tlv_field(&append_frame);
+    let _ = request(&context, route, append_type, append_payload);
+    let commit_frame = crate::benchkit::build_stream_commit(session_id, 1);
+    let (commit_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+    let _ = request(&context, route, commit_type, commit_payload);
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let committed_snapshot = context.admin_read_model.streams(None);
+
+    // Assert
+    assert_eq!(live_snapshot.len(), 1);
+    assert_eq!(live_snapshot[0].committed_event_count, 1);
+    assert_eq!(live_snapshot[0].sessions_active, 1);
+    assert_eq!(committed_snapshot.len(), 1);
+    assert_eq!(committed_snapshot[0].committed_event_count, 2);
+    assert_eq!(committed_snapshot[0].offset, 1);
+    assert_eq!(committed_snapshot[0].sessions_active, 0);
+}
+
+#[test]
 fn should_project_persisted_unprovisioned_family_into_admin_snapshot() {
     // Arrange
     let engine = crate::testkit::create_test_engine_with_cfs(vec![1, 2]);

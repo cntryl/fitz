@@ -22,6 +22,11 @@ impl StreamFamilyState {
         self.refresh_metrics_gauges();
     }
 
+    pub(in crate::domains::stream::sink) fn mark_committed_admin_snapshot_dirty(&mut self) {
+        self.observability.mark_committed_dirty();
+        self.refresh_metrics_gauges();
+    }
+
     pub(in crate::domains::stream::sink) fn refresh_metrics_gauges(&mut self) {
         let counts = self.live_counts();
         self.observability.publish_family(self.family, counts);
@@ -112,10 +117,35 @@ impl StreamFamilyState {
     }
 
     fn try_sync_admin_snapshot(&mut self) -> Result<(), String> {
-        let (mut streams, realm_snapshots, area_snapshots, committed_events_total) =
-            self.collect_committed_stream_snapshots()?;
-        let stream_realm_watermarks = self.collect_stream_realm_watermarks(realm_snapshots)?;
-        let stream_area_watermarks = self.collect_stream_area_watermarks(area_snapshots)?;
+        let (mut streams, stream_realm_watermarks, stream_area_watermarks, committed_events_total) =
+            if let Some(snapshot) = self.observability.committed_snapshot() {
+                (
+                    snapshot.streams,
+                    snapshot.realm_watermarks,
+                    snapshot.area_watermarks,
+                    snapshot.committed_events_total,
+                )
+            } else {
+                let (streams, realm_snapshots, area_snapshots, committed_events_total) =
+                    self.collect_committed_stream_snapshots()?;
+                let stream_realm_watermarks =
+                    self.collect_stream_realm_watermarks(realm_snapshots)?;
+                let stream_area_watermarks = self.collect_stream_area_watermarks(area_snapshots)?;
+                self.observability.publish_committed_snapshot(
+                    super::projection::StreamCommittedAdminSnapshot {
+                        streams: streams.clone(),
+                        realm_watermarks: stream_realm_watermarks.clone(),
+                        area_watermarks: stream_area_watermarks.clone(),
+                        committed_events_total,
+                    },
+                );
+                (
+                    streams,
+                    stream_realm_watermarks,
+                    stream_area_watermarks,
+                    committed_events_total,
+                )
+            };
         self.overlay_live_actor_snapshots_from(&mut streams);
         self.overlay_live_subscription_snapshots(&mut streams);
         self.publish_admin_snapshot(
@@ -344,24 +374,21 @@ impl StreamFamilyState {
             }
         }
 
-        for (family_id, realm, area, resource) in streams.keys().cloned().collect::<Vec<_>>() {
+        for ((family_id, realm, area, resource), stream) in streams.iter_mut() {
             let route = format!("stream://{realm}/{area}/{resource}");
-            let subscriptions_active =
+            stream.subscriptions_active =
                 self.subscriptions
                     .families
-                    .get(&family_id)
+                    .get(family_id)
                     .map_or(0, |subscriptions| {
                         subscriptions
                             .matching_ids(
-                                crate::runtime::routing::RouteFamily::try_from(family_id)
+                                crate::runtime::routing::RouteFamily::try_from(*family_id)
                                     .expect("subscription family IDs originate from RouteFamily"),
                                 &route,
                             )
                             .len()
                     });
-            if let Some(stream) = streams.get_mut(&(family_id, realm, area, resource)) {
-                stream.subscriptions_active = subscriptions_active;
-            }
         }
     }
 

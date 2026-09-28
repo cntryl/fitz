@@ -33,6 +33,7 @@ impl super::super::model::StreamFamilyRuntime {
         }
 
         let is_begin = matches!(&stream_msg, StreamMessage::Begin { .. });
+        let is_commit = matches!(&stream_msg, StreamMessage::Commit { .. });
         let outcome: OperationOutcome = (match stream_msg {
             StreamMessage::Begin {
                 family_id,
@@ -90,7 +91,11 @@ impl super::super::model::StreamFamilyRuntime {
         .into();
 
         if outcome.admin_dirty {
-            self.core.mark_admin_snapshot_dirty();
+            if is_commit {
+                self.core.mark_committed_admin_snapshot_dirty();
+            } else {
+                self.core.mark_admin_snapshot_dirty();
+            }
         }
 
         if let Some(notification) = outcome.notification.as_ref() {
