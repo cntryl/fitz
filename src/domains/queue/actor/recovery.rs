@@ -39,7 +39,7 @@ impl QueueActor {
             Err(error) => {
                 self.index_meta_written = false;
                 match &error {
-                    IndexRecoveryAttempt::Missing { .. } => {
+                    IndexRecoveryAttempt::Missing => {
                         Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_MISSING);
                     }
                     IndexRecoveryAttempt::Invalid { .. } => {
@@ -61,19 +61,9 @@ impl QueueActor {
         };
         let (mut ready, mut delayed, mut dlq) = match scan() {
             Ok(rows) => rows,
-            Err(reason) => {
-                return IndexRecoveryAttempt::Error {
-                    next_id: meta_snapshot.next_id,
-                    reason,
-                }
-            }
+            Err(reason) => return IndexRecoveryAttempt::Error { reason },
         };
-        let stats = match self.scan_index_entries(
-            &mut ready,
-            &mut delayed,
-            &mut dlq,
-            meta_snapshot.next_id,
-        ) {
+        let stats = match self.scan_index_entries(&mut ready, &mut delayed, &mut dlq) {
             Ok(stats) => stats,
             Err(error) => return error,
         };
@@ -87,7 +77,6 @@ impl QueueActor {
             self.index_meta_written = false;
             Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
             return IndexRecoveryAttempt::Invalid {
-                next_id: store.next_id(snapshot),
                 reason: format!(
                     "Queue index meta counters mismatch (meta ready={}, scanned ready={}, meta delayed={}, scanned delayed={})",
                     meta_snapshot.ready_count,
@@ -101,7 +90,7 @@ impl QueueActor {
         Self::observe_elapsed_us(obs::METRIC_QUEUE_RECOVERY_INDEX_LOAD_LATENCY, start);
         Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_HITS);
         IndexRecoveryAttempt::Hit {
-            next_id: meta_snapshot.next_id,
+            indexed_next_id: meta_snapshot.next_id,
             max_id: stats.max_id,
         }
     }
@@ -127,7 +116,7 @@ impl QueueActor {
 
     pub(super) fn recover_from_scan_and_rebuild_index(
         &mut self,
-        fallback_next_id: u64,
+        fallback_next_id: Option<u64>,
         store: &QueueRecoveryStore,
         snapshot: &QueueRecoverySnapshot,
     ) -> Result<Option<u64>, String> {
@@ -151,6 +140,18 @@ impl QueueActor {
         if max_id.is_none() {
             return Ok(None);
         }
+        let fallback_next_id = fallback_next_id
+            .ok_or_else(|| "Queue ID reservation is missing for a non-empty queue".to_string())?;
+        let reservation_below_recovered_ids = max_id.is_some_and(|id| {
+            if id == u64::MAX {
+                fallback_next_id != u64::MAX
+            } else {
+                fallback_next_id <= id
+            }
+        });
+        if reservation_below_recovered_ids {
+            return Err("Queue ID reservation is below the recovered queue IDs".to_string());
+        }
         if self.delayed.is_empty() {
             self.next_delayed_deadline = now_instant + QUEUE_IDLE_HORIZON;
         }
@@ -164,9 +165,9 @@ impl QueueActor {
         Self::observe_elapsed_us(obs::METRIC_QUEUE_RECOVERY_FALLBACK_SCAN_LATENCY, start);
         Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_FALLBACKS);
 
-        let rebuild_next_id = max_id
-            .map_or(fallback_next_id, |value| value.saturating_add(1))
-            .max(fallback_next_id);
+        let rebuild_next_id = max_id.map_or(fallback_next_id, |value| {
+            value.saturating_add(1).max(fallback_next_id)
+        });
 
         self.rewrite_index_from_memory(rebuild_next_id)?;
         Ok(max_id)
@@ -176,17 +177,37 @@ impl QueueActor {
         let store = self.persistence.recovery.clone();
         let snapshot = store.snapshot()?;
         let (mut next_id, max_id) = match self.try_recover_from_index(&store, &snapshot) {
-            IndexRecoveryAttempt::Hit { next_id, max_id } => {
+            IndexRecoveryAttempt::Hit {
+                indexed_next_id,
+                max_id,
+            } => {
                 self.recovery_path = RecoveryPath::IndexHit;
+                let reservation = store.next_id(&snapshot)?.ok_or_else(|| {
+                    "Queue ID reservation is missing for an indexed queue".to_string()
+                })?;
+                let reservation_below_live_ids = max_id.is_some_and(|id| {
+                    if id == u64::MAX {
+                        reservation != u64::MAX
+                    } else {
+                        reservation <= id
+                    }
+                });
+                if reservation < indexed_next_id || reservation_below_live_ids {
+                    return Err(
+                        "Queue ID reservation is below the persisted index floor".to_string()
+                    );
+                }
+                let next_id = reservation.max(indexed_next_id);
                 (next_id, max_id)
             }
-            IndexRecoveryAttempt::Missing { next_id } => {
+            IndexRecoveryAttempt::Missing => {
                 self.recovery_path = RecoveryPath::IndexMissingFallback;
+                let next_id = store.next_id(&snapshot)?;
                 let max_id =
                     self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
-                (next_id, max_id)
+                (next_id.unwrap_or(1), max_id)
             }
-            IndexRecoveryAttempt::Invalid { next_id, reason } => {
+            IndexRecoveryAttempt::Invalid { reason } => {
                 tracing::warn!(
                     queue = ?self.queue_key,
                     route_family = self.queue_key.family.as_u64(),
@@ -194,11 +215,14 @@ impl QueueActor {
                     "Queue index recovery found invalid state; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexInvalidFallback;
+                let next_id = store.next_id(&snapshot)?.ok_or_else(|| {
+                    "Queue ID reservation is missing for an indexed queue".to_string()
+                })?;
                 let max_id =
-                    self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
+                    self.recover_from_scan_and_rebuild_index(Some(next_id), &store, &snapshot)?;
                 (next_id, max_id)
             }
-            IndexRecoveryAttempt::Error { next_id, reason } => {
+            IndexRecoveryAttempt::Error { reason } => {
                 tracing::warn!(
                     queue = ?self.queue_key,
                     route_family = self.queue_key.family.as_u64(),
@@ -206,8 +230,11 @@ impl QueueActor {
                     "Queue index recovery failed; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexErrorFallback;
+                let next_id = store.next_id(&snapshot)?.ok_or_else(|| {
+                    "Queue ID reservation is missing for an indexed queue".to_string()
+                })?;
                 let max_id =
-                    self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
+                    self.recover_from_scan_and_rebuild_index(Some(next_id), &store, &snapshot)?;
                 (next_id, max_id)
             }
         };
@@ -233,15 +260,14 @@ impl QueueActor {
         ready_iter: &mut impl Iterator<Item = Result<super::ReadyRange, String>>,
         delayed_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
         dlq_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
-        next_id: u64,
     ) -> Result<IndexScanStats, IndexRecoveryAttempt> {
         let now_epoch_ms = self.clock.now_epoch_ms();
         let now_instant = self.clock.now_instant();
         let mut stats = IndexScanStats::new();
 
-        self.scan_ready_ranges(ready_iter, next_id, &mut stats)?;
-        self.scan_delayed_entries(delayed_iter, next_id, now_epoch_ms, now_instant, &mut stats)?;
-        self.scan_dlq_entries(dlq_iter, next_id, &mut stats)?;
+        self.scan_ready_ranges(ready_iter, &mut stats)?;
+        self.scan_delayed_entries(delayed_iter, now_epoch_ms, now_instant, &mut stats)?;
+        self.scan_dlq_entries(dlq_iter, &mut stats)?;
 
         if self.delayed.is_empty() {
             self.next_delayed_deadline = now_instant + QUEUE_IDLE_HORIZON;
@@ -253,11 +279,10 @@ impl QueueActor {
     fn scan_ready_ranges(
         &mut self,
         ready_iter: &mut impl Iterator<Item = Result<super::ReadyRange, String>>,
-        next_id: u64,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
         for entry in ready_iter.by_ref() {
-            let range = entry.map_err(|reason| IndexRecoveryAttempt::Error { next_id, reason })?;
+            let range = entry.map_err(|reason| IndexRecoveryAttempt::Error { reason })?;
 
             self.push_persisted_ready_range(range);
             stats.scanned_ready_count += Self::usize_to_u64(Self::range_len(range));
@@ -274,14 +299,13 @@ impl QueueActor {
     fn scan_delayed_entries(
         &mut self,
         delayed_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
-        next_id: u64,
         now_epoch_ms: u64,
         now_instant: Instant,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
         for entry in delayed_iter.by_ref() {
             let (visible_at_ms, id) =
-                entry.map_err(|reason| IndexRecoveryAttempt::Error { next_id, reason })?;
+                entry.map_err(|reason| IndexRecoveryAttempt::Error { reason })?;
 
             self.insert_persisted_delayed(id, visible_at_ms);
             stats.scanned_delayed_count += 1;
@@ -315,12 +339,11 @@ impl QueueActor {
     fn scan_dlq_entries(
         &mut self,
         dlq_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
-        next_id: u64,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
         for entry in dlq_iter.by_ref() {
             let (dead_lettered_at_ms, id) =
-                entry.map_err(|reason| IndexRecoveryAttempt::Error { next_id, reason })?;
+                entry.map_err(|reason| IndexRecoveryAttempt::Error { reason })?;
 
             self.insert_persisted_dlq(id, dead_lettered_at_ms);
             stats.max_id = Some(

@@ -189,6 +189,12 @@ fn should_recover_ready_message_id_at_numeric_maximum_without_looping() {
         None,
     )
     .expect("write index metadata");
+    txn.put(
+        QueueActor::meta_key(&queue_key),
+        u64::MAX.to_le_bytes().to_vec(),
+        None,
+    )
+    .expect("write ID reservation");
     txn.put(ready_key, u64::MAX.to_le_bytes().to_vec(), None)
         .expect("write max ready range");
     txn.commit(crate::domains::WritePolicy::Buffered.into())
@@ -198,7 +204,7 @@ fn should_recover_ready_message_id_at_numeric_maximum_without_looping() {
     let actor = QueueActor::new(
         queue_key.family,
         queue_key,
-        store,
+        store.clone(),
         None,
         crate::utils::idempotency::default_dedup_store(),
     );
@@ -206,4 +212,15 @@ fn should_recover_ready_message_id_at_numeric_maximum_without_looping() {
     // Assert
     assert_eq!(actor.ready_len(), 1);
     assert!(actor.ready_contains(MessageId::new(u64::MAX)));
+    let txn = store
+        .begin_tx(
+            actor.queue_key.family.id(),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
+        .expect("begin reservation read");
+    let reservation = txn
+        .get(&QueueActor::meta_key(&actor.queue_key))
+        .expect("read reservation")
+        .expect("reservation row was seeded");
+    assert_eq!(QueueActor::decode_meta(&reservation), Some(u64::MAX));
 }
