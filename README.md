@@ -1,9 +1,17 @@
 # fitz
 
-Fitz is a single-node application broker that exposes seven communication and
-state primitives through one process and one route model.
+Fitz is a container-friendly application broker that exposes seven communication
+and state primitives through one active broker process and one route model per
+storage namespace.
 
-The model is simple: one broker, seven application primitives, one deployment model.
+The deployment model is intentionally simple: one active writer per storage
+namespace, replaceable broker compute, and explicit workload sharding when more
+capacity is needed.
+
+**Product stage:** Fitz is pre-GA and is already used in production deployments.
+Deployment status and release stage are distinct; current deployments do not
+imply general availability, certification across configurations, or a
+service-level commitment.
 
 ## What Fitz Provides
 
@@ -21,21 +29,43 @@ restart semantics.
 | Lease | single-broker ownership coordination | ephemeral |
 | Schedule | durable future timing intent | durable definitions and pending fire claims |
 
-Durable paths use Midge-backed persistence. Local storage writes to disk. Blob/object-backed storage uses a local cache plus provider storage and keeps domain guarantees explicit: a domain is durable only when its contract and selected write policy say it is.
+Durable paths use Midge-backed persistence. Local storage writes to disk.
+Blob/object-backed storage uses a local cache plus provider storage, so durable
+state that has reached the configured cloud durability barrier can outlive and
+be recovered by a replacement broker process. A storage writer lease ensures
+only one process at a time owns a storage namespace. Each domain's contract and
+selected write policy determine which commits are durable.
 
-## Non-Goals
+## Deployment Tradeoffs
 
-Fitz is single-node software. It does not provide:
+Fitz keeps each storage namespace single-writer instead of coordinating a broker
+cluster. This reduces the coordination and operational surface for workloads that
+fit on one broker instance. Container orchestrators can replace a failed process;
+after the replacement acquires the storage lease and recovers persisted state, it
+can serve traffic again. On an ungraceful failure, lease expiry can delay that
+handoff. Clients reconnect and rebuild ephemeral session state.
 
-- high availability or consensus
-- transparent failover
+When a workload outgrows one broker, scale it explicitly: assign independent
+workloads or partitions to separate Fitz deployments, each with its own storage
+namespace and local cache. Application routing owns that assignment; Fitz does
+not automatically shard one logical broker across processes. RouteFamily remains
+an isolation boundary within a broker deployment, not a cross-process shard
+selector.
+
+Fitz does not form a multi-node consensus cluster or provide a clustered
+high-availability mode. Process replacement can interrupt traffic; it does not
+provide:
+
+- zero-downtime or transparent failover during process replacement
 - session recovery after disconnect
 - exactly-once delivery
 - durable live subscription recovery
 - durable RPC pending work
 - crash-safe lease ownership
 
-Sessions are ephemeral. Disconnect creates a new session, and clients must rebuild subscriptions, workers, leases, transactions, and stream resume positions explicitly.
+Sessions are ephemeral. Disconnect creates a new session, and clients must
+rebuild subscriptions, workers, leases, transactions, and Stream resume
+positions explicitly.
 
 ## Quick Start
 
@@ -54,7 +84,7 @@ docker run --rm \
 
 `latest` and `main` are rebuilt automatically from every push to `main`. For a
 reproducible deployment, use an immutable SemVer image such as
-`ghcr.io/cntryl/fitz:0.1.0`; publish one by dispatching the `Publish` workflow
+`ghcr.io/cntryl/fitz:0.1.1`; publish one by dispatching the `Publish` workflow
 from `main` after the release checks pass.
 
 Check readiness:

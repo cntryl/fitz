@@ -14,6 +14,29 @@ Legacy storage-mode aliases are rejected. Use `FITZ_STORAGE_MODE=cloud` plus an 
 
 Cloud mode uses a local cache plus provider storage. `FITZ_STORAGE_PATH` is only for local disk storage; cloud mode reads `FITZ_STORAGE_CACHE_PATH` and defaults it to `./.fitz-cloud-cache`.
 
+## Container Deployment and Explicit Sharding
+
+Cloud persistence separates committed durable state from the broker process.
+The deployment model maps cleanly onto container orchestrators such as
+Kubernetes, AWS Fargate, or Azure Container Apps. Let the orchestrator replace a
+failed process. The replacement opens the same storage namespace, recovers its
+storage writer lease, validates or preloads persisted domains, and becomes ready
+only after recovery completes. Keep customer traffic gated on `/healthz` or
+`/readyz` until that handoff completes. Live sessions are not restored; clients
+reconnect and rebuild their session-owned state.
+
+Scale out by explicitly assigning independent workloads or partitions to
+separate Fitz deployments. Give each shard its own storage namespace/prefix and
+its own local cache path, and route each workload consistently to its owner.
+Fitz does not coordinate shard ownership across processes. `RouteFamily` is an
+isolation boundary inside a broker deployment, not a cross-process shard map.
+
+This keeps the normal deployment to one active writer per namespace and avoids
+requiring cluster coordination for workloads that do not need it. It also means
+process replacement is not zero-downtime failover: after an ungraceful failure,
+the replacement must wait for the storage lease to expire before taking
+ownership. The lease timing is described below.
+
 ## Required Shape
 
 Set these values for cloud mode:
