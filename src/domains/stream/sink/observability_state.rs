@@ -5,6 +5,7 @@ use super::model::StreamLiveCounts;
 use super::projection::{StreamAdminProjection, StreamFamilyAdminSnapshot};
 use crate::domains::stream::metrics::StreamDurableMetrics;
 use crate::runtime::routing::RouteFamily;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -13,6 +14,7 @@ pub(super) struct StreamObservability {
     dirty: Arc<AtomicBool>,
     live_gauges: Arc<StreamLiveGaugeCoordinator>,
     durable_metrics: Arc<StreamDurableMetrics>,
+    committed_snapshot: Mutex<Option<super::projection::StreamCommittedAdminSnapshot>>,
 }
 
 impl StreamObservability {
@@ -27,11 +29,30 @@ impl StreamObservability {
             dirty,
             live_gauges,
             durable_metrics,
+            committed_snapshot: Mutex::new(None),
         }
     }
 
     pub(super) fn mark_dirty(&self) {
         self.dirty.store(true, Ordering::Release);
+    }
+
+    pub(super) fn mark_committed_dirty(&self) {
+        *self.committed_snapshot.lock() = None;
+        self.mark_dirty();
+    }
+
+    pub(super) fn committed_snapshot(
+        &self,
+    ) -> Option<super::projection::StreamCommittedAdminSnapshot> {
+        self.committed_snapshot.lock().clone()
+    }
+
+    pub(super) fn publish_committed_snapshot(
+        &self,
+        snapshot: super::projection::StreamCommittedAdminSnapshot,
+    ) {
+        *self.committed_snapshot.lock() = Some(snapshot);
     }
 
     pub(super) fn is_dirty(&self) -> bool {
@@ -56,5 +77,9 @@ impl StreamObservability {
 
     pub(super) fn durable_metrics(&self) -> Arc<StreamDurableMetrics> {
         self.durable_metrics.clone()
+    }
+
+    pub(super) fn watermark_generation(&self) -> u64 {
+        self.durable_metrics.watermark_generation()
     }
 }

@@ -51,6 +51,65 @@ fn should_advance_plus_persist_area_plus_realm_watermarks_after_commit() {
 }
 
 #[test]
+fn should_invalidate_cached_admin_watermarks_after_async_persistence() {
+    // Arrange
+    let context = setup_test_context();
+    seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"event");
+    context.sink.sync_admin_snapshot();
+    assert_eq!(
+        context.admin_read_model.stream_area_watermarks()[0].family_watermarks[0].watermark,
+        0
+    );
+    let family = context.family;
+
+    // Act
+    context.sink.inspect_family_for_tests(family, move |state| {
+        state
+            .core
+            .stream_store
+            .set_watermark(family.as_u64(), "bench", "events", 9)
+            .expect("persist area watermark");
+        state
+            .core
+            .stream_store
+            .set_realm_watermark(family.as_u64(), "bench", 9)
+            .expect("persist realm watermark");
+        state
+            .core
+            .observability
+            .durable_metrics()
+            .set_area_watermark(family.as_u64(), "bench", "events", 9);
+        state
+            .core
+            .observability
+            .durable_metrics()
+            .set_realm_watermark(family.as_u64(), "bench", 9);
+        state.service_watermark_timers();
+    });
+    context.sink.refresh_admin_snapshot_if_dirty();
+
+    // Assert
+    assert_eq!(
+        context.admin_read_model.stream_area_watermarks()[0]
+            .family_watermarks
+            .iter()
+            .find(|item| item.family == family.as_u64())
+            .expect("area watermark for the test family")
+            .watermark,
+        9
+    );
+    assert_eq!(
+        context.admin_read_model.stream_realm_watermarks()[0]
+            .family_watermarks
+            .iter()
+            .find(|item| item.family == family.as_u64())
+            .expect("realm watermark for the test family")
+            .watermark,
+        9
+    );
+}
+
+#[test]
 fn should_track_independent_watermarks_per_area_within_a_realm() {
     // Arrange
     let context = setup_test_context();
