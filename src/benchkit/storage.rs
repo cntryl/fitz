@@ -1,13 +1,13 @@
 //! Storage helpers for benchmarks
 //!
-//! Provides `MidgeEngine` instances for benchmark execution.
+//! Provides Midge `Engine` instances for benchmark execution.
 //! Supports both in-memory (fast) and local disk (realistic) storage modes.
 
 use std::sync::Arc;
 
 const WRITE_HEAVY_BENCH_MEMORY_BUDGET_BYTES: usize = 4 * 1024 * 1024 * 1024;
 
-/// Create an in-memory `MidgeEngine` for benchmarks with Fitz's explicit CF mapping.
+/// Create an in-memory Midge `Engine` for benchmarks with Fitz's explicit CF mapping.
 ///
 /// This eliminates disk I/O overhead and provides fast, deterministic
 /// storage for benchmark scenarios. All data is lost when the engine
@@ -17,7 +17,7 @@ pub fn create_bench_store() -> Arc<cntryl_midge::Engine> {
     create_bench_store_with_cfs([1])
 }
 
-/// Create an in-memory `MidgeEngine` with the requested explicit CF mapping.
+/// Create an in-memory Midge `Engine` with the requested explicit CF mapping.
 ///
 /// # Panics
 ///
@@ -36,7 +36,7 @@ pub fn create_bench_store_with_cfs(
     )
 }
 
-/// Create a write-heavy in-memory `MidgeEngine` for churn-heavy benchmark scenarios.
+/// Create a write-heavy in-memory Midge `Engine` for churn-heavy benchmark scenarios.
 ///
 /// This keeps benchmarks that repeatedly create and delete durable rows focused on
 /// domain operation cost instead of the default mixed-workload memory budget.
@@ -45,7 +45,7 @@ pub fn create_write_heavy_bench_store() -> Arc<cntryl_midge::Engine> {
     create_write_heavy_bench_store_with_cfs([1])
 }
 
-/// Create a write-heavy in-memory `MidgeEngine` with explicit CF mapping.
+/// Create a write-heavy in-memory Midge `Engine` with explicit CF mapping.
 ///
 /// # Panics
 ///
@@ -95,7 +95,7 @@ fn create_store_with_cfs(
     store
 }
 
-/// Create a local disk-backed `MidgeEngine` for benchmarks
+/// Create a local disk-backed Midge `Engine` for benchmarks.
 ///
 /// This uses a temporary directory for storage, providing realistic
 /// persistence characteristics while being automatically cleaned up.
