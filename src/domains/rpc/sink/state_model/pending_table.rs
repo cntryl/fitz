@@ -6,6 +6,9 @@ use super::{
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+const EXPIRATION_HEAP_STALE_ENTRY_ALLOWANCE: usize = 256;
+const EXPIRATION_HEAP_LIVE_ENTRY_MULTIPLIER: usize = 2;
+
 /// Owns live queued and dispatched requests and their expiration indexes.
 pub(in crate::domains::rpc::sink) struct RpcPendingTable {
     pending: RpcFastMap<RpcCorrelationKey, RpcPendingRequest>,
@@ -57,6 +60,7 @@ impl RpcPendingTable {
             key,
         });
         self.queued.insert(key, queued);
+        self.compact_queued_expirations_if_needed();
     }
 
     pub(in crate::domains::rpc::sink) fn remove_queued_for_family(
@@ -64,10 +68,12 @@ impl RpcPendingTable {
         family: RouteFamily,
         correlation_id: &uuid::Uuid,
     ) -> Option<RpcQueuedRequest> {
-        self.queued.remove(&RpcCorrelationKey {
+        let queued = self.queued.remove(&RpcCorrelationKey {
             family,
             correlation_id: *correlation_id,
-        })
+        })?;
+        self.compact_queued_expirations_if_needed();
+        Some(queued)
     }
 
     pub(in crate::domains::rpc::sink) fn queued_keys_for_session(
@@ -219,6 +225,7 @@ impl RpcPendingTable {
         *self.route_counts.entry((family, route)).or_default() += 1;
         self.expirations
             .push(ExpiringPendingRequest { expires_at, key });
+        self.compact_pending_expirations_if_needed();
         self.pending.len()
     }
 
@@ -360,7 +367,38 @@ impl RpcPendingTable {
     ) -> Option<RpcPendingRequest> {
         let pending = self.pending.remove(key)?;
         self.decrement_route_count(key.family, &pending.dispatch_info.route);
+        self.compact_pending_expirations_if_needed();
         Some(pending)
+    }
+
+    fn compact_pending_expirations_if_needed(&mut self) {
+        let limit = expiration_heap_limit(self.pending.len());
+        if self.expirations.len() <= limit {
+            return;
+        }
+        self.expirations = self
+            .pending
+            .iter()
+            .map(|(key, pending)| ExpiringPendingRequest {
+                expires_at: pending.expires_at,
+                key: *key,
+            })
+            .collect();
+    }
+
+    fn compact_queued_expirations_if_needed(&mut self) {
+        let limit = expiration_heap_limit(self.queued.len());
+        if self.queued_expirations.len() <= limit {
+            return;
+        }
+        self.queued_expirations = self
+            .queued
+            .iter()
+            .map(|(key, queued)| ExpiringPendingRequest {
+                expires_at: queued.expires_at,
+                key: *key,
+            })
+            .collect();
     }
 
     fn decrement_route_count(&mut self, family: RouteFamily, route: &Route) {
@@ -456,8 +494,15 @@ impl RpcPendingTable {
     }
 }
 
+fn expiration_heap_limit(live_entries: usize) -> usize {
+    live_entries
+        .saturating_mul(EXPIRATION_HEAP_LIVE_ENTRY_MULTIPLIER)
+        .saturating_add(EXPIRATION_HEAP_STALE_ENTRY_ALLOWANCE)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::requests::RpcPendingRequestInit;
     use super::*;
     use crate::runtime::routing::RouteAddress;
     use std::time::{Duration, Instant};
@@ -539,5 +584,110 @@ mod tests {
         // Assert
         assert_eq!(early, None);
         assert_eq!(due.map(|key| key.correlation_id), Some(correlation_id));
+    }
+
+    #[test]
+    fn should_bound_stale_expiration_entries_after_fast_completions() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let route = Route::new("rpc://bench/system/resource/operation");
+        let now = Instant::now();
+        let expires_at = now + Duration::from_secs(30);
+        let mut table = RpcPendingTable::new();
+
+        // Act
+        for _ in 0..1024 {
+            let correlation_id = uuid::Uuid::new_v4();
+            let pending = make_pending_request(family, &route, now, expires_at);
+            table.track_pending_for_family(family, correlation_id, pending);
+            let _ = table.remove(&RpcCorrelationKey {
+                family,
+                correlation_id,
+            });
+
+            let queued_id = uuid::Uuid::new_v4();
+            let queued = make_queued_request(family, &route, queued_id, expires_at);
+            table.track_queued_for_family(family, queued_id, queued);
+            let _ = table.remove_queued_for_family(family, &queued_id);
+        }
+
+        let live_pending_id = uuid::Uuid::new_v4();
+        table.track_pending_for_family(
+            family,
+            live_pending_id,
+            make_pending_request(family, &route, now, expires_at),
+        );
+        let live_queued_id = uuid::Uuid::new_v4();
+        table.track_queued_for_family(
+            family,
+            live_queued_id,
+            make_queued_request(family, &route, live_queued_id, expires_at),
+        );
+
+        // Assert
+        assert!(table.expirations.len() <= expiration_heap_limit(1));
+        assert!(table.queued_expirations.len() <= expiration_heap_limit(1));
+        assert_eq!(
+            table
+                .next_expired_pending_key(expires_at)
+                .map(|key| key.correlation_id),
+            Some(live_pending_id)
+        );
+        assert_eq!(
+            table
+                .next_expired_queued_key(expires_at)
+                .map(|key| key.correlation_id),
+            Some(live_queued_id)
+        );
+    }
+
+    fn make_pending_request(
+        family: RouteFamily,
+        route: &Route,
+        now: Instant,
+        expires_at: Instant,
+    ) -> RpcPendingRequest {
+        use crate::runtime::routing::RouteAddress;
+
+        let worker_addr = RouteAddress::new(family, route.clone());
+        let caller_inbox_addr = RouteAddress::new(
+            family,
+            Route::new("inbox://bench/system/resource/operation"),
+        );
+        RpcPendingRequest::new(RpcPendingRequestInit {
+            route: route.clone(),
+            caller_session_id: 7,
+            caller_inbox_addr,
+            registration_addr: worker_addr,
+            registration_session_id: 8,
+            registration_id: 9,
+            submitted_at: chrono::Utc::now(),
+            submitted_at_instant: now,
+            expires_at,
+        })
+    }
+
+    fn make_queued_request(
+        family: RouteFamily,
+        route: &Route,
+        correlation_id: uuid::Uuid,
+        expires_at: Instant,
+    ) -> RpcQueuedRequest {
+        use crate::runtime::routing::RouteAddress;
+
+        RpcQueuedRequest::from_request(
+            crate::domains::rpc::protocol::RpcRequest::new(
+                family,
+                correlation_id,
+                route.clone(),
+                bytes::Bytes::from_static(b"queued"),
+            ),
+            7,
+            RouteAddress::new(
+                family,
+                Route::new("inbox://bench/system/resource/operation"),
+            ),
+            expires_at,
+        )
     }
 }
