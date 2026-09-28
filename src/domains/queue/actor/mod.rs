@@ -508,10 +508,17 @@ enum RecoveryPath {
 }
 
 enum IndexRecoveryAttempt {
-    Hit { next_id: u64, max_id: Option<u64> },
-    Missing { next_id: u64 },
-    Invalid { next_id: u64, reason: String },
-    Error { next_id: u64, reason: String },
+    Hit {
+        indexed_next_id: u64,
+        max_id: Option<u64>,
+    },
+    Missing,
+    Invalid {
+        reason: String,
+    },
+    Error {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
