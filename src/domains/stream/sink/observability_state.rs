@@ -78,4 +78,8 @@ impl StreamObservability {
     pub(super) fn durable_metrics(&self) -> Arc<StreamDurableMetrics> {
         self.durable_metrics.clone()
     }
+
+    pub(super) fn watermark_generation(&self) -> u64 {
+        self.durable_metrics.watermark_generation()
+    }
 }

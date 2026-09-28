@@ -186,5 +186,10 @@ impl StreamFamilyRuntime {
                 .router
                 .route_exact(crate::runtime::Envelope::new(destination, event));
         }
+        let watermark_generation = self.core.observability.watermark_generation();
+        if watermark_generation != self.last_watermark_generation {
+            self.core.mark_committed_admin_snapshot_dirty();
+            self.last_watermark_generation = watermark_generation;
+        }
     }
 }

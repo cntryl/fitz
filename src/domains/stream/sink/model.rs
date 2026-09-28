@@ -349,6 +349,7 @@ impl WatermarkCoordinators {
 
 pub(super) struct StreamFamilyRuntime {
     pub(super) core: StreamFamilyState,
+    pub(super) last_watermark_generation: u64,
     pub(super) watermark_coordinators: WatermarkCoordinators,
     pub(super) watermark_router: Arc<Router>,
     pub(super) watermark_events: crossbeam_channel::Receiver<crate::runtime::DomainPublishEvent>,
@@ -376,6 +377,7 @@ impl MailboxSink for WatermarkEventSink {
 
 impl StreamFamilyRuntime {
     pub(super) fn new(core: StreamFamilyState) -> Self {
+        let last_watermark_generation = core.observability.watermark_generation();
         let watermark_router = Arc::new(Router::new());
         let (watermark_event_sender, watermark_events) = crossbeam_channel::unbounded();
         watermark_router.register_domain_pattern(
@@ -386,6 +388,7 @@ impl StreamFamilyRuntime {
         );
         Self {
             core,
+            last_watermark_generation,
             watermark_coordinators: WatermarkCoordinators::new(),
             watermark_router,
             watermark_events,
