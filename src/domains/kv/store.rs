@@ -66,7 +66,8 @@ impl KvStore {
             | cntryl_midge::MidgeError::Fenced(_)
             | cntryl_midge::MidgeError::LeaseIndeterminate(_)
             | cntryl_midge::MidgeError::LeaseEpochExhausted
-            | cntryl_midge::MidgeError::ResourceLimit(_) => {
+            | cntryl_midge::MidgeError::ResourceLimit(_)
+            | cntryl_midge::MidgeError::UnflushedDataPresent { .. } => {
                 KvError::BackendError(error.to_string())
             }
         }

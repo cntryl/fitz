@@ -39,7 +39,7 @@ brotli = "9"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
 cntryl-lexkey = "0.1.0"
-cntryl-midge = "0.1.1"
+cntryl-midge = "0.2.0"
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"
 futures = "0.3"

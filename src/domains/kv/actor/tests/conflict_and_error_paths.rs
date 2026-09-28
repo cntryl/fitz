@@ -356,6 +356,10 @@ fn should_classify_midge_errors_by_variant_not_message_wording() {
         cntryl_midge::MidgeError::WriteConflict("disk unavailable".to_string()),
         cntryl_midge::MidgeError::Internal("conflict; retry".to_string()),
         cntryl_midge::MidgeError::Corruption("temporary I/O failure".to_string()),
+        cntryl_midge::MidgeError::UnflushedDataPresent {
+            cf_id: 1,
+            bytes: 16,
+        },
     ];
 
     // Act
@@ -365,6 +369,7 @@ fn should_classify_midge_errors_by_variant_not_message_wording() {
     assert!(matches!(classifications[0], KvError::Conflict(_)));
     assert!(matches!(classifications[1], KvError::BackendError(_)));
     assert!(matches!(classifications[2], KvError::BackendError(_)));
+    assert!(matches!(classifications[3], KvError::BackendError(_)));
 }
 
 #[test]
