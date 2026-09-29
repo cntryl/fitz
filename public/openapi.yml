@@ -5988,17 +5988,16 @@ components:
 
     ScheduleResourceDetail:
       type: object
-      description: Durable, boot-loaded schedule definition detail for the current broker. This describes persisted timing intent, not durable subscriber delivery or durable execution history. `executions_total` remains a non-authoritative placeholder until durable execution history exists.
+      description: Rollup across the durable, boot-loaded schedules a resource groups. `enabled` is true when any schedule is enabled and `next_run` is the earliest next run. A schedule's cron belongs to that schedule (see ScheduleExecutionObservation), never to the resource. This describes persisted timing intent, not durable subscriber delivery or durable execution history. `executions_total` remains a non-authoritative placeholder until durable execution history exists.
       required: [realm, area, resource, enabled, executions_total, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
         enabled: { type: boolean }
-        cron:
-          type: [string, "null"]
         next_run:
           type: [string, "null"]
+          description: Earliest next run across the resource's schedules.
         executions_total:
           type: integer
           description: Non-authoritative current broker counter. This is not durable execution history.

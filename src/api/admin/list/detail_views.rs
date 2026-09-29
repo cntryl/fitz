@@ -246,10 +246,6 @@ pub fn lease_detail(
 }
 
 #[must_use]
-/// # Panics
-///
-/// Panics if the filtered schedule list reports exactly one item but that item
-/// cannot be retrieved from the iterator.
 pub fn schedule_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -265,11 +261,6 @@ pub fn schedule_detail(
         .collect::<Vec<_>>();
     if schedules.is_empty() {
         return ScheduleResourceDetail::empty(path);
-    }
-
-    if schedules.len() == 1 {
-        let item = schedules.into_iter().next().expect("single schedule");
-        return ScheduleResourceDetail::from_schedule(item);
     }
 
     ScheduleResourceDetail::aggregate(path, &schedules)

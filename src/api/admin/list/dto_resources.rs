@@ -281,16 +281,16 @@ pub struct LeaseResourceDetail {
 /// Schedule resource detail derived from the current broker's durable,
 /// boot-loaded schedule definitions.
 ///
-/// `enabled`, `cron`, and `next_run` reflect persisted schedule definitions for
-/// this resource. `executions_total` reflects persisted acknowledged live
-/// handoffs recorded when a claimed occurrence leaves durable pending state.
+/// A resource groups individual schedules, so every field is a rollup across
+/// them: `enabled` is true when any schedule is enabled, `next_run` is the
+/// earliest next run, and `executions_total` sums persisted acknowledged live
+/// handoffs. A single schedule's cron belongs to that schedule, never here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleResourceDetail {
     pub realm: String,
     pub area: String,
     pub resource: String,
     pub enabled: bool,
-    pub cron: Option<String>,
     pub next_run: Option<String>,
     pub executions_total: u64,
     pub diagnostics: DiagnosticSnapshot,
@@ -519,29 +519,9 @@ impl ScheduleResourceDetail {
             area: path.area.to_string(),
             resource: path.resource.to_string(),
             enabled: false,
-            cron: None,
             next_run: None,
             executions_total: 0,
             diagnostics: troubleshooting::schedule_resource_diagnostics(false, None, None, 0),
-        }
-    }
-
-    pub(super) fn from_schedule(item: ScheduleInfo) -> Self {
-        let diagnostics = troubleshooting::schedule_resource_diagnostics(
-            item.enabled,
-            Some(item.next_run.as_str()),
-            item.last_run.as_deref(),
-            item.executions_total,
-        );
-        Self {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-            enabled: item.enabled,
-            cron: Some(item.cron),
-            next_run: Some(item.next_run),
-            executions_total: item.executions_total,
-            diagnostics,
         }
     }
 
@@ -556,7 +536,6 @@ impl ScheduleResourceDetail {
             area: path.area.to_string(),
             resource: path.resource.to_string(),
             enabled: schedules.iter().any(|item| item.enabled),
-            cron: None,
             next_run: next_run.map(ToString::to_string),
             executions_total: schedules.iter().map(|item| item.executions_total).sum(),
             diagnostics: troubleshooting::schedule_resource_diagnostics(
