@@ -28,7 +28,7 @@ export function kvValueQueryKey(
 
 const kvValueQuery = defineQuery<KvValueQueryInput, KvCommittedValueResult>({
   key: ({ key, keyEncoding, scope }) => kvValueQueryKey(scope, key, keyEncoding),
-  fetch: ({ key, keyEncoding, scope, signal }) =>
+  fetch: ({ key, keyEncoding, scope }, { signal }) =>
     kvService.getCommittedValue(scope, key, keyEncoding, { signal }),
 });
 

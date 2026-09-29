@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { queryState } from "@askrjs/askr/testing";
+import { flush, queryState } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
 import {
   activeSessions,
@@ -225,8 +225,10 @@ describe("admin page smoke tests", () => {
     expect(root.querySelector(".resource-raw")).toBeNull();
 
     payloadTrigger?.click();
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
-    expect(payloadTrigger?.getAttribute("aria-expanded")).toBe("true");
+    flush();
+    expect(root.querySelector("[data-collapsible-trigger]")?.getAttribute("aria-expanded")).toBe(
+      "true",
+    );
     expect(root.querySelector(".resource-raw")).toBeTruthy();
 
     const filter = root.querySelector(

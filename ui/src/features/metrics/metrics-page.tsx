@@ -1,3 +1,4 @@
+import { state } from "@askrjs/askr";
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute, updateRouteQuery } from "@askrjs/askr/router";
 import { Input } from "@askrjs/ui";
@@ -487,6 +488,7 @@ function MetricsShortcuts({
 }
 
 export default function MetricsPage() {
+  const payloadOpen = state(false);
   const metrics = createMetricsOverviewQuery();
   const filter = () => currentRoute().query.get("q") ?? "";
   const setFilter = (value: string) => updateRouteQuery({ q: value || null });
@@ -741,7 +743,7 @@ export default function MetricsPage() {
               </Card>
 
               <section class="domain-section metrics-structured-payload">
-                <Collapsible>
+                <Collapsible open={payloadOpen()} onOpenChange={(open) => payloadOpen.set(open)}>
                   <div class="domain-section-header">
                     <div>
                       <h2>Structured payload</h2>
