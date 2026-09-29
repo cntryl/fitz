@@ -137,6 +137,7 @@ vi.mock("@/features/stream/stream-query", () => ({
   createStreamAreaQuery: () => mocks.queryStates.streamArea,
   createStreamOverviewQuery: () => mocks.queryStates.stream,
   createStreamRealmQuery: () => mocks.queryStates.streamRealm,
+  createStreamRecordsQuery: () => mocks.queryStates.streamRecords,
   createStreamResourceQuery: () => mocks.queryStates.streamResource,
 }));
 
@@ -273,7 +274,8 @@ export function resetQueries() {
   mocks.queryStates.stream = queryState.fresh(streamOverview, queryOptions());
   mocks.queryStates.streamRealm = queryState.fresh(streamRealm, queryOptions());
   mocks.queryStates.streamArea = queryState.fresh(streamArea, queryOptions());
-  mocks.queryStates.streamResource = queryState.fresh(streamResource, queryOptions());
+  mocks.queryStates.streamResource = queryState.fresh(streamResource.detail, queryOptions());
+  mocks.queryStates.streamRecords = queryState.fresh(streamResource.records, queryOptions());
   mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
   mocks.queryStates.kvRows = queryState.fresh(kvRows, queryOptions());
   mocks.queryStates.kvValue = queryState.fresh(

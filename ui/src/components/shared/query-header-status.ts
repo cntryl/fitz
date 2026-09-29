@@ -29,7 +29,7 @@ export function queryHeaderStatus(
   query: QueryPresentationState,
   copy: QueryHeaderStatusCopy,
   ready: QueryReadyStatus = {},
-): QueryHeaderStatus {
+): QueryHeaderStatus | undefined {
   const hasData = hasQueryData(query);
 
   if (query.refreshing) {
@@ -64,9 +64,12 @@ export function queryHeaderStatus(
     };
   }
 
+  // Fresh data is the normal case; the badge slot is reserved for a real status.
+  if (!ready.label) return undefined;
+
   return {
     detail: copy.ready,
-    label: ready.label ?? "Live",
+    label: ready.label,
     tone: ready.tone ?? "success",
   };
 }

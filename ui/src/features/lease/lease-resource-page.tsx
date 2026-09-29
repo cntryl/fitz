@@ -6,8 +6,7 @@ import { Block, Card, CardContent, CardTitle } from "@askrjs/themes/components";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -170,12 +169,6 @@ export default function LeaseResourcePage() {
                 : "",
               unavailable: "Lease ownership evidence is unavailable for this resource.",
             })}
-          />
-          <OperatorScopeStrip
-            realm={realm}
-            area={area}
-            resource={resource}
-            freshness={queryFreshness(rowsQuery)}
           />
           <Show when={!rowsData && rowsQuery.loading}>
             <QueryLoadingState description="Loading lease ownership rows..." />

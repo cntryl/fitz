@@ -8,8 +8,7 @@ import DomainOperationTable, {
 } from "@/components/shared/domain-operation-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryErrorState,
   QueryLoadingState,
@@ -41,6 +40,7 @@ const scheduleOperationColumns: readonly DomainOperationMetricColumn<ScheduleExe
     },
     {
       id: "cron",
+      priority: "secondary",
       header: "Cron",
       width: "14%",
       cell: (row) => row.cron || "unset",
@@ -55,6 +55,7 @@ const scheduleOperationColumns: readonly DomainOperationMetricColumn<ScheduleExe
     },
     {
       id: "last-handoff",
+      priority: "secondary",
       header: "Last handoff",
       width: "16%",
       cell: (row) => (row.last_run ? formatRelativeTime(row.last_run) : "--"),
@@ -84,6 +85,17 @@ function schedulePageHref(
   return offset > 0 ? `${href}?offset=${offset}` : href;
 }
 
+function earliestNextRun(rows: readonly ScheduleExecutionObservation[]) {
+  let earliest: string | null = null;
+  for (const row of rows) {
+    const time = Date.parse(row.next_run);
+    if (!Number.isNaN(time) && (earliest === null || time < Date.parse(earliest))) {
+      earliest = row.next_run;
+    }
+  }
+  return earliest;
+}
+
 export default function ScheduleResourcePage() {
   const route = currentRoute();
   const ref = {
@@ -100,7 +112,6 @@ export default function ScheduleResourcePage() {
   const data = query.data;
   const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
   const rows = data?.executionObservations.observations ?? [];
-  const detail = data?.detail;
   const pendingHandoffs = rows.reduce((sum, row) => sum + row.pending_handoffs, 0);
 
   return (
@@ -116,26 +127,16 @@ export default function ScheduleResourcePage() {
             label: "Refresh schedule",
             onPress: () => query.refresh(),
           }}
-          status={queryHeaderStatus(
-            query,
-            {
-              loading: "Loading schedules for this resource.",
-              ready: data
-                ? `${formatCount(rows.length, "observed schedule")}, ${formatCount(
-                    pendingHandoffs,
-                    "pending handoff",
-                  )}.`
-                : "",
-              unavailable: "Schedule operations are unavailable for this resource.",
-            },
-            { label: "Operations", tone: "info" },
-          )}
-        />
-        <OperatorScopeStrip
-          realm={ref.realm}
-          area={ref.area}
-          resource={ref.resource}
-          freshness={queryFreshness(query)}
+          status={queryHeaderStatus(query, {
+            loading: "Loading schedules for this resource.",
+            ready: data
+              ? `${formatCount(rows.length, "observed schedule")}, ${formatCount(
+                  pendingHandoffs,
+                  "pending handoff",
+                )}.`
+              : "",
+            unavailable: "Schedule operations are unavailable for this resource.",
+          })}
         />
 
         <Show when={!data && query.loading}>
@@ -157,26 +158,23 @@ export default function ScheduleResourcePage() {
                 <QueryRefreshingState description="Refreshing schedules..." />
               </Show>
 
-              <Show when={detail}>
-                {(resourceDetail) => (
-                  <DomainSummaryStrip
-                    id="schedule-resource-detail"
-                    title="Durable timing intent"
-                    description="Persisted definition state for this resource. The broker observation counter is non-authoritative and is not downstream execution history."
-                    items={[
-                      { label: "Enabled", value: resourceDetail.enabled ? "Yes" : "No" },
-                      { label: "Cron", value: resourceDetail.cron ?? "unset" },
-                      scheduleTimingMetric(resourceDetail.next_run),
-                      {
-                        label: "Broker observation counter",
-                        value: resourceDetail.executions_total,
-                        caption: "Non-authoritative; not downstream execution history",
-                      },
-                      { label: "Pending handoffs", value: pendingHandoffs },
-                    ]}
-                  />
-                )}
-              </Show>
+              {/* A resource groups schedules; only rollups belong here, never one schedule's fields. */}
+              <DomainSummaryStrip
+                id="schedule-resource-detail"
+                title="Durable timing intent"
+                description="Rolled up from the schedules listed below."
+                items={[
+                  {
+                    label: "Schedules",
+                    value: `${formatNumber(rows.length)}${current.executionObservations.has_more ? "+" : ""}`,
+                  },
+                  {
+                    ...scheduleTimingMetric(earliestNextRun(rows)),
+                    label: "Earliest next run",
+                  },
+                  { label: "Pending handoffs", value: pendingHandoffs },
+                ]}
+              />
 
               <DomainOperationTable<ScheduleExecutionObservation>
                 domain="schedule"

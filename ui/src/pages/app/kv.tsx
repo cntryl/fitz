@@ -49,13 +49,14 @@ export default function KvPage() {
   const inventoryRows = domainResourceInventoryRows(inventory.data);
   const kvHealth = stats
     ? ({
-        label: stats.transactionsActive > 0 || stats.operationsPerSecond > 0 ? "Active" : "Live",
+        label: stats.transactionsActive > 0 || stats.operationsPerSecond > 0 ? "Active" : "Idle",
         tone: stats.transactionsActive > 0 || stats.operationsPerSecond > 0 ? "info" : "success",
       } as const)
     : null;
   const metricCandidates: readonly AvailableMetricColumn[] = [
     {
       id: "records",
+      priority: "secondary",
       header: "Records",
       width: "8%",
       cell: formatRecordCount,
@@ -65,6 +66,7 @@ export default function KvPage() {
     },
     {
       id: "storage",
+      priority: "secondary",
       header: "Storage",
       width: "8%",
       cell: (row) => formatStorageBytes(row.estimatedStorageBytes),
@@ -81,6 +83,7 @@ export default function KvPage() {
     },
     {
       id: "read-latency",
+      rollup: "worst",
       header: "Read p95 ms",
       width: "12%",
       cell: (row) => formatLatency(row.readLatencyP95Ms),
@@ -89,6 +92,7 @@ export default function KvPage() {
     },
     {
       id: "write-latency",
+      rollup: "worst",
       header: "Write p95 ms",
       width: "12%",
       cell: (row) => formatLatency(row.writeLatencyP95Ms),
@@ -116,6 +120,11 @@ export default function KvPage() {
       emptyDescription="No KV tables are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={kvMetricColumns}
+      reason={
+        stats
+          ? "KV reports no pressure signal. Sort realms by latency to find slow tables."
+          : undefined
+      }
       stats={[
         { label: "Domain keys", value: stats ? formatNumber(stats.keysTotal) : "--" },
         {

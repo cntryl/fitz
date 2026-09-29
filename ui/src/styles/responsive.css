@@ -38,8 +38,7 @@
   }
 
   .overview-status-band > [data-slot="badge"],
-  .overview-issue-heading [data-slot="badge"],
-  .overview-domain-heading [data-slot="badge"] {
+  .overview-issue-heading [data-slot="badge"] {
     justify-self: start;
   }
 

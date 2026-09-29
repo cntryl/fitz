@@ -12,6 +12,15 @@
   overflow-wrap: anywhere;
 }
 
+/* The status reason is a signal, not a caption, so it keeps full text contrast. */
+.domain-status-reason {
+  margin: calc(-1 * var(--ak-space-1, 0.25rem)) 0 0;
+  max-width: 72ch;
+  color: var(--ak-color-text, CanvasText);
+  font-size: var(--ak-font-size-sm, 0.875rem);
+  line-height: var(--ak-line-height-normal, 1.4);
+}
+
 .domain-section {
   display: grid;
   gap: var(--ak-space-2, 0.5rem);
@@ -41,13 +50,6 @@
 .domain-resource-metric {
   font-size: var(--ak-font-size-sm, 0.875rem);
   line-height: var(--ak-line-height-normal, 1.4);
-}
-
-.domain-inventory-scroll-hint {
-  display: none;
-  margin: 0;
-  color: var(--ak-color-text-muted, var(--ak-color-text, CanvasText));
-  font-size: var(--ak-font-size-xs, 0.75rem);
 }
 
 .domain-table-wrap {
@@ -90,8 +92,9 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Headers wrap rather than widen a table; bottom-aligned so labels share a baseline. */
 .domain-table-wrap [data-slot="table-header-cell"] {
-  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .domain-metric-table-wrap [data-slot="table-head"],
@@ -109,17 +112,6 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-.domain-resource-data-table[data-has-metrics="true"] [data-slot="table"],
-.queue-resource-data-table [data-slot="table"],
-.stream-record-table [data-slot="table"] {
-  min-inline-size: 48rem;
-}
-
-.queue-resource-data-table [data-slot="table"] {
-  min-inline-size: 58rem;
-}
-
-.domain-resource-data-table [data-slot="table-header-cell"],
 .domain-resource-data-table [data-slot="table-cell"],
 .queue-resource-data-table [data-slot="table-header-cell"],
 .queue-resource-data-table [data-slot="table-cell"],
@@ -136,7 +128,7 @@
 }
 
 .queue-action-cell {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .queue-action-cell button,
@@ -146,10 +138,6 @@
 }
 
 @media (max-width: 47.999rem) {
-  .domain-inventory-scroll-hint {
-    display: block;
-  }
-
   .domain-header-title-row,
   .domain-inventory-toolbar,
   .domain-inventory-search-shell,
@@ -171,14 +159,93 @@
     white-space: normal;
     overflow-wrap: anywhere;
   }
+}
 
-  .domain-resource-data-table[data-has-metrics="true"] [data-slot="table"],
-  .queue-resource-data-table [data-slot="table"],
-  .stream-record-table [data-slot="table"] {
-    min-inline-size: 42rem;
+/*
+ * Inventory tables never scroll sideways. When the table is narrow, secondary
+ * metrics leave their columns and fold into a detail line under the route.
+ */
+.domain-resource-inventory {
+  container-type: inline-size;
+}
+
+.domain-resource-data-table [data-slot="table-cell"][data-column-id="route"] {
+  white-space: normal;
+}
+
+/* Fitz routes have no spaces; let long ones wrap rather than widen the table. */
+.domain-resource-data-table .domain-link-cell {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.domain-row-detail {
+  display: none;
+  margin-top: var(--ak-space-1, 0.25rem);
+  color: var(--ak-color-text-muted, var(--ak-color-text, CanvasText));
+  font-size: var(--ak-font-size-xs, 0.75rem);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 44rem) {
+  .domain-resource-data-table [data-priority="secondary"] {
+    display: none;
   }
 
-  .queue-resource-data-table [data-slot="table"] {
-    min-inline-size: 52rem;
+  .domain-row-detail {
+    display: block;
   }
+}
+
+.titled-cell {
+  display: grid;
+  gap: var(--ak-space-1, 0.25rem);
+  min-width: 0;
+}
+
+.titled-cell-title {
+  overflow-wrap: anywhere;
+}
+
+.titled-cell-subtitle {
+  color: var(--ak-color-text-muted, var(--ak-color-text, CanvasText));
+  font-size: var(--ak-font-size-xs, 0.75rem);
+  line-height: var(--ak-line-height-normal, 1.4);
+  overflow-wrap: anywhere;
+}
+
+/* Tables whose prose moved into subtitles wrap instead of truncating. */
+.diagnostics-data-table [data-slot="table-cell"],
+.metrics-sample-data-table [data-slot="table-cell"] {
+  white-space: normal;
+}
+
+/* Record values wrap inside their cell but stop at three lines; the full value is on hover. */
+.titled-cell {
+  white-space: normal;
+}
+
+.stream-record-table .titled-cell-title,
+.domain-resource-data-table .titled-cell-title,
+.queue-resource-data-table .titled-cell-subtitle {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.rows-request-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ak-space-2, 0.5rem) var(--ak-space-3, 0.75rem);
+  padding-block: var(--ak-space-2, 0.5rem);
+}
+
+.rows-request-prompt p {
+  margin: 0;
+  color: var(--ak-color-text-muted, var(--ak-color-text, CanvasText));
+  font-size: var(--ak-font-size-sm, 0.875rem);
 }

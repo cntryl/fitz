@@ -530,7 +530,13 @@ describe("service endpoint contracts", () => {
     try {
       await streamService.getRealmRollup("default");
       await streamService.getAreaRollup("default", "ops");
-      await streamService.getResourceView({
+      await streamService.getResourceDetail({
+        area: "ops",
+        realm: "default",
+        resource: "events",
+        routeFamily: 7,
+      });
+      await streamService.readResourceRecords({
         area: "ops",
         discriminator: "invoice",
         fromOffset: 4,

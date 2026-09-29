@@ -1,11 +1,7 @@
 import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { streamService } from "./stream-service";
-import type {
-  StreamAreaRollup,
-  StreamOverview,
-  StreamRealmRollup,
-  StreamResourceView,
-} from "./stream-models";
+import type { StreamAreaRollup, StreamOverview, StreamRealmRollup } from "./stream-models";
+import type { StreamRecordsResponse, StreamResourceDetail } from "@/adapters";
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 
 const streamQueries = queryScope("stream");
@@ -65,7 +61,7 @@ const streamAreaQuery = defineQuery<
     streamService.getAreaRollup(realm, area, { routeFamily: family, signal }),
 });
 
-interface StreamResourceQueryInput {
+interface StreamRecordsQueryInput {
   area: string;
   discriminator?: string;
   family: string;
@@ -75,10 +71,20 @@ interface StreamResourceQueryInput {
   resource: string;
 }
 
-const streamResourceQuery = defineQuery<StreamResourceQueryInput, StreamResourceView>({
+const streamResourceDetailQuery = defineQuery<
+  { area: string; family: string; realm: string; resource: string },
+  StreamResourceDetail
+>({
+  key: ({ area, family, realm, resource }) =>
+    streamQueries.key("resource-detail", family, realm, area, resource),
+  fetch: ({ family, ...scope }, { signal }) =>
+    streamService.getResourceDetail({ ...scope, routeFamily: family }, { signal }),
+});
+
+const streamRecordsQuery = defineQuery<StreamRecordsQueryInput, StreamRecordsResponse>({
   key: ({ family, ...request }) => streamResourceQueryKey(request, family),
   fetch: ({ family, ...request }, { signal }) =>
-    streamService.getResourceView({ ...request, routeFamily: family }, { signal }),
+    streamService.readResourceRecords({ ...request, routeFamily: family }, { signal }),
 });
 
 export function createStreamOverviewQuery() {
@@ -93,18 +99,29 @@ export function createStreamAreaQuery(realm: string, area: string) {
   return createQuery(streamAreaQuery, { area, family: currentRouteFamilySegment(), realm });
 }
 
-export function createStreamResourceQuery(request: {
+export function createStreamResourceQuery(scope: {
   area: string;
-  discriminator?: string;
-  fromOffset?: number;
-  limit?: number;
   realm: string;
   resource: string;
 }) {
-  const limit = request.limit ?? 50;
-  return createQuery(streamResourceQuery, {
-    ...request,
-    family: currentRouteFamilySegment(),
-    limit,
-  });
+  return createQuery(streamResourceDetailQuery, { ...scope, family: currentRouteFamilySegment() });
+}
+
+/** Records are data rows; pass `skipInitialFetch` until the operator asks for them. */
+export function createStreamRecordsQuery(
+  request: {
+    area: string;
+    discriminator?: string;
+    fromOffset?: number;
+    limit?: number;
+    realm: string;
+    resource: string;
+  },
+  options?: { skipInitialFetch?: boolean },
+) {
+  return createQuery(
+    streamRecordsQuery,
+    { ...request, family: currentRouteFamilySegment(), limit: request.limit ?? 50 },
+    options,
+  );
 }

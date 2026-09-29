@@ -6,11 +6,21 @@ import type {
   DomainResourceInventoryRow,
   DomainResourceMetricColumn,
 } from "./domain-resource-inventory-table";
-import { formatNumber } from "@/shared/format";
 import { domainScopeHref, formatFitzRoute, type DomainSegment } from "@/shared/navigation/domains";
 
-const ROLLUP_DESCRIPTION =
-  "Counts and rates are summed across the scope; latency, age, and next-run columns show the extreme value any one resource reported.";
+function rollupDescription(columns: readonly DomainResourceMetricColumn[]) {
+  const summed = "Counts and rates are summed across each row's resources";
+  const worst = columns
+    .filter((column) => column.rollup === "worst")
+    .map((column) => column.header);
+  if (worst.length === 0) return `${summed}.`;
+
+  const names =
+    worst.length === 1
+      ? worst[0]
+      : `${worst.slice(0, -1).join(", ")} and ${worst[worst.length - 1]}`;
+  return `${summed}; ${names} ${worst.length === 1 ? "shows" : "show"} the worst single resource.`;
+}
 
 export interface DomainScopeInventoryTableProps {
   domain: DomainSegment;
@@ -21,20 +31,6 @@ export interface DomainScopeInventoryTableProps {
   realm?: string;
   rows: readonly DomainResourceInventoryRow[];
   searchValue: string;
-}
-
-function countColumn(
-  id: string,
-  header: string,
-  value: (row: DomainScopeRow) => number | undefined,
-): DomainResourceMetricColumn {
-  return {
-    id,
-    header,
-    width: "10%",
-    cell: (row) => formatNumber(value(row as DomainScopeRow) ?? 0),
-    sortValue: (row) => value(row as DomainScopeRow),
-  };
 }
 
 export default function DomainScopeInventoryTable({
@@ -52,21 +48,15 @@ export default function DomainScopeInventoryTable({
   const scopeRows = showingAreas
     ? areaRollupRows(rows, realmInventory?.areas, realm)
     : realmRollupRows(rows, inventory?.realms);
-  const structuralColumns = showingAreas
-    ? [countColumn("resources", "Resources", (row) => row.resourceCount)]
-    : [
-        countColumn("areas", "Areas", (row) => row.areaCount),
-        countColumn("resources", "Resources", (row) => row.resourceCount),
-      ];
   const scopeHref = (row: DomainScopeRow) =>
     domainScopeHref(domain, { area: row.area, realm: row.realm });
 
   return (
     <DomainDrilldownTable<DomainScopeRow>
-      description={metricColumns.length > 0 ? ROLLUP_DESCRIPTION : undefined}
+      description={metricColumns.length > 0 ? rollupDescription(metricColumns) : undefined}
       emptyDescription={emptyDescription}
       id={`${domain}-inventory`}
-      metricColumns={[...structuralColumns, ...metricColumns]}
+      metricColumns={metricColumns}
       onRowOpen={(row) => navigate(scopeHref(row))}
       onSearchChange={onSearchChange}
       primaryHeader="Route"

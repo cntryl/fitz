@@ -6,19 +6,24 @@ import { Form, Input, Label } from "@askrjs/ui";
 import type { StreamAdminRecord } from "@/adapters";
 import CopyTextButton from "@/components/shared/copy-text-button";
 import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
+import TitledCell from "@/components/shared/titled-cell";
+import RowsRequestPrompt from "@/components/shared/rows-request-prompt";
+import { hasRowsRequest, rowsRequestQuery } from "@/shared/navigation/rows-request";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
-import { createStreamResourceQuery } from "@/features/stream/stream-query";
+import {
+  createStreamRecordsQuery,
+  createStreamResourceQuery,
+} from "@/features/stream/stream-query";
 import { formatCount, formatNumber, formatTimestampMs } from "@/shared/format";
 import { domainResourceHref } from "@/shared/navigation/domains";
 
@@ -47,43 +52,30 @@ function recordsHref(
     limit: number;
   },
 ) {
-  const query = new URLSearchParams();
+  const query = rowsRequestQuery();
 
   if (params.fromOffset > 0) query.set("fromOffset", params.fromOffset.toString());
   if (params.discriminator) query.set("discriminator", params.discriminator);
   if (params.limit !== DEFAULT_LIMIT) query.set("limit", params.limit.toString());
 
-  const queryString = query.toString();
-  const href = domainResourceHref("stream", scope);
-
-  return queryString ? `${href}?${queryString}` : href;
+  return `${domainResourceHref("stream", scope)}?${query.toString()}`;
 }
 
 const recordColumns: readonly DataTableColumn<StreamAdminRecord>[] = [
   {
     id: "offset",
     header: "Offset",
-    width: "12%",
+    width: "16%",
     cellComponent: ({ row }) => <span>{formatNumber(row.resource_offset)}</span>,
-  },
-  {
-    id: "created",
-    header: "Created",
-    width: "24%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={formatTimestampMs(row.created_at_ms)}>
-        {formatTimestampMs(row.created_at_ms)}
-      </span>
-    ),
   },
   {
     id: "body",
     header: "Body",
-    width: "44%",
+    width: "64%",
     cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.body.base64}>
+      <TitledCell title={row.body.base64} subtitle={formatTimestampMs(row.created_at_ms)}>
         {row.body.utf8 ?? row.body.base64}
-      </span>
+      </TitledCell>
     ),
   },
   {
@@ -112,18 +104,21 @@ export default function StreamResourcePage() {
   const [fromOffsetDraft, setFromOffsetDraft] = state(fromOffset.toString());
   const [limitDraft, setLimitDraft] = state(limit.toString());
   const [discriminatorDraft, setDiscriminatorDraft] = state(discriminator);
-  const query = createStreamResourceQuery({ ...scope, discriminator, fromOffset, limit });
-  const data = query.data;
-  const records = data?.records.records ?? [];
-  const headerStatus = queryHeaderStatus(
-    query,
-    {
-      loading: "Loading stream resource.",
-      ready: `${formatCount(records.length, "committed record")} visible from offset ${formatNumber(data?.records.from_offset ?? fromOffset)}.`,
-      unavailable: "Committed stream records are unavailable.",
-    },
-    { label: "Committed", tone: "success" },
+  const recordsRequested = hasRowsRequest(route.query, ["fromOffset", "discriminator"]);
+  const detailQuery = createStreamResourceQuery(scope);
+  const recordsQueryCell = createStreamRecordsQuery(
+    { ...scope, discriminator, fromOffset, limit },
+    { skipInitialFetch: !recordsRequested },
   );
+  const recordsQuery = recordsRequested ? recordsQueryCell : null;
+  const detail = detailQuery.data;
+  const recordsWindow = recordsQuery?.data;
+  const records = recordsWindow?.records ?? [];
+  const headerStatus = queryHeaderStatus(detailQuery, {
+    loading: "Loading stream resource.",
+    ready: `${formatCount(records.length, "committed record")} visible.`,
+    unavailable: "Stream resource metadata is unavailable.",
+  });
 
   function applyFilters(event: Event) {
     event.preventDefault();
@@ -144,20 +139,17 @@ export default function StreamResourcePage() {
           title={scope.resource}
           description={`${scope.realm} / ${scope.area}`}
           primaryAction={{
-            busy: query.refreshing,
-            disabled: query.refreshing,
-            label: "Refresh records",
-            onPress: () => query.refresh(),
+            busy: detailQuery.refreshing || recordsQuery?.refreshing,
+            disabled: detailQuery.refreshing || recordsQuery?.refreshing,
+            label: "Refresh stream",
+            onPress: () => {
+              void detailQuery.refresh();
+              void recordsQuery?.refresh();
+            },
           }}
           status={headerStatus}
         />
-        <OperatorScopeStrip
-          realm={scope.realm}
-          area={scope.area}
-          resource={scope.resource}
-          freshness={queryFreshness(query)}
-        />
-        {data ? (
+        {detail ? (
           <DomainSummaryStrip
             id="stream-committed-metadata"
             title="Committed metadata"
@@ -165,27 +157,27 @@ export default function StreamResourcePage() {
             items={[
               {
                 label: "Latest committed offset",
-                value: data.detail.offset,
+                value: detail.offset,
                 caption: "Resource high-water metadata, not the read cursor",
               },
               {
                 label: "Watermark",
-                value: data.detail.watermark,
+                value: detail.watermark,
                 caption: "Durable committed metadata",
               },
               {
                 label: "Size bytes",
-                value: data.detail.size_bytes,
+                value: detail.size_bytes,
                 caption: "Durable committed metadata",
               },
               {
                 label: "Append sessions",
-                value: data.detail.sessions_active,
+                value: detail.sessions_active,
                 caption: "Live append sessions",
               },
               {
                 label: "Active subscriptions",
-                value: data.detail.subscriptions_active,
+                value: detail.subscriptions_active,
                 caption: "Live subscriptions; resets on disconnect cleanup or broker restart",
               },
             ]}
@@ -241,20 +233,27 @@ export default function StreamResourcePage() {
             </Block>
           </Form>
         </DomainDataSection>
-        <Show when={query.loading}>
-          <QueryLoadingState description="Loading committed stream records..." />
-        </Show>
-        <Show when={query.refreshing}>
-          <QueryRefreshingState description="Refreshing committed stream records..." />
-        </Show>
-        <Show when={query.error}>
-          <QueryErrorState
-            title="Unable to read stream records"
-            error={query.error}
-            onRetry={() => query.refresh()}
+        <Show when={!recordsRequested}>
+          <RowsRequestPrompt
+            description="Committed records load only when requested."
+            href={recordsHref(scope, { discriminator, fromOffset, limit })}
+            label="Load records"
           />
         </Show>
-        <Show when={data && records.length === 0}>
+        <Show when={recordsQuery?.loading}>
+          <QueryLoadingState description="Loading committed stream records..." />
+        </Show>
+        <Show when={recordsQuery?.refreshing}>
+          <QueryRefreshingState description="Refreshing committed stream records..." />
+        </Show>
+        <Show when={recordsQuery?.error}>
+          <QueryErrorState
+            title="Unable to read stream records"
+            error={recordsQuery?.error}
+            onRetry={() => recordsQuery?.refresh()}
+          />
+        </Show>
+        <Show when={recordsWindow && records.length === 0}>
           <QueryEmptyState description="No committed stream records matched this offset and discriminator." />
         </Show>
         <Show when={records.length > 0}>
@@ -264,9 +263,6 @@ export default function StreamResourcePage() {
             description="Durable stream records returned by the current read window."
           >
             <Block direction="column" gap="xs">
-              <p class="domain-inventory-scroll-hint">
-                Scroll horizontally to inspect every record field and action.
-              </p>
               <DataTable<StreamAdminRecord>
                 ariaLabel="Stream records"
                 class="stream-record-table"
@@ -296,7 +292,7 @@ export default function StreamResourcePage() {
               Previous page
             </Link>
           </Show>
-          <Show when={data?.records.has_more}>
+          <Show when={recordsWindow?.has_more}>
             <Button asChild>
               <Link
                 href={recordsHref(scope, {

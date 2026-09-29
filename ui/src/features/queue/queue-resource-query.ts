@@ -124,11 +124,15 @@ export function createQueueResourceQuery(resourceRef: QueueResourceRef) {
   return createQuery(queueResourceQuery, { family: currentRouteFamilySegment(), resourceRef });
 }
 
-export function createQueueResourceInflightQuery(resourceRef: QueueResourceRef) {
-  return createQuery(queueResourceInflightQuery, {
-    family: currentRouteFamilySegment(),
-    resourceRef,
-  });
+export function createQueueResourceInflightQuery(
+  resourceRef: QueueResourceRef,
+  options?: { skipInitialFetch?: boolean },
+) {
+  return createQuery(
+    queueResourceInflightQuery,
+    { family: currentRouteFamilySegment(), resourceRef },
+    options,
+  );
 }
 
 export function createQueueResourceTimelineQuery(resourceRef: QueueResourceRef) {

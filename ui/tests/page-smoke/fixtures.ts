@@ -381,7 +381,6 @@ export const scheduleArea = {
 export const scheduleResource = {
   detail: {
     area: "ops",
-    cron: "*/5 * * * *",
     diagnostics: healthyGlobalDiagnostics,
     enabled: true,
     executions_total: 42,

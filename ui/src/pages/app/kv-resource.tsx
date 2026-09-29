@@ -16,10 +16,12 @@ import {
 import DomainHeader from "@/components/shared/domain-header";
 import CopyTextButton from "@/components/shared/copy-text-button";
 import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
+import TitledCell from "@/components/shared/titled-cell";
+import RowsRequestPrompt from "@/components/shared/rows-request-prompt";
+import { hasRowsRequest, rowsRequestQuery } from "@/shared/navigation/rows-request";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryCompactEmptyState,
   QueryEmptyState,
@@ -75,7 +77,7 @@ function rowsHref(
     startsWith: string;
   },
 ) {
-  const query = new URLSearchParams();
+  const query = rowsRequestQuery();
 
   if (params.startsWith) query.set("startsWith", params.startsWith);
   if (params.cursor) query.set("cursor", params.cursor);
@@ -84,10 +86,7 @@ function rowsHref(
   }
   if (params.limit !== DEFAULT_LIMIT) query.set("limit", params.limit.toString());
 
-  const queryString = query.toString();
-  const href = domainResourceHref("kv", scope);
-
-  return queryString ? `${href}?${queryString}` : href;
+  return `${domainResourceHref("kv", scope)}?${query.toString()}`;
 }
 
 export default function KvResourcePage() {
@@ -112,6 +111,7 @@ export default function KvResourcePage() {
   } | null>(null);
   const selectedFamily = currentRouteFamilySegment() ?? operator.selectedRouteFamilyId;
   const concreteFamily = parseConcreteRouteFamilyId(selectedFamily);
+  const rowsRequested = hasRowsRequest(route.query, ["cursor", "startsWith"]);
   const rowsQueryCell = createKvRowsQuery(
     scope,
     {
@@ -119,9 +119,9 @@ export default function KvResourcePage() {
       limit,
       startsWith,
     },
-    { skipInitialFetch: concreteFamily === null },
+    { skipInitialFetch: concreteFamily === null || !rowsRequested },
   );
-  const rowsQuery = concreteFamily === null ? null : rowsQueryCell;
+  const rowsQuery = concreteFamily === null || !rowsRequested ? null : rowsQueryCell;
   const rows = rowsQuery?.data?.items ?? [];
   const lookup = activeLookup();
   const valueQueryCell = createKvValueQuery(
@@ -134,41 +134,24 @@ export default function KvResourcePage() {
   const valueResult = valueQuery?.data;
   const rowColumns: readonly DataTableColumn<KvCommittedPair>[] = [
     {
-      id: "key-bytes",
-      header: "Key bytes",
-      width: "12%",
-      cellComponent: ({ row }) => <span>{formatNumber(row.key.lenBytes)}</span>,
-    },
-    {
-      id: "key-preview",
-      header: "Key preview",
-      width: "26%",
+      id: "key",
+      header: "Key",
+      width: "80%",
       cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.key.base64}>
+        <TitledCell
+          title={row.key.base64}
+          subtitle={`${bytePreview(row.value)} (${bytePreviewKind(row.value)}) · key ${formatNumber(
+            row.key.lenBytes,
+          )} B · value ${formatNumber(row.value.lenBytes)} B`}
+        >
           {bytePreview(row.key)} ({bytePreviewKind(row.key)})
-        </span>
-      ),
-    },
-    {
-      id: "value-bytes",
-      header: "Value bytes",
-      width: "12%",
-      cellComponent: ({ row }) => <span>{formatNumber(row.value.lenBytes)}</span>,
-    },
-    {
-      id: "value-preview",
-      header: "Value preview",
-      width: "36%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.value.base64}>
-          {bytePreview(row.value)} ({bytePreviewKind(row.value)})
-        </span>
+        </TitledCell>
       ),
     },
     {
       id: "actions",
       header: "Action",
-      width: "14%",
+      width: "20%",
       cellComponent: ({ row }) => (
         <CopyTextButton label="Copy value" text={bytePreview(row.value)} />
       ),
@@ -205,11 +188,13 @@ export default function KvResourcePage() {
           label: "Select Route Family",
           tone: "warning" as const,
         }
-      : queryHeaderStatus(rowsQuery ?? {}, {
-          loading: "Loading committed KV rows.",
-          ready: `${formatNumber(rows.length)} committed row${rows.length === 1 ? "" : "s"} visible for this resource.`,
-          unavailable: "Committed KV rows are unavailable.",
-        });
+      : rowsQuery
+        ? queryHeaderStatus(rowsQuery, {
+            loading: "Loading committed KV rows.",
+            ready: `${formatNumber(rows.length)} committed row${rows.length === 1 ? "" : "s"} visible for this resource.`,
+            unavailable: "Committed KV rows are unavailable.",
+          })
+        : undefined;
 
   return (
     <DomainPageFrame>
@@ -227,14 +212,6 @@ export default function KvResourcePage() {
               : undefined
           }
           status={rowsStatus}
-        />
-        <OperatorScopeStrip
-          realm={scope.realm}
-          area={scope.area}
-          resource={scope.resource}
-          freshness={
-            concreteFamily === null ? "Route Family required" : queryFreshness(rowsQuery ?? {})
-          }
         />
 
         <DomainDataSection
@@ -401,6 +378,14 @@ export default function KvResourcePage() {
           <QueryEmptyState description="Select a concrete Route Family to browse committed KV rows." />
         </Show>
 
+        <Show when={concreteFamily !== null && !rowsRequested}>
+          <RowsRequestPrompt
+            description="Committed rows load only when requested."
+            href={rowsHref(scope, { limit, startsWith })}
+            label="Load rows"
+          />
+        </Show>
+
         <Show when={rowsQuery?.loading}>
           <QueryLoadingState description="Loading committed KV rows..." />
         </Show>
@@ -428,9 +413,6 @@ export default function KvResourcePage() {
             description="Committed rows returned by the selected scope and filters."
           >
             <Block direction="column" gap="xs">
-              <p class="domain-inventory-scroll-hint">
-                Scroll horizontally to inspect every row field and action.
-              </p>
               <DataTable<KvCommittedPair>
                 ariaLabel="Committed KV rows"
                 class="domain-resource-data-table"

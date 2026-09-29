@@ -84,9 +84,6 @@ export function QueueResourceInflightPanel({ messages }: { messages: QueueInflig
         />
       ) : (
         <Block direction="column" gap="xs">
-          <Text tone="muted" size="sm">
-            Scroll the table horizontally to inspect ownership and expiry details.
-          </Text>
           <QueueInflightTable messages={messages} />
         </Block>
       )}
@@ -125,9 +122,6 @@ export function QueueResourceDeadLettersPanel({
         />
       ) : (
         <Block direction="column" gap="xs">
-          <Text tone="muted" size="sm">
-            Scroll the table horizontally to reach all actions.
-          </Text>
           <QueueDeadLetterTable
             messages={messages}
             onReplay={onReplay}
