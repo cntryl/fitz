@@ -361,3 +361,34 @@ fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
     .expect("decode estimate");
     assert!(!estimate.estimate_complete);
 }
+
+/// Sequence: an inventory repair retry fails -> another KV frame arrives at once.
+///
+/// Invariant: retries back off, so a failing store does not add a storage
+/// write to every KV frame on the family.
+#[test]
+fn should_back_off_inventory_repair_retries_after_failure() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sink = KvDomain::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let scope = KvResourceScope::new(family, "acme", "app", "users");
+
+    // Act
+    let pending_after_immediate_retry = sink.run_on_family_for_tests(family, move |runtime| {
+        runtime.core.pending_inventory_repairs.insert(
+            super::locks::KvResourceLockKey::from_scope(&scope),
+            (1, scope.clone()),
+        );
+        crate::domains::kv::KvActor::fail_next_inventory_update_for_tests();
+        runtime.retry_inventory_repairs();
+        runtime.retry_inventory_repairs();
+        runtime.core.pending_inventory_repairs.len()
+    });
+
+    // Assert
+    assert_eq!(pending_after_immediate_retry, 1);
+}

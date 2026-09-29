@@ -91,23 +91,16 @@ export function createLeaseAreaQuery(realm: string, area: string) {
   return createQuery(leaseAreaQuery, { area, family: currentRouteFamilySegment(), realm });
 }
 
-export function createLeaseResourceRowsQuery(
-  request: {
-    realm: string;
-    area: string;
-    resource: string;
-    limit?: number;
-  },
-  options?: { skipInitialFetch?: boolean },
-) {
+export function createLeaseResourceRowsQuery(request: {
+  realm: string;
+  area: string;
+  resource: string;
+  limit?: number;
+}) {
   const limit = request.limit ?? 50;
-  return createQuery(
-    leaseResourceRowsQuery,
-    {
-      ...request,
-      family: currentRouteFamilySegment(),
-      limit,
-    },
-    options,
-  );
+  return createQuery(leaseResourceRowsQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit,
+  });
 }

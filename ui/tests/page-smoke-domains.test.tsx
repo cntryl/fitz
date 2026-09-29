@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
 import { click, queryState, submit, type } from "@askrjs/askr/testing";
+import { formatTimestamp } from "@/shared/format";
 import { mountRoute, pageSmokeMocks, queryOptions, resetQueries } from "./page-smoke/harness";
 import {
   diagnostics,
@@ -206,6 +207,13 @@ describe("admin page smoke tests", () => {
     expect(noticeText).not.toContain("latency");
     expect(lease.textContent).toContain(
       "Counts and rates are summed across each row's resources; Oldest shows the worst single resource.",
+    );
+    cleanupApp(lease);
+    document.body.innerHTML = "";
+    const { default: SchedulePage } = await import("@/pages/app/schedule");
+    const schedule = await mountRoute("/schedule", "/schedule", SchedulePage);
+    expect(schedule.textContent).toContain(
+      "Counts and rates are summed across each row's resources; Earliest next run shows the soonest single resource.",
     );
   });
 
@@ -650,6 +658,41 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("No live listeners visible");
     expect(text).not.toContain("Back to schedule area");
   });
+  it("rolls schedule resource summaries up across every schedule, not just this page", async () => {
+    // Arrange
+    mocks.queryStates.scheduleResource = queryState.fresh(
+      {
+        ...scheduleResource,
+        detail: { ...scheduleResource.detail, next_run: "2026-05-21T12:45:00.000Z" },
+        executionObservations: { ...scheduleResource.executionObservations, has_more: true },
+      },
+      queryOptions(),
+    );
+    const { default: ScheduleResourcePage } = await import("@/pages/app/schedule-resource");
+
+    // Act
+    const root = await mountRoute(
+      "/admin/1/schedule/default/ops/primary",
+      "/admin/{family}/schedule/{realm}/{area}/{resource}",
+      ScheduleResourcePage,
+    );
+    const summary = root.querySelector('[aria-labelledby="schedule-resource-detail"]');
+    const tiles = Object.fromEntries(
+      Array.from(summary?.querySelectorAll('[data-slot="stat"]') ?? []).map((stat) => [
+        stat.querySelector('[data-slot="stat-label"]')?.textContent?.trim(),
+        stat.querySelector('[data-slot="stat-value"]')?.textContent?.trim(),
+      ]),
+    );
+
+    // Assert
+    expect(Object.keys(tiles)).toEqual([
+      "Schedules on this page",
+      "Earliest next run",
+      "Pending handoffs on this page",
+    ]);
+    expect(tiles["Earliest next run"]).toBe(formatTimestamp("2026-05-21T12:45:00.000Z"));
+  });
+
   it("links to the next schedule operation page when more rows exist", async () => {
     mocks.queryStates.scheduleResource = queryState.fresh(
       {

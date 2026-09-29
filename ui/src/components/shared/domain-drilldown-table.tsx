@@ -20,8 +20,12 @@ export interface DomainDrilldownMetricColumn<Row> {
   id: string;
   /** Secondary metrics fold into the route cell instead of forcing sideways scroll. */
   priority?: "secondary";
-  /** "worst" when a rollup row shows its worst child instead of a sum. */
-  rollup?: "worst";
+  /**
+   * How a rollup row aggregates this column when it is not a sum: "worst" shows
+   * the worst child, "earliest" the soonest. Mirrors the aggregation in
+   * domain-inventory-rollup.ts.
+   */
+  rollup?: "worst" | "earliest";
   sortValue?: (row: Row) => number | null | undefined;
   title?: (row: Row) => string | undefined;
   width?: string;

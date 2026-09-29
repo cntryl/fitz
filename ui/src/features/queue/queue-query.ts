@@ -122,11 +122,10 @@ export function createQueueAreaQuery(realm: string, area: string) {
 export function createQueueDeadLettersQuery(
   resourceRef: QueueResourceRef,
   filters: DeadLetterFilters = {},
-  options?: { skipInitialFetch?: boolean },
 ) {
-  return createQuery(
-    queueDeadLettersQuery,
-    { family: currentRouteFamilySegment(), filters, resourceRef },
-    options,
-  );
+  return createQuery(queueDeadLettersQuery, {
+    family: currentRouteFamilySegment(),
+    filters,
+    resourceRef,
+  });
 }

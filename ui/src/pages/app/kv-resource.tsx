@@ -1,47 +1,23 @@
 import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
-import { currentRoute, Link, navigate } from "@askrjs/askr/router";
+import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Form, Input, Label } from "@askrjs/ui";
-import {
-  Button,
-  Block,
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemTitle,
-  Text,
-} from "@askrjs/themes/components";
+import { Button, Block } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
-import CopyTextButton from "@/components/shared/copy-text-button";
-import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
-import TitledCell from "@/components/shared/titled-cell";
 import RowsRequestPrompt from "@/components/shared/rows-request-prompt";
-import { hasRowsRequest, rowsRequestQuery } from "@/shared/navigation/rows-request";
+import { hasRowsRequest } from "@/shared/navigation/rows-request";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import { queryHeaderStatus } from "@/components/shared/query-header-status";
+import { QueryEmptyState } from "@/components/shared/query-state";
+import type { KvKeyEncoding } from "@/features/kv/kv-models";
 import {
-  QueryCompactEmptyState,
-  QueryEmptyState,
-  QueryErrorState,
-  QueryLoadingState,
-  QueryRefreshingState,
-} from "@/components/shared/query-state";
-import type {
-  KvByteValue,
-  KvCommittedPair,
-  KvKeyEncoding,
-  KvResourceScope,
-} from "@/features/kv/kv-models";
-import { createKvRowsQuery } from "@/features/kv/kv-rows-query";
-import { createKvValueQuery } from "@/features/kv/kv-value-query";
-import { formatNumber } from "@/shared/format";
-import { currentRouteFamilySegment, domainResourceHref } from "@/shared/navigation/domains";
+  DEFAULT_ROWS_LIMIT,
+  KvRowsSection,
+  KvValueLookupResult,
+  rowsHref,
+} from "@/features/kv/kv-resource-sections";
+import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 import { parseConcreteRouteFamilyId, useOperatorScope } from "@/shared/operator-scope";
-
-const DEFAULT_LIMIT = 50;
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -54,39 +30,12 @@ function decodeParam(value: string | undefined) {
 }
 
 function parseLimit(value: string | null) {
-  if (!value) return DEFAULT_LIMIT;
+  if (!value) return DEFAULT_ROWS_LIMIT;
   const parsed = Number(value);
 
-  return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.floor(parsed), 200) : DEFAULT_LIMIT;
-}
-
-function bytePreview(value: KvByteValue) {
-  return value.utf8 ?? value.base64;
-}
-
-function bytePreviewKind(value: KvByteValue) {
-  return value.utf8 ? "utf8" : "base64";
-}
-
-function rowsHref(
-  scope: KvResourceScope,
-  params: {
-    cursor?: string | null;
-    cursorTrail?: readonly string[];
-    limit: number;
-    startsWith: string;
-  },
-) {
-  const query = rowsRequestQuery();
-
-  if (params.startsWith) query.set("startsWith", params.startsWith);
-  if (params.cursor) query.set("cursor", params.cursor);
-  for (const trailCursor of params.cursorTrail ?? []) {
-    query.append("cursorTrail", trailCursor);
-  }
-  if (params.limit !== DEFAULT_LIMIT) query.set("limit", params.limit.toString());
-
-  return `${domainResourceHref("kv", scope)}?${query.toString()}`;
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(Math.floor(parsed), 200)
+    : DEFAULT_ROWS_LIMIT;
 }
 
 export default function KvResourcePage() {
@@ -112,54 +61,7 @@ export default function KvResourcePage() {
   const selectedFamily = currentRouteFamilySegment() ?? operator.selectedRouteFamilyId;
   const concreteFamily = parseConcreteRouteFamilyId(selectedFamily);
   const rowsRequested = hasRowsRequest(route.query, ["cursor", "startsWith"]);
-  const rowsQueryCell = createKvRowsQuery(
-    scope,
-    {
-      cursor,
-      limit,
-      startsWith,
-    },
-    { skipInitialFetch: concreteFamily === null || !rowsRequested },
-  );
-  const rowsQuery = concreteFamily === null || !rowsRequested ? null : rowsQueryCell;
-  const rows = rowsQuery?.data?.items ?? [];
   const lookup = activeLookup();
-  const valueQueryCell = createKvValueQuery(
-    { ...scope, routeFamily: concreteFamily ?? 0 },
-    lookup?.key ?? "",
-    lookup?.keyEncoding ?? "utf8",
-    { skipInitialFetch: concreteFamily === null || lookup === null },
-  );
-  const valueQuery = concreteFamily !== null && lookup ? valueQueryCell : null;
-  const valueResult = valueQuery?.data;
-  const rowColumns: readonly DataTableColumn<KvCommittedPair>[] = [
-    {
-      id: "key",
-      header: "Key",
-      width: "80%",
-      cellComponent: ({ row }) => (
-        <TitledCell
-          title={row.key.base64}
-          subtitle={`${bytePreview(row.value)} (${bytePreviewKind(row.value)}) · key ${formatNumber(
-            row.key.lenBytes,
-          )} B · value ${formatNumber(row.value.lenBytes)} B`}
-        >
-          {bytePreview(row.key)} ({bytePreviewKind(row.key)})
-        </TitledCell>
-      ),
-    },
-    {
-      id: "actions",
-      header: "Action",
-      width: "20%",
-      cellComponent: ({ row }) => (
-        <CopyTextButton label="Copy value" text={bytePreview(row.value)} />
-      ),
-    },
-  ];
-  const nextCursor = rowsQuery?.data?.nextCursor ?? null;
-  const previousCursor = cursorTrail[cursorTrail.length - 1] ?? null;
-  const previousCursorTrail = cursorTrail.slice(0, -1);
 
   function applyFilters(event: Event) {
     event.preventDefault();
@@ -188,13 +90,7 @@ export default function KvResourcePage() {
           label: "Select Route Family",
           tone: "warning" as const,
         }
-      : rowsQuery
-        ? queryHeaderStatus(rowsQuery, {
-            loading: "Loading committed KV rows.",
-            ready: `${formatNumber(rows.length)} committed row${rows.length === 1 ? "" : "s"} visible for this resource.`,
-            unavailable: "Committed KV rows are unavailable.",
-          })
-        : undefined;
+      : undefined;
 
   return (
     <DomainPageFrame>
@@ -203,14 +99,6 @@ export default function KvResourcePage() {
           eyebrow="KV resource"
           title={scope.resource}
           description={`${scope.realm} / ${scope.area}`}
-          primaryAction={
-            rowsQuery
-              ? {
-                  label: "Refresh rows",
-                  onPress: () => rowsQuery.refresh(),
-                }
-              : undefined
-          }
           status={rowsStatus}
         />
 
@@ -266,71 +154,8 @@ export default function KvResourcePage() {
           </Block>
         </DomainDataSection>
 
-        <Show when={valueQuery?.loading}>
-          <QueryLoadingState description="Looking up the committed KV value..." />
-        </Show>
-        <Show when={valueQuery?.error}>
-          <QueryErrorState
-            title="Unable to look up committed KV value"
-            error={valueQuery?.error}
-            onRetry={() => valueQuery?.refresh()}
-          />
-        </Show>
-        <Show when={valueResult && !valueResult.found}>
-          <QueryCompactEmptyState
-            title="Key not found"
-            description="No current committed value exists for this exact key."
-          />
-        </Show>
-        <Show when={valueResult?.found && valueResult.value}>
-          <DomainDataSection
-            id="kv-exact-key-result"
-            title="Exact key result"
-            description={`Current committed value for the submitted ${lookup?.keyEncoding ?? "UTF-8"} key.`}
-          >
-            <ItemGroup role="list" aria-label="Exact key result">
-              <Item role="listitem" variant="outline">
-                <ItemContent>
-                  <ItemTitle>Key</ItemTitle>
-                  <ItemDescription>
-                    <Text as="span" font="mono" wrap="anywhere">
-                      {valueResult ? bytePreview(valueResult.key) : ""}
-                    </Text>
-                  </ItemDescription>
-                  <ItemDescription>
-                    {valueResult ? formatNumber(valueResult.key.lenBytes) : "0"} bytes ·{" "}
-                    {valueResult ? bytePreviewKind(valueResult.key) : "utf8"}
-                  </ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <CopyTextButton
-                    label="Copy exact key"
-                    text={valueResult ? bytePreview(valueResult.key) : ""}
-                  />
-                </ItemActions>
-              </Item>
-              <Item role="listitem" variant="outline">
-                <ItemContent>
-                  <ItemTitle>Value</ItemTitle>
-                  <ItemDescription>
-                    <Text as="span" font="mono" wrap="anywhere">
-                      {valueResult?.value ? bytePreview(valueResult.value) : ""}
-                    </Text>
-                  </ItemDescription>
-                  <ItemDescription>
-                    {valueResult?.value ? formatNumber(valueResult.value.lenBytes) : "0"} bytes ·{" "}
-                    {valueResult?.value ? bytePreviewKind(valueResult.value) : "utf8"}
-                  </ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <CopyTextButton
-                    label="Copy exact value"
-                    text={valueResult?.value ? bytePreview(valueResult.value) : ""}
-                  />
-                </ItemActions>
-              </Item>
-            </ItemGroup>
-          </DomainDataSection>
+        <Show when={concreteFamily !== null && lookup}>
+          <KvValueLookupResult lookup={lookup!} routeFamily={concreteFamily ?? 0} scope={scope} />
         </Show>
 
         <DomainDataSection
@@ -386,76 +211,15 @@ export default function KvResourcePage() {
           />
         </Show>
 
-        <Show when={rowsQuery?.loading}>
-          <QueryLoadingState description="Loading committed KV rows..." />
-        </Show>
-
-        <Show when={rowsQuery?.refreshing}>
-          <QueryRefreshingState description="Refreshing committed KV rows..." />
-        </Show>
-
-        <Show when={rowsQuery?.error}>
-          <QueryErrorState
-            title="Unable to load committed KV rows"
-            error={rowsQuery?.error}
-            onRetry={() => rowsQuery?.refresh()}
+        <Show when={concreteFamily !== null && rowsRequested}>
+          <KvRowsSection
+            cursor={cursor}
+            cursorTrail={cursorTrail}
+            limit={limit}
+            scope={scope}
+            startsWith={startsWith}
           />
         </Show>
-
-        <Show when={rowsQuery?.data && rows.length === 0}>
-          <QueryEmptyState description="No committed KV rows match this resource and key prefix." />
-        </Show>
-
-        <Show when={rows.length > 0}>
-          <DomainDataSection
-            id="kv-committed-rows"
-            title="Current authoritative KV rows"
-            description="Committed rows returned by the selected scope and filters."
-          >
-            <Block direction="column" gap="xs">
-              <DataTable<KvCommittedPair>
-                ariaLabel="Committed KV rows"
-                class="domain-resource-data-table"
-                columns={rowColumns}
-                getKey={(row) => row.key.base64}
-                rows={rows}
-              />
-            </Block>
-          </DomainDataSection>
-        </Show>
-
-        <Block direction="row" gap="xs" wrap={true}>
-          <Show when={cursor !== null}>
-            <Link class="page-action-link" href={rowsHref(scope, { limit, startsWith })}>
-              First page
-            </Link>
-            <Link
-              class="page-action-link"
-              href={rowsHref(scope, {
-                cursor: previousCursor,
-                cursorTrail: previousCursorTrail,
-                limit,
-                startsWith,
-              })}
-            >
-              Previous page
-            </Link>
-          </Show>
-          <Show when={rowsQuery?.data?.hasMore && nextCursor}>
-            <Button asChild>
-              <Link
-                href={rowsHref(scope, {
-                  cursor: nextCursor,
-                  cursorTrail: [...cursorTrail, cursor ?? ""],
-                  limit,
-                  startsWith,
-                })}
-              >
-                Next page
-              </Link>
-            </Button>
-          </Show>
-        </Block>
       </Block>
     </DomainPageFrame>
   );

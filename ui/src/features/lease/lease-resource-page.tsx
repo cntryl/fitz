@@ -134,15 +134,12 @@ export default function LeaseResourcePage() {
 
   const limit = parseLimit(route.query.get("limit"));
   const hasScope = Boolean(realm && area && resource);
-  const rowsQuery = createLeaseResourceRowsQuery(
-    {
-      area: area ?? "",
-      limit,
-      realm: realm ?? "",
-      resource: resource ?? "",
-    },
-    { skipInitialFetch: !hasScope },
-  );
+  const rowsQuery = createLeaseResourceRowsQuery({
+    area: area ?? "",
+    limit,
+    realm: realm ?? "",
+    resource: resource ?? "",
+  });
 
   const rowsData = rowsQuery?.data;
   const rows = rowsData?.items ?? [];

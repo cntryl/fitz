@@ -590,21 +590,22 @@ fn should_count_and_retain_failed_fast_flushes() {
         crate::control::admin::read_model::AdminReadModel::new(),
         crate::domains::WritePolicy::BestEffort,
     );
-    let failures_before =
-        crate::observability::metrics().counter_get(super::METRIC_QUEUE_FAST_FLUSH_FAILURES);
+    let failures_before = crate::observability::metrics()
+        .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL);
 
     // Act
     let retained = sink.inspect_family_for_tests(family, |state| {
-        // Family 999 has no column family, so its flush cannot succeed.
-        state.dirty_fast_flush_families.insert(999);
+        state.dirty_fast_flush_families.insert(1);
+        crate::domains::queue::actor::recovery_store::QueueStore::fail_next_flush_for_tests();
         state.flush_dirty_fast_families();
-        state.dirty_fast_flush_families.contains(&999)
+        state.dirty_fast_flush_families.contains(&1)
     });
 
     // Assert
     assert!(retained);
     assert!(
-        crate::observability::metrics().counter_get(super::METRIC_QUEUE_FAST_FLUSH_FAILURES)
+        crate::observability::metrics()
+            .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL)
             > failures_before
     );
 }

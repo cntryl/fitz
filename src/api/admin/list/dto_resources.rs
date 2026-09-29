@@ -283,7 +283,7 @@ pub struct LeaseResourceDetail {
 ///
 /// A resource groups individual schedules, so every field is a rollup across
 /// them: `enabled` is true when any schedule is enabled, `next_run` is the
-/// earliest next run, and `executions_total` sums persisted acknowledged live
+/// earliest next run among enabled schedules, and `executions_total` sums persisted acknowledged live
 /// handoffs. A single schedule's cron belongs to that schedule, never here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleResourceDetail {
@@ -526,7 +526,12 @@ impl ScheduleResourceDetail {
     }
 
     pub(super) fn aggregate(path: &ResourcePath<'_>, schedules: &[ScheduleInfo]) -> Self {
-        let next_run = schedules.iter().map(|item| item.next_run.as_str()).min();
+        // A disabled schedule never fires, so it cannot be the resource's next run.
+        let next_run = schedules
+            .iter()
+            .filter(|item| item.enabled)
+            .map(|item| item.next_run.as_str())
+            .min();
         let last_run = schedules
             .iter()
             .filter_map(|item| item.last_run.as_deref())

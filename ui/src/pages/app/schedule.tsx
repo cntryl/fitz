@@ -24,6 +24,7 @@ const scheduleMetricColumns: readonly DomainResourceMetricColumn[] = [
   {
     id: "next-run",
     header: "Earliest next run",
+    rollup: "earliest",
     width: "20%",
     cell: (row) => (row.nextRun ? formatTimestamp(row.nextRun) : "--"),
     sortValue: (row) => {

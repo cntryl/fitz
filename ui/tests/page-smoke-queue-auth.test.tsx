@@ -112,6 +112,44 @@ describe("admin page smoke tests", () => {
     }
   });
 
+  it("creates no data-row query until the operator asks for rows", async () => {
+    // Arrange
+    const { createQueueDeadLettersQuery } = await import("@/features/queue/queue-query");
+    const { createQueueResourceInflightQuery } =
+      await import("@/features/queue/queue-resource-query");
+    const { createKvRowsQuery } = await import("@/features/kv/kv-rows-query");
+    const { createKvValueQuery } = await import("@/features/kv/kv-value-query");
+    const { createStreamRecordsQuery } = await import("@/features/stream/stream-query");
+    const factories = [
+      createQueueDeadLettersQuery,
+      createQueueResourceInflightQuery,
+      createKvRowsQuery,
+      createKvValueQuery,
+      createStreamRecordsQuery,
+    ].map((factory) => vi.mocked(factory));
+    for (const factory of factories) factory.mockClear();
+    const pages = [
+      ["@/pages/app/queue-resource", "/admin/1/queue/default/ops/primary", "queue"],
+      ["@/pages/app/kv-resource", "/admin/1/kv/default/ops/primary", "kv"],
+      ["@/pages/app/stream-resource", "/admin/1/stream/default/ops/primary", "stream"],
+    ] as const;
+
+    // Act
+    for (const [module, path, domain] of pages) {
+      const { default: Component } = await import(module);
+      const root = await mountRoute(
+        path,
+        `/admin/{family}/${domain}/{realm}/{area}/{resource}`,
+        Component,
+      );
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+
+    // Assert
+    expect(factories.map((factory) => factory.mock.calls.length)).toEqual([0, 0, 0, 0, 0]);
+  });
+
   it("fits queue realms without structural columns or a scroll hint", async () => {
     // Arrange
     const { default: QueuePage } = await import("@/pages/app/queue");

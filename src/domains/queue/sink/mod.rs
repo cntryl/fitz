@@ -14,9 +14,5 @@ mod subscriptions;
 
 pub(crate) use model::QueueDomain;
 
-/// Failed fast-mode flush attempts. A sustained non-zero rate means accepted
-/// Queue writes are outliving the configured loss window without reaching disk.
-pub(crate) const METRIC_QUEUE_FAST_FLUSH_FAILURES: &str = "fitz_queue_fast_flush_failures_total";
-
 #[cfg(test)]
 mod tests;

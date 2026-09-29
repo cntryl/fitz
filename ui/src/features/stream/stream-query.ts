@@ -107,21 +107,18 @@ export function createStreamResourceQuery(scope: {
   return createQuery(streamResourceDetailQuery, { ...scope, family: currentRouteFamilySegment() });
 }
 
-/** Records are data rows; pass `skipInitialFetch` until the operator asks for them. */
-export function createStreamRecordsQuery(
-  request: {
-    area: string;
-    discriminator?: string;
-    fromOffset?: number;
-    limit?: number;
-    realm: string;
-    resource: string;
-  },
-  options?: { skipInitialFetch?: boolean },
-) {
-  return createQuery(
-    streamRecordsQuery,
-    { ...request, family: currentRouteFamilySegment(), limit: request.limit ?? 50 },
-    options,
-  );
+/** Records are data rows; create this query only once the operator asks for them. */
+export function createStreamRecordsQuery(request: {
+  area: string;
+  discriminator?: string;
+  fromOffset?: number;
+  limit?: number;
+  realm: string;
+  resource: string;
+}) {
+  return createQuery(streamRecordsQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit: request.limit ?? 50,
+  });
 }

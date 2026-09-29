@@ -26,6 +26,7 @@ impl KvFamilyState {
             buffered_write_policy: config.buffered_write_policy,
             idle_transaction_ttl: config.idle_transaction_ttl,
             pending_inventory_repairs: HashMap::new(),
+            next_inventory_repair_at: None,
         }
     }
 }

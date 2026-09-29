@@ -132,7 +132,9 @@ test("applies the Fitz palette in every explicit and system color mode", async (
   const palette = () =>
     page.evaluate(() => ({
       background: getComputedStyle(document.body).backgroundColor,
-      primary: getComputedStyle(document.documentElement).getPropertyValue("--ak-color-primary").trim(),
+      primary: getComputedStyle(document.documentElement)
+        .getPropertyValue("--ak-color-primary")
+        .trim(),
     }));
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 1440, height: 900 });

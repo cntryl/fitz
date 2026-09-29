@@ -38,7 +38,7 @@ impl KvInventoryDelta {
 }
 
 impl KvActor {
-    pub(super) fn inventory_write_policy(
+    pub(crate) fn inventory_write_policy(
         committed: crate::domains::WritePolicy,
     ) -> crate::domains::WritePolicy {
         // Inventory estimates are best-effort admin bookkeeping, so we avoid

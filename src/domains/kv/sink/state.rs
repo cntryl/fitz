@@ -102,6 +102,8 @@ pub(super) struct KvFamilyState {
     /// Resources whose inventory estimate must be re-flagged for rescan.
     pub(super) pending_inventory_repairs:
         HashMap<KvResourceLockKey, (u32, crate::domains::kv::KvResourceScope)>,
+    /// Earliest time the next repair retry may run after a failed attempt.
+    pub(super) next_inventory_repair_at: Option<std::time::Instant>,
 }
 
 pub(super) struct KvFamilyRuntime<'a> {

@@ -8,18 +8,25 @@ import type {
 } from "./domain-resource-inventory-table";
 import { domainScopeHref, formatFitzRoute, type DomainSegment } from "@/shared/navigation/domains";
 
-function rollupDescription(columns: readonly DomainResourceMetricColumn[]) {
-  const summed = "Counts and rates are summed across each row's resources";
-  const worst = columns
-    .filter((column) => column.rollup === "worst")
-    .map((column) => column.header);
-  if (worst.length === 0) return `${summed}.`;
+function joinHeaders(headers: readonly string[]) {
+  return headers.length === 1
+    ? headers[0]
+    : `${headers.slice(0, -1).join(", ")} and ${headers[headers.length - 1]}`;
+}
 
-  const names =
-    worst.length === 1
-      ? worst[0]
-      : `${worst.slice(0, -1).join(", ")} and ${worst[worst.length - 1]}`;
-  return `${summed}; ${names} ${worst.length === 1 ? "shows" : "show"} the worst single resource.`;
+function rollupDescription(columns: readonly DomainResourceMetricColumn[]) {
+  const clauses = (["worst", "earliest"] as const).flatMap((rollup) => {
+    const headers = columns
+      .filter((column) => column.rollup === rollup)
+      .map((column) => column.header);
+    if (headers.length === 0) return [];
+    const verb = headers.length === 1 ? "shows" : "show";
+    const what = rollup === "worst" ? "the worst single resource" : "the soonest single resource";
+    return [`${joinHeaders(headers)} ${verb} ${what}`];
+  });
+  const summed = "Counts and rates are summed across each row's resources";
+
+  return clauses.length === 0 ? `${summed}.` : `${summed}; ${clauses.join("; ")}.`;
 }
 
 export interface DomainScopeInventoryTableProps {

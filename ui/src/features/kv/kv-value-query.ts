@@ -36,7 +36,6 @@ export function createKvValueQuery(
   scope: KvCommittedResourceScope,
   key: string,
   keyEncoding: KvKeyEncoding,
-  options?: { skipInitialFetch?: boolean },
 ) {
-  return createQuery(kvValueQuery, { key, keyEncoding, scope }, options);
+  return createQuery(kvValueQuery, { key, keyEncoding, scope });
 }

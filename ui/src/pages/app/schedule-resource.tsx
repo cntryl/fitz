@@ -85,17 +85,6 @@ function schedulePageHref(
   return offset > 0 ? `${href}?offset=${offset}` : href;
 }
 
-function earliestNextRun(rows: readonly ScheduleExecutionObservation[]) {
-  let earliest: string | null = null;
-  for (const row of rows) {
-    const time = Date.parse(row.next_run);
-    if (!Number.isNaN(time) && (earliest === null || time < Date.parse(earliest))) {
-      earliest = row.next_run;
-    }
-  }
-  return earliest;
-}
-
 export default function ScheduleResourcePage() {
   const route = currentRoute();
   const ref = {
@@ -113,6 +102,7 @@ export default function ScheduleResourcePage() {
   const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
   const rows = data?.executionObservations.observations ?? [];
   const pendingHandoffs = rows.reduce((sum, row) => sum + row.pending_handoffs, 0);
+  const paginated = offset > 0 || Boolean(data?.executionObservations.has_more);
 
   return (
     <DomainPageFrame>
@@ -162,17 +152,25 @@ export default function ScheduleResourcePage() {
               <DomainSummaryStrip
                 id="schedule-resource-detail"
                 title="Durable timing intent"
-                description="Rolled up from the schedules listed below."
+                description={
+                  paginated
+                    ? "Earliest next run covers every schedule; counts cover this page."
+                    : "Rolled up from every schedule in this resource."
+                }
                 items={[
                   {
-                    label: "Schedules",
-                    value: `${formatNumber(rows.length)}${current.executionObservations.has_more ? "+" : ""}`,
+                    label: paginated ? "Schedules on this page" : "Schedules",
+                    value: formatNumber(rows.length),
                   },
                   {
-                    ...scheduleTimingMetric(earliestNextRun(rows)),
+                    // The server rolls next_run up across every enabled schedule.
+                    ...scheduleTimingMetric(current.detail?.next_run),
                     label: "Earliest next run",
                   },
-                  { label: "Pending handoffs", value: pendingHandoffs },
+                  {
+                    label: paginated ? "Pending handoffs on this page" : "Pending handoffs",
+                    value: pendingHandoffs,
+                  },
                 ]}
               />
 

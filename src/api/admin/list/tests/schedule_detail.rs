@@ -97,3 +97,46 @@ fn should_aggregate_schedule_detail_given_multiple_schedules() {
     assert_eq!(detail.next_run.as_deref(), Some("2026-03-31T01:00:00Z"));
     assert_eq!(detail.executions_total, 5);
 }
+
+#[test]
+fn should_roll_up_next_run_from_enabled_schedules_only() {
+    // Arrange
+    let path = ResourcePath {
+        realm: "acme",
+        area: "billing",
+        resource: "invoices",
+    };
+    let schedules = vec![
+        schedule("paused", "0 * * * *", "2026-03-31T01:00:00Z", 1, false),
+        schedule("live", "*/5 * * * *", "2026-03-31T02:00:00Z", 2, true),
+    ];
+
+    // Act
+    let detail = ScheduleResourceDetail::aggregate(&path, &schedules);
+
+    // Assert
+    assert_eq!(detail.next_run.as_deref(), Some("2026-03-31T02:00:00Z"));
+}
+
+#[test]
+fn should_report_no_next_run_when_every_schedule_is_disabled() {
+    // Arrange
+    let path = ResourcePath {
+        realm: "acme",
+        area: "billing",
+        resource: "invoices",
+    };
+    let schedules = vec![schedule(
+        "paused",
+        "0 * * * *",
+        "2026-03-31T01:00:00Z",
+        1,
+        false,
+    )];
+
+    // Act
+    let detail = ScheduleResourceDetail::aggregate(&path, &schedules);
+
+    // Assert
+    assert_eq!(detail.next_run, None);
+}
