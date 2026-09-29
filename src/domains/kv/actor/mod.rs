@@ -49,6 +49,9 @@ pub struct KvActor {
     store: super::store::KvStore,
     transactions: HashMap<u64, ActiveKvTx>,
     next_tx_id: u64,
+    /// Resources whose post-commit inventory estimate update failed; the sink
+    /// drains these and retries marking the estimate incomplete.
+    inventory_repairs: Vec<(u32, KvResourceScope)>,
 }
 
 impl KvActor {
@@ -59,6 +62,7 @@ impl KvActor {
             store: store.into(),
             transactions: HashMap::new(),
             next_tx_id: 1,
+            inventory_repairs: Vec::new(),
         }
     }
 

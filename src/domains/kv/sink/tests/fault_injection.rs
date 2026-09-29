@@ -297,3 +297,67 @@ fn should_reject_retried_commit_after_transaction_already_committed_and_forgotte
     assert!(sink.resource_locks_are_empty_for_tests());
     assert_eq!(sink.active_transaction_count(), 0);
 }
+
+/// Sequence: COMMIT succeeds -> the post-commit inventory estimate update fails.
+///
+/// Invariant: the family keeps the resource as a pending repair and, on retry,
+/// persists the estimate as incomplete so the admin path rescans exact counts.
+#[test]
+fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let sink = KvDomain::new(
+        store.clone(),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let scope = KvResourceScope::new(family, "acme", "app", "users");
+
+    // Act
+    let pending_after_retry = sink.run_on_family_for_tests(family, move |runtime| {
+        let actor = runtime.actor_for_session(8, "inventory repair test");
+        let crate::domains::kv::KvResponse::BeginOk { tx_id } =
+            actor.handle(crate::domains::kv::KvMessage::Begin {
+                scope: scope.clone(),
+                mode: crate::domains::kv::TxMode::ReadWrite,
+                write_options: crate::domains::WritePolicy::Buffered,
+            })
+        else {
+            panic!("transaction should begin");
+        };
+        actor.handle(crate::domains::kv::KvMessage::Insert {
+            tx_id,
+            scope: scope.clone(),
+            key: Bytes::from_static(b"alice"),
+            value: Bytes::from_static(b"1"),
+        });
+        crate::domains::kv::KvActor::fail_next_inventory_update_for_tests();
+        actor.handle(crate::domains::kv::KvMessage::Commit {
+            tx_id,
+            scope: scope.clone(),
+        });
+        runtime.collect_inventory_repairs(8);
+        let pending_before_retry = runtime.core.pending_inventory_repairs.len();
+        runtime.retry_inventory_repairs();
+        (
+            pending_before_retry,
+            runtime.core.pending_inventory_repairs.len(),
+        )
+    });
+
+    // Assert
+    assert_eq!(pending_after_retry, (1, 0));
+    let key = crate::domains::kv::KvActor::inventory_metadata_key("acme", "app", "users");
+    let read = store
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+        .expect("begin inventory read");
+    let estimate = crate::domains::kv::inventory::decode_estimate(
+        &read
+            .get(&key)
+            .expect("read estimate")
+            .expect("estimate persisted"),
+    )
+    .expect("decode estimate");
+    assert!(!estimate.estimate_complete);
+}

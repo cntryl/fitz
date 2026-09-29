@@ -160,6 +160,7 @@ impl QueueFamilyState {
             match self.store.flush_family(family_id) {
                 Ok(true) => {}
                 Ok(false) => {
+                    crate::observability::counter_inc(super::METRIC_QUEUE_FAST_FLUSH_FAILURES);
                     tracing::warn!(
                         domain = "queue",
                         family = family_id,
@@ -168,11 +169,12 @@ impl QueueFamilyState {
                     retry_family_ids.push(family_id);
                 }
                 Err(error) => {
+                    crate::observability::counter_inc(super::METRIC_QUEUE_FAST_FLUSH_FAILURES);
                     tracing::warn!(
                         domain = "queue",
                         family = family_id,
                         error = ?error,
-                        "Queue fast flush failed"
+                        "Queue fast flush failed; accepted writes remain unflushed past the loss window until a retry succeeds"
                     );
                     retry_family_ids.push(family_id);
                 }

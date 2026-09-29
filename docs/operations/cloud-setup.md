@@ -120,6 +120,10 @@ Queue has a separate hot-path policy:
 - `FITZ_QUEUE_WRITE_POLICY=strict`: waits for local sync writes; in cloud mode it also waits for provider acknowledgement.
 
 `FITZ_QUEUE_LOSS_WINDOW_MS` defaults to `100` and controls the target flush interval for fast queue writes. In fast mode, accepted recent queue sends, completes, dead-letter replays, and dead-letter purges can be lost if the process or host crashes before the background flush completes.
+A failed background flush is retried on the next interval and counted in
+`fitz_queue_fast_flush_failures_total`. A sustained non-zero rate means
+accepted Queue writes are outliving the loss window without reaching disk, so
+alert on it; readiness is not withdrawn for flush failures.
 If that loss leaves only one side of a split queue record, startup discards the
 incomplete remnant with a sync write (or provider-acknowledged write in strict
 cloud mode), invalidates that queue's derived indexes for authoritative rebuild,

@@ -72,6 +72,7 @@ use super::{
 std::thread_local! {
     static FAIL_NEXT_ACK_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_REDELIVERY_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_NEXT_RECORD_LOAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub(crate) mod recovery;

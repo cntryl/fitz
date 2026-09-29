@@ -99,6 +99,9 @@ pub(super) struct KvFamilyState {
     pub(super) sync_write_policy: crate::domains::WritePolicy,
     pub(super) buffered_write_policy: crate::domains::WritePolicy,
     pub(super) idle_transaction_ttl: std::time::Duration,
+    /// Resources whose inventory estimate must be re-flagged for rescan.
+    pub(super) pending_inventory_repairs:
+        HashMap<KvResourceLockKey, (u32, crate::domains::kv::KvResourceScope)>,
 }
 
 pub(super) struct KvFamilyRuntime<'a> {

@@ -103,7 +103,11 @@ impl QueueActor {
         Some(inflight)
     }
 
-    fn load_redelivery_record(&self, id: MessageId, inflight: &Inflight) -> Option<QueueRecord> {
+    fn load_redelivery_record(
+        &mut self,
+        id: MessageId,
+        inflight: &Inflight,
+    ) -> Option<QueueRecord> {
         if let Some(cached) = self.records.get(&id) {
             return Some(cached.clone());
         }
@@ -112,7 +116,9 @@ impl QueueActor {
             Ok(record) => Some(record),
             Err(error) => {
                 self.warn_redelivery_load_error(id, error.as_str());
-                let _ = inflight;
+                // The expiry timer was already popped; re-arm it like every other
+                // redelivery failure path so the message is not stranded in flight.
+                self.schedule_inflight_retry(id, inflight);
                 None
             }
         }

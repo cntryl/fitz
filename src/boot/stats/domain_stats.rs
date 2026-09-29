@@ -85,6 +85,11 @@ impl Runtime {
     }
 
     #[must_use]
+    pub fn kv_inventory_estimate_update_failures_total(&self) -> u64 {
+        metric_counter("fitz_kv_inventory_estimate_update_failures_total")
+    }
+
+    #[must_use]
     pub fn kv_notify_drops_total(&self) -> u64 {
         metric_counter(crate::domains::kv::metrics::METRIC_NOTIFY_DROPS_TOTAL)
     }
@@ -180,6 +185,11 @@ impl Runtime {
     #[must_use]
     pub fn queue_notify_drops_total(&self) -> u64 {
         metric_counter(crate::domains::queue::metrics::METRIC_NOTIFY_DROPS_TOTAL)
+    }
+
+    #[must_use]
+    pub fn queue_fast_flush_failures_total(&self) -> u64 {
+        metric_counter("fitz_queue_fast_flush_failures_total")
     }
 
     #[must_use]
