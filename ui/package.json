@@ -21,15 +21,15 @@
     "gen:adapters": "askr generate ../public/openapi.yml -o ./src/adapters/generated"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.3.0",
-    "@askrjs/fetch": "0.3.0",
-    "@askrjs/lucide": "0.3.0",
-    "@askrjs/themes": "^0.3.0",
-    "@askrjs/ui": "^0.3.0"
+    "@askrjs/askr": "^0.4.0",
+    "@askrjs/fetch": "0.4.1",
+    "@askrjs/lucide": "0.4.0",
+    "@askrjs/themes": "^0.4.0",
+    "@askrjs/ui": "^0.4.0"
   },
   "devDependencies": {
-    "@askrjs/cli": "0.3.0",
-    "@askrjs/vite": "0.3.0",
+    "@askrjs/cli": "0.4.0",
+    "@askrjs/vite": "0.4.0",
     "@playwright/test": "^1.63.0",
     "@types/node": "^26.4.1",
     "autoprefixer": "^10.5.6",
