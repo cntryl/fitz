@@ -12,6 +12,7 @@ import {
   topologyAppLane,
   topologyOverview,
 } from "./page-smoke/fixtures";
+import { healthyDiagnostics } from "./fixtures/topology";
 
 const mocks = pageSmokeMocks();
 
@@ -52,7 +53,46 @@ function completeMetricsSnapshot(activityValue = 0, cumulativeFailureValue = 0) 
 }
 
 describe("admin page smoke tests", () => {
-  it("renders compact domain entry points when no lanes are visible", async () => {
+  it("lists one issue per domain signal with sentence-case titles and no freshness badge", async () => {
+    // Arrange
+    const { default: Home } = await import("@/pages/app/home");
+    mocks.queryStates.topology = queryState.fresh(
+      {
+        ...topologyOverview,
+        diagnostics: {
+          ...healthyGlobalDiagnostics,
+          hotspots: [
+            {
+              ...healthyDiagnostics,
+              area: "ops",
+              current_stage: "queue_pressure",
+              domain: "queue",
+              explanation_hints: ["queue pressure needs operator attention."],
+              likely_bottleneck: "queue capacity",
+              realm: "default",
+              resource: "primary",
+              severity: "high",
+            },
+          ],
+        },
+        lanes: [topologyAppLane("queue", "Queue", "blocked")],
+      },
+      queryOptions(),
+    );
+
+    // Act
+    const root = await mountRoute("/", "/", Home);
+    const titles = Array.from(root.querySelectorAll(".overview-issue-heading strong")).map(
+      (title) => title.textContent?.trim(),
+    );
+
+    // Assert
+    expect(titles).toContain("Queue capacity");
+    expect(titles).not.toContain("Queue blocked");
+    expect(root.querySelector(".domain-header [role='status']")).toBeNull();
+  });
+
+  it("renders the overview without redundant domain cards", async () => {
     const { default: Home } = await import("@/pages/app/home");
 
     mocks.queryStates.topology = queryState.fresh(emptyTopology, queryOptions());
@@ -61,10 +101,8 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("Fitz status");
-    expect(text).toContain("Domain health");
     expect(text).toContain("Broker vitals");
-    expect(text).toContain("Stream");
-    expect(text).toContain("Queue");
+    expect(root.querySelector('[aria-label="Domain health"]')).toBeNull();
     expect(text).not.toContain("No domain lanes are visible yet");
     expect(text).not.toContain("Domain workspaces");
   });
@@ -110,7 +148,6 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("No active issues");
-    expect(text).toContain("Events 1,224");
     expect(text).not.toContain("KV write pressure");
     expect(text).not.toContain("Stream pressure");
     expect(text).not.toContain("stream latency");
@@ -167,26 +204,6 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).not.toContain("RPC failures");
     expect(root.textContent).not.toContain("KV write pressure");
   });
-  it("does not label a flowing lane with a historical pressure counter", async () => {
-    const { default: Home } = await import("@/pages/app/home");
-    mocks.queryStates.topology = queryState.fresh(
-      {
-        ...topologyOverview,
-        diagnostics: healthyGlobalDiagnostics,
-        lanes: [
-          topologyAppLane("stream", "Stream", "flowing", [
-            { key: "pressure", label: "Pressure", value: 9 },
-          ]),
-        ],
-      },
-      queryOptions(),
-    );
-
-    const root = await mountRoute("/admin/1", "/admin/{family}", Home);
-
-    expect(root.textContent).toContain("1.00 act/sec");
-    expect(root.textContent).not.toContain("Pressure 9");
-  });
   it("marks overview health incomplete when a required source is unavailable", async () => {
     const { default: Home } = await import("@/pages/app/home");
     mocks.queryStates.system = queryState.error(
@@ -214,6 +231,9 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("No known summary metrics");
     expect(root.textContent).not.toContain("Broker snapshot");
     expect(root.textContent).toContain("Incomplete");
+    expect(root.querySelector(".domain-status-reason")?.textContent).toMatch(
+      /^Missing from this snapshot: .+\. Refresh, then check those metric families\.$/,
+    );
     expect(root.textContent).not.toContain("Missing telemetry is not treated as zero");
     expect(root.textContent).not.toContain("Uptime0seconds");
     expect(root.textContent).toContain("Metric samples");
@@ -271,6 +291,17 @@ describe("admin page smoke tests", () => {
     expect(filter?.value).toBe("rpc");
     expect(root.textContent).toContain("Showing 1 of 3 samples");
   });
+  it("shows metric sample labels as a subtitle rather than a column", async () => {
+    // Arrange
+    const { default: MetricsPage } = await import("@/pages/app/metrics");
+
+    // Act
+    const root = await mountRoute("/admin/1/metrics", "/admin/{family}/metrics", MetricsPage);
+
+    // Assert
+    expect(root.querySelector('th[data-column-id="labels"]')).toBeNull();
+    expect(root.querySelector('td[data-column-id="metric"] .titled-cell-subtitle')).toBeTruthy();
+  });
   it("labels current work as activity while keeping cumulative failures historical", async () => {
     const { default: MetricsPage } = await import("@/pages/app/metrics");
     mocks.queryStates.metrics = queryState.fresh(completeMetricsSnapshot(4, 9), queryOptions());
@@ -316,10 +347,16 @@ describe("admin page smoke tests", () => {
 
     let root = await mountRoute("/sessions", "/sessions", SessionsPage);
 
-    expect(root.textContent).toContain("Session summary");
-    expect(root.textContent).toContain("Active");
+    expect(root.querySelector('[aria-label="Session summary"]')).toBeTruthy();
+    expect(root.querySelector("h2")?.textContent).not.toBe("Session summary");
+    expect(root.querySelector(".domain-header [role='status']")).toBeNull();
     expect(root.textContent).toContain("Sessions");
-    expect(root.textContent).toContain("Route families");
+    expect(root.textContent).not.toContain("Route families");
+    expect(
+      Array.from(root.querySelectorAll(".session-list-badge")).some((badge) =>
+        badge.textContent?.includes("Route Family"),
+      ),
+    ).toBe(false);
     expect(root.textContent).toContain("Transports");
     expect(root.textContent).toContain("Longest idle");
     expect(root.textContent).toContain("session-1");

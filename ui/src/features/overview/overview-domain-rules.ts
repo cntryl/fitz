@@ -1,6 +1,6 @@
 import type { DiagnosticSeverity } from "@/adapters";
 import type { SystemDomainStatsSummary } from "@/features/system/system-models";
-import { formatCount, formatNumber } from "@/shared/format";
+import { formatCount } from "@/shared/format";
 import { domainSegments, type DomainSegment } from "@/shared/navigation/domains";
 
 export interface OverviewDomainIssueDescriptor {
@@ -17,7 +17,6 @@ export interface OverviewDomainIssue extends OverviewDomainIssueDescriptor {
 export interface OverviewDomainRule {
   domain: DomainSegment;
   issues(domains: SystemDomainStatsSummary): OverviewDomainIssueDescriptor[];
-  signal(domains: SystemDomainStatsSummary): string;
 }
 
 const queueRule: OverviewDomainRule = {
@@ -38,11 +37,6 @@ const queueRule: OverviewDomainRule = {
         ]
       : [];
   },
-  signal(domains) {
-    return `${formatNumber(domains.queue.messagesReady)} ready / ${formatNumber(
-      domains.queue.inflightActive,
-    )} inflight`;
-  },
 };
 
 // Process-lifetime counters stay visible in domain and Metrics detail, but a non-zero
@@ -53,11 +47,6 @@ const rpcRule: OverviewDomainRule = {
   domain: "rpc",
   issues() {
     return [];
-  },
-  signal(domains) {
-    return `${formatNumber(domains.rpc.requestsPending)} pending / ${formatNumber(
-      domains.rpc.workersRegistered,
-    )} workers`;
   },
 };
 
@@ -80,11 +69,6 @@ const scheduleRule: OverviewDomainRule = {
 
     return [];
   },
-  signal(domains) {
-    return `${formatNumber(domains.schedule.schedulesActive)} schedules / ${formatNumber(
-      domains.schedule.pendingFireClaims,
-    )} claims`;
-  },
 };
 
 const leaseRule: OverviewDomainRule = {
@@ -103,20 +87,12 @@ const leaseRule: OverviewDomainRule = {
         ]
       : [];
   },
-  signal(domains) {
-    return `${formatNumber(domains.lease.leasesActive)} leases / ${formatNumber(
-      domains.lease.waiterDepth,
-    )} waiters`;
-  },
 };
 
 const noticeRule: OverviewDomainRule = {
   domain: "notice",
   issues() {
     return [];
-  },
-  signal(domains) {
-    return `${formatNumber(domains.notice.subscriptionsActive)} subscriptions`;
   },
 };
 
@@ -125,22 +101,12 @@ const streamRule: OverviewDomainRule = {
   issues() {
     return [];
   },
-  signal(domains) {
-    return `${formatNumber(domains.stream.streamsActive)} streams / ${formatNumber(
-      domains.stream.eventsTotal,
-    )} events`;
-  },
 };
 
 const kvRule: OverviewDomainRule = {
   domain: "kv",
   issues() {
     return [];
-  },
-  signal(domains) {
-    return `${formatNumber(domains.kv.keysTotal)} keys / ${formatNumber(
-      domains.kv.transactionsActive,
-    )} transactions`;
   },
 };
 
@@ -160,11 +126,4 @@ export function overviewDomainIssueDescriptors(
   return domainSegments.flatMap((domain) =>
     overviewDomainRules[domain].issues(domains).map((issue) => ({ ...issue, domain })),
   );
-}
-
-export function overviewDomainSignal(
-  domain: DomainSegment,
-  domains: SystemDomainStatsSummary | undefined,
-) {
-  return domains ? overviewDomainRules[domain].signal(domains) : null;
 }

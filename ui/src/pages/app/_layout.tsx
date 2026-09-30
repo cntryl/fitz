@@ -321,8 +321,8 @@ export default function Layout({ children }: { children?: unknown }) {
           Skip to main content
         </a>
 
-        <Header sticky>
-          <Container paddingY="sm">
+        <Header sticky class="operator-shell-header">
+          <Container>
             <Navbar class="operator-shell-navbar" aria-label="Operator context">
               <NavBrand>
                 <Brand asChild>

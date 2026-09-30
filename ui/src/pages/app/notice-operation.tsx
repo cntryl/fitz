@@ -14,8 +14,7 @@ import {
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryCompactEmptyState,
   QueryErrorState,
@@ -147,13 +146,6 @@ export default function NoticeOperationPage(props: {
               : "",
             unavailable: "Notice delivery evidence is unavailable for this operation.",
           })}
-        />
-        <OperatorScopeStrip
-          realm={realm}
-          area={area}
-          resource={resource}
-          operation={query}
-          freshness={queryFreshness(rowsQuery)}
         />
         <Show when={!data && rowsQuery.loading}>
           <QueryLoadingState description="Loading notice operation deliveries..." />

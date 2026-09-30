@@ -196,3 +196,38 @@ pub(super) fn should_encode_kv_scope_prefix_with_typed_segments() {
     // Assert
     assert_eq!(prefix, expected);
 }
+
+#[test]
+fn should_queue_inventory_repair_when_estimate_update_fails_after_commit() {
+    // Arrange
+    let mut actor = test_actor();
+    let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "repair");
+    let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
+        scope: scope.clone(),
+        mode: TxMode::ReadWrite,
+        write_options: crate::domains::WritePolicy::Buffered,
+    }) else {
+        panic!("transaction should begin");
+    };
+    assert!(matches!(
+        actor.handle(KvMessage::Insert {
+            tx_id,
+            scope: scope.clone(),
+            key: Bytes::from_static(b"key"),
+            value: Bytes::from_static(b"value"),
+        }),
+        KvResponse::InsertOk
+    ));
+    KvActor::fail_next_inventory_update_for_tests();
+
+    // Act
+    let commit = actor.handle(KvMessage::Commit {
+        tx_id,
+        scope: scope.clone(),
+    });
+
+    // Assert
+    assert!(matches!(commit, KvResponse::CommitOk));
+    assert_eq!(actor.take_inventory_repairs(), vec![(1, scope)]);
+    assert!(actor.take_inventory_repairs().is_empty());
+}

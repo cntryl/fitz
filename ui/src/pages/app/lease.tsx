@@ -2,7 +2,7 @@ import DomainInventoryPage from "@/components/shared/domain-inventory-page";
 import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-import { formatDurationSeconds, formatNumber } from "@/shared/format";
+import { formatCount, formatDurationSeconds, formatNumber } from "@/shared/format";
 
 const leaseMetricColumns: readonly DomainResourceMetricColumn[] = [
   {
@@ -21,6 +21,7 @@ const leaseMetricColumns: readonly DomainResourceMetricColumn[] = [
   },
   {
     id: "oldest",
+    rollup: "worst",
     header: "Oldest",
     width: "18%",
     cell: (row) => formatDurationSeconds(row.oldestLeaseAgeSeconds ?? 0),
@@ -53,13 +54,17 @@ function riskSignal(stats: {
     return {
       detail: `${detailBase} Current waiters indicate live contention. Historical totals do not identify a current incident.`,
       label: "Pressure" as const,
+      reason: `${formatCount(stats.waiterDepth, "caller is", "callers are")} waiting for a lease; the oldest lease has been held ${formatDurationSeconds(
+        stats.oldestLeaseAgeSeconds,
+      )}. Sort realms by Waiters to find the contention.`,
       tone: "warning" as const,
     };
   }
 
   return {
     detail: `${detailBase} No current waiters are visible; historical totals do not establish live contention.`,
-    label: "Live" as const,
+    label: "Healthy" as const,
+    reason: "No callers are waiting for a lease.",
     tone: "success" as const,
   };
 }
@@ -94,6 +99,7 @@ export default function LeasePage() {
       emptyDescription="No lease resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={leaseMetricColumns}
+      reason={health?.reason}
       stats={[
         { label: "Active leases", value: stats ? formatNumber(stats.leasesActive) : "--" },
         { label: "Waiters", value: stats ? formatNumber(stats.waiterDepth) : "--" },

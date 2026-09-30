@@ -575,3 +575,37 @@ fn should_not_wake_pending_reserve_when_an_unrelated_dead_letter_is_purged() {
         "purge of an unrelated dead letter must not wake this parked reserve"
     );
 }
+
+/// Sequence: fast mode marks a family dirty -> the background flush fails.
+///
+/// Invariant: the failure is counted for alerting and the family stays dirty,
+/// so the next flush pass retries instead of silently widening the loss window.
+#[test]
+fn should_count_and_retain_failed_fast_flushes() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::BestEffort,
+    );
+    let failures_before = crate::observability::metrics()
+        .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL);
+
+    // Act
+    let retained = sink.inspect_family_for_tests(family, |state| {
+        state.dirty_fast_flush_families.insert(1);
+        crate::domains::queue::actor::recovery_store::QueueStore::fail_next_flush_for_tests();
+        state.flush_dirty_fast_families();
+        state.dirty_fast_flush_families.contains(&1)
+    });
+
+    // Assert
+    assert!(retained);
+    assert!(
+        crate::observability::metrics()
+            .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL)
+            > failures_before
+    );
+}

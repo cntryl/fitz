@@ -160,19 +160,23 @@ impl QueueFamilyState {
             match self.store.flush_family(family_id) {
                 Ok(true) => {}
                 Ok(false) => {
+                    // A missing column family is permanent: retrying every flush
+                    // interval would only raise a false durability alert.
                     tracing::warn!(
                         domain = "queue",
                         family = family_id,
-                        "Queue fast flush skipped missing column family"
+                        "Queue fast flush dropped a family whose column family no longer exists"
                     );
-                    retry_family_ids.push(family_id);
                 }
                 Err(error) => {
+                    crate::observability::counter_inc(
+                        crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL,
+                    );
                     tracing::warn!(
                         domain = "queue",
                         family = family_id,
                         error = ?error,
-                        "Queue fast flush failed"
+                        "Queue fast flush failed; accepted writes remain unflushed past the loss window until a retry succeeds"
                     );
                     retry_family_ids.push(family_id);
                 }

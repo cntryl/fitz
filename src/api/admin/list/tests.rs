@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod rpc_metrics;
+mod schedule_detail;
 
 fn current_epoch_ms() -> u64 {
     u64::try_from(
@@ -823,53 +824,6 @@ fn should_leave_schedule_next_run_missing_given_disabled_definitions() {
     assert_eq!(collection.resources[0].next_run, None);
 }
 
-#[test]
-fn should_aggregate_schedule_detail_given_multiple_schedules() {
-    // Arrange
-    let path = ResourcePath {
-        realm: "acme",
-        area: "billing",
-        resource: "invoices",
-    };
-    let schedules = vec![
-        ScheduleInfo {
-            route_family: 1,
-            realm: "acme".to_string(),
-            area: "billing".to_string(),
-            resource: "invoices".to_string(),
-            operation: "send".to_string(),
-            cron: "0 * * * *".to_string(),
-            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
-            next_run: "2026-03-31T02:00:00Z".to_string(),
-            last_run: None,
-            executions_total: 2,
-            enabled: false,
-        },
-        ScheduleInfo {
-            route_family: 1,
-            realm: "acme".to_string(),
-            area: "billing".to_string(),
-            resource: "invoices".to_string(),
-            operation: "retry".to_string(),
-            cron: "*/5 * * * *".to_string(),
-            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
-            next_run: "2026-03-31T01:00:00Z".to_string(),
-            last_run: None,
-            executions_total: 3,
-            enabled: true,
-        },
-    ];
-
-    // Act
-    let detail = ScheduleResourceDetail::aggregate(&path, &schedules);
-
-    // Assert
-    assert!(detail.enabled);
-    assert_eq!(detail.cron, None);
-    assert_eq!(detail.next_run.as_deref(), Some("2026-03-31T01:00:00Z"));
-    assert_eq!(detail.executions_total, 5);
-}
-
 #[tokio::test]
 async fn should_filter_schedule_operation_before_applying_limit() {
     // Arrange
@@ -990,8 +944,8 @@ fn should_expose_persisted_schedule_execution_state_given_preloaded_runtime() {
     assert_eq!(schedules[0].operation, "send");
     assert!(schedules[0].last_run.is_some());
     assert_eq!(schedules[0].executions_total, 7);
+    assert_eq!(schedules[0].cron, "0 * * * *");
     assert!(detail.enabled);
-    assert_eq!(detail.cron.as_deref(), Some("0 * * * *"));
     assert_eq!(detail.executions_total, 7);
     assert!(detail.next_run.is_some());
 }

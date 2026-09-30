@@ -16,6 +16,7 @@ const streamMetricColumns: readonly DomainResourceMetricColumn[] = [
   },
   {
     id: "storage",
+    priority: "secondary",
     header: "Storage",
     width: "14%",
     cell: (row) => formatBytes(row.sizeBytes ?? 0),
@@ -23,6 +24,7 @@ const streamMetricColumns: readonly DomainResourceMetricColumn[] = [
   },
   {
     id: "sessions",
+    priority: "secondary",
     header: "Append sessions",
     width: "18%",
     cell: (row) => formatNumber(row.sessionsActive ?? 0),
@@ -41,7 +43,8 @@ type StreamPostureTone = "success" | "warning" | "danger" | "info";
 
 interface StreamPosture {
   detail: string;
-  label: "Live" | "Pressure" | "Attention";
+  label: "Healthy" | "Idle" | "Pressure" | "Attention";
+  reason: string;
   tone: StreamPostureTone;
 }
 
@@ -69,7 +72,8 @@ function summarizeStreamHealth(stats: {
     return {
       detail:
         "No active stream families are visible yet; stream replay health will appear when families are active.",
-      label: "Live",
+      label: "Idle",
+      reason: "No subscribers are tracking replay yet.",
       tone: "info",
     };
   }
@@ -87,6 +91,9 @@ function summarizeStreamHealth(stats: {
         stats.watermarkLagBuckets.over100,
       )} ${stats.watermarkLagBuckets.over100 === 1 ? "family" : "families"} at 100+ behind.`,
       label: "Attention",
+      reason: `${formatNumber(lag.behind)} of ${formatCount(lag.total, "subscriber watermark")} are behind; ${formatNumber(
+        stats.watermarkLagBuckets.over100,
+      )} by more than 100 events. Open a realm to find the lagging stream.`,
       tone: "danger",
     };
   }
@@ -102,6 +109,7 @@ function summarizeStreamHealth(stats: {
         lag.total,
       )} observed watermark families (${lag.percentageBehind}%) are behind the latest watermark, and replay catch-up is in progress.`,
       label: "Pressure",
+      reason: `${formatNumber(lag.behind)} of ${formatCount(lag.total, "subscriber watermark")} are catching up on replay.`,
       tone: "warning",
     };
   }
@@ -114,7 +122,8 @@ function summarizeStreamHealth(stats: {
       stats.subscriptionsActive,
       "live subscription",
     )}. Watermark lag is caught up for durable replay.`,
-    label: "Live",
+    label: "Healthy",
+    reason: `All ${formatCount(lag.total, "subscriber watermark")} are caught up.`,
     tone: "success",
   };
 }
@@ -153,6 +162,7 @@ export default function StreamPage() {
       emptyDescription="No stream resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={streamMetricColumns}
+      reason={stats ? health.reason : undefined}
       stats={[
         { label: "Committed events", value: stats ? formatNumber(stats.eventsTotal) : "--" },
         { label: "Streams", value: stats ? formatNumber(stats.streamsActive) : "--" },

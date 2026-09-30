@@ -18,6 +18,14 @@ export interface DomainDrilldownMetricColumn<Row> {
   cell: (row: Row) => unknown;
   header: string;
   id: string;
+  /** Secondary metrics fold into the route cell instead of forcing sideways scroll. */
+  priority?: "secondary";
+  /**
+   * How a rollup row aggregates this column when it is not a sum: "worst" shows
+   * the worst child, "earliest" the soonest. Mirrors the aggregation in
+   * domain-inventory-rollup.ts.
+   */
+  rollup?: "worst" | "earliest";
   sortValue?: (row: Row) => number | null | undefined;
   title?: (row: Row) => string | undefined;
   width?: string;
@@ -114,6 +122,22 @@ export function sortDrilldownRows<Row>(
     .map((entry) => entry.row);
 }
 
+/** Offers a line break after each `/` so routes wrap between segments, not mid-word. */
+function routeWithBreaks(label: string) {
+  return label
+    .split(/(?<=\/)/)
+    .flatMap((segment, index) => (index === 0 ? [segment] : [<wbr />, segment]));
+}
+
+/** Only primitive cells can fold into text; a cell rendering markup stays column-only. */
+function foldedMetricText<Row>(columns: readonly DomainDrilldownMetricColumn<Row>[], row: Row) {
+  return columns
+    .map((column) => ({ header: column.header, value: column.cell(row) }))
+    .filter(({ value }) => typeof value === "string" || typeof value === "number")
+    .map(({ header, value }) => `${header} ${value as string | number}`)
+    .join(" · ");
+}
+
 function shouldIgnoreRowClick(event: MouseEvent) {
   if (event.defaultPrevented) return true;
   const target = event.target;
@@ -148,6 +172,7 @@ export default function DomainDrilldownTable<Row>({
     : [...allRows];
   const rows = sortDrilldownRows(filteredRows, metricColumns, currentSort);
   const hasMetrics = metricColumns.length > 0;
+  const secondaryColumns = metricColumns.filter((column) => column.priority === "secondary");
   const searchInputId = `${id}-search`;
   const tableId = `${id}-table`;
 
@@ -193,15 +218,21 @@ export default function DomainDrilldownTable<Row>({
         const label = primaryText(row);
 
         return (
-          <Link class="domain-link-cell" href={rowHref(row)} title={label}>
-            {label}
-          </Link>
+          <>
+            <Link class="domain-link-cell" href={rowHref(row)} title={label}>
+              {routeWithBreaks(label)}
+            </Link>
+            {secondaryColumns.length > 0 ? (
+              <span class="domain-row-detail">{foldedMetricText(secondaryColumns, row)}</span>
+            ) : null}
+          </>
         );
       },
     },
     ...metricColumns.map((column): DataTableColumn<Row> => ({
       id: column.id,
       header: sortHeader(column),
+      priority: column.priority,
       width: column.width,
       cellComponent: ({ row }) => (
         <DomainDrilldownMetricText title={column.title?.(row)}>
@@ -260,25 +291,20 @@ export default function DomainDrilldownTable<Row>({
       ) : rows.length === 0 ? (
         <QueryCompactEmptyState description="No routes match the current search. Clear filters to show all routes." />
       ) : (
-        <>
-          {hasMetrics ? (
-            <p class="domain-inventory-scroll-hint">Scroll horizontally to view every metric.</p>
-          ) : null}
-          <DataTable<Row>
-            id={tableId}
-            ariaLabel={title}
-            class="domain-resource-data-table"
-            dataHasMetrics={hasMetrics}
-            columns={columns}
-            getKey={(row) => rowKey(row)}
-            onRowClick={(row, _rowIndex, _rowKey, event) => {
-              if (!shouldIgnoreRowClick(event)) {
-                onRowOpen(row);
-              }
-            }}
-            rows={rows}
-          />
-        </>
+        <DataTable<Row>
+          id={tableId}
+          ariaLabel={title}
+          class="domain-resource-data-table"
+          dataHasMetrics={hasMetrics}
+          columns={columns}
+          getKey={(row) => rowKey(row)}
+          onRowClick={(row, _rowIndex, _rowKey, event) => {
+            if (!shouldIgnoreRowClick(event)) {
+              onRowOpen(row);
+            }
+          }}
+          rows={rows}
+        />
       )}
     </section>
   );

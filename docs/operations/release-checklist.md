@@ -56,6 +56,16 @@ Use this checklist before approving a Fitz release.
 Use the standalone `Containers` workflow for prerelease branch images. It
 publishes their GitVersion SemVer without creating repository release tags.
 
+## Midge 0.3 cloud storage release gate
+
+Before releasing a broker that embeds `cntryl-midge` 0.3.0, confirm every
+cloud-mode deployment (`FITZ_STORAGE_MODE=cloud`) has chosen logical migration
+or a fresh prefix, and has preserved its original prefix and cache for
+rollback. Rehearse the chosen path on a copy, including restart recovery and
+recovery after local-cache loss. Local-mode deployments only need a verified
+copy of `FITZ_STORAGE_PATH`. Follow the procedure in the
+[migration guide](migration-guide.md).
+
 ## Stream error envelope generation 2 release gate
 
 For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK

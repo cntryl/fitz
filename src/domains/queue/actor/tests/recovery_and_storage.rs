@@ -694,6 +694,43 @@ fn should_redeliver_message_on_retry_sweep_after_redelivery_commit_failure() {
 }
 
 #[test]
+fn should_redeliver_message_on_retry_sweep_after_redelivery_record_load_failure() {
+    // Arrange
+    let clock = MockClock::new();
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-redelivery-load-retry");
+    let mut actor = QueueActor::with_clock(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        Box::new(clock.clone()),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let (msg_id, _) = send_and_reserve_single_message(&mut actor, "test message");
+    actor.records.clear();
+    clock.advance(Duration::from_secs(31));
+    QueueActor::fail_next_record_load_for_tests();
+    actor.process_expired_timers();
+    clock.advance(Duration::from_secs(1));
+
+    // Act
+    actor.process_expired_timers();
+
+    // Assert
+    assert_eq!(actor.ready_len(), 1);
+    assert_eq!(actor.inflight.len(), 0);
+    assert!(actor.ready_contains(msg_id));
+}
+
+#[test]
 fn should_reject_complete_with_invalid_token() {
     // Arrange
     let store = Arc::new(

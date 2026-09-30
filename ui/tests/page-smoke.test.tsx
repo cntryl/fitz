@@ -205,13 +205,14 @@ describe("admin page smoke tests", () => {
         expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
         expect(text).toContain(page.assertText);
         expect(text).toContain("Realms");
-        expect(text).toContain("Areas");
-        expect(text).toContain("Resources");
+        expect(root.querySelector('th[data-column-id="areas"]')).toBeNull();
+        expect(root.querySelector(".operator-scope-strip")).toBeNull();
+        expect(root.querySelector('th[data-column-id="resources"]')).toBeNull();
         for (const statLabel of page.statLabels) {
           expect(text).toContain(statLabel);
         }
         expect(text).toContain("Refresh");
-        expect(text).toMatch(/Live|Healthy|Quiet|Pressure|Attention/);
+        expect(text).toMatch(/Healthy|Idle|Active|Ready|Pressure|Attention/);
         expect(root.querySelector('[data-slot="table"]')).toBeTruthy();
         expect(root.querySelector(`a[href="/admin/1${page.path}/default"]`)).toBeTruthy();
         expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeNull();

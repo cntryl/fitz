@@ -29,6 +29,11 @@ pub(crate) struct QueueStoreError {
     message: String,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static FAIL_NEXT_FLUSH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 impl std::fmt::Display for QueueStoreError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.message)
@@ -74,6 +79,12 @@ impl QueueStore {
     }
 
     pub(crate) fn flush_family(&self, family_id: u32) -> Result<bool, QueueStoreError> {
+        #[cfg(test)]
+        if FAIL_NEXT_FLUSH.with(|cell| cell.replace(false)) {
+            return Err(QueueStoreError {
+                message: "Injected queue fast flush failure".to_string(),
+            });
+        }
         let families = self
             .engine
             .list_column_families()
@@ -85,6 +96,11 @@ impl QueueStore {
             .flush_cf(family)
             .map(|()| true)
             .map_err(QueueStoreError::from_midge)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_flush_for_tests() {
+        FAIL_NEXT_FLUSH.with(|cell| cell.set(true));
     }
 }
 

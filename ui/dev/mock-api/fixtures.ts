@@ -344,32 +344,72 @@ export const sessions = {
   ],
 };
 
+const queueMetrics = (index: number) => ({
+  complete_success_total: 420 + index * 11,
+  enqueue_success_total: 510 + index * 13,
+  in_rate_per_second: 4.2 + index,
+  messages_dead_lettered: index % 2,
+  messages_delayed: 2 + index,
+  messages_inflight: 3 + index,
+  messages_ready: 8 + index * 3,
+  messages_total: 14 + index * 6,
+  oldest_backlog_age_seconds: 90 + index * 120,
+  out_rate_per_second: 3.8 + index,
+  subscriptions_active: 5 + index,
+});
+
+const kvMetrics = (index: number) => ({
+  estimate_complete: true,
+  estimated_record_count: 300 + index * 37,
+  estimated_storage_bytes: 1024 * (16 + index * 9),
+  read_latency_avg_ms: 2.4 + index,
+  read_latency_p95_ms: 12.5 + index * 2,
+  transactions_active: 1 + index,
+  write_latency_avg_ms: 4.1 + index,
+  write_latency_p95_ms: 18.3 + index * 2,
+});
+
+// Each domain reports only its own resource metrics, like the real admin API.
+const domainMetrics: Record<Domain, (index: number) => Record<string, unknown>> = {
+  kv: kvMetrics,
+  lease: (index) => ({
+    active_leases: 4 + index * 2,
+    oldest_lease_age_seconds: 240 + index * 300,
+    waiters: 2 + index,
+  }),
+  notice: (index) => ({
+    notifications_received: 180 + index * 21,
+    publishes_per_minute: 16 + index * 4,
+    subscriptions_active: 12 + index * 3,
+  }),
+  queue: queueMetrics,
+  rpc: (index) => ({
+    requests_pending: 3 + index * 2,
+    slowest_worker_average_latency_ms: 38.5 + index * 12,
+    workers_registered: 2 + index,
+  }),
+  schedule: (index) => ({
+    next_run: new Date(Date.parse(now) + (5 + index * 10) * 60_000).toISOString(),
+    pending_claims: index % 2,
+    schedules_active: 3 + index,
+  }),
+  stream: (index) => ({
+    committed_event_count: 1200 + index * 340,
+    sessions_active: 1 + index,
+    size_bytes: 1024 * (48 + index * 20),
+    subscriptions_active: 6 + index,
+  }),
+};
+
 export function resourceEntry(resource: string, index: number, domain?: Domain) {
   const entry = {
     area: areas[index % areas.length],
-    complete_success_total: 420 + index * 11,
-    enqueue_success_total: 510 + index * 13,
-    estimate_complete: true,
-    estimated_record_count: 300 + index * 37,
-    estimated_storage_bytes: 1024 * (16 + index * 9),
     family_count: 3,
-    in_rate_per_second: 4.2 + index,
-    messages_dead_lettered: index % 2,
-    messages_delayed: 2 + index,
-    messages_inflight: 3 + index,
-    messages_ready: 8 + index * 3,
-    messages_total: 14 + index * 6,
-    oldest_backlog_age_seconds: 90 + index * 120,
-    out_rate_per_second: 3.8 + index,
-    read_latency_avg_ms: 2.4 + index,
-    read_latency_p95_ms: 12.5 + index * 2,
     realm: realms[index % realms.length],
     resource,
     status: index === 0 ? "falling_behind" : "draining",
-    subscriptions_active: 5 + index,
-    transactions_active: 1 + index,
-    write_latency_avg_ms: 4.1 + index,
-    write_latency_p95_ms: 18.3 + index * 2,
+    // Domain-less callers (topology hotspots, queue realm rollups) keep the queue and KV blend.
+    ...(domain ? domainMetrics[domain](index) : { ...queueMetrics(index), ...kvMetrics(index) }),
   };
 
   return domain && domainUsesOperationSegment(domain)
@@ -669,7 +709,6 @@ export function resourceDetail(
   if (domain === "schedule") {
     return {
       area,
-      cron: "*/5 * * * *",
       diagnostics: diagnostic("low", "next_fire"),
       enabled: true,
       executions_total: 184,

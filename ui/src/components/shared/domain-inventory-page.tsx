@@ -4,7 +4,6 @@ import { Alert, Button, Block } from "@askrjs/themes/components";
 import DomainHeader from "./domain-header";
 import type { DomainHeaderProps } from "./domain-header";
 import DomainPageFrame from "./domain-page-frame";
-import OperatorScopeStrip from "./operator-scope-strip";
 import DomainSummaryStrip from "./domain-summary-strip";
 import DomainScopeInventoryTable from "./domain-scope-inventory-table";
 import { aggregateDomainMetricRows } from "./domain-inventory-rollup";
@@ -46,6 +45,8 @@ export interface DomainInventoryPageProps<TInventory extends DomainResourceInven
   inventory: DomainInventoryQuery<TInventory>;
   loadingDescription: string;
   metricColumns?: readonly DomainResourceMetricColumn[];
+  /** One sentence: why the status badge reads as it does and where to look next. */
+  reason?: string;
   refreshing?: boolean;
   refreshers?: Array<() => unknown>;
   refreshLabel: string;
@@ -76,6 +77,7 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
   inventory,
   loadingDescription,
   metricColumns = [],
+  reason,
   refreshing,
   refreshers,
   refreshLabel,
@@ -139,6 +141,15 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
             : inventory.data
               ? "Live"
               : undefined;
+  // Domain health describes the whole Route Family, so a scoped tier badges only
+  // abnormal freshness of its own rows; live data needs no badge.
+  const scopedStatus: DomainHeaderProps["status"] =
+    freshness && freshness !== "Live"
+      ? {
+          label: freshness,
+          tone: freshness === "Refreshing" || freshness === "Loading" ? "info" : "warning",
+        }
+      : undefined;
 
   return (
     <DomainPageFrame>
@@ -153,9 +164,11 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
             label: refreshLabel,
             onPress: onRefresh,
           }}
-          status={status}
+          status={hasScopedInventory ? scopedStatus : status}
         />
-        <OperatorScopeStrip realm={realm} area={area} freshness={freshness} />
+        <Show when={!hasScopedInventory && reason}>
+          <p class="domain-status-reason">{reason}</p>
+        </Show>
 
         <Show when={!inventory.data && inventory.loading}>
           <QueryLoadingState description={loadingDescription} />

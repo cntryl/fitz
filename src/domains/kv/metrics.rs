@@ -10,6 +10,9 @@ pub const METRIC_LATENCY_MS: &str = "fitz_kv_latency_ms";
 pub const METRIC_ACTIVE_GAUGE: &str = "fitz_kv_active_gauge";
 pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_kv_subscriptions_gauge";
 pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_kv_notify_drops_total";
+/// Post-commit inventory estimate updates that failed and were queued for repair.
+pub const METRIC_INVENTORY_UPDATE_FAILURES_TOTAL: &str =
+    "fitz_kv_inventory_estimate_update_failures_total";
 pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_kv_family_failed_closed_total";
 
 #[derive(Clone)]

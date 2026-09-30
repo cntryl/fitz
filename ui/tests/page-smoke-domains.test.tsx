@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
 import { click, queryState, submit, type } from "@askrjs/askr/testing";
+import { formatTimestamp } from "@/shared/format";
 import { mountRoute, pageSmokeMocks, queryOptions, resetQueries } from "./page-smoke/harness";
 import {
   diagnostics,
@@ -11,6 +12,7 @@ import {
   noticeOverview,
   noticeResourceRows,
   queueInventory,
+  queueOverview,
   rpcOverview,
   scheduleOverview,
   scheduleResource,
@@ -125,8 +127,96 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("acquire timeout");
     expect(text).not.toContain("Historical totals do not identify a current incident");
     expect(text).not.toContain("Broker-local owners");
+    expect(root.querySelector(".domain-status-reason")?.textContent).toBe(
+      "4 callers are waiting for a lease; the oldest lease has been held 1h. Sort realms by Waiters to find the contention.",
+    );
     expect(root.querySelector('a[href="/admin/1/lease/default"]')).toBeTruthy();
   });
+  it("explains queue dead letters and where to find them", async () => {
+    // Arrange
+    mocks.queryStates.queue = queryState.fresh(
+      { ...queueOverview, stats: { ...queueOverview.stats, messagesDeadLettered: 3 } },
+      queryOptions(),
+    );
+
+    // Act
+    const { default: QueuePage } = await import("@/pages/app/queue");
+    const root = await mountRoute("/queue", "/queue", QueuePage);
+
+    // Assert
+    expect(root.textContent).toContain("Attention");
+    expect(root.querySelector(".domain-status-reason")?.textContent).toBe(
+      "3 messages are dead-lettered and need inspection or replay. Sort realms by Dead-lettered to find them.",
+    );
+  });
+
+  it("omits the status reason until domain health loads", async () => {
+    // Arrange
+    mocks.queryStates.kv = queryState.loading(queryOptions());
+
+    // Act
+    const { default: KvPage } = await import("@/pages/app/kv");
+    const root = await mountRoute("/kv", "/kv", KvPage);
+
+    // Assert
+    expect(root.querySelector(".domain-status-reason")).toBeNull();
+  });
+
+  it("keeps family-wide health off realm pages", async () => {
+    // Arrange
+    mocks.queryStates.lease = queryState.fresh(
+      { ...leaseOverview, stats: { ...leaseOverview.stats, waiterDepth: 4 } },
+      queryOptions(),
+    );
+
+    // Act
+    const { default: LeasePage } = await import("@/pages/app/lease");
+    const root = await mountRoute("/lease/default", "/lease/{realm}", LeasePage);
+
+    // Assert
+    expect(root.querySelector(".domain-status-reason")).toBeNull();
+    expect(root.querySelector(".domain-header [role='status']")).toBeNull();
+  });
+
+  it("labels a healthy domain as Healthy rather than Live", async () => {
+    // Arrange
+    mocks.queryStates.lease = queryState.fresh(leaseOverview, queryOptions());
+
+    // Act
+    const { default: LeasePage } = await import("@/pages/app/lease");
+    const root = await mountRoute("/lease", "/lease", LeasePage);
+
+    // Assert
+    expect(root.querySelector(".domain-header [role='status']")?.textContent).toBe("Healthy");
+  });
+
+  it("describes only the rollups a realm table actually shows", async () => {
+    // Arrange
+    const { default: NoticePage } = await import("@/pages/app/notice");
+    const { default: LeasePage } = await import("@/pages/app/lease");
+
+    // Act
+    const notice = await mountRoute("/notice", "/notice", NoticePage);
+    const noticeText = notice.textContent ?? "";
+    cleanupApp(notice);
+    document.body.innerHTML = "";
+    const lease = await mountRoute("/lease", "/lease", LeasePage);
+
+    // Assert
+    expect(noticeText).toContain("Counts and rates are summed across each row's resources.");
+    expect(noticeText).not.toContain("latency");
+    expect(lease.textContent).toContain(
+      "Counts and rates are summed across each row's resources; Oldest shows the worst single resource.",
+    );
+    cleanupApp(lease);
+    document.body.innerHTML = "";
+    const { default: SchedulePage } = await import("@/pages/app/schedule");
+    const schedule = await mountRoute("/schedule", "/schedule", SchedulePage);
+    expect(schedule.textContent).toContain(
+      "Counts and rates are summed across each row's resources; Earliest next run shows the soonest single resource.",
+    );
+  });
+
   it("renders kv tables with inventory stats and explorer links", async () => {
     const { default: KvPage } = await import("@/pages/app/kv");
     const root = await mountRoute("/kv/default/ops", "/kv/{realm}/{area}", KvPage);
@@ -379,11 +469,14 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Notice inventory");
     expect(text).toContain("Realms");
-    expect(text).toContain("Live");
+    expect(text).toContain("Healthy");
     expect(text).not.toContain("2 delivery drop");
     expect(text).not.toContain("1 wildcard reject");
     expect(text).not.toContain("Historical totals do not identify a current fanout incident");
     expect(text).not.toContain("Communication flow");
+    expect(root.querySelector(".domain-status-reason")?.textContent).toBe(
+      "14 subscribers are receiving live fanout.",
+    );
     expect(root.querySelector('a[href="/admin/1/notice/default"]')).toBeTruthy();
   });
   it("renders Notice resource publish rates without an unavailable latency column", async () => {
@@ -464,6 +557,9 @@ describe("admin page smoke tests", () => {
       "Cumulative failures describe process history, not a current incident.",
     );
     expect(text).not.toContain("Schedule realms");
+    expect(root.querySelector(".domain-status-reason")?.textContent).toBe(
+      "7 due runs are waiting for a subscriber to claim them. Sort realms by Pending claims to find them.",
+    );
     expect(root.querySelector('a[href="/admin/1/schedule/default"]')).toBeTruthy();
   });
   it("renders schedule hierarchy routes and resource drill-down pages", async () => {
@@ -486,7 +582,11 @@ describe("admin page smoke tests", () => {
     // Schedule reports these per resource, so its inventory carries them like every
     // other domain rather than rendering a bare route list.
     expect(areaRoot.textContent).toContain("Pending claims");
-    expect(areaRoot.textContent).toContain("Next run");
+    expect(
+      Array.from(areaRoot.querySelectorAll("#schedule-inventory-table th")).map((th) =>
+        th.textContent?.trim(),
+      ),
+    ).toEqual(["Route", "Enabled schedules", "Pending claims", "Earliest next run"]);
     cleanupApp(areaRoot);
     document.body.innerHTML = "";
 
@@ -505,7 +605,22 @@ describe("admin page smoke tests", () => {
     expect(resourceText).toContain("schedule://default/ops/primary/handoff");
     // The resource tier summarises its own durable intent and compares its schedules.
     expect(resourceText).toContain("Durable timing intent");
+    // Cron belongs to each schedule, never to the resource that groups them.
+    const resourceSummary = resourceRoot.querySelector(
+      '[aria-labelledby="schedule-resource-detail"]',
+    );
+    expect(resourceSummary).toBeTruthy();
+    expect(resourceRoot.querySelector(".domain-header [role='status']")).toBeNull();
+    const summaryLabels = Array.from(
+      resourceSummary?.querySelectorAll('[data-slot="stat-label"]') ?? [],
+    ).map((label) => label.textContent?.trim());
+    expect(summaryLabels).toEqual(["Schedules", "Earliest next run", "Pending handoffs"]);
     expect(resourceText).toContain("Pending handoffs");
+    expect(
+      Array.from(resourceRoot.querySelectorAll('th[data-priority="secondary"]')).map((cell) =>
+        cell.getAttribute("data-column-id"),
+      ),
+    ).toEqual(["cron", "last-handoff"]);
     // Single-schedule detail and the run action stay on the operation tier.
     expect(resourceText).not.toContain("Schedule timing");
     expect(resourceText).not.toContain("Pending and missed handoffs");
@@ -529,11 +644,55 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("Next run");
     expect(text).toContain("Non-authoritative; not downstream execution history");
     expect(text).toContain("Pending and missed handoffs");
+    expect(text).not.toContain("Scroll the table horizontally");
+    const missedTable = operationRoot.querySelector(
+      "#schedule-missed-handoffs [data-slot='table']",
+    );
+    expect(
+      Array.from(missedTable?.querySelectorAll('[data-slot="table-header-cell"]') ?? []).map(
+        (header) => header.textContent?.trim(),
+      ),
+    ).toEqual(["Fire at", "Age", "Status"]);
     expect(text).toContain("Run now");
     expect(text).not.toContain("Is anyone listening?");
     expect(text).not.toContain("No live listeners visible");
     expect(text).not.toContain("Back to schedule area");
   });
+  it("rolls schedule resource summaries up across every schedule, not just this page", async () => {
+    // Arrange
+    mocks.queryStates.scheduleResource = queryState.fresh(
+      {
+        ...scheduleResource,
+        detail: { ...scheduleResource.detail, next_run: "2026-05-21T12:45:00.000Z" },
+        executionObservations: { ...scheduleResource.executionObservations, has_more: true },
+      },
+      queryOptions(),
+    );
+    const { default: ScheduleResourcePage } = await import("@/pages/app/schedule-resource");
+
+    // Act
+    const root = await mountRoute(
+      "/admin/1/schedule/default/ops/primary",
+      "/admin/{family}/schedule/{realm}/{area}/{resource}",
+      ScheduleResourcePage,
+    );
+    const summary = root.querySelector('[aria-labelledby="schedule-resource-detail"]');
+    const tiles = Object.fromEntries(
+      Array.from(summary?.querySelectorAll('[data-slot="stat"]') ?? []).map((stat) => [
+        stat.querySelector('[data-slot="stat-label"]')?.textContent?.trim(),
+        stat.querySelector('[data-slot="stat-value"]')?.textContent?.trim(),
+      ]),
+    );
+
+    // Assert
+    expect(Object.keys(tiles)).toEqual([
+      "Schedules on this page",
+      "Earliest next run",
+      "Pending handoffs on this page",
+    ]);
+    expect(tiles["Earliest next run"]).toBe(formatTimestamp("2026-05-21T12:45:00.000Z"));
+  });
+
   it("links to the next schedule operation page when more rows exist", async () => {
     mocks.queryStates.scheduleResource = queryState.fresh(
       {
@@ -644,6 +803,9 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("4,200 committed event");
     expect(text).not.toContain("live subscriptions");
     expect(text).not.toContain("Stream metrics");
+    expect(root.querySelector(".domain-status-reason")?.textContent).toBe(
+      "6 of 12 subscriber watermarks are behind; 2 by more than 100 events. Open a realm to find the lagging stream.",
+    );
     expect(root.querySelector('a[href="/admin/1/stream/default"]')).toBeTruthy();
   });
   it("does not label unavailable detail queries as live", async () => {
@@ -720,7 +882,7 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("stream://default/ops/primary");
 
     root = await mountRoute(
-      "/admin/1/stream/default/ops/events",
+      "/admin/1/stream/default/ops/events?rows=1",
       "/admin/{family}/stream/{realm}/{area}/{resource}",
       StreamResourcePage,
     );
@@ -738,7 +900,7 @@ describe("admin page smoke tests", () => {
       Array.from(recordsTable?.querySelectorAll('[data-slot="table-header-cell"]') ?? []).map(
         (header) => header.textContent?.trim(),
       ),
-    ).toEqual(["Offset", "Created", "Body", "Action"]);
+    ).toEqual(["Offset", "Body", "Action"]);
   });
   it("renders rpc health in the inventory header", async () => {
     mocks.queryStates.rpc = queryState.fresh(
@@ -767,6 +929,9 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("Pending work is in-memory");
     expect(text).not.toContain("pending requests");
     expect(text).not.toContain("Communication flow");
+    expect(root.querySelector(".domain-status-reason")?.textContent).toBe(
+      "6 requests are pending for 2 registered workers. Sort realms by Pending to find the busy route.",
+    );
     expect(root.querySelector('a[href="/admin/1/rpc/default"]')).toBeTruthy();
   });
   it("renders RPC hierarchy routes and operation pages", async () => {
@@ -803,6 +968,11 @@ describe("admin page smoke tests", () => {
     const operations = root.querySelector('[data-slot="table"][aria-label="RPC operations"]');
     expect(operations?.querySelectorAll('[data-slot="table-row"][data-row-key]')).toHaveLength(1);
     expect(root.querySelector("#rpc-operations-search")).toBeTruthy();
+    expect(
+      Array.from(operations?.querySelectorAll('th[data-priority="secondary"]') ?? []).map((cell) =>
+        cell.getAttribute("data-column-id"),
+      ),
+    ).toEqual(["handled"]);
 
     root = await mountRoute(
       "/admin/1/rpc/default/ops/primary/GetStatus",
@@ -899,7 +1069,9 @@ describe("admin page smoke tests", () => {
     const summary = root.querySelector(".domain-summary-strip")?.textContent ?? "";
     expect(summary).toContain("Workers1");
     expect(summary).toContain("Pending2");
-    expect(summary).toMatch(/Handled by live workers \(exact\)--/);
+    expect(summary).toMatch(/Handled by live workers--/);
+    expect(summary).toContain("Current exact-name workers only; excludes wildcard workers");
+    expect(summary).not.toContain("(exact)");
   });
   it("renders the status-first dashboard sections", async () => {
     const { default: Home } = await import("@/pages/app/home");
@@ -914,13 +1086,13 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Queue blocked");
     expect(text).toContain("Schedule pending claims");
     expect(text).toContain("Open Queue");
-    expect(text).toContain("Domain health");
+    expect(root.querySelector('[aria-label="Domain health"]')).toBeNull();
     expect(text).toContain("Broker vitals");
     expect(text).toContain("Router pressure");
     expect(text).not.toContain("Messaging flow");
     expect(text).not.toContain("Flow inspector");
 
-    const orderedSections = ["Current status", "Issues", "Domain health", "Broker vitals"];
+    const orderedSections = ["Current status", "Issues", "Broker vitals"];
     let cursor = -1;
     for (const section of orderedSections) {
       const index = text.indexOf(section, cursor + 1);
@@ -989,6 +1161,24 @@ describe("admin page smoke tests", () => {
     expect(root.querySelector('a[href="/admin/1/sessions"]')).toBeTruthy();
     expect(root.querySelector('a[href="/admin/1/metrics"]')).toBeTruthy();
     expect(root.querySelector('a[href="/api/v1/queue/stats"]')).toBeTruthy();
+  });
+  it("folds diagnostics prose into row subtitles instead of columns", async () => {
+    // Arrange
+    const { default: DiagnosticsPage } = await import("@/pages/app/diagnostics");
+
+    // Act
+    const root = await mountRoute(
+      "/admin/1/diagnostics",
+      "/admin/{family}/diagnostics",
+      DiagnosticsPage,
+    );
+    const proseHeaders = ["detail", "internals", "evidence", "remediation", "help"].filter(
+      (id) => root.querySelector(`th[data-column-id="${id}"]`) !== null,
+    );
+
+    // Assert
+    expect(proseHeaders).toEqual([]);
+    expect(root.querySelectorAll(".titled-cell-subtitle").length).toBeGreaterThan(0);
   });
   it("refreshes every diagnostics source from the page action", async () => {
     const { default: DiagnosticsPage } = await import("@/pages/app/diagnostics");
@@ -1072,7 +1262,7 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Refreshing");
     expect(text).toContain("Issues");
-    expect(text).toContain("Domain health");
+    expect(root.querySelector('[aria-label="Domain health"]')).toBeNull();
     expect(text).toContain("Broker vitals");
     expect(text).toContain("Queue");
   });

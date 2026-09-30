@@ -885,7 +885,6 @@ export type ScheduleResourceDetail = {
   "area": string;
   "resource": string;
   "enabled": boolean;
-  "cron"?: string | null;
   "next_run"?: string | null;
   "executions_total": number;
   "diagnostics": DiagnosticSnapshot;

@@ -59,6 +59,23 @@ describe("query header status", () => {
     expect(queryFreshness(query)).toBe("Stale");
   });
 
+  it("shows no badge for fresh data without a page-specific status", () => {
+    // Arrange
+    const query = {
+      data: { rows: 1 },
+      error: null,
+      loading: false,
+      refreshing: false,
+      stale: false,
+    };
+
+    // Act
+    const status = queryHeaderStatus(query, copy);
+
+    // Assert
+    expect(status).toBeUndefined();
+  });
+
   it("preserves a page-specific ready status only for fresh data", () => {
     const query = {
       data: { rows: 1 },

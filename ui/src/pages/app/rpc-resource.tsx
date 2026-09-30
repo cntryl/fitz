@@ -7,8 +7,7 @@ import DomainOperationTable, {
 } from "@/components/shared/domain-operation-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryErrorState,
   QueryLoadingState,
@@ -17,6 +16,7 @@ import {
 import { createRpcResourceQuery } from "@/features/rpc/rpc-query";
 import type { RpcResourceOperationRows } from "@/features/rpc/rpc-models";
 import { formatCount, formatNumber } from "@/shared/format";
+import { RPC_HANDLED_CAPTION } from "@/features/rpc/rpc-models";
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -47,7 +47,8 @@ const rpcOperationColumns: readonly DomainOperationMetricColumn<RpcOperationRow>
   },
   {
     id: "handled",
-    header: "Handled by live workers (exact)",
+    priority: "secondary",
+    header: "Handled by live workers",
     width: "12%",
     cell: (row) => (row.requestsHandled == null ? "--" : formatNumber(row.requestsHandled)),
     sortValue: (row) => row.requestsHandled,
@@ -101,12 +102,6 @@ export default function RpcResourcePage() {
             unavailable: "RPC operation evidence is unavailable for this resource.",
           })}
         />
-        <OperatorScopeStrip
-          realm={realm}
-          area={area}
-          resource={resource}
-          freshness={queryFreshness(query)}
-        />
         <Show when={!data && query.loading}>
           <QueryLoadingState description="Loading RPC operations..." />
         </Show>
@@ -131,8 +126,9 @@ export default function RpcResourcePage() {
                 { label: "Workers", value: formatNumber(totalWorkers) },
                 { label: "Pending", value: formatNumber(pendingRequests) },
                 {
-                  label: "Handled by live workers (exact)",
+                  label: "Handled by live workers",
                   value: requestsHandled == null ? "--" : formatNumber(requestsHandled),
+                  caption: RPC_HANDLED_CAPTION,
                 },
               ]}
             />

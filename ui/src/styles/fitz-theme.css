@@ -1,0 +1,67 @@
+/* Fitz's ginger palette. Keep the Askr component styles and override their semantic tokens.
+ * Light tokens must not outrank Askr's dark tokens: `:where()` holds this selector to one
+ * attribute of specificity, so it never matches explicit dark, loses to the system-dark
+ * media rule, and still beats Askr's light tokens by loading after them. */
+:where(:root):not([data-theme="dark"]) {
+  --ak-color-primary: #9a4a0f;
+  --ak-color-primary-hover: #813a09;
+  --ak-color-primary-active: #6b3007;
+  --ak-color-primary-soft: #fbe7cf;
+  --ak-color-primary-ink: #783607;
+  --ak-color-text: #30261d;
+  --ak-color-text-muted: #6d5d50;
+  --ak-color-text-subtle: #756354;
+  --ak-color-text-inverse: #fffaf4;
+  --ak-color-bg: #ffffff;
+  --ak-color-surface: #ffffff;
+  --ak-color-surface-muted: #f8f6f3;
+  --ak-color-surface-raised: #ffffff;
+  --ak-color-surface-overlay: #ffffff;
+  --ak-color-border-subtle: #ebdfd1;
+  --ak-color-border: #d8c5b2;
+  --ak-color-border-strong: #86705c;
+  --ak-color-warning: #766400;
+  --ak-color-warning-soft: #f7f0c6;
+  --ak-color-warning-ink: #5d4d00;
+  --ak-color-focus-ring: #813a09;
+  --ak-color-disabled-bg: #f0e7dd;
+  --ak-color-disabled-surface: #f8f1e9;
+  --ak-color-disabled-border: #998575;
+  --ak-color-disabled-text: #79695c;
+  --ak-color-selected-border: #a56733;
+  --ak-color-hover: #f5e9dc;
+  --ak-color-active: #efdcc8;
+}
+
+:root {
+  /* Input boundaries communicate an affordance, unlike decorative card borders. */
+  --ak-color-input: var(--ak-color-border-strong);
+  --ak-dark-color-primary: #f5a750;
+  --ak-dark-color-primary-hover: #ffbc71;
+  --ak-dark-color-primary-active: #e28a33;
+  --ak-dark-color-primary-soft: #49301b;
+  --ak-dark-color-primary-ink: #ffc481;
+  --ak-dark-color-text: #f7eee3;
+  --ak-dark-color-text-muted: #c7b6a4;
+  --ak-dark-color-text-subtle: #bba895;
+  --ak-dark-color-text-inverse: #2d1b0e;
+  --ak-dark-color-bg: #221b16;
+  --ak-dark-color-surface: #2e251f;
+  --ak-dark-color-surface-muted: #382d25;
+  --ak-dark-color-surface-raised: #392d25;
+  --ak-dark-color-surface-overlay: #403228;
+  --ak-dark-color-border-subtle: #594534;
+  --ak-dark-color-border: #715742;
+  --ak-dark-color-border-strong: #b8987b;
+  --ak-dark-color-warning: #f2e184;
+  --ak-dark-color-warning-soft: #403a1b;
+  --ak-dark-color-warning-ink: #f9edab;
+  --ak-dark-color-focus-ring: #ffd39b;
+  --ak-dark-color-disabled-bg: #3c3229;
+  --ak-dark-color-disabled-surface: #2e251f;
+  --ak-dark-color-disabled-border: #a58c76;
+  --ak-dark-color-disabled-text: #b9a795;
+  --ak-dark-color-selected-border: #d18d48;
+  --ak-dark-color-hover: #483626;
+  --ak-dark-color-active: #58402b;
+}

@@ -14,8 +14,7 @@ import type { ScheduleMissedObservation, ScheduleRunNowResponse } from "@/adapte
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -32,6 +31,7 @@ import { createScheduleOperationQuery } from "@/features/schedule/schedule-query
 import { scheduleService } from "@/features/schedule/schedule-service";
 import ScheduleRunNowDialog from "@/features/schedule/schedule-run-now-dialog";
 import ScheduleRunNowResult from "@/features/schedule/schedule-run-now-result";
+import TitledCell from "@/components/shared/titled-cell";
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 import { formatDurationSeconds, formatTimestamp } from "@/shared/format";
 
@@ -45,32 +45,31 @@ function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
         <QueryEmptyState description="No pending or missed handoff claims matched this schedule." />
       }
     >
-      <div>
-        <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
-        <div class="domain-table-wrap">
-          <Table>
-            <TableHead>
+      <div id="schedule-missed-handoffs" class="domain-table-wrap">
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableHeaderCell>Fire at</TableHeaderCell>
+              <TableHeaderCell>Age</TableHeaderCell>
+              <TableHeaderCell>Status</TableHeaderCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {props.rows.map((row) => (
               <TableRow>
-                <TableHeaderCell>Mode</TableHeaderCell>
-                <TableHeaderCell>Fire at</TableHeaderCell>
-                <TableHeaderCell>Claimed at</TableHeaderCell>
-                <TableHeaderCell>Age</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
+                <TableCell>
+                  <TitledCell
+                    subtitle={`Claimed ${formatTimestamp(row.claimed_at)} · ${row.delivery_mode}`}
+                  >
+                    {formatTimestamp(row.fire_at)}
+                  </TitledCell>
+                </TableCell>
+                <TableCell>{formatDurationSeconds(row.age_seconds)}</TableCell>
+                <TableCell>{row.status}</TableCell>
               </TableRow>
-            </TableHead>
-            <TableBody>
-              {props.rows.map((row) => (
-                <TableRow>
-                  <TableCell>{row.delivery_mode}</TableCell>
-                  <TableCell>{formatTimestamp(row.fire_at)}</TableCell>
-                  <TableCell>{formatTimestamp(row.claimed_at)}</TableCell>
-                  <TableCell>{formatDurationSeconds(row.age_seconds)}</TableCell>
-                  <TableCell>{row.status}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+            ))}
+          </TableBody>
+        </Table>
       </div>
     </Show>
   );
@@ -150,13 +149,6 @@ export default function ScheduleOperationPage() {
               ? { label: scheduleRow.status, tone: "info" }
               : { label: "No observations", tone: "warning" },
           )}
-        />
-        <OperatorScopeStrip
-          realm={ref.realm}
-          area={ref.area}
-          resource={ref.resource}
-          operation={operation}
-          freshness={queryFreshness(query)}
         />
 
         <Show when={!data && query.loading}>

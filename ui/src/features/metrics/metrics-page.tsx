@@ -15,6 +15,7 @@ import {
 } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
+import TitledCell from "@/components/shared/titled-cell";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
@@ -40,6 +41,8 @@ interface MetricsPostureSummary {
   detail: string;
   label: string;
   nextStep: string;
+  /** One visible sentence: why the badge reads as it does. */
+  reason: string;
   tone: MetricsHeaderTone;
 }
 
@@ -123,6 +126,7 @@ function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSumm
       detail: `${signalText("queue dead letters", deadLetters)} currently require a replay or purge decision. Cumulative failure counters below describe process history, not active incidents.`,
       label: "Attention",
       nextStep: "Open Queue and inspect the current dead-letter set.",
+      reason: `${signalText("queue dead letters", deadLetters)} need a replay or purge decision. Open Queue to inspect them.`,
       tone: "danger" as const,
     };
   }
@@ -134,6 +138,10 @@ function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSumm
       label: "Incomplete",
       nextStep:
         "Refresh the snapshot, then inspect the missing metric families before judging health.",
+      reason: `Missing from this snapshot: ${[
+        ...(deadLetters === null ? ["queue dead letters"] : []),
+        ...missingSignals.map((signal) => signal.label),
+      ].join(", ")}. Refresh, then check those metric families.`,
       tone: "warning" as const,
     };
   }
@@ -148,6 +156,10 @@ function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSumm
         .map((signal) => signalText(signal.label, signal.value))
         .join(", ")}. Activity alone does not establish pressure.`,
       label: "Active",
+      reason: `Current activity: ${activeSignals
+        .slice(0, 3)
+        .map((signal) => signalText(signal.label, signal.value))
+        .join(", ")}. Activity alone is not pressure.`,
       nextStep:
         "Use age, lag, and broker diagnostics to decide whether active work needs attention.",
       tone: "info" as const,
@@ -158,6 +170,7 @@ function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSumm
     detail:
       "All observed current-activity gauges are zero. Cumulative counters below remain historical process totals.",
     label: "Quiet",
+    reason: "Every current-activity gauge reads zero.",
     nextStep:
       "Use the search box to inspect a specific metric family when you need a narrower read.",
     tone: "success",
@@ -518,33 +531,23 @@ export default function MetricsPage() {
     {
       id: "metric",
       header: "Metric",
-      width: "34%",
+      width: "60%",
       cellComponent: ({ row }) => (
-        <span class="metrics-family-cell" title={row.family}>
-          {row.family}
-        </span>
+        <TitledCell subtitle={row.labels}>
+          <span class="metrics-family-cell">{row.family}</span>
+        </TitledCell>
       ),
     },
     {
       id: "type",
       header: "Type",
-      width: "12%",
+      width: "18%",
       cellComponent: ({ row }) => <span>{row.type}</span>,
-    },
-    {
-      id: "labels",
-      header: "Labels",
-      width: "38%",
-      cellComponent: ({ row }) => (
-        <code class="metrics-labels-cell" title={row.labels}>
-          {row.labels}
-        </code>
-      ),
     },
     {
       id: "value",
       header: "Value",
-      width: "16%",
+      width: "22%",
       cellComponent: ({ row }) => (
         <Text
           as="span"
@@ -604,6 +607,9 @@ export default function MetricsPage() {
           }}
           status={headerStatus}
         />
+        <Show when={snapshotSummary}>
+          {(summary) => <p class="domain-status-reason">{summary.reason}</p>}
+        </Show>
 
         <Show when={!data && metrics.loading}>
           <QueryLoadingState
