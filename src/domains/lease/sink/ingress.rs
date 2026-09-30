@@ -257,7 +257,25 @@ impl LeaseFamilyRuntime<'_> {
         };
         let domain_response =
             self.dispatch_actor_operation(envelope, meta, lease_msg, scoped_owner_id.as_deref());
-        if !self.route_lease_response(envelope, meta, &domain_response, request_started) {
+        let delivered =
+            self.route_lease_response(envelope, meta, &domain_response, request_started);
+        if let crate::domains::lease::protocol::LeaseMessage::List {
+            family_id,
+            pattern,
+            cursor,
+            ..
+        } = lease_msg
+        {
+            self.finish_list_response_delivery(
+                *family_id,
+                pattern.as_str(),
+                *cursor,
+                meta.session_id,
+                &domain_response,
+                delivered,
+            );
+        }
+        if !delivered {
             if let Some(key) = acquire_key.as_ref() {
                 self.rollback_undeliverable_acquire(key, meta.session_id, &domain_response);
             }

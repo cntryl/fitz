@@ -65,6 +65,10 @@ pub(super) struct ReadyStreamNotification {
 }
 
 impl RoutedSubscription for StreamSubscription {
+    fn metric_domain() -> &'static str {
+        "stream"
+    }
+
     fn pattern(&self) -> &crate::runtime::matcher::Pattern {
         &self.pattern
     }

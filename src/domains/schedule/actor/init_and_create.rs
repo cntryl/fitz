@@ -86,6 +86,7 @@ impl ScheduleActor {
             schedules: HashMap::with_capacity_and_hasher(128, FxBuildHasher),
             cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
             list_entries: Vec::new(),
+            list_entries_by_route: BTreeMap::new(),
             list_cache: None,
             write_policy,
             last_scan_time: now,

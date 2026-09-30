@@ -26,6 +26,8 @@ impl MessageType {
     pub const CORRELATED: MessageType = MessageType(3);
     /// Server-to-client capability advertisement sent once on CONNECT success.
     pub const SERVER_HELLO: MessageType = MessageType(4);
+    /// Client-reported name for the connected service, when negotiated.
+    pub const SESSION_METADATA: MessageType = MessageType(5);
 
     #[inline]
     #[must_use]

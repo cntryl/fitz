@@ -24,6 +24,10 @@ pub(super) struct QueueSubscription {
 }
 
 impl RoutedSubscription for QueueSubscription {
+    fn metric_domain() -> &'static str {
+        "queue"
+    }
+
     fn pattern(&self) -> &crate::runtime::matcher::Pattern {
         &self.pattern
     }

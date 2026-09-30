@@ -88,6 +88,15 @@ a transport frame with nothing after it. Closing is correct here and nowhere
 else: a misplaced label means the client's own request-to-response mapping is
 already ambiguous, so there is no caller left to answer.
 
+### Client-reported service name
+
+After observing `SERVER_HELLO` with `CAP_SESSION_METADATA`, a client MAY send
+`SESSION_METADATA` (message type 5) on the control channel. Its payload is one
+length-prefixed UTF-8 string containing the service name (1–128 bytes after
+trimming, with no control characters). The broker treats this as reported
+display metadata, not authenticated identity. Clients MUST NOT send this message
+when the capability is absent, so they remain compatible with older brokers.
+
 #### Message Structure
 
 ```

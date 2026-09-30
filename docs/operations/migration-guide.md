@@ -79,6 +79,16 @@ request per message type.
 Broker rollback is safe at any point; correlated clients fall back to the
 one-at-a-time path on reconnect. No persisted data is affected.
 
+## Client-reported session service names
+
+The broker advertises `CAP_SESSION_METADATA` in `SERVER_HELLO`. A client that
+has a configured service name may send `SESSION_METADATA` (5) after seeing that
+capability. Older clients ignore `SERVER_HELLO`; newer clients omit the message
+when connecting to an older broker. The active-sessions API adds an optional
+`service_name` field, omitted when the client does not report one. The value is
+display metadata supplied by the client and is not an authenticated identity.
+No persisted data changes.
+
 Concurrency conflicts carry `2001`; unclassified backend errors carry `2012`.
 Preserve unknown codes and original exceptions. Never classify message wording
 or automatically retry a failed append/commit. Applications own command retries.
