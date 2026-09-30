@@ -119,7 +119,7 @@ export default function RpcResourcePage() {
             </Show>
             <DomainSummaryStrip
               id="rpc-resource-rollup"
-              class="domain-inventory-summary"
+              class="domain-inventory-summary domain-detail-summary"
               description="Complete worker and pending counts. Handled and latency are unavailable for operations matched by wildcard registrations; handled counters cover exact live registrations only, not historical traffic."
               items={[
                 { label: "Operations", value: formatNumber(data?.operations.length ?? 0) },

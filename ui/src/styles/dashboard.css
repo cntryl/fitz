@@ -61,6 +61,11 @@
   line-height: var(--ak-line-height-normal, 1.4);
 }
 
+.overview-status-copy p.overview-status-updated {
+  margin-top: var(--ak-space-2, 0.5rem);
+  font-size: var(--ak-font-size-xs, 0.75rem);
+}
+
 .overview-issues-section {
   display: grid;
   gap: var(--ak-space-2, 0.5rem);

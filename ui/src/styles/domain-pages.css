@@ -41,6 +41,57 @@
   min-width: 0;
 }
 
+/* Detail rollups are supporting context, not a wall of separate card surfaces. */
+.domain-detail-summary .domain-summary-items {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--ak-color-border);
+  border-radius: var(--ak-radius-md);
+  background: var(--ak-color-surface);
+}
+
+.domain-detail-summary .domain-summary-item {
+  min-width: 0;
+  gap: var(--ak-space-1, 0.25rem);
+  padding: var(--ak-space-2, 0.5rem) var(--ak-space-3, 0.75rem);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.domain-detail-summary .domain-summary-item + .domain-summary-item {
+  border-inline-start: 1px solid var(--ak-color-border);
+}
+
+.domain-detail-summary .domain-summary-item [data-slot="card-content"] {
+  padding-inline: 0;
+}
+
+.domain-detail-summary .domain-summary-item [data-slot="stat-value"] {
+  line-height: var(--ak-line-height-tight, 1.2);
+}
+
+.domain-detail-summary .domain-summary-item [data-slot="stat-description"] {
+  margin-block-start: 0;
+  font-size: var(--ak-font-size-xs, 0.75rem);
+}
+
+@media (max-width: 47.999rem) {
+  .domain-detail-summary .domain-summary-items {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .domain-detail-summary .domain-summary-item:nth-child(2n + 1) {
+    border-inline-start: 0;
+  }
+
+  .domain-detail-summary .domain-summary-item:nth-child(n + 3) {
+    border-block-start: 1px solid var(--ak-color-border);
+  }
+}
+
 .domain-resource-metric,
 .domain-metric-value {
   font-variant-numeric: tabular-nums;

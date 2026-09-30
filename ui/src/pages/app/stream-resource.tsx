@@ -82,6 +82,7 @@ export default function StreamResourcePage() {
         {detail ? (
           <DomainSummaryStrip
             id="stream-committed-metadata"
+            class="domain-detail-summary"
             title="Committed metadata"
             description="Durable committed metadata. Append sessions are live and separate from replay history."
             items={[

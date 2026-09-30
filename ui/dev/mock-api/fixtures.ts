@@ -13,7 +13,7 @@ export const realms = ["acme", "platform", "ops"];
 export const areas = ["payments", "messaging", "control"];
 export const resources = ["invoices", "orders", "worker-pool"];
 export const operations = ["ReconcileInvoice", "RefreshProjection", "ExpireWindow"];
-export const now = "2026-06-29T14:30:00.000Z";
+export const now = new Date().toISOString();
 
 export const domains = ["kv", "queue", "stream", "lease", "schedule", "notice", "rpc"] as const;
 export type Domain = (typeof domains)[number];
@@ -576,7 +576,7 @@ const structuredMetricSamples = [
 ];
 
 export const structuredMetrics = {
-  generated_at: 1782743400000,
+  generated_at: Date.now(),
   samples: structuredMetricSamples,
   scope: "all" as const,
 };

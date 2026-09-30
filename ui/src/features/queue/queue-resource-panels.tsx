@@ -33,7 +33,7 @@ import {
 export function QueueResourceCurrentValuesPanel({ detail }: { detail: QueueResourceDetail }) {
   return (
     <DomainSummaryStrip
-      class="queue-resource-summary"
+      class="queue-resource-summary domain-detail-summary"
       title="Current values"
       description="Broker-visible queue counters and live reservations for this scope."
       items={[

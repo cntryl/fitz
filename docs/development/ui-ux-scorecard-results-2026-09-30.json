@@ -1,0 +1,3337 @@
+{
+  "run_at": "2026-09-30T12:51:57.908008+00:00",
+  "model_requested": "jev-latest",
+  "rubric_version": 2,
+  "page_count": 25,
+  "success_count": 25,
+  "questions": {
+    "task_usefulness": {
+      "type": "score",
+      "instructions": "How useful is this page for its stated primary operator task?",
+      "criteria": [
+        "Does not support a recognizable operator task.",
+        "Supports a rare or indirect task with substantial work elsewhere.",
+        "Supports a clear task with some gaps or detours.",
+        "Directly supports an important task end to end."
+      ]
+    },
+    "decision_value": {
+      "type": "score",
+      "instructions": "How well does this page help an operator decide what to inspect or do next?",
+      "criteria": [
+        "Provides no useful basis for an operator decision.",
+        "Adds context but leaves the decision unclear.",
+        "Supports a decision with limited ambiguity.",
+        "Clearly guides a timely, appropriate operator decision."
+      ]
+    },
+    "actionability": {
+      "type": "score",
+      "instructions": "How directly can an operator take an appropriate next step from this page?",
+      "criteria": [
+        "No practical next step is available.",
+        "The next step must be inferred or found elsewhere.",
+        "Useful actions or links exist but have gaps.",
+        "Findings lead directly to an appropriate next step."
+      ]
+    },
+    "distinct_value": {
+      "type": "score",
+      "instructions": "How much meaningful capability does this page add beyond other Fitz UI pages?",
+      "criteria": [
+        "Duplicates other UI with no meaningful benefit.",
+        "Mostly overlaps; only a small unique benefit.",
+        "Adds a useful distinct view or workflow.",
+        "Provides a uniquely valuable capability."
+      ]
+    },
+    "clarity": {
+      "type": "score",
+      "instructions": "How clearly does this page communicate its purpose, route scope, and signals?",
+      "criteria": [
+        "Purpose, scope, or signals are materially confusing.",
+        "Several labels or relationships require inference.",
+        "Purpose is clear with a few points of friction.",
+        "Purpose, scope, and signals are immediately understandable."
+      ]
+    },
+    "operational_trust": {
+      "type": "score",
+      "instructions": "How clearly does this page distinguish live, stale, partial, unavailable, ephemeral, or durable information when relevant?",
+      "criteria": [
+        "States can mislead about freshness, completeness, or availability.",
+        "Important data caveats are easy to miss.",
+        "Most caveats and data states are clear.",
+        "Freshness, completeness, and failure states are explicit and dependable."
+      ]
+    },
+    "critical_scope_confusion": {
+      "type": "noul",
+      "instructions": "Does this page create a plausible risk that an operator confuses the broker Route Family with the application-defined realm, or otherwise applies the data to the wrong scope?",
+      "criteria": {
+        "true": "The visible UI or described behavior plausibly conflates scopes or leaves selected scope materially unclear.",
+        "false": "The scopes and selected context are clearly distinguished, or this page does not expose a scope decision."
+      }
+    },
+    "serious_accessibility_barrier": {
+      "type": "noul",
+      "instructions": "Does the supplied UI evidence reveal a plausible serious keyboard or screen-reader barrier to the page primary task? A yes is only a candidate for direct accessibility verification.",
+      "criteria": {
+        "true": "The supplied evidence plausibly blocks a keyboard or screen-reader user from completing the primary task.",
+        "false": "The supplied evidence does not reveal such a blocking barrier."
+      }
+    }
+  },
+  "results": [
+    {
+      "page": "family_selector",
+      "route": "/",
+      "state": {
+        "page": "family_selector",
+        "route": "/",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Choose one concrete Route Family before entering the operator workspace. The page explains this requirement and shows five links, one for each available family.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.04,
+            "confidence": 0.38,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.16,
+              "2": 0.45,
+              "3": 0.33
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.39,
+            "confidence": 0.41,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.1,
+              "1": 0.52,
+              "2": 0.27,
+              "3": 0.11
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.76,
+            "confidence": 0.76,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.05,
+              "2": 0.14,
+              "3": 0.8099999999999999
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 1.91,
+            "confidence": 0.6,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.04,
+              "1": 0.15,
+              "2": 0.66,
+              "3": 0.15
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.53,
+            "confidence": 0.53,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.09,
+              "2": 0.22,
+              "3": 0.67
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.8,
+            "confidence": 0.18,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.15,
+              "1": 0.21,
+              "2": 0.33,
+              "3": 0.31
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.39
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.13
+          }
+        },
+        "usage": {
+          "input_tokens": 1079,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "overview",
+      "route": "/admin/1",
+      "state": {
+        "page": "overview",
+        "route": "/admin/1",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Operator overview for one selected Route Family. Shows current Fitz status, actionable issue list with deep links, and a small set of broker vitals. Healthy empty-state says no active issues and directs normal activity inspection to Domains.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.59,
+            "confidence": 0.59,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.4,
+              "3": 0.6
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.82,
+            "confidence": 0.82,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.16,
+              "3": 0.83
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.86,
+            "confidence": 0.86,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.13,
+              "3": 0.86
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.02,
+            "confidence": 0.81,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.08,
+              "2": 0.81,
+              "3": 0.11
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.67,
+            "confidence": 0.67,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.05,
+              "2": 0.22,
+              "3": 0.73
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.11,
+            "confidence": 0.44,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.23,
+              "1": 0.49,
+              "2": 0.23,
+              "3": 0.05
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.35
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.11
+          }
+        },
+        "usage": {
+          "input_tokens": 1098,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "sessions",
+      "route": "/admin/1/sessions",
+      "state": {
+        "page": "sessions",
+        "route": "/admin/1/sessions",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect currently connected broker and admin sessions. Shows session, transport, and longest-idle summary, a refresh action, and an empty-state message when none are connected.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.65,
+            "confidence": 0.65,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.34,
+              "3": 0.66
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.06,
+            "confidence": 0.67,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.12,
+              "2": 0.67,
+              "3": 0.2
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.99,
+            "confidence": 0.63,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.14,
+              "2": 0.66,
+              "3": 0.18
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.18,
+            "confidence": 0.75,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.03,
+              "2": 0.76,
+              "3": 0.21
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.84,
+            "confidence": 0.84,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.11,
+              "3": 0.87
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.38,
+            "confidence": 0.33,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.14,
+              "1": 0.41000000000000003,
+              "2": 0.38,
+              "3": 0.07
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.28
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.13
+          }
+        },
+        "usage": {
+          "input_tokens": 1089,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "diagnostics",
+      "route": "/admin/1/diagnostics",
+      "state": {
+        "page": "diagnostics",
+        "route": "/admin/1/diagnostics",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Advanced infrastructure view for storage health, topology, metric families, and broker-local internals. Includes a search for sessions and domain resources within the selected Route Family, follow-up guidance, refresh, and live/stale/partial status.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.87,
+            "confidence": 0.87,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.12,
+              "3": 0.88
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.15,
+            "confidence": 0.54,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.14,
+              "2": 0.54,
+              "3": 0.31
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.36,
+            "confidence": 0.52,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.04,
+              "2": 0.53,
+              "3": 0.42
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.76,
+            "confidence": 0.76,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.23,
+              "3": 0.77
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.54,
+            "confidence": 0.54,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.07,
+              "2": 0.32,
+              "3": 0.61
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 2.28,
+            "confidence": 0.47,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.09,
+              "2": 0.49,
+              "3": 0.4
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.56
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.15
+          }
+        },
+        "usage": {
+          "input_tokens": 1109,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "metrics",
+      "route": "/admin/1/metrics",
+      "state": {
+        "page": "metrics",
+        "route": "/admin/1/metrics",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect structured broker metrics for the selected Route Family. Separates live delivery activity from cumulative failure counters, provides filterable samples and exact JSON payload, and reports missing metric families.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "clarity": {
+            "type": "score",
+            "score": 2.72,
+            "confidence": 0.72,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.05,
+              "2": 0.17,
+              "3": 0.77
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.97,
+            "confidence": 0.49,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.04,
+              "1": 0.19,
+              "2": 0.53,
+              "3": 0.24
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.35
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.13
+          },
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.96,
+            "confidence": 0.96,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.03,
+              "3": 0.97
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.19,
+            "confidence": 0.19,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.15,
+              "2": 0.35,
+              "3": 0.44
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.47,
+            "confidence": 0.47,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.04,
+              "1": 0.07,
+              "2": 0.29,
+              "3": 0.6
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.66,
+            "confidence": 0.66,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.34,
+              "3": 0.66
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 1092,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "kv_inventory",
+      "route": "/admin/1/kv",
+      "state": {
+        "page": "kv_inventory",
+        "route": "/admin/1/kv",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Browse current authoritative KV tables by realm and scope. Shows keys, active transactions, and operations rate; links into scopes and supports refresh. Empty state says no tables are visible and suggests checking family or broadening scope.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.82,
+            "confidence": 0.82,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.18,
+              "3": 0.82
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.2,
+            "confidence": 0.6,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.09,
+              "2": 0.6,
+              "3": 0.3
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.7,
+            "confidence": 0.7,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.28,
+              "3": 0.71
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.36,
+            "confidence": 0.6,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.61,
+              "3": 0.38
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.7,
+            "confidence": 0.7,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.03,
+              "2": 0.23,
+              "3": 0.74
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.0,
+            "confidence": 0.49,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.25,
+              "1": 0.52,
+              "2": 0.21,
+              "3": 0.02
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.46
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.13
+          }
+        },
+        "usage": {
+          "input_tokens": 1100,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "lease_inventory",
+      "route": "/admin/1/lease",
+      "state": {
+        "page": "lease_inventory",
+        "route": "/admin/1/lease",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Browse ephemeral lease ownership and contention by scope. Shows active leases, waiters, oldest age, resource rollups, and ownership detail links. Empty state indicates no visible resources.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.77,
+            "confidence": 0.77,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.22,
+              "3": 0.78
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.07,
+            "confidence": 0.62,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.12,
+              "2": 0.64,
+              "3": 0.22
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.46,
+            "confidence": 0.46,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.04,
+              "2": 0.4,
+              "3": 0.54
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.44,
+            "confidence": 0.51,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.52,
+              "3": 0.46
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.57,
+            "confidence": 0.57,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.06,
+              "2": 0.29,
+              "3": 0.65
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.32,
+            "confidence": 0.36,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.16,
+              "1": 0.42,
+              "2": 0.35,
+              "3": 0.07
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.45
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.14
+          }
+        },
+        "usage": {
+          "input_tokens": 1095,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "notice_inventory",
+      "route": "/admin/1/notice",
+      "state": {
+        "page": "notice_inventory",
+        "route": "/admin/1/notice",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Browse live ephemeral Notice activity. Shows active operation routes, subscriptions, publish rate, and resources with current subscribers. Explains that only currently observable routes appear.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.52,
+            "confidence": 0.52,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.43,
+              "3": 0.55
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.68,
+            "confidence": 0.46,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.03,
+              "1": 0.37,
+              "2": 0.49,
+              "3": 0.11
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.59,
+            "confidence": 0.25,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.08,
+              "1": 0.43,
+              "2": 0.3,
+              "3": 0.19
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.39,
+            "confidence": 0.56,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.56,
+              "3": 0.42
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.71,
+            "confidence": 0.71,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.03,
+              "2": 0.22,
+              "3": 0.75
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 2.37,
+            "confidence": 0.52,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.05,
+              "2": 0.53,
+              "3": 0.42
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.38
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.13
+          }
+        },
+        "usage": {
+          "input_tokens": 1090,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "queue_inventory",
+      "route": "/admin/1/queue",
+      "state": {
+        "page": "queue_inventory",
+        "route": "/admin/1/queue",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Browse durable work queues. Shows ready work, in-flight work, dead letters, resource counters, and links into scopes. Empty state distinguishes that no resources are currently visible.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.89,
+            "confidence": 0.89,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.1,
+              "3": 0.9
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.04,
+            "confidence": 0.58,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.15,
+              "2": 0.6,
+              "3": 0.23
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.59,
+            "confidence": 0.59,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.02,
+              "2": 0.34,
+              "3": 0.63
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.48,
+            "confidence": 0.49,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.5,
+              "3": 0.5
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.74,
+            "confidence": 0.74,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.04,
+              "2": 0.17,
+              "3": 0.79
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.59,
+            "confidence": 0.39,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.08,
+              "1": 0.35,
+              "2": 0.47,
+              "3": 0.1
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.36
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.11
+          }
+        },
+        "usage": {
+          "input_tokens": 1094,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "rpc_inventory",
+      "route": "/admin/1/rpc",
+      "state": {
+        "page": "rpc_inventory",
+        "route": "/admin/1/rpc",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Browse live RPC workers and request pressure. Shows pending requests, worker counts, operations rate, and per-resource rollups; explains the scope of aggregates.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.81,
+            "confidence": 0.81,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.17,
+              "3": 0.83
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.89,
+            "confidence": 0.53,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.24,
+              "2": 0.56,
+              "3": 0.18
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.91,
+            "confidence": 0.31,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.27,
+              "2": 0.37,
+              "3": 0.3
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.45,
+            "confidence": 0.51,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.52,
+              "3": 0.47
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.7,
+            "confidence": 0.7,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.04,
+              "2": 0.21,
+              "3": 0.75
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.27,
+            "confidence": 0.38,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.18,
+              "1": 0.44,
+              "2": 0.32,
+              "3": 0.06
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.38
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.11
+          }
+        },
+        "usage": {
+          "input_tokens": 1086,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "schedule_inventory",
+      "route": "/admin/1/schedule",
+      "state": {
+        "page": "schedule_inventory",
+        "route": "/admin/1/schedule",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Browse durable timing intent and handoff health. Shows active schedules, pending claims, handoffs per minute, and soonest next run. Distinguishes counts rolled up by resource.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.75,
+            "confidence": 0.75,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.24,
+              "3": 0.76
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.24,
+            "confidence": 0.57,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.09,
+              "2": 0.58,
+              "3": 0.33
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.98,
+            "confidence": 0.33,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.05,
+              "1": 0.25,
+              "2": 0.37,
+              "3": 0.33
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.37,
+            "confidence": 0.59,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.6,
+              "3": 0.39
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.6,
+            "confidence": 0.6,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.06,
+              "2": 0.27,
+              "3": 0.67
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.0,
+            "confidence": 0.4,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.3,
+              "1": 0.44,
+              "2": 0.22,
+              "3": 0.04
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.36
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.12
+          }
+        },
+        "usage": {
+          "input_tokens": 1095,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "stream_inventory",
+      "route": "/admin/1/stream",
+      "state": {
+        "page": "stream_inventory",
+        "route": "/admin/1/stream",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Browse durable Stream history and replay metadata. Shows committed events, streams, and live subscriptions, keeping durable history conceptually distinct from live observers.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "distinct_value": {
+            "type": "score",
+            "score": 2.57,
+            "confidence": 0.57,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.41,
+              "3": 0.58
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.67,
+            "confidence": 0.67,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.04,
+              "2": 0.22,
+              "3": 0.74
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.8,
+            "confidence": 0.54,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.05,
+              "1": 0.24,
+              "2": 0.58,
+              "3": 0.13
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.35
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.12
+          },
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.74,
+            "confidence": 0.74,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.01,
+              "2": 0.18,
+              "3": 0.79
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.35,
+            "confidence": 0.44,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.1,
+              "1": 0.52,
+              "2": 0.31,
+              "3": 0.07
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.71,
+            "confidence": 0.21,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.13,
+              "1": 0.29,
+              "2": 0.33,
+              "3": 0.25
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 1086,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "kv_resource",
+      "route": "/admin/1/kv/default/default/primary",
+      "state": {
+        "page": "kv_resource",
+        "route": "/admin/1/kv/default/default/primary",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect one KV resource. Offers explicit UTF-8/base64 exact-key lookup and filtered committed-row loading with prefix and page-size controls; rows load only when requested.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.79,
+            "confidence": 0.79,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.2,
+              "3": 0.8
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.97,
+            "confidence": 0.44,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.05,
+              "1": 0.2,
+              "2": 0.49,
+              "3": 0.26
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.63,
+            "confidence": 0.63,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.03,
+              "2": 0.27,
+              "3": 0.69
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.4,
+            "confidence": 0.54,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.55,
+              "3": 0.43
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.44,
+            "confidence": 0.44,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.1,
+              "2": 0.31,
+              "3": 0.57
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.24,
+            "confidence": 0.27,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.24,
+              "1": 0.37,
+              "2": 0.3,
+              "3": 0.09
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.42
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.15
+          }
+        },
+        "usage": {
+          "input_tokens": 1094,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "lease_resource",
+      "route": "/admin/1/lease/default/default/primary",
+      "state": {
+        "page": "lease_resource",
+        "route": "/admin/1/lease/default/default/primary",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect current lease ownership for one resource, including ownership rows and refresh. Empty state reports that no visible ownership rows exist.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.79,
+            "confidence": 0.79,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.19,
+              "3": 0.81
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.64,
+            "confidence": 0.43,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.34,
+              "2": 0.5,
+              "3": 0.1
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.14,
+            "confidence": 0.49,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.13,
+              "2": 0.53,
+              "3": 0.32
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 1.92,
+            "confidence": 0.74,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.12,
+              "2": 0.77,
+              "3": 0.09
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.27,
+            "confidence": 0.27,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.14,
+              "2": 0.39,
+              "3": 0.45
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.13,
+            "confidence": 0.37,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.25,
+              "1": 0.43,
+              "2": 0.26,
+              "3": 0.06
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.42
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.14
+          }
+        },
+        "usage": {
+          "input_tokens": 1084,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "notice_resource",
+      "route": "/admin/1/notice/default/default/primary",
+      "state": {
+        "page": "notice_resource",
+        "route": "/admin/1/notice/default/default/primary",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect one Notice resource. Shows operation routes, active subscriptions and publish rates; only operations with active subscribers are observable.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.57,
+            "confidence": 0.57,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.41,
+              "3": 0.58
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.56,
+            "confidence": 0.37,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.42,
+              "2": 0.43,
+              "3": 0.09
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.11,
+            "confidence": 0.43,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.03,
+              "1": 0.16,
+              "2": 0.47,
+              "3": 0.34
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.05,
+            "confidence": 0.75,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.08,
+              "2": 0.76,
+              "3": 0.15
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.24,
+            "confidence": 0.45,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.12,
+              "2": 0.46,
+              "3": 0.4
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.37,
+            "confidence": 0.35,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.14,
+              "1": 0.42,
+              "2": 0.37,
+              "3": 0.07
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.42
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.13
+          }
+        },
+        "usage": {
+          "input_tokens": 1083,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "notice_operation",
+      "route": "/admin/1/notice/default/default/primary/GetStatus",
+      "state": {
+        "page": "notice_operation",
+        "route": "/admin/1/notice/default/default/primary/GetStatus",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect live subscription delivery observations for a concrete Notice operation. Provides refresh and explicitly says evidence is not delivery history and counters lack a reported reset scope.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.22,
+            "confidence": 0.65,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.04,
+              "2": 0.66,
+              "3": 0.28
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.79,
+            "confidence": 0.43,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.04,
+              "1": 0.3,
+              "2": 0.48,
+              "3": 0.18
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.73,
+            "confidence": 0.57,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.03,
+              "1": 0.29,
+              "2": 0.6,
+              "3": 0.08
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.12,
+            "confidence": 0.69,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.07,
+              "2": 0.7,
+              "3": 0.22
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.21,
+            "confidence": 0.42,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.03,
+              "1": 0.13,
+              "2": 0.45,
+              "3": 0.39
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 2.22,
+            "confidence": 0.51,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.09,
+              "2": 0.53,
+              "3": 0.36
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.36
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.12
+          }
+        },
+        "usage": {
+          "input_tokens": 1093,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "queue_resource",
+      "route": "/admin/1/queue/default/default/primary",
+      "state": {
+        "page": "queue_resource",
+        "route": "/admin/1/queue/default/default/primary",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect one durable queue resource. Shows current ready/delayed/inflight/subscription/dead-letter values, throughput and backlog age; messages load on demand; includes a live transition timeline.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.91,
+            "confidence": 0.91,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.09,
+              "3": 0.91
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.19,
+            "confidence": 0.63,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.08,
+              "2": 0.64,
+              "3": 0.28
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.04,
+            "confidence": 0.36,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.03,
+              "1": 0.25,
+              "2": 0.38,
+              "3": 0.34
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.31,
+            "confidence": 0.64,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.65,
+              "3": 0.33
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.6,
+            "confidence": 0.6,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.05,
+              "2": 0.29,
+              "3": 0.66
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.73,
+            "confidence": 0.5,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.27,
+              "2": 0.56,
+              "3": 0.11
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.44
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.16
+          }
+        },
+        "usage": {
+          "input_tokens": 1101,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "rpc_resource",
+      "route": "/admin/1/rpc/default/default/primary",
+      "state": {
+        "page": "rpc_resource",
+        "route": "/admin/1/rpc/default/default/primary",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect one RPC resource and its live operation totals. Shows worker/pending/handled counts and explains wildcard registrations limit per-operation attribution and pending state is in memory.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.55,
+            "confidence": 0.55,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.42,
+              "3": 0.57
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.65,
+            "confidence": 0.5,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.38,
+              "2": 0.52,
+              "3": 0.08
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.28,
+            "confidence": 0.4,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.16,
+              "1": 0.55,
+              "2": 0.14,
+              "3": 0.15
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.02,
+            "confidence": 0.78,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.08,
+              "2": 0.79,
+              "3": 0.12
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.34,
+            "confidence": 0.34,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.09,
+              "2": 0.43,
+              "3": 0.46
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.99,
+            "confidence": 0.64,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.15,
+              "2": 0.66,
+              "3": 0.17
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.41
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.12
+          }
+        },
+        "usage": {
+          "input_tokens": 1094,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "rpc_operation",
+      "route": "/admin/1/rpc/default/default/primary/GetStatus",
+      "state": {
+        "page": "rpc_operation",
+        "route": "/admin/1/rpc/default/default/primary/GetStatus",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect one RPC operation. Shows live worker capacity, pending calls, exact-registration handled counts, latency buckets, and live call evidence; calls out current-versus-historical limits.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.44
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.15
+          },
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.85,
+            "confidence": 0.85,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.0,
+              "2": 0.14,
+              "3": 0.86
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.15,
+            "confidence": 0.47,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.02,
+              "1": 0.14,
+              "2": 0.5,
+              "3": 0.34
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.84,
+            "confidence": 0.04,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.36,
+              "2": 0.25,
+              "3": 0.33
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.44,
+            "confidence": 0.48,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.03,
+              "2": 0.48,
+              "3": 0.48
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.48,
+            "confidence": 0.48,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.07,
+              "2": 0.37,
+              "3": 0.55
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.64,
+            "confidence": 0.39,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.36,
+              "2": 0.46,
+              "3": 0.12
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 1101,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "schedule_resource",
+      "route": "/admin/1/schedule/default/default/primary",
+      "state": {
+        "page": "schedule_resource",
+        "route": "/admin/1/schedule/default/default/primary",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect schedules within one resource. Shows schedule count, earliest next run and pending handoffs; individual rows represent schedule-owned observations, and schedules without observations do not appear.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.25,
+            "confidence": 0.69,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.7,
+              "3": 0.28
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.9,
+            "confidence": 0.66,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.21,
+              "2": 0.66,
+              "3": 0.12
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.78,
+            "confidence": 0.33,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.04,
+              "1": 0.35,
+              "2": 0.38,
+              "3": 0.23
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.0,
+            "confidence": 0.84,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.06,
+              "2": 0.85,
+              "3": 0.08
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.23,
+            "confidence": 0.44,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.14,
+              "2": 0.46,
+              "3": 0.39
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 0.88,
+            "confidence": 0.39,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.36,
+              "1": 0.42,
+              "2": 0.19,
+              "3": 0.03
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.37
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.14
+          }
+        },
+        "usage": {
+          "input_tokens": 1094,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "schedule_operation",
+      "route": "/admin/1/schedule/default/default/primary/handoff",
+      "state": {
+        "page": "schedule_operation",
+        "route": "/admin/1/schedule/default/default/primary/handoff",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect a single schedule and its timing/handoff state. Shows Run now, cron, next run, delivery mode, broker observation counts, and pending or missed claims; explicitly warns the broker counter is not downstream execution history. The mock currently renders no observations, an unset cron, and no next run.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.35,
+            "confidence": 0.58,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.59,
+              "3": 0.39
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.93,
+            "confidence": 0.56,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.23,
+              "2": 0.58,
+              "3": 0.18
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.14,
+            "confidence": 0.69,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.06,
+              "2": 0.7,
+              "3": 0.23
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.15,
+            "confidence": 0.66,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.07,
+              "2": 0.68,
+              "3": 0.24
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.46,
+            "confidence": 0.46,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.06,
+              "2": 0.4,
+              "3": 0.53
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.98,
+            "confidence": 0.5,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.13,
+              "2": 0.5700000000000001,
+              "3": 0.24
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.36
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.13
+          }
+        },
+        "usage": {
+          "input_tokens": 1125,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "stream_resource",
+      "route": "/admin/1/stream/default/default/primary",
+      "state": {
+        "page": "stream_resource",
+        "route": "/admin/1/stream/default/default/primary",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Inspect durable committed metadata separately from ephemeral append sessions and subscriptions. Offers on-demand committed-record reads by offset/discriminator/limit.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.48,
+            "confidence": 0.48,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.08,
+              "1": 0.03,
+              "2": 0.21,
+              "3": 0.68
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.71,
+            "confidence": 0.27,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.08,
+              "1": 0.34,
+              "2": 0.36,
+              "3": 0.22
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 1.55,
+            "confidence": 0.06,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.2,
+              "1": 0.33,
+              "2": 0.19,
+              "3": 0.28
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.65,
+            "confidence": 0.65,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.01,
+              "2": 0.33,
+              "3": 0.66
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.07,
+            "confidence": 0.42,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.03,
+              "1": 0.19,
+              "2": 0.46,
+              "3": 0.32
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.59,
+            "confidence": 0.33,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.11,
+              "1": 0.32,
+              "2": 0.44,
+              "3": 0.13
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.48
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.14
+          }
+        },
+        "usage": {
+          "input_tokens": 1092,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "login",
+      "route": "/login",
+      "state": {
+        "page": "login",
+        "route": "/login",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Authenticate to Fitz Admin with configured root username and password. The screen labels both fields and offers a Sign in action.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 2.82,
+            "confidence": 0.82,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.01,
+              "2": 0.14,
+              "3": 0.84
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 2.02,
+            "confidence": 0.02,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.17,
+              "1": 0.14,
+              "2": 0.18,
+              "3": 0.51
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.9,
+            "confidence": 0.9,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.02,
+              "2": 0.05,
+              "3": 0.93
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 2.47,
+            "confidence": 0.47,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.08,
+              "1": 0.04,
+              "2": 0.21,
+              "3": 0.67
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.81,
+            "confidence": 0.81,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.04,
+              "2": 0.08,
+              "3": 0.87
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.81,
+            "confidence": 0.0,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.18,
+              "1": 0.19,
+              "2": 0.29,
+              "3": 0.33999999999999997
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.14
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.08
+          }
+        },
+        "usage": {
+          "input_tokens": 1074,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "logout_flow",
+      "route": "/logout",
+      "state": {
+        "page": "logout_flow",
+        "route": "/logout",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "The authenticated shell exposes Sign out. The logout flow clears the session, displays progress, then redirects to sign-in; browser E2E coverage verifies redirect and progress behavior.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "decision_value": {
+            "type": "score",
+            "score": 1.26,
+            "confidence": 0.45,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.15,
+              "1": 0.53,
+              "2": 0.24,
+              "3": 0.08
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.54,
+            "confidence": 0.54,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.04,
+              "1": 0.08,
+              "2": 0.18,
+              "3": 0.7
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 1.64,
+            "confidence": 0.43,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.09,
+              "1": 0.3,
+              "2": 0.51,
+              "3": 0.1
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.65,
+            "confidence": 0.65,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.0,
+              "1": 0.05,
+              "2": 0.23,
+              "3": 0.72
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 2.1,
+            "confidence": 0.48,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.03,
+              "1": 0.14,
+              "2": 0.52,
+              "3": 0.31
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.1
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.09
+          },
+          "task_usefulness": {
+            "type": "score",
+            "score": 1.39,
+            "confidence": 0.09,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.26,
+              "1": 0.36,
+              "2": 0.11,
+              "3": 0.27
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 1086,
+          "output_tokens": 139
+        }
+      }
+    },
+    {
+      "page": "operator_navigation",
+      "route": "/admin/1",
+      "state": {
+        "page": "operator_navigation",
+        "route": "/admin/1",
+        "intended_operator": "Fitz operator investigating broker state or performing an admin task",
+        "task_and_visible_ui": "Shared shell navigation groups Overview, Sessions, Diagnostics, Metrics, and seven domains; shows the selected Route Family control, active location, responsive mobile navigation toggle, theme control, sign out, and resource hierarchy breadcrumbs.",
+        "evidence_limits": "This state describes the mock UI and its labels/actions only. Mock API values are synthetic; do not infer real operator frequency, real broker health, or production data correctness from them."
+      },
+      "response": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "task_usefulness": {
+            "type": "score",
+            "score": 1.82,
+            "confidence": 0.36,
+            "legend": {
+              "0": "Does not support a recognizable operator task.",
+              "1": "Supports a rare or indirect task with substantial work elsewhere.",
+              "2": "Supports a clear task with some gaps or detours.",
+              "3": "Directly supports an important task end to end."
+            },
+            "probabilities": {
+              "0": 0.08,
+              "1": 0.26,
+              "2": 0.43,
+              "3": 0.23
+            }
+          },
+          "decision_value": {
+            "type": "score",
+            "score": 1.38,
+            "confidence": 0.49,
+            "legend": {
+              "0": "Provides no useful basis for an operator decision.",
+              "1": "Adds context but leaves the decision unclear.",
+              "2": "Supports a decision with limited ambiguity.",
+              "3": "Clearly guides a timely, appropriate operator decision."
+            },
+            "probabilities": {
+              "0": 0.06,
+              "1": 0.56,
+              "2": 0.32,
+              "3": 0.06
+            }
+          },
+          "actionability": {
+            "type": "score",
+            "score": 2.05,
+            "confidence": 0.52,
+            "legend": {
+              "0": "No practical next step is available.",
+              "1": "The next step must be inferred or found elsewhere.",
+              "2": "Useful actions or links exist but have gaps.",
+              "3": "Findings lead directly to an appropriate next step."
+            },
+            "probabilities": {
+              "0": 0.03,
+              "1": 0.15,
+              "2": 0.56,
+              "3": 0.26
+            }
+          },
+          "distinct_value": {
+            "type": "score",
+            "score": 1.29,
+            "confidence": 0.22,
+            "legend": {
+              "0": "Duplicates other UI with no meaningful benefit.",
+              "1": "Mostly overlaps; only a small unique benefit.",
+              "2": "Adds a useful distinct view or workflow.",
+              "3": "Provides a uniquely valuable capability."
+            },
+            "probabilities": {
+              "0": 0.24,
+              "1": 0.35,
+              "2": 0.28,
+              "3": 0.13
+            }
+          },
+          "clarity": {
+            "type": "score",
+            "score": 2.39,
+            "confidence": 0.39,
+            "legend": {
+              "0": "Purpose, scope, or signals are materially confusing.",
+              "1": "Several labels or relationships require inference.",
+              "2": "Purpose is clear with a few points of friction.",
+              "3": "Purpose, scope, and signals are immediately understandable."
+            },
+            "probabilities": {
+              "0": 0.01,
+              "1": 0.12,
+              "2": 0.33,
+              "3": 0.54
+            }
+          },
+          "operational_trust": {
+            "type": "score",
+            "score": 1.25,
+            "confidence": 0.25,
+            "legend": {
+              "0": "States can mislead about freshness, completeness, or availability.",
+              "1": "Important data caveats are easy to miss.",
+              "2": "Most caveats and data states are clear.",
+              "3": "Freshness, completeness, and failure states are explicit and dependable."
+            },
+            "probabilities": {
+              "0": 0.25,
+              "1": 0.37,
+              "2": 0.26,
+              "3": 0.12
+            }
+          },
+          "critical_scope_confusion": {
+            "type": "noul",
+            "noul": 0.5
+          },
+          "serious_accessibility_barrier": {
+            "type": "noul",
+            "noul": 0.14
+          }
+        },
+        "usage": {
+          "input_tokens": 1099,
+          "output_tokens": 139
+        }
+      }
+    }
+  ]
+}
