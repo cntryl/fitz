@@ -151,6 +151,7 @@ export default function ScheduleResourcePage() {
               {/* A resource groups schedules; only rollups belong here, never one schedule's fields. */}
               <DomainSummaryStrip
                 id="schedule-resource-detail"
+                class="domain-detail-summary"
                 title="Durable timing intent"
                 description={
                   paginated

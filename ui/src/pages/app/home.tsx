@@ -14,6 +14,7 @@ import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
 import { formatUnknownError } from "@/shared/errors/format";
+import { formatRelativeTime, formatTimestamp } from "@/shared/format";
 
 function toneVariant(tone: OverviewTone) {
   if (tone === "danger") return "danger";
@@ -34,6 +35,14 @@ function OverviewStatusBand({ overview }: { overview: OverviewStatus }) {
         <p class="domain-header-kicker">Current status</p>
         <h2>{overview.overall.title}</h2>
         <p>{overview.overall.description}</p>
+        {overview.generatedAt ? (
+          <p class="overview-status-updated">
+            Snapshot generated{" "}
+            <time dateTime={overview.generatedAt} title={formatTimestamp(overview.generatedAt)}>
+              {formatRelativeTime(overview.generatedAt)}
+            </time>
+          </p>
+        ) : null}
       </div>
       <Badge variant={toneVariant(overview.overall.tone)}>{overview.overall.label}</Badge>
     </section>

@@ -106,6 +106,23 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("No domain lanes are visible yet");
     expect(text).not.toContain("Domain workspaces");
   });
+
+  it("shows the generated time for the current overview snapshot", async () => {
+    // Arrange
+    const { default: Home } = await import("@/pages/app/home");
+    mocks.queryStates.topology = queryState.fresh(topologyOverview, queryOptions());
+    mocks.queryStates.system = queryState.fresh(systemOverview, queryOptions());
+
+    // Act
+    const root = await mountRoute("/", "/", Home);
+    const snapshotTime = root.querySelector(".overview-status-updated time");
+
+    // Assert
+    expect(snapshotTime?.getAttribute("datetime")).toBe("2026-05-21T13:10:00.000Z");
+    expect(snapshotTime?.getAttribute("title")).toBeTruthy();
+    expect(snapshotTime?.textContent).toMatch(/ago|moments/);
+  });
+
   it("does not promote caught-up Stream signals to issues", async () => {
     const { default: Home } = await import("@/pages/app/home");
     const healthySystem = {

@@ -549,6 +549,25 @@ describe("shared UI polish contracts", () => {
     expect(breadcrumbs?.textContent).not.toContain("Settings");
   });
 
+  it("labels Route Family, realm, area, and resource as separate breadcrumb scopes", async () => {
+    const root = await mount(
+      () => (
+        <AppLayout>
+          <DomainPageFrame>
+            <section>Resource content</section>
+          </DomainPageFrame>
+        </AppLayout>
+      ),
+      "/admin/1/kv/default/operations/primary",
+    );
+    const breadcrumbs = root.querySelector('[aria-label="Resource hierarchy"]');
+
+    expect(breadcrumbs?.textContent).toContain("Route Family 1");
+    expect(breadcrumbs?.textContent).toContain("Realm: default");
+    expect(breadcrumbs?.textContent).toContain("Area: operations");
+    expect(breadcrumbs?.textContent).toContain("Resource: primary");
+  });
+
   it("renders auth pages in a focused full-viewport shell", async () => {
     const root = await mount(
       () => (
