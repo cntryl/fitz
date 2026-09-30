@@ -131,6 +131,60 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
 }
 
 #[test]
+fn should_ack_pending_fires_in_bounded_batches_given_claim_count_exceeds_limit() {
+    // Arrange
+    const CLAIM_COUNT: usize = 64;
+    const ACK_BATCH_SIZE: usize = 32;
+    let family = RouteFamily::new(1);
+    let clock = Arc::new(MockClock::new(1_700_000_000_000));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
+        router,
+        admin_read_model,
+    );
+    let mut actor = crate::domains::schedule::ScheduleActor::new_with_clock(
+        family,
+        crate::domains::schedule::ScheduleStore::new(store),
+        crate::domains::WritePolicy::Buffered,
+        clock.clone(),
+    );
+    for index in 0..CLAIM_COUNT {
+        let route = format!("schedule://acme/jobs/recovery/job-{index:02}");
+        let response = actor.handle(crate::domains::schedule::ScheduleMessage::Create {
+            route,
+            cron: "* * * * *".to_string(),
+            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+            payload: Bytes::from_static(b"recovery"),
+        });
+        assert!(matches!(
+            response,
+            crate::domains::schedule::ScheduleResponse::Ok
+        ));
+    }
+    actor.bench_prepare_scan(CLAIM_COUNT);
+    assert_eq!(actor.bench_claim_due_fires().len(), ACK_BATCH_SIZE);
+    clock.advance(Duration::from_millis(11));
+    assert_eq!(actor.bench_claim_due_fires().len(), ACK_BATCH_SIZE);
+    sink.insert_actor_for_tests(family, actor);
+
+    // Act
+    sink.scan_due_schedules();
+
+    // Assert
+    assert_eq!(
+        sink.actor_pending_fire_count_for_tests(family),
+        ACK_BATCH_SIZE
+    );
+    assert_eq!(sink.pending_ack_retry_count(), ACK_BATCH_SIZE);
+    sink.scan_due_schedules();
+    assert_eq!(sink.actor_pending_fire_count_for_tests(family), 0);
+    assert_eq!(sink.pending_ack_retry_count(), 0);
+}
+
+#[test]
 fn should_retain_pending_claim_when_it_is_older_than_the_former_cleanup_ttl() {
     // Arrange
     let family = RouteFamily::new(1);

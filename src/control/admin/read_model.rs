@@ -62,6 +62,7 @@ fn snapshot_session_info(session: &RuntimeSessionInfo, connected_at: String) -> 
     let claims = session.claims.as_ref();
     SessionInfo {
         session_id: session.session_id.to_string(),
+        service_name: session.metadata.service_name(),
         route_family: session.route_family.as_u64(),
         subject: claims.map(|claims| claims.sub.clone()).unwrap_or_default(),
         identity_claim: claims

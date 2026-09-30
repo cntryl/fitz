@@ -35,8 +35,11 @@ pub const PROTOCOL_VERSION: u16 = 1;
 /// Broker accepts `CORRELATE` records and echoes `CORRELATED` on responses.
 pub const CAP_CORRELATION: u32 = 1 << 0;
 
+/// Broker accepts client-reported service names in `SESSION_METADATA`.
+pub const CAP_SESSION_METADATA: u32 = 1 << 1;
+
 /// Every capability this broker implements.
-pub const SUPPORTED_CAPABILITIES: u32 = CAP_CORRELATION;
+pub const SUPPORTED_CAPABILITIES: u32 = CAP_CORRELATION | CAP_SESSION_METADATA;
 
 /// Why a correlation record could not be accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

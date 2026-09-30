@@ -61,6 +61,8 @@ pub struct ScheduleActor {
     pub(super) cron_cache_order: VecDeque<String>,
     /// Canonical mutable LIST backing store.
     pub(super) list_entries: Vec<Arc<ScheduleListEntry>>,
+    /// Route-ordered index used to serve bounded v2 pages without sorting all definitions.
+    pub(super) list_entries_by_route: BTreeMap<String, Arc<ScheduleListEntry>>,
     /// Cached full LIST snapshot reused by the common `offset=0, limit=0` path.
     pub(super) list_cache: Option<Arc<Vec<Arc<ScheduleListEntry>>>>,
     /// Write options for persistence.

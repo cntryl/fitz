@@ -92,6 +92,14 @@ impl Ingress for RuntimeIngress {
                 .announce_server_hello(session_id, route_family);
         }
 
+        if msg_type == crate::protocol::tlv::MessageType::SESSION_METADATA {
+            return self.domain_frame_dispatcher().update_session_metadata(
+                session_id,
+                channel_id,
+                &message_payload,
+            );
+        }
+
         if let Some(frame) = &notify_frame {
             debug!(
                 session_id = session_id,

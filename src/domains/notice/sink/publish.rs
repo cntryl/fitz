@@ -1,6 +1,7 @@
 //! Publish fan-out: matching subscribers to a published route and handing
 //! delivery off to the per-route-family delivery workers.
 
+use super::delivery_worker::{flush_notice_delivery_targets, push_notice_delivery_target};
 use super::{
     notice_delivery_worker, NoticeDeliveryJob, NoticeDeliveryTarget, NoticeDeliveryTargets,
     NoticeFamilyState, NoticeMatchedRoutePatterns,
@@ -9,72 +10,19 @@ use std::sync::Arc;
 use std::time::Instant;
 
 impl NoticeFamilyState {
-    fn enqueue_notice_event(
-        &mut self,
-        targets: NoticeDeliveryTargets,
-        route: &crate::runtime::routing::Route,
-        payload: &bytes::Bytes,
-    ) {
-        let family = *targets[0].subscriber.family();
-        let worker = notice_delivery_worker(
-            &mut self.delivery_workers,
-            &self.router,
-            family,
-            self.metrics.as_ref(),
-        );
-        let Some(worker) = worker else {
-            super::delivery_worker::record_delivery_drop(self.metrics.as_ref());
-            return;
-        };
-        let job = NoticeDeliveryJob::new(targets, route.clone(), payload.clone());
-        if worker.try_send(job).is_err() {
-            super::delivery_worker::record_delivery_drop(self.metrics.as_ref());
-        }
-    }
-
     fn record_route_publishes(
         &mut self,
         route_family: crate::runtime::routing::RouteFamily,
-        routes: &[Arc<str>],
+        routes: impl IntoIterator<Item = Arc<str>>,
     ) {
-        if routes.is_empty() {
-            return;
-        }
-
         let now = Instant::now();
         let route_stats = &mut self.route_stats;
         for route in routes {
             route_stats
-                .entry((route_family, Arc::clone(route)))
+                .entry((route_family, route))
                 .or_insert_with(super::NoticeRouteStats::new)
                 .record_publish(now);
         }
-    }
-
-    fn collect_matching_targets_for_route(
-        &mut self,
-        family_id: crate::runtime::routing::RouteFamily,
-        route: &str,
-    ) -> NoticeDeliveryTargets {
-        let families = &self.families;
-        let Some(state) = families.get(&family_id) else {
-            return NoticeDeliveryTargets::new();
-        };
-
-        let mut targets = NoticeDeliveryTargets::with_capacity(state.matching_capacity_hint(route));
-        let mut matching_routes = NoticeMatchedRoutePatterns::new();
-        state.for_each_matching_route(family_id, route, |subscription| {
-            targets.push(NoticeDeliveryTarget::from(subscription));
-            let pattern_route = subscription.pattern_route.as_ref();
-            if !matching_routes
-                .iter()
-                .any(|route| route.as_ref() == pattern_route)
-            {
-                matching_routes.push(Arc::clone(&subscription.pattern_route));
-            }
-        });
-        self.record_route_publishes(family_id, &matching_routes);
-        targets
     }
 
     pub(super) fn publish_route_payload(
@@ -83,13 +31,54 @@ impl NoticeFamilyState {
         route: &crate::runtime::routing::Route,
         payload: &bytes::Bytes,
     ) {
-        let targets = self.collect_matching_targets_for_route(family_id, route.as_str());
-        if targets.is_empty() {
+        let Some(state) = self.families.get(&family_id) else {
             return;
-        }
+        };
 
-        self.enqueue_notice_event(targets, route, payload);
-        self.mark_admin_snapshot_dirty();
+        let mut targets = NoticeDeliveryTargets::new();
+        let mut matching_routes =
+            NoticeMatchedRoutePatterns::with_capacity_and_hasher(8, rustc_hash::FxBuildHasher);
+        let mut delivery_worker: Option<crossbeam_channel::Sender<NoticeDeliveryJob>> = None;
+        let mut delivery_worker_initialized = false;
+        let mut enqueue_failed = false;
+        let (delivery_workers, router, metrics) = (
+            &mut self.delivery_workers,
+            &self.router,
+            self.metrics.as_ref(),
+        );
+        state.for_each_matching_route(family_id, route.as_str(), |subscription| {
+            if !delivery_worker_initialized {
+                delivery_worker_initialized = true;
+                delivery_worker =
+                    notice_delivery_worker(delivery_workers, router, family_id, metrics);
+            }
+            if let Some(batch) =
+                push_notice_delivery_target(&mut targets, NoticeDeliveryTarget::from(subscription))
+            {
+                if let Some(worker) = delivery_worker.as_ref() {
+                    let job = NoticeDeliveryJob::new(batch, route.clone(), payload.clone());
+                    enqueue_failed |= worker.try_send(job).is_err();
+                } else {
+                    enqueue_failed = true;
+                }
+            }
+            matching_routes.insert(Arc::clone(&subscription.pattern_route));
+        });
+        if let Some(batch) = flush_notice_delivery_targets(&mut targets) {
+            if let Some(worker) = delivery_worker.as_ref() {
+                let job = NoticeDeliveryJob::new(batch, route.clone(), payload.clone());
+                enqueue_failed |= worker.try_send(job).is_err();
+            } else {
+                enqueue_failed = true;
+            }
+        }
+        if enqueue_failed {
+            super::delivery_worker::record_delivery_drop(metrics);
+        }
+        self.record_route_publishes(family_id, matching_routes);
+        if delivery_worker_initialized {
+            self.mark_admin_snapshot_dirty();
+        }
     }
 
     fn publish_event(&mut self, event: &crate::runtime::DomainPublishEvent) {

@@ -40,6 +40,7 @@ contract:
       - "client parses multiple TLV records from one transport frame"
       - "client handles SERVER_HELLO and never blocks connect on it"
       - "client treats a missing SERVER_HELLO as legacy, not as an error"
+      - "client sends configured SESSION_METADATA only when CAP_SESSION_METADATA is advertised"
       - "client labels requests with a unique non-zero u64 when correlation is available"
       - "client matches responses by correlation identifier, not arrival order"
       - "client holds one in-flight request per message type when correlation is unavailable"

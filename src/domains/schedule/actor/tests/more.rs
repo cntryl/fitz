@@ -514,6 +514,108 @@ fn should_page_a_byte_bounded_list_to_completion_via_offset() {
 }
 
 #[test]
+fn should_continue_after_deleted_schedule_list_cursor_anchor() {
+    // Arrange
+    let mut actor = make_actor();
+    let routes = [
+        "schedule://acme/jobs/a/run",
+        "schedule://acme/jobs/b/run",
+        "schedule://acme/jobs/c/run",
+    ];
+    for route in routes {
+        actor
+            .create_schedule(route.to_string(), "* * * * *".to_string(), Bytes::new())
+            .expect("create schedule");
+    }
+    let (first_page, has_more, cursor) = actor.list_entries_v2(None, 2).expect("first page");
+    assert!(has_more);
+    assert_eq!(first_page[1].route, routes[1]);
+    let cursor = cursor.expect("continuation cursor");
+    actor.delete_schedule(routes[1]).expect("cancel cursor route");
+
+    // Act
+    let (next_page, has_more, _) = actor
+        .list_entries_v2(Some(&cursor), 2)
+        .expect("continue after deleted cursor route");
+
+    // Assert
+    assert_eq!(next_page.len(), 1);
+    assert_eq!(next_page[0].route, routes[2]);
+    assert!(!has_more);
+}
+
+#[test]
+fn should_reject_invalid_schedule_list_cursors() {
+    // Arrange
+    let mut actor = make_actor();
+    actor
+        .create_schedule(
+            "schedule://acme/jobs/a/run".to_string(),
+            "* * * * *".to_string(),
+            Bytes::new(),
+        )
+        .expect("create schedule");
+    let cursors = [
+        "schedule-list-v1:2:schedule://acme/jobs/a/run",
+        "schedule-list-v1:invalid",
+        "schedule-list-v1:1:",
+    ];
+
+    // Act
+    let results = cursors
+        .iter()
+        .map(|cursor| actor.list_entries_v2(Some(cursor), 10))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        results.iter().all(Result::is_err),
+        "foreign-family and malformed cursors must be rejected"
+    );
+}
+
+#[test]
+fn should_keep_route_order_index_in_sync_with_schedule_mutations() {
+    // Arrange
+    let mut actor = make_actor();
+    let routes = [
+        "schedule://acme/jobs/c/run",
+        "schedule://acme/jobs/a/run",
+        "schedule://acme/jobs/b/run",
+    ];
+    for route in routes {
+        actor
+            .create_schedule(route.to_string(), "* * * * *".to_string(), Bytes::new())
+            .expect("create schedule");
+    }
+
+    // Act
+    actor
+        .create_schedule(
+            routes[1].to_string(),
+            "0 2 * * *".to_string(),
+            Bytes::from_static(b"updated"),
+        )
+        .expect("update schedule");
+    actor.delete_schedule(routes[0]).expect("delete schedule");
+
+    // Assert
+    let indexed_routes: Vec<_> = actor
+        .list_entries_by_route
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(indexed_routes, [routes[1], routes[2]]);
+    let updated = actor
+        .list_entries_by_route
+        .get(routes[1])
+        .expect("updated route is indexed");
+    assert_eq!(updated.cron, "0 2 * * *");
+    assert_eq!(updated.payload, Bytes::from_static(b"updated"));
+    assert_eq!(actor.list_entries_by_route.len(), actor.schedules.len());
+}
+
+#[test]
 fn should_bound_list_response_to_one_wire_frame() {
     // Arrange
     // A schedule LIST response is encoded into a single TLV value, whose

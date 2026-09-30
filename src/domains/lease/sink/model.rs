@@ -290,6 +290,10 @@ pub(super) struct LeaseSubscription {
 }
 
 impl RoutedSubscription for LeaseSubscription {
+    fn metric_domain() -> &'static str {
+        "lease"
+    }
+
     fn pattern(&self) -> &crate::runtime::matcher::Pattern {
         &self.route
     }

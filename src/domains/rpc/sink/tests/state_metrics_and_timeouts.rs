@@ -179,6 +179,32 @@ pub(super) fn test_rpc_worker(family: RouteFamily, route: &Route, session_id: u6
     )
 }
 
+#[test]
+fn should_track_rpc_registration_counts_by_session_through_unregister_and_disconnect() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 77;
+    let first_route = Route::new("rpc://bench/system/one/run");
+    let second_route = Route::new("rpc://bench/system/two/run");
+    let first_addr = RouteAddress::new(family, first_route.clone());
+    let mut state = RpcState::new();
+    assert_eq!(state.registration_count_for_session(session_id), 0);
+
+    // Act
+    state.register_registration(test_rpc_worker(family, &first_route, session_id));
+    state.register_registration(test_rpc_worker(family, &first_route, session_id));
+    state.register_registration(test_rpc_worker(family, &second_route, session_id));
+    let after_add = state.registration_count_for_session(session_id);
+    state.unregister_registration(&first_addr, session_id);
+    let after_unsubscribe = state.registration_count_for_session(session_id);
+    state.cleanup_session(session_id);
+
+    // Assert
+    assert_eq!(after_add, 2, "duplicate registration is idempotent");
+    assert_eq!(after_unsubscribe, 1);
+    assert_eq!(state.registration_count_for_session(session_id), 0);
+}
+
 pub(super) fn test_rpc_timestamp() -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339("2026-03-14T12:00:00Z")
         .expect("test timestamp")

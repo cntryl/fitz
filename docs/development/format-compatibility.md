@@ -45,6 +45,12 @@ Unlike the generation-2 error envelope, this is not a clean break — both
 generations coexist indefinitely by design, because the uncorrelated path is
 also the legacy-broker path and clients keep it permanently.
 
+`SESSION_METADATA` (5) is a capability-gated client-to-server control message.
+Clients send it only after `SERVER_HELLO` advertises `CAP_SESSION_METADATA`, so
+new clients do not send an unknown message to older brokers. Its addition does
+not change CONNECT or any existing payload, and the optional active-session
+`service_name` field is omitted when no name is reported.
+
 ## Compatibility Rules
 
 1. Backward-incompatible wire changes require explicit release notes and migration guidance.

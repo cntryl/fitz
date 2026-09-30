@@ -55,6 +55,10 @@ pub(super) struct ScheduleSubscription {
 }
 
 impl crate::domains::subscription_state::RoutedSubscription for ScheduleSubscription {
+    fn metric_domain() -> &'static str {
+        "schedule"
+    }
+
     fn pattern(&self) -> &crate::runtime::matcher::Pattern {
         &self.pattern
     }
