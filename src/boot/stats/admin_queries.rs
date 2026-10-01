@@ -183,7 +183,7 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Returns an error when the selector is not an exact KV resource or the
+    /// Returns an error when the selector is not a KV selector or the
     /// committed row scan fails.
     pub fn capture_kv_snapshot(
         &self,
