@@ -40,8 +40,9 @@ Use this checklist before approving a Fitz release.
    moving `ghcr.io/cntryl/fitz:main` and `:latest` multi-architecture aliases.
    A green run must report both `linux/amd64` and `linux/arm64` in its manifest.
 2. Dispatch the `Publish` workflow from `main` only for a stable release. Its
-   called `Containers` workflow uses `version.yml` to calculate the release
-   SemVer. Repeating the same publish for the same source SHA is idempotent:
+   called `Containers` workflow reads the package version from `Cargo.toml` via
+   `version.yml`; bump that manifest version before dispatching a new release.
+   Repeating the same publish for the same source SHA is idempotent:
    the existing image and source tag are verified and reused. A conflicting
    existing `v<semver>` tag still fails safely.
 3. Confirm the called `Containers` workflow published the multi-architecture
@@ -53,8 +54,9 @@ Use this checklist before approving a Fitz release.
 5. For rollback, deploy the previous immutable SemVer image. Do not move or
    replace an existing image or repository version tag.
 
-Use the standalone `Containers` workflow for prerelease branch images. It
-publishes their GitVersion SemVer without creating repository release tags.
+Use the standalone `Containers` workflow to publish the moving `main` or
+`develop` branch image aliases. It does not publish a versioned image or create
+a repository release tag.
 
 ## Midge 0.3 cloud storage release gate
 

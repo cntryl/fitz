@@ -5,7 +5,7 @@ on:
   workflow_call:
     outputs:
       semver:
-        description: GitVersion semver output
+        description: Fitz package version from Cargo.toml
         value: ${{ jobs.version.outputs.semver }}
 
 permissions:
@@ -17,21 +17,15 @@ jobs:
     timeout-minutes: 10
 
     outputs:
-      semver: ${{ steps.gitversion.outputs.semVer }}
+      semver: ${{ steps.package-version.outputs.semver }}
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
-      - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4
-        with:
-          versionSpec: "6.x"
-
-      - name: Determine version
-        id: gitversion
-        uses: gittools/actions/gitversion/execute@v4
-
-      - name: Output version
-        run: echo "semver=${{ steps.gitversion.outputs.semVer }}"
+      - name: Read package version from Cargo.toml
+        id: package-version
+        run: |
+          semver="$(cargo metadata --no-deps --format-version 1 \
+            | jq -er '[.packages[] | select(.name == "fitz")] | if length == 1 then .[0].version else error("expected exactly one fitz package") end')"
+          echo "semver=${semver}" >> "$GITHUB_OUTPUT"
+          echo "Using Cargo package version ${semver}"
