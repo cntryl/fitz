@@ -422,6 +422,14 @@ pub(super) enum StreamDomainCommand {
     ),
     ReadLiveCounts(crossbeam_channel::Sender<StreamLiveCounts>),
     ReadResourceRecords(StreamAdminReadCommand),
+    CaptureStreamSnapshot(
+        crate::snapshot::SnapshotSelector,
+        crossbeam_channel::Sender<Result<crate::snapshot::SnapshotArtifact, String>>,
+    ),
+    RestoreStreamSnapshot(
+        crate::snapshot::SnapshotArtifact,
+        crossbeam_channel::Sender<Result<Vec<String>, String>>,
+    ),
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     RunMaintenance {
         family: u64,

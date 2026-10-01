@@ -15,6 +15,7 @@ pub mod prelude;
 pub mod protocol;
 pub mod runtime;
 pub mod session;
+pub mod snapshot;
 pub(crate) mod storage;
 pub mod utils;
 
