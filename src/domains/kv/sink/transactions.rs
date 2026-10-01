@@ -23,7 +23,7 @@ impl KvFamilyRuntime<'_> {
             self.route_kv_response(envelope, meta, &response, request_started)?;
             return Ok(());
         }
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = Self::error_response("session already closed");
             self.route_kv_response(envelope, meta, &response, request_started)?;
             return Ok(());

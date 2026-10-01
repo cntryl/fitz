@@ -41,7 +41,7 @@ impl ScheduleDomainRuntime<'_> {
         // jumped ahead of it. Reject rather than silently recreating a
         // subscription for a session that is already gone and will never be
         // cleaned up again.
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = crate::domains::schedule::ScheduleResponse::Error(
                 crate::domains::schedule::ScheduleFailure::new(
                     crate::domains::schedule::ScheduleFailureCategory::InvalidTarget,

@@ -119,6 +119,15 @@ This is a hard Fitz rule:
 - Session state exists only for the lifetime of the active connection.
 - Disconnect immediately destroys session-owned state.
 - Reconnect always creates a new session identity.
+- Client work admitted from a canonical session inbox through routing or a domain
+  mailbox retains a shared disconnect flag until its last envelope
+  reference drains, including deferred replies. Routing disconnect cleanup marks
+  that flag before attempting control-lane delivery, so an admitted request stays
+  invalid even if later cleanup traffic evicts its ID from a domain's bounded
+  recent-cleanup history. The flag registry retains only weak references and
+  removes an entry when the last work reference drops; it stores no permanent
+  closed-session history. Family keys remain separate, and older live sessions
+  are not rejected merely because newer sessions disconnected.
 - Recovery is client-driven, explicit, and deterministic.
 
 ## Layer Responsibilities

@@ -50,7 +50,7 @@ impl QueueFamilyState {
         // lane) and jumped ahead of it. Reject rather than silently
         // recreating a subscription or pending reserve for a session that is
         // already gone and will never be cleaned up again.
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = crate::domains::queue::QueueResponse::BadRequest {
                 reason: "session already closed".to_string(),
             };
