@@ -128,6 +128,9 @@ This is a hard Fitz rule:
   removes an entry when the last work reference drops; it stores no permanent
   closed-session history. Family keys remain separate, and older live sessions
   are not rejected merely because newer sessions disconnected.
+- Independent disconnect cleanup dispatches retain their concurrency permits in
+  the synchronous jobs, so canceling an async close waiter does not release
+  capacity while its blocking cleanup is still running.
 - Recovery is client-driven, explicit, and deterministic.
 
 ## Layer Responsibilities
