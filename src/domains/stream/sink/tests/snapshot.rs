@@ -246,7 +246,7 @@ fn should_capture_an_empty_exact_stream_resource() {
         "stream://acme/jobs/orders"
     );
     assert_eq!(artifact.stream_resources()[0].captured_watermark, 0);
-    assert!(artifact.stream_resources()[0].records.is_empty());
+    assert_eq!(artifact.stream_resources()[0].records, []);
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn should_capture_empty_stream_realm_pattern_without_resources() {
         .expect("capture empty Stream realm selector");
 
     // Assert
-    assert!(artifact.stream_resources().is_empty());
+    assert_eq!(artifact.stream_resources(), []);
     assert_eq!(artifact.record_count(), 0);
 }
 

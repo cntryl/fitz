@@ -175,7 +175,7 @@ fn should_capture_empty_realm_pattern_without_inventing_resources() {
         .expect("capture empty realm selector");
 
     // Assert
-    assert!(artifact.kv_resources().is_empty());
+    assert_eq!(artifact.kv_resources(), []);
     assert_eq!(artifact.record_count(), 0);
 }
 
