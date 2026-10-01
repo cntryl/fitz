@@ -272,6 +272,47 @@ fn should_capture_empty_stream_realm_pattern_without_resources() {
 }
 
 #[test]
+fn should_wait_for_snapshot_capture_when_family_actor_is_delayed() {
+    // Arrange
+    let context = setup_test_context();
+    let family = context.family;
+    let selector = crate::snapshot::SnapshotSelector::new(
+        crate::snapshot::SnapshotDomain::Stream,
+        family,
+        "stream://acme/jobs/orders",
+    )
+    .expect("valid Stream selector");
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    context
+        .sink
+        .block_family_actor_for_tests(family, entered_tx, release_rx);
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("block the Stream family actor");
+    let sink = context.sink.clone();
+    let (result_tx, result_rx) = crossbeam_channel::bounded(1);
+    std::thread::spawn(move || {
+        let _ = result_tx.send(sink.capture_stream_snapshot(&selector));
+    });
+
+    // Act
+    let early_result = result_rx.recv_timeout(Duration::from_millis(1_200));
+    release_tx
+        .send(())
+        .expect("release the Stream family actor");
+    let result = match early_result {
+        Err(crossbeam_channel::RecvTimeoutError::Timeout) => result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("receive snapshot after the actor is released"),
+        other => panic!("snapshot returned while its actor was blocked: {other:?}"),
+    };
+
+    // Assert
+    assert!(result.is_ok());
+}
+
+#[test]
 fn should_capture_a_consistent_prefix_while_stream_writes_continue() {
     // Arrange
     let context = setup_test_context();

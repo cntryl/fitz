@@ -75,7 +75,7 @@ impl KvDomain {
         )
         .map_err(|error| error.to_string())?;
         reply_rx
-            .recv_timeout(std::time::Duration::from_secs(30))
+            .recv()
             .map_err(|error| format!("KV snapshot restore did not complete: {error}"))?
     }
 

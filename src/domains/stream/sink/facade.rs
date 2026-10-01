@@ -59,7 +59,8 @@ impl StreamDomain {
     ///
     /// # Errors
     /// Returns an error when the selector is invalid, the family is not
-    /// provisioned, or committed history cannot be read.
+    /// provisioned, or committed history cannot be read. The synchronous call
+    /// waits for the family actor to finish the complete capture.
     pub fn capture_stream_snapshot(
         &self,
         selector: &crate::snapshot::SnapshotSelector,
@@ -67,16 +68,19 @@ impl StreamDomain {
         if selector.domain() != crate::snapshot::SnapshotDomain::Stream {
             return Err("Stream snapshot capture requires a Stream selector".to_string());
         }
-        self.dispatch_family_command(Some(selector.route_family()), "snapshot capture", |reply| {
-            StreamDomainCommand::CaptureStreamSnapshot(selector.clone(), reply)
-        })?
+        self.dispatch_family_snapshot_command(
+            Some(selector.route_family()),
+            "snapshot capture",
+            |reply| StreamDomainCommand::CaptureStreamSnapshot(selector.clone(), reply),
+        )?
     }
 
     /// Restore a validated Stream artifact into an empty matching destination.
     ///
     /// # Errors
     /// Returns an error when validation fails, matching history already exists,
-    /// or replay cannot be completed.
+    /// or replay cannot be completed. The synchronous call waits for the family
+    /// actor to finish replay and report its progress.
     pub fn restore_stream_snapshot(&self, bytes: &[u8]) -> Result<Vec<String>, String> {
         let artifact = crate::snapshot::SnapshotArtifact::from_bytes(bytes)?;
         if artifact.domain() != crate::snapshot::SnapshotDomain::Stream {
@@ -84,7 +88,7 @@ impl StreamDomain {
         }
         let family = RouteFamily::try_from(artifact.route_family())
             .map_err(|_| "snapshot route family is invalid".to_string())?;
-        self.dispatch_family_command(Some(family), "snapshot restore", |reply| {
+        self.dispatch_family_snapshot_command(Some(family), "snapshot restore", |reply| {
             StreamDomainCommand::RestoreStreamSnapshot(artifact, reply)
         })?
     }
@@ -744,6 +748,20 @@ impl StreamDomain {
             .map_err(|error| format!("enqueue Stream {operation}: {error}"))?;
         reply_rx
             .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| format!("receive Stream {operation}: {error}"))
+    }
+
+    fn dispatch_family_snapshot_command<T>(
+        &self,
+        family: Option<RouteFamily>,
+        operation: &'static str,
+        build_command: impl FnOnce(crossbeam_channel::Sender<T>) -> StreamDomainCommand,
+    ) -> Result<T, String> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.dispatch_family_control(family, build_command(reply_tx))
+            .map_err(|error| format!("enqueue Stream {operation}: {error}"))?;
+        reply_rx
+            .recv()
             .map_err(|error| format!("receive Stream {operation}: {error}"))
     }
 
