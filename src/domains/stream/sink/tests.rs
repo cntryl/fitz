@@ -435,4 +435,5 @@ mod global_reads;
 mod live_gauges;
 mod realm_reads;
 mod sink_dispatch;
+mod snapshot;
 mod watermark_wiring;

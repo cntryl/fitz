@@ -78,6 +78,26 @@ impl KvActor {
             String::from_utf8(resource.to_vec()).ok()?,
         ))
     }
+
+    pub(crate) fn parse_user_scope_key(key: &[u8]) -> Option<(String, String, String)> {
+        let (realm, suffix) = storage_key::split_domain_key(key, DomainKeyspace::Kv)?;
+        if suffix.first().copied()? != KV_KEY_SCOPE_MARKER {
+            return None;
+        }
+
+        let mut parts = suffix[1..].split(|byte| *byte == LexKey::SEPARATOR);
+        let area = parts.next()?;
+        let resource = parts.next()?;
+        if area.is_empty() || resource.is_empty() {
+            return None;
+        }
+
+        Some((
+            realm.to_string(),
+            String::from_utf8(area.to_vec()).ok()?,
+            String::from_utf8(resource.to_vec()).ok()?,
+        ))
+    }
 }
 
 #[cfg(test)]

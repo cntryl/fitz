@@ -17,6 +17,7 @@ mod inventory_delta;
 mod key_layout;
 mod mutations;
 mod scan;
+mod snapshot;
 mod transaction_access;
 mod transactions;
 

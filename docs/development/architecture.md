@@ -694,6 +694,11 @@ fn match_parts(route: &[&str], pattern: &[&str]) -> bool {
     }
 }
 ```
+### Domain snapshots
+
+Committed KV and readable Stream snapshot behavior, limitations, and restore
+semantics are specified in [domain-snapshots.md](domain-snapshots.md).
+
 ## Authentication & TLS
 ### JWT Validation (Layer 2: Session)
 Brokers MUST validate JWT in CONNECT handshake:
