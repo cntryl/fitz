@@ -9,6 +9,7 @@ mod observability_state;
 mod projection;
 mod reads;
 mod session_owners;
+mod snapshot;
 
 pub(crate) use model::{
     AdminStreamReadRequest, StreamDomain, StreamSinkInitError, StreamStorageWriteOptions,

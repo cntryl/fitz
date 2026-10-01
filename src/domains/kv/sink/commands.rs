@@ -8,6 +8,10 @@ use std::time::Duration;
 pub(super) enum KvDomainCommand {
     Deliver(crate::runtime::Envelope),
     CleanupSession(u64, crossbeam_channel::Sender<()>),
+    RestoreSnapshot(
+        crate::snapshot::SnapshotArtifact,
+        crossbeam_channel::Sender<Result<Vec<String>, String>>,
+    ),
     #[cfg(test)]
     SyncAdminSnapshot(crossbeam_channel::Sender<()>),
     #[cfg(test)]

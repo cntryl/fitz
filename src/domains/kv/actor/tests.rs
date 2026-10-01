@@ -11,6 +11,7 @@ mod inventory;
 mod lifecycle;
 mod range_and_pagination;
 mod scope;
+mod snapshot;
 mod state_model;
 mod wire_budget;
 mod write_policy;
