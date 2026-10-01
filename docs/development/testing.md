@@ -27,9 +27,7 @@ PROPTEST_CASES=256 cargo test --locked --lib state_model
 ```
 
 Proptest prints a reproducible seed and minimizes a failing operation sequence.
-Backend CI runs the filtered models twice and also runs the complete library
-suite with 16 test threads to expose seed-dependent and parallel-state leakage.
-The complete default correctness pass remains:
+The complete CI correctness pass is:
 
 ```bash
 cargo test --locked --workspace

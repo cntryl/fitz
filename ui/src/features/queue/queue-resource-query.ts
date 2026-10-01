@@ -85,19 +85,19 @@ interface QueueResourceComparisonQueryInput extends QueueResourceQueryInput {
 
 const queueResourceQuery = defineQuery<QueueResourceQueryInput, QueueResourceDetail>({
   key: ({ family, resourceRef }) => queueResourceQueryKey(resourceRef, family),
-  fetch: ({ family, resourceRef, signal }) =>
+  fetch: ({ family, resourceRef }, { signal }) =>
     queueResourceService.getResource(resourceRef, { routeFamily: family, signal }),
 });
 
 const queueResourceInflightQuery = defineQuery<QueueResourceQueryInput, QueueInflightMessage[]>({
   key: ({ family, resourceRef }) => queueResourceInflightQueryKey(resourceRef, family),
-  fetch: ({ family, resourceRef, signal }) =>
+  fetch: ({ family, resourceRef }, { signal }) =>
     queueResourceService.getInflight(resourceRef, { routeFamily: family, signal }),
 });
 
 const queueResourceTimelineQuery = defineQuery<QueueResourceQueryInput, QueueResourceTimeline>({
   key: ({ family, resourceRef }) => queueResourceTimelineQueryKey(resourceRef, family),
-  fetch: ({ family, resourceRef, signal }) =>
+  fetch: ({ family, resourceRef }, { signal }) =>
     queueResourceService.getTimeline(resourceRef, { routeFamily: family, signal }),
 });
 
@@ -107,7 +107,7 @@ const queueResourceComparisonQuery = defineQuery<
 >({
   key: ({ againstResourceRef, family, resourceRef }) =>
     queueResourceComparisonQueryKey(resourceRef, againstResourceRef, family),
-  fetch: ({ againstResourceRef, family, resourceRef, signal }) =>
+  fetch: ({ againstResourceRef, family, resourceRef }, { signal }) =>
     queueResourceService.compareResource(
       resourceRef,
       {

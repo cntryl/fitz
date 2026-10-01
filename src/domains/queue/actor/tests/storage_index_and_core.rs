@@ -107,7 +107,7 @@ pub(super) fn send_and_dead_letter_single_message(
 }
 
 pub(super) fn read_index_meta(
-    store: &Arc<cntryl_midge::MidgeEngine>,
+    store: &Arc<cntryl_midge::Engine>,
     queue_key: &QueueKey,
 ) -> Option<Bytes> {
     let txn = store
@@ -121,7 +121,7 @@ pub(super) fn read_index_meta(
 }
 
 pub(super) fn read_ready_index_ranges(
-    store: &Arc<cntryl_midge::MidgeEngine>,
+    store: &Arc<cntryl_midge::Engine>,
     queue_key: &QueueKey,
 ) -> Vec<(usize, ReadyRange)> {
     let txn = store
@@ -148,7 +148,7 @@ pub(super) fn read_ready_index_ranges(
 }
 
 pub(super) fn read_delayed_index_entries(
-    store: &Arc<cntryl_midge::MidgeEngine>,
+    store: &Arc<cntryl_midge::Engine>,
     queue_key: &QueueKey,
 ) -> Vec<(MessageId, u64)> {
     let txn = store
@@ -174,7 +174,7 @@ pub(super) fn read_delayed_index_entries(
 }
 
 pub(super) fn read_dlq_index_entries(
-    store: &Arc<cntryl_midge::MidgeEngine>,
+    store: &Arc<cntryl_midge::Engine>,
     queue_key: &QueueKey,
 ) -> Vec<(MessageId, u64)> {
     let txn = store
@@ -200,7 +200,7 @@ pub(super) fn read_dlq_index_entries(
 }
 
 pub(super) fn clear_queue_index(
-    store: &Arc<cntryl_midge::MidgeEngine>,
+    store: &Arc<cntryl_midge::Engine>,
     queue_key: &QueueKey,
     meta_override: Option<Vec<u8>>,
 ) {

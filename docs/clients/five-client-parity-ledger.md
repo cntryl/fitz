@@ -15,6 +15,7 @@ not establish the capabilities below.
 | Observability | pass | pass | pass | pass | pass | Shared lifecycle names and request/error/state/subscription telemetry hooks |
 | Error ergonomics | pass | pass | pass | pass | pass | Language-native typed errors or sentinels with wrapping support |
 | Documentation truth | pass | pass | pass | pass | pass | Public examples compile against default APIs and migration notes describe breaks |
+| Exclusive scan resume | todo | todo | todo | todo | todo | Encode the trailing `start_exclusive` byte on SCAN and paginate byte-bounded scans to completion in both directions; document the forward-only fallback |
 
 Status is accepted only with a green native repository gate and exact-head CI.
 Package publication, tags, and version changes are outside this ledger.

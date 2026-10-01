@@ -9,26 +9,6 @@ import { createActiveSessionsQuery } from "@/features/session/session-query";
 import type { ActiveSession } from "@/features/session/session-models";
 import { formatNumber } from "@/shared/format";
 
-type SessionsTone = "info" | "success" | "warning" | "danger";
-
-interface SessionsPostureSummary {
-  detail: string;
-  label: string;
-  tone: SessionsTone;
-}
-
-function countLabel(value: number, singular: string, plural = `${singular}s`) {
-  return `${formatNumber(value)} ${value === 1 ? singular : plural}`;
-}
-
-function countResolvedRouteFamilies(sessions: ActiveSession[]) {
-  return new Set(
-    sessions
-      .map((session) => session.routeFamily)
-      .filter((routeFamily): routeFamily is number => routeFamily != null),
-  ).size;
-}
-
 function countTransportKinds(sessions: ActiveSession[]) {
   return new Set(sessions.map((session) => session.transport ?? "Unknown")).size;
 }
@@ -41,72 +21,25 @@ function longestIdleSeconds(sessions: ActiveSession[]) {
   return reported.length > 0 ? Math.max(...reported) : null;
 }
 
-function summarizeSessions(sessions: ActiveSession[]): SessionsPostureSummary {
-  if (sessions.length === 0) {
-    return {
-      detail:
-        "No active sessions are visible. The broker is not holding any live connections right now.",
-      label: "Idle",
-      tone: "success",
-    };
-  }
-
-  const longestIdle = longestIdleSeconds(sessions);
-  const routeFamilies = countResolvedRouteFamilies(sessions);
-  const transportKinds = countTransportKinds(sessions);
-  const idleSummary =
-    longestIdle === null
-      ? "Idle duration is not reported."
-      : `Longest reported idle: ${formatNumber(longestIdle)}s.`;
-  const summary = `${countLabel(sessions.length, "session")} across ${countLabel(routeFamilies, "route family", "route families")} and ${countLabel(transportKinds, "transport")}. ${idleSummary}`;
-
-  return {
-    detail: summary,
-    label: "Active",
-    tone: "info",
-  };
-}
-
 export default function SessionsPage() {
   const sessionsQuery = createActiveSessionsQuery();
   const data = sessionsQuery.data;
   const sessions = data?.sessions ?? [];
-  const routeFamilies = countResolvedRouteFamilies(sessions);
   const transportKinds = countTransportKinds(sessions);
   const longestIdle = longestIdleSeconds(sessions);
-  const posture = data ? summarizeSessions(sessions) : null;
   const isInitialLoad = sessionsQuery.loading && !data;
   const isInitialError = sessionsQuery.error && !data;
 
-  const headerStatus: {
-    detail: string;
-    label: string;
-    tone: "info" | "success" | "warning" | "danger";
-  } = isInitialLoad
-    ? {
-        detail: "Loading active sessions from broker telemetry.",
-        label: "Loading",
-        tone: "info",
-      }
+  // Session counts are shown below; the badge only reports abnormal data state.
+  const headerStatus = isInitialLoad
+    ? { label: "Loading", tone: "info" as const }
     : isInitialError
-      ? {
-          detail: "Could not load active sessions from this route.",
-          label: "Unavailable",
-          tone: "danger",
-        }
-      : {
-          detail: posture?.detail ?? "Live sessions reflect currently connected clients only.",
-          label: sessionsQuery.refreshing
-            ? "Refreshing"
-            : sessionsQuery.stale
-              ? "Stale"
-              : (posture?.label ?? "Healthy"),
-          tone: sessionsQuery.refreshing
-            ? "info"
-            : sessionsQuery.stale
-              ? "warning"
-              : (posture?.tone ?? "success"),
-        };
+      ? { label: "Unavailable", tone: "danger" as const }
+      : sessionsQuery.refreshing
+        ? { label: "Refreshing", tone: "info" as const }
+        : sessionsQuery.stale
+          ? { label: "Stale", tone: "warning" as const }
+          : undefined;
 
   return (
     <DomainPageFrame>
@@ -121,11 +54,7 @@ export default function SessionsPage() {
             label: "Refresh sessions",
             onPress: () => sessionsQuery.refresh(),
           }}
-          status={{
-            detail: headerStatus.detail,
-            label: headerStatus.label,
-            tone: headerStatus.tone,
-          }}
+          status={headerStatus}
         />
 
         <Show when={!data && sessionsQuery.loading}>
@@ -147,10 +76,9 @@ export default function SessionsPage() {
           {(data) => (
             <Block direction="column" gap="sm">
               <DomainSummaryStrip
-                title="Session summary"
+                ariaLabel="Session summary"
                 items={[
                   { label: "Sessions", value: data.sessions.length },
-                  { label: "Route families", value: routeFamilies },
                   { label: "Transports", value: transportKinds },
                   {
                     label: "Longest idle",

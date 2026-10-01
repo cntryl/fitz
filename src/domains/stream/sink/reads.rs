@@ -21,13 +21,19 @@ enum ReadScope {
 
 impl StreamFamilyState {
     pub(in crate::domains::stream::sink) fn run_maintenance_slice(&mut self, family: u64) {
-        if let Err(error) = self.stream_store.run_maintenance(family) {
-            tracing::warn!(
-                domain = "stream",
-                family,
-                error,
-                "Stream maintenance slice failed; queued work will be retried"
-            );
+        match self.stream_store.run_maintenance(family) {
+            Ok(result) if result.buckets_compacted > 0 => {
+                self.mark_committed_admin_snapshot_dirty();
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    domain = "stream",
+                    family,
+                    error,
+                    "Stream maintenance slice failed; queued work will be retried"
+                );
+            }
         }
     }
 

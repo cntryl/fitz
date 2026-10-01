@@ -489,7 +489,10 @@ pub(crate) fn build_family_stats(runtime: &Runtime, family: u64) -> GlobalStats 
                 diagnostics: healthy.clone(),
             },
             stream: StreamStats {
-                streams_active: streams.len(),
+                streams_active: streams
+                    .iter()
+                    .filter(|stream| stream.committed_event_count > 0)
+                    .count(),
                 append_sessions_active: streams.iter().map(|stream| stream.sessions_active).sum(),
                 events_total: 0,
                 requests_total: 0,
@@ -608,7 +611,7 @@ pub(crate) fn build_family_stats(runtime: &Runtime, family: u64) -> GlobalStats 
                 diagnostics: healthy,
             },
         },
-        diagnostics: troubleshooting::healthy_global_diagnostics(),
+        diagnostics: troubleshooting::build_family_troubleshooting(runtime, family),
     }
 }
 
@@ -623,8 +626,10 @@ pub fn handle_global_troubleshooting(runtime: &Runtime) -> Response {
 }
 
 /// Handle troubleshooting guidance scoped to one authorized route family.
-pub fn handle_family_troubleshooting(_runtime: &Runtime, _family: u64) -> Response {
-    super::json_response(troubleshooting::healthy_global_diagnostics())
+pub fn handle_family_troubleshooting(runtime: &Runtime, family: u64) -> Response {
+    super::json_response(troubleshooting::build_family_troubleshooting(
+        runtime, family,
+    ))
 }
 
 /// Handle domain-specific stats endpoints

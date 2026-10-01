@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod rpc_metrics;
+mod schedule_detail;
 
 fn current_epoch_ms() -> u64 {
     u64::try_from(
@@ -410,6 +411,63 @@ fn should_collect_resources_given_area_filter() {
 }
 
 #[test]
+fn should_include_live_subscription_count_in_stream_resource_detail() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime.admin_read_model().replace_streams(vec![StreamInfo {
+        route_family: 1,
+        realm: "prod".to_string(),
+        area: "events".to_string(),
+        resource: "orders".to_string(),
+        committed_event_count: 0,
+        offset: 0,
+        watermark: 0,
+        size_bytes: 0,
+        sessions_active: 0,
+        subscriptions_active: 3,
+    }]);
+    let path = ResourcePath {
+        realm: "prod",
+        area: "events",
+        resource: "orders",
+    };
+
+    // Act
+    let detail = detail_views::stream_detail(&runtime, &path, Some(1));
+
+    // Assert
+    assert_eq!(detail.subscriptions_active, 3);
+    assert_eq!(detail.sessions_active, 0);
+}
+
+#[test]
+fn should_exclude_subscription_only_rows_from_durable_stream_scope_counts() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime.admin_read_model().replace_streams(vec![StreamInfo {
+        route_family: 1,
+        realm: "prod".to_string(),
+        area: "events".to_string(),
+        resource: "orders".to_string(),
+        committed_event_count: 0,
+        offset: 0,
+        watermark: 0,
+        size_bytes: 0,
+        sessions_active: 0,
+        subscriptions_active: 2,
+    }]);
+
+    // Act
+    let realm = detail_views::stream_realm_watermark_detail(&runtime, "prod", Some(1));
+    let area = detail_views::stream_area_watermark_detail(&runtime, "prod", "events", Some(1));
+
+    // Assert
+    assert_eq!(realm.area_count, 0);
+    assert_eq!(realm.resource_count, 0);
+    assert_eq!(area.resource_count, 0);
+}
+
+#[test]
 fn should_aggregate_stream_resource_rollups_across_families() {
     // Arrange
     let runtime = snapshot_runtime();
@@ -419,20 +477,24 @@ fn should_aggregate_stream_resource_rollups_across_families() {
             realm: "prod".to_string(),
             area: "events".to_string(),
             resource: "orders".to_string(),
+            committed_event_count: 3,
             offset: 2,
             watermark: 2,
             size_bytes: 100,
             sessions_active: 1,
+            subscriptions_active: 2,
         },
         StreamInfo {
             route_family: 2,
             realm: "prod".to_string(),
             area: "events".to_string(),
             resource: "orders".to_string(),
+            committed_event_count: 5,
             offset: 4,
             watermark: 4,
             size_bytes: 250,
             sessions_active: 2,
+            subscriptions_active: 3,
         },
     ]);
 
@@ -444,6 +506,7 @@ fn should_aggregate_stream_resource_rollups_across_families() {
     assert_eq!(collection.resources[0].committed_event_count, 8);
     assert_eq!(collection.resources[0].size_bytes, 350);
     assert_eq!(collection.resources[0].sessions_active, 3);
+    assert_eq!(collection.resources[0].subscriptions_active, 5);
 }
 
 #[test]
@@ -456,20 +519,24 @@ fn should_isolate_stream_resource_rollups_by_family() {
             realm: "prod".to_string(),
             area: "events".to_string(),
             resource: "orders".to_string(),
+            committed_event_count: 3,
             offset: 2,
             watermark: 2,
             size_bytes: 100,
             sessions_active: 1,
+            subscriptions_active: 4,
         },
         StreamInfo {
             route_family: 2,
             realm: "prod".to_string(),
             area: "events".to_string(),
             resource: "orders".to_string(),
+            committed_event_count: 5,
             offset: 4,
             watermark: 4,
             size_bytes: 250,
             sessions_active: 2,
+            subscriptions_active: 8,
         },
     ]);
 
@@ -480,6 +547,7 @@ fn should_isolate_stream_resource_rollups_by_family() {
     assert_eq!(collection.resources[0].committed_event_count, 3);
     assert_eq!(collection.resources[0].size_bytes, 100);
     assert_eq!(collection.resources[0].sessions_active, 1);
+    assert_eq!(collection.resources[0].subscriptions_active, 4);
 }
 
 #[test]
@@ -756,53 +824,6 @@ fn should_leave_schedule_next_run_missing_given_disabled_definitions() {
     assert_eq!(collection.resources[0].next_run, None);
 }
 
-#[test]
-fn should_aggregate_schedule_detail_given_multiple_schedules() {
-    // Arrange
-    let path = ResourcePath {
-        realm: "acme",
-        area: "billing",
-        resource: "invoices",
-    };
-    let schedules = vec![
-        ScheduleInfo {
-            route_family: 1,
-            realm: "acme".to_string(),
-            area: "billing".to_string(),
-            resource: "invoices".to_string(),
-            operation: "send".to_string(),
-            cron: "0 * * * *".to_string(),
-            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
-            next_run: "2026-03-31T02:00:00Z".to_string(),
-            last_run: None,
-            executions_total: 2,
-            enabled: false,
-        },
-        ScheduleInfo {
-            route_family: 1,
-            realm: "acme".to_string(),
-            area: "billing".to_string(),
-            resource: "invoices".to_string(),
-            operation: "retry".to_string(),
-            cron: "*/5 * * * *".to_string(),
-            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
-            next_run: "2026-03-31T01:00:00Z".to_string(),
-            last_run: None,
-            executions_total: 3,
-            enabled: true,
-        },
-    ];
-
-    // Act
-    let detail = ScheduleResourceDetail::aggregate(&path, &schedules);
-
-    // Assert
-    assert!(detail.enabled);
-    assert_eq!(detail.cron, None);
-    assert_eq!(detail.next_run.as_deref(), Some("2026-03-31T01:00:00Z"));
-    assert_eq!(detail.executions_total, 5);
-}
-
 #[tokio::test]
 async fn should_filter_schedule_operation_before_applying_limit() {
     // Arrange
@@ -923,8 +944,8 @@ fn should_expose_persisted_schedule_execution_state_given_preloaded_runtime() {
     assert_eq!(schedules[0].operation, "send");
     assert!(schedules[0].last_run.is_some());
     assert_eq!(schedules[0].executions_total, 7);
+    assert_eq!(schedules[0].cron, "0 * * * *");
     assert!(detail.enabled);
-    assert_eq!(detail.cron.as_deref(), Some("0 * * * *"));
     assert_eq!(detail.executions_total, 7);
     assert!(detail.next_run.is_some());
 }

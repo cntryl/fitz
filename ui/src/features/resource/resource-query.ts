@@ -7,7 +7,7 @@ const resourceQueries = queryScope("resource");
 const resourceInventoryQuery = defineQuery<{ domain: DomainId; family: string }, ResourceInventory>(
   {
     key: ({ domain, family }) => resourceQueries.key("inventory", domain, family),
-    fetch: ({ domain, family, signal }) =>
+    fetch: ({ domain, family }, { signal }) =>
       resourceService.getResourceInventory(domain, { routeFamily: family, signal }),
   },
 );

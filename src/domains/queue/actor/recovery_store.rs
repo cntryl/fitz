@@ -27,7 +27,11 @@ pub(crate) enum QueueTransactionMode {
 #[derive(Debug)]
 pub(crate) struct QueueStoreError {
     message: String,
-    missing_snapshot: bool,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static FAIL_NEXT_FLUSH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl std::fmt::Display for QueueStoreError {
@@ -37,25 +41,11 @@ impl std::fmt::Display for QueueStoreError {
 }
 
 impl QueueStoreError {
-    pub(super) fn is_missing_snapshot(&self) -> bool {
-        self.missing_snapshot
-    }
-
     #[allow(clippy::needless_pass_by_value)]
     fn from_midge(error: cntryl_midge::MidgeError) -> Self {
-        let missing_snapshot = Self::is_missing_midge(&error);
         Self {
             message: error.to_string(),
-            missing_snapshot,
         }
-    }
-
-    fn is_missing_midge(error: &cntryl_midge::MidgeError) -> bool {
-        matches!(
-            error,
-            cntryl_midge::MidgeError::InvalidArgument(message)
-                if message.contains("read snapshot not available")
-        )
     }
 }
 
@@ -89,6 +79,12 @@ impl QueueStore {
     }
 
     pub(crate) fn flush_family(&self, family_id: u32) -> Result<bool, QueueStoreError> {
+        #[cfg(test)]
+        if FAIL_NEXT_FLUSH.with(|cell| cell.replace(false)) {
+            return Err(QueueStoreError {
+                message: "Injected queue fast flush failure".to_string(),
+            });
+        }
         let families = self
             .engine
             .list_column_families()
@@ -100,6 +96,11 @@ impl QueueStore {
             .flush_cf(family)
             .map(|()| true)
             .map_err(QueueStoreError::from_midge)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_flush_for_tests() {
+        FAIL_NEXT_FLUSH.with(|cell| cell.set(true));
     }
 }
 
@@ -236,27 +237,15 @@ impl QueueRecoveryStore {
     ) -> Result<IndexMetaSnapshot, IndexRecoveryAttempt> {
         let index_meta = match snapshot.0.get(&self.index_meta_key) {
             Ok(Some(bytes)) => bytes,
-            Ok(None) => {
-                return Err(IndexRecoveryAttempt::Missing {
-                    next_id: self.next_id(snapshot),
-                })
-            }
-            Err(error) if error.is_missing_snapshot() => {
-                return Err(IndexRecoveryAttempt::Missing {
-                    next_id: self.next_id(snapshot),
-                });
-            }
+            Ok(None) => return Err(IndexRecoveryAttempt::Missing),
             Err(error) => {
                 return Err(IndexRecoveryAttempt::Error {
-                    next_id: self.next_id(snapshot),
                     reason: format!("Failed to read queue index meta: {error:?}"),
                 })
             }
         };
-        QueueActor::decode_index_meta(&index_meta).map_err(|reason| IndexRecoveryAttempt::Invalid {
-            next_id: self.next_id(snapshot),
-            reason,
-        })
+        QueueActor::decode_index_meta(&index_meta)
+            .map_err(|reason| IndexRecoveryAttempt::Invalid { reason })
     }
 
     pub(super) fn ready_ranges<'a>(
@@ -302,18 +291,12 @@ impl QueueRecoveryStore {
         &'a self,
         snapshot: &'a QueueRecoverySnapshot,
     ) -> Result<impl Iterator<Item = Result<(MessageId, QueueRecord), String>> + 'a, String> {
-        let rows = match snapshot.0.scan_prefix(self.header_key_prefix.clone()) {
-            Ok(rows) => Some(rows),
-            Err(error) if error.is_missing_snapshot() => None,
-            Err(error) => {
-                return Err(format!(
-                    "Failed to scan queue headers for recovery: {error:?}"
-                ))
-            }
-        };
+        let rows = snapshot
+            .0
+            .scan_prefix(self.header_key_prefix.clone())
+            .map_err(|error| format!("Failed to scan queue headers for recovery: {error:?}"))?;
         Ok(rows
             .into_iter()
-            .flatten()
             .map(|(key, value)| decode_header(&key, &value, &self.header_key_prefix)))
     }
 
@@ -390,18 +373,21 @@ impl QueueRecoveryStore {
             .map_err(|error| format!("Failed to commit queue index rebuild: {error:?}"))
     }
 
-    pub(super) fn next_id(&self, snapshot: &QueueRecoverySnapshot) -> u64 {
+    pub(super) fn next_id(&self, snapshot: &QueueRecoverySnapshot) -> Result<Option<u64>, String> {
         // The reservation row, not potentially corrupt index metadata, owns the
         // fallback ID floor. Read it from the same snapshot as the index/headers.
-        match snapshot.0.get(&self.meta_key) {
-            Ok(Some(bytes)) => QueueActor::decode_next_id(Some(&bytes)),
-            Ok(None) => 1,
-            Err(error) if error.is_missing_snapshot() => 1,
-            Err(error) => {
-                tracing::warn!(queue = ?self.key, route_family = self.key.family.as_u64(), ?error,
-                    "Failed to recover queue next_id; starting from 1");
-                1
-            }
+        Self::decode_reservation_id(snapshot.0.get(&self.meta_key))
+    }
+
+    fn decode_reservation_id(
+        reservation: Result<Option<Bytes>, QueueStoreError>,
+    ) -> Result<Option<u64>, String> {
+        match reservation {
+            Ok(None) => Ok(None),
+            Ok(Some(bytes)) => QueueActor::decode_meta(&bytes)
+                .map(Some)
+                .ok_or_else(|| "Queue ID reservation has invalid encoding".to_string()),
+            Err(error) => Err(format!("Failed to read queue ID reservation: {error:?}")),
         }
     }
 }

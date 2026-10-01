@@ -12,7 +12,7 @@ export function activeSessionsQueryKey(family = currentRouteFamilySegment()) {
   return sessionQueries.key("active", family);
 }
 
-async function fetchCurrentSession({ signal }: { signal: AbortSignal }) {
+async function fetchCurrentSession(_: Record<never, never>, { signal }: { signal: AbortSignal }) {
   return (
     (await sessionService.getCurrentSession({ signal })) ?? {
       authRequired: true,
@@ -31,7 +31,7 @@ const currentSessionQuery = defineQuery<Record<never, never>, SessionState>({
 
 const activeSessionsQuery = defineQuery<{ family: string }, ActiveSessionsOverview>({
   key: ({ family }) => activeSessionsQueryKey(family),
-  fetch: ({ family, signal }) => sessionService.listActiveSessions(family, { signal }),
+  fetch: ({ family }, { signal }) => sessionService.listActiveSessions(family, { signal }),
 });
 
 export function createCurrentSessionQuery() {

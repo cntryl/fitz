@@ -116,10 +116,55 @@ fn should_read_reserved_id_from_recovery_snapshot_after_concurrent_commit() {
         .expect("commit reservation");
 
     // Act
-    let reserved = store.next_id(&snapshot);
+    let reserved = store
+        .next_id(&snapshot)
+        .expect("read reservation row")
+        .expect("reservation row exists");
 
     // Assert
     assert_eq!(reserved, expected);
+}
+
+#[test]
+fn should_use_authoritative_reservation_when_index_hit_has_stale_next_id() {
+    // Arrange
+    let (mut actor, store) = seeded_queue();
+    let super::super::QueueResponse::Received { messages } =
+        actor.handle_receive_for_session(1, 30, Some(1))
+    else {
+        panic!("reserve seeded queue message");
+    };
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        actor.handle_ack_for_session(1, messages[0].id, messages[0].token),
+        super::super::QueueResponse::Acked
+    );
+    let reserved = store
+        .next_id(&store.snapshot().expect("read queue snapshot"))
+        .expect("read reservation row")
+        .expect("reservation row exists");
+    let mut write = store
+        .store
+        .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
+        .expect("begin stale index write");
+    write
+        .put(
+            store.index_meta_key.clone(),
+            QueueActor::encode_index_meta(1, 0, 0, None),
+            None,
+        )
+        .expect("write stale index next ID");
+    write
+        .commit(WritePolicy::Buffered)
+        .expect("commit stale index");
+
+    // Act
+    actor.recover_from_store().expect("recover empty queue");
+
+    // Assert
+    assert_eq!(actor.ready_len(), 0);
+    assert_eq!(actor.next_id, reserved);
+    assert_eq!(actor.recovery_path, super::super::RecoveryPath::Empty);
 }
 
 #[test]
@@ -127,7 +172,10 @@ fn should_use_authoritative_reservation_when_index_counters_are_invalid() {
     // Arrange
     let (mut actor, store) = seeded_queue();
     let original = store.snapshot().expect("read original snapshot");
-    let reserved = store.next_id(&original);
+    let reserved = store
+        .next_id(&original)
+        .expect("read reservation row")
+        .expect("reservation row exists");
     let mut write = store
         .store
         .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
@@ -149,6 +197,184 @@ fn should_use_authoritative_reservation_when_index_counters_are_invalid() {
     // Assert
     recovery.expect("recover authoritative headers");
     assert_eq!(actor.next_id, reserved);
+}
+
+#[test]
+fn should_use_authoritative_reservation_when_index_rows_are_invalid_and_queue_is_empty() {
+    // Arrange
+    let (mut actor, store) = seeded_queue();
+    let super::super::QueueResponse::Received { messages } =
+        actor.handle_receive_for_session(1, 30, Some(1))
+    else {
+        panic!("reserve seeded queue message");
+    };
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        actor.handle_ack_for_session(1, messages[0].id, messages[0].token),
+        super::super::QueueResponse::Acked
+    );
+    let reserved = store
+        .next_id(&store.snapshot().expect("read queue snapshot"))
+        .expect("read reservation row")
+        .expect("reservation row exists");
+    let mut write = store
+        .store
+        .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
+        .expect("begin corrupt index write");
+    write
+        .put(
+            store.index_meta_key.clone(),
+            QueueActor::encode_index_meta(1, 0, 0, None),
+            None,
+        )
+        .expect("write stale index next ID");
+    write
+        .put(
+            QueueActor::ready_range_key_with_prefix(&store.ready_index_prefix, 1, 1),
+            vec![0],
+            None,
+        )
+        .expect("write malformed ready index row");
+    write
+        .commit(WritePolicy::Buffered)
+        .expect("commit corrupt index");
+
+    // Act
+    actor.recover_from_store().expect("recover empty queue");
+
+    // Assert
+    assert_eq!(actor.ready_len(), 0);
+    assert_eq!(actor.next_id, reserved);
+}
+
+#[test]
+fn should_fail_reservation_recovery_when_persisted_row_cannot_be_read() {
+    // Arrange
+    let error = QueueStoreError {
+        message: "injected reservation read failure".to_string(),
+    };
+
+    // Act
+    let result = QueueRecoveryStore::decode_reservation_id(Err(error));
+
+    // Assert
+    assert!(result
+        .expect_err("an unreadable reservation cannot prove a safe ID")
+        .contains("Failed to read queue ID reservation"));
+}
+
+#[test]
+fn should_reject_malformed_reservation_encoding_during_recovery() {
+    // Arrange
+    let malformed = Some(Bytes::from_static(b"bad"));
+
+    // Act
+    let result = QueueRecoveryStore::decode_reservation_id(Ok(malformed));
+
+    // Assert
+    assert!(result
+        .expect_err("a malformed reservation cannot prove a safe ID")
+        .contains("invalid encoding"));
+}
+
+#[test]
+fn should_initialize_new_queue_when_reservation_row_is_absent() {
+    // Arrange
+    let reservation = None;
+
+    // Act
+    let result = QueueRecoveryStore::decode_reservation_id(Ok(reservation));
+
+    // Assert
+    assert_eq!(result, Ok(None));
+}
+
+#[test]
+fn should_fail_closed_when_existing_index_has_no_reservation_row() {
+    // Arrange
+    let (mut actor, store) = seeded_queue();
+    let super::super::QueueResponse::Received { messages } =
+        actor.handle_receive_for_session(1, 30, Some(1))
+    else {
+        panic!("reserve seeded queue message");
+    };
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        actor.handle_ack_for_session(1, messages[0].id, messages[0].token),
+        super::super::QueueResponse::Acked
+    );
+    let mut write = store
+        .store
+        .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
+        .expect("begin reservation removal");
+    write
+        .delete(QueueActor::meta_key(&store.key))
+        .expect("remove reservation row");
+    write
+        .commit(WritePolicy::Buffered)
+        .expect("commit reservation removal");
+
+    // Act
+    let result = actor.recover_from_store();
+
+    // Assert
+    assert!(result
+        .expect_err("existing index without its reservation must fail closed")
+        .contains("reservation is missing"));
+}
+
+#[test]
+fn should_fail_closed_when_header_scan_finds_messages_without_reservation_metadata() {
+    // Arrange
+    let (mut actor, store) = seeded_queue();
+    let mut write = store
+        .store
+        .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
+        .expect("begin reservation and index removal");
+    write
+        .delete(QueueActor::meta_key(&store.key))
+        .expect("remove reservation row");
+    write
+        .delete(store.index_meta_key.clone())
+        .expect("remove index metadata");
+    write
+        .commit(WritePolicy::Buffered)
+        .expect("commit metadata removal");
+
+    // Act
+    let result = actor.recover_from_store();
+
+    // Assert
+    assert!(result
+        .expect_err("live headers cannot recover acknowledged ID history")
+        .contains("reservation is missing"));
+}
+
+#[test]
+fn should_fail_closed_when_header_ids_exceed_reservation_metadata() {
+    // Arrange
+    let (mut actor, store) = seeded_queue();
+    let mut write = store
+        .store
+        .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
+        .expect("begin stale reservation write");
+    write
+        .put(store.meta_key.clone(), 1_u64.to_le_bytes().to_vec(), None)
+        .expect("write stale reservation row");
+    write
+        .delete(store.index_meta_key.clone())
+        .expect("remove index metadata to force header scan");
+    write
+        .commit(WritePolicy::Buffered)
+        .expect("commit stale reservation");
+
+    // Act
+    let result = actor.recover_from_store();
+
+    // Assert
+    assert!(result
+        .expect_err("header IDs at or above the reservation cannot prove a safe next ID")
+        .contains("below the recovered queue IDs"));
 }
 
 #[test]

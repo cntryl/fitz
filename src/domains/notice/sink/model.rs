@@ -4,6 +4,9 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// How long synchronous callers wait for a family actor's reply.
+pub(super) const NOTICE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
+
 pub(super) type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
 pub(super) type NoticeMatchedRoutePatterns = SmallVec<[Arc<str>; 8]>;
 pub(super) type NoticeRouteStatsKey = (crate::runtime::routing::RouteFamily, Arc<str>);
@@ -18,7 +21,7 @@ pub(super) struct NoticeDeliveryTarget {
 
 pub(super) struct NoticeRouteStats {
     publishes_total: u64,
-    recent_publishes: VecDeque<Instant>,
+    recent_publishes: VecDeque<(Instant, usize)>,
 }
 
 impl NoticeRouteStats {
@@ -32,7 +35,13 @@ impl NoticeRouteStats {
     pub(super) fn record_publish(&mut self, now: Instant) {
         self.prune_recent_publishes(now);
         self.publishes_total = self.publishes_total.saturating_add(1);
-        self.recent_publishes.push_back(now);
+        if let Some((bucket_at, count)) = self.recent_publishes.back_mut() {
+            if now.saturating_duration_since(*bucket_at) < Duration::from_secs(1) {
+                *count = count.saturating_add(1);
+                return;
+            }
+        }
+        self.recent_publishes.push_back((now, 1));
     }
 
     pub(super) fn publishes_total(&self) -> u64 {
@@ -41,11 +50,15 @@ impl NoticeRouteStats {
 
     pub(super) fn publishes_per_minute(&mut self, now: Instant) -> f64 {
         self.prune_recent_publishes(now);
-        usize_to_f64(self.recent_publishes.len())
+        let recent_count = self
+            .recent_publishes
+            .iter()
+            .fold(0_usize, |total, (_, count)| total.saturating_add(*count));
+        usize_to_f64(recent_count)
     }
 
     pub(super) fn prune_recent_publishes(&mut self, now: Instant) {
-        while let Some(oldest) = self.recent_publishes.front().copied() {
+        while let Some((oldest, _)) = self.recent_publishes.front().copied() {
             if now.saturating_duration_since(oldest) <= Duration::from_mins(1) {
                 break;
             }
@@ -99,4 +112,47 @@ fn usize_to_f64(value: usize) -> f64 {
 
 pub(super) fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NoticeRouteStats;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn should_aggregate_recent_publishes_into_second_buckets() {
+        // Arrange
+        let start = Instant::now();
+        let mut stats = NoticeRouteStats::new();
+
+        // Act
+        stats.record_publish(start);
+        stats.record_publish(start + Duration::from_millis(500));
+
+        // Assert
+        assert_eq!(stats.recent_publishes.len(), 1);
+        assert!(
+            (stats.publishes_per_minute(start + Duration::from_millis(500)) - 2.0).abs()
+                < f64::EPSILON
+        );
+    }
+
+    #[test]
+    fn should_bound_recent_publish_buckets_to_the_rolling_window() {
+        // Arrange
+        let start = Instant::now();
+        let mut stats = NoticeRouteStats::new();
+
+        // Act
+        for second in 0..=120 {
+            stats.record_publish(start + Duration::from_secs(second));
+        }
+
+        // Assert
+        assert!(stats.recent_publishes.len() <= 61);
+        assert!(
+            (stats.publishes_per_minute(start + Duration::from_secs(120)) - 61.0).abs()
+                < f64::EPSILON
+        );
+    }
 }

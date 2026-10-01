@@ -87,8 +87,10 @@ impl KvActor {
                         ?error,
                         scope = %inventory_scope.realm,
                         resource = %inventory_scope.resource,
-                        "KV inventory estimate update failed after successful data commit; returning CommitOk for data path while estimates may drift"
+                        "KV inventory estimate update failed after successful data commit; queued a repair that marks the estimate for rescan"
                     );
+                    self.inventory_repairs
+                        .push((inventory_column_family, inventory_scope));
                 }
                 KvResponse::CommitOk
             }

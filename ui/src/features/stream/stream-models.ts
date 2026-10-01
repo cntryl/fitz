@@ -47,11 +47,6 @@ export interface StreamAreaRollup {
   resources: string[];
 }
 
-export interface StreamResourceView {
-  detail: import("@/adapters").StreamResourceDetail;
-  records: import("@/adapters").StreamRecordsResponse;
-}
-
 export interface StreamRecordSearchRequest {
   area?: string;
   discriminator?: string;

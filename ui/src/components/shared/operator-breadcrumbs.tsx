@@ -67,12 +67,12 @@ function routeCrumbs(path: string, params: Record<string, string | undefined>, f
     const operation = decodeSegment(params.operation ?? parts[4]);
 
     if (realm) {
-      crumbs.push({ href: domainScopeHref(first, { realm }, family), label: realm });
+      crumbs.push({ href: domainScopeHref(first, { realm }, family), label: `Realm: ${realm}` });
     }
     if (area) {
       crumbs.push({
         href: domainScopeHref(first, { area, realm: realm ?? undefined }, family),
-        label: area,
+        label: `Area: ${area}`,
       });
     }
     if (resource) {
@@ -86,7 +86,7 @@ function routeCrumbs(path: string, params: Record<string, string | undefined>, f
           },
           family,
         ),
-        label: resource,
+        label: `Resource: ${resource}`,
       });
     }
     if (operation) crumbs.push({ href: path, label: operation });

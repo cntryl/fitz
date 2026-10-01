@@ -17,7 +17,7 @@ on:
         default: false
     outputs:
       semver:
-        description: SemVer calculated for the workflow
+        description: Fitz package version from Cargo.toml
         value: ${{ jobs.version.outputs.semver }}
 
 concurrency:
@@ -49,7 +49,7 @@ jobs:
       - name: Require a version
         run: |
           if [[ -z "${SEMVER}" ]]; then
-            echo "GitVersion returned an empty SemVer" >&2
+            echo "Cargo package version is empty" >&2
             exit 1
           fi
 

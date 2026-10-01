@@ -2,6 +2,11 @@
 
 Fitz release work is focused on explicit change communication and operator safety.
 
+An immutable stable SemVer tag identifies a release artifact; it is not a
+declaration of general availability and does not alter the product's release
+stage or support commitments. Fitz is pre-GA and is already used in production
+deployments.
+
 ## Policy
 
 1. Every release includes migration notes when compatibility risk exists.

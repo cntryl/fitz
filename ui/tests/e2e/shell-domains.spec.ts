@@ -40,16 +40,12 @@ async function expectInventoryRollups(page: Page, domain: string, mobile: boolea
       name: new RegExp(`Sort by ${headers[0]}, descending`),
     }),
   ).toBeVisible();
-  const scrollHint = page.getByText("Scroll horizontally to view every metric.");
-  if (mobile) {
-    await expect(scrollHint).toBeVisible();
-  } else {
-    await expect(scrollHint).toBeHidden();
-  }
-  if (mobile) {
-    const table = page.locator(".domain-resource-data-table");
-    expect(await table.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
-  }
+  // Tables never scroll sideways; narrow layouts fold secondary metrics instead.
+  await expect(page.getByText(/Scroll horizontally/)).toHaveCount(0);
+  const table = page.locator(".domain-resource-data-table");
+  expect(await table.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+  if (!mobile) return;
+  await expect(page.locator(".domain-row-detail").first()).toBeVisible();
 }
 
 test("captures a domain inventory page", async ({ page }, testInfo) => {
@@ -67,7 +63,7 @@ test("captures a domain inventory page", async ({ page }, testInfo) => {
     "href",
     "/admin/1/queue/default",
   );
-  await expect(page.getByRole("columnheader", { name: "Areas" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Areas" })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: /Dead-lettered/ })).toBeVisible();
   await page.screenshot({
     fullPage: true,
@@ -85,6 +81,8 @@ test("omits comparison controls from queue resource inspection", async ({ page }
   };
   await mockQueueResourceApis(page, queueScope);
   await page.goto("/admin/1/queue/acme/payments/orders");
+  await expect(page.getByRole("table", { name: "Dead-letter queue messages" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Load messages" }).click();
 
   await expect(page.getByRole("heading", { level: 1, name: "orders" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Compare scopes" })).toHaveCount(0);
@@ -218,7 +216,7 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   // Schedule reports these per resource, so its inventory carries them like every
   // other domain rather than rendering a bare route list.
   await expect(page.getByRole("columnheader", { name: /Pending claims/ })).toBeVisible();
-  await expect(page.getByRole("columnheader", { name: /Next run/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /next run/i })).toBeVisible();
   await page.locator('a[href="/admin/1/schedule/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/schedule/default/default/primary");
   await expect(page.getByRole("heading", { level: 1, name: "primary" })).toBeVisible();
@@ -226,7 +224,7 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   const schedules = page.getByRole("table", { name: "Individual schedules" });
   await expect(schedules).toBeVisible();
   await expect(schedules.getByRole("row")).toHaveCount(3);
-  await expect(page.getByRole("columnheader", { name: /Next run/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /next run/i })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: /Pending/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Durable timing intent" })).toBeVisible();
   // Single-schedule detail and the run action stay on the operation tier.

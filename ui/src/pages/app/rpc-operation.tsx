@@ -15,8 +15,7 @@ import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryCompactEmptyState,
   QueryErrorState,
@@ -26,6 +25,7 @@ import {
 import type { RpcCallObservation } from "@/adapters";
 import { createRpcOperationQuery } from "@/features/rpc/rpc-query";
 import { formatCount, formatNumber } from "@/shared/format";
+import { RPC_HANDLED_CAPTION } from "@/features/rpc/rpc-models";
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -131,13 +131,6 @@ export default function RpcOperationPage() {
             unavailable: "RPC operation evidence is unavailable.",
           })}
         />
-        <OperatorScopeStrip
-          realm={realm}
-          area={area}
-          resource={resource}
-          operation={operation}
-          freshness={queryFreshness(query)}
-        />
         <Show when={!data && query.loading}>
           <QueryLoadingState description="Loading RPC operation..." />
         </Show>
@@ -161,8 +154,9 @@ export default function RpcOperationPage() {
                   { label: "Workers", value: detail.workers_registered },
                   { label: "Pending requests", value: detail.requests_pending },
                   {
-                    label: "Handled by live workers (exact)",
+                    label: "Handled by live workers",
                     value: detail.requests_handled_by_live_workers ?? "--",
+                    caption: RPC_HANDLED_CAPTION,
                   },
                   {
                     label: "Slowest average latency",

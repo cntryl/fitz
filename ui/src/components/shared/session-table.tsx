@@ -63,9 +63,6 @@ export default function SessionTable({ sessions }: SessionTableProps) {
                   <strong class="session-list-id" title={session.sessionId ?? session.key}>
                     {session.sessionId ?? session.key}
                   </strong>
-                  <span class="session-list-badge">
-                    Route Family {session.routeFamily ?? "Unknown"}
-                  </span>
                   <span class="session-list-badge">{session.transport ?? "Unknown"}</span>
                 </div>
                 <p class="session-list-description">

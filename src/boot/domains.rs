@@ -328,6 +328,31 @@ impl DomainAdminPorts {
         self.kv.admin_scan_committed_rows(request)
     }
 
+    pub(crate) fn kv_admin_capture_snapshot(
+        &self,
+        selector: &crate::snapshot::SnapshotSelector,
+    ) -> Result<crate::snapshot::SnapshotArtifact, String> {
+        self.kv.capture_kv_snapshot(selector)
+    }
+
+    pub(crate) fn kv_admin_restore_snapshot(&self, bytes: &[u8]) -> Result<Vec<String>, String> {
+        self.kv.restore_kv_snapshot(bytes)
+    }
+
+    pub(crate) fn stream_admin_capture_snapshot(
+        &self,
+        selector: &crate::snapshot::SnapshotSelector,
+    ) -> Result<crate::snapshot::SnapshotArtifact, String> {
+        self.stream.capture_stream_snapshot(selector)
+    }
+
+    pub(crate) fn stream_admin_restore_snapshot(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Vec<String>, String> {
+        self.stream.restore_stream_snapshot(bytes)
+    }
+
     pub(crate) fn queue_ready_message_count(&self) -> usize {
         self.queue.counts().ready
     }

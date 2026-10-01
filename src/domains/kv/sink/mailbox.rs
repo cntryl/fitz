@@ -43,6 +43,9 @@ impl KvFamilyRuntime<'_> {
                 self.cleanup_session(session_id);
                 let _ = reply.send(());
             }
+            KvDomainCommand::RestoreSnapshot(artifact, reply) => {
+                let _ = reply.send(self.restore_kv_snapshot(&artifact));
+            }
             #[cfg(test)]
             KvDomainCommand::SyncAdminSnapshot(reply) => {
                 self.sync_admin_snapshot();

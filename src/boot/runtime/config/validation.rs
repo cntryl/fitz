@@ -1,17 +1,16 @@
 use super::env::env_non_empty;
 use super::{BootResult, LocalListenerExposure, DEFAULT_LOCAL_WS_ALLOWED_ORIGIN_VALUES};
 
-pub(super) fn configured_ws_allowed_origins(
-    configured: &[crate::api::origin::ExactOrigin],
+/// Return the origins the runtime will enforce, or the error recorded while
+/// parsing them. Env values are parsed into the config at construction, so
+/// validation must check the config rather than re-reading the environment.
+pub(super) fn configured_ws_allowed_origins<'a>(
+    configured: &'a [crate::api::origin::ExactOrigin],
     configured_error: Option<&String>,
-) -> BootResult<Vec<crate::api::origin::ExactOrigin>> {
-    if let Some(error) = configured_error {
-        return Err(error.clone().into());
-    }
-    match env_non_empty("FITZ_WS_ALLOWED_ORIGINS") {
-        Some(value) => crate::api::origin::parse_exact_origin_list(&value)
-            .map_err(|error| format!("FITZ_WS_ALLOWED_ORIGINS {error}").into()),
-        None => Ok(configured.to_vec()),
+) -> BootResult<&'a [crate::api::origin::ExactOrigin]> {
+    match configured_error {
+        Some(error) => Err(error.clone().into()),
+        None => Ok(configured),
     }
 }
 

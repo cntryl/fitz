@@ -394,8 +394,8 @@ impl<'a> TransportConfig<'a> {
             &config.ws_allowed_origins,
             config.ws_allowed_origins_error.as_ref(),
         )?;
-        validate_local_loopback_edge_origins(config.local_listener_exposure, &origins)?;
-        validate_public_origin_security("FITZ_WS_ALLOWED_ORIGINS", &origins)?;
+        validate_local_loopback_edge_origins(config.local_listener_exposure, origins)?;
+        validate_public_origin_security("FITZ_WS_ALLOWED_ORIGINS", origins)?;
         if config.auth_required && public_bind && origins.is_empty() {
             return Err("FITZ_WS_ALLOWED_ORIGINS is required when authenticated WebSocket listeners bind to a non-loopback address".into());
         }

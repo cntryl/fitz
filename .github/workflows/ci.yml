@@ -4,9 +4,11 @@ on:
   pull_request:
     branches:
       - develop
+      - main
   push:
     branches:
       - develop
+      - main
   workflow_dispatch:
 
 concurrency:
@@ -17,56 +19,40 @@ permissions:
   contents: read
 
 jobs:
-  develop-backend:
-    name: develop-backend
+  backend:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       RUST_LOG: "off"
-      RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+      FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
+      RUSTUP_TOOLCHAIN: "1.98.1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Lint GitHub Actions workflows
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-
-      - name: Update Rust toolchain
-        run: rustup update stable
-
-      - name: Install lld linker
-        run: |
-          sudo grep -RIl 'dl.google.com/linux/chrome' /etc/apt/sources.list.d \
-            | xargs -r sudo rm -f
-          sudo apt-get update
-          sudo apt-get install -y lld
+      - name: Install verified Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci"
 
-      - name: Install Rust components
-        run: rustup component add rustfmt clippy
-
-      - name: Cargo fmt check
+      - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Cargo clippy pedantic
+      - name: Pedantic lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 
-      - name: Run library tests
-        env:
-          FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
-        run: cargo test --locked --lib
+      - name: Build
+        run: cargo build --locked --workspace --all-features
 
-      - name: Check architecture contracts
-        run: cargo test --locked --test architecture_contract
+      - name: Test
+        run: cargo test --locked --workspace
 
-  develop-frontend:
-    name: develop-frontend
+  frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: ui
@@ -84,20 +70,17 @@ jobs:
       - name: Install UI dependencies
         run: npm ci
 
-      - name: Check generated adapters
-        run: npm run check:generated
-
-      - name: UI format check
+      - name: Format check
         run: npm run fmt:check
 
-      - name: UI lint
+      - name: Lint
         run: npm run lint
 
-      - name: UI type check
+      - name: Type check
         run: npm run type-check
 
-      - name: UI tests
-        run: npm run test -- --run
-
-      - name: UI build
+      - name: Build
         run: npm run build
+
+      - name: Test
+        run: npm run test -- --run

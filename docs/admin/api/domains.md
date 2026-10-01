@@ -175,6 +175,8 @@ broker observations for active subscriptions and live route counters.
 GET /api/v1/notice/stats
 ```
 These values are point-in-time in-memory statistics for the running broker instance.
+`publishes_per_minute` is estimated from one-second buckets, so its rolling-window
+boundary may differ by up to one second; storage remains bounded under high publish rates.
 
 **Response**:
 ```json

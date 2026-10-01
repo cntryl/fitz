@@ -22,6 +22,11 @@ impl StreamFamilyState {
         self.refresh_metrics_gauges();
     }
 
+    pub(in crate::domains::stream::sink) fn mark_committed_admin_snapshot_dirty(&mut self) {
+        self.observability.mark_committed_dirty();
+        self.refresh_metrics_gauges();
+    }
+
     pub(in crate::domains::stream::sink) fn refresh_metrics_gauges(&mut self) {
         let counts = self.live_counts();
         self.observability.publish_family(self.family, counts);
@@ -112,11 +117,37 @@ impl StreamFamilyState {
     }
 
     fn try_sync_admin_snapshot(&mut self) -> Result<(), String> {
-        let (mut streams, realm_snapshots, area_snapshots, committed_events_total) =
-            self.collect_committed_stream_snapshots()?;
-        let stream_realm_watermarks = self.collect_stream_realm_watermarks(realm_snapshots)?;
-        let stream_area_watermarks = self.collect_stream_area_watermarks(area_snapshots)?;
+        let (mut streams, stream_realm_watermarks, stream_area_watermarks, committed_events_total) =
+            if let Some(snapshot) = self.observability.committed_snapshot() {
+                (
+                    snapshot.streams,
+                    snapshot.realm_watermarks,
+                    snapshot.area_watermarks,
+                    snapshot.committed_events_total,
+                )
+            } else {
+                let (streams, realm_snapshots, area_snapshots, committed_events_total) =
+                    self.collect_committed_stream_snapshots()?;
+                let stream_realm_watermarks =
+                    self.collect_stream_realm_watermarks(realm_snapshots)?;
+                let stream_area_watermarks = self.collect_stream_area_watermarks(area_snapshots)?;
+                self.observability.publish_committed_snapshot(
+                    super::projection::StreamCommittedAdminSnapshot {
+                        streams: streams.clone(),
+                        realm_watermarks: stream_realm_watermarks.clone(),
+                        area_watermarks: stream_area_watermarks.clone(),
+                        committed_events_total,
+                    },
+                );
+                (
+                    streams,
+                    stream_realm_watermarks,
+                    stream_area_watermarks,
+                    committed_events_total,
+                )
+            };
         self.overlay_live_actor_snapshots_from(&mut streams);
+        self.overlay_live_subscription_snapshots(&mut streams);
         self.publish_admin_snapshot(
             streams,
             stream_realm_watermarks,
@@ -172,6 +203,7 @@ impl StreamFamilyState {
                             realm: &realm,
                             area: &area,
                             resource: &resource,
+                            committed_event_count: next_offset,
                             offset: last_offset,
                             watermark: last_offset,
                             size_bytes: committed_size_bytes,
@@ -281,6 +313,10 @@ impl StreamFamilyState {
                 continue;
             }
             let committed_size_bytes = committed_snapshot.map_or(0, |item| item.size_bytes);
+            let committed_event_count = committed_snapshot.map_or_else(
+                || last_offset.map_or(0, |offset| offset.saturating_add(1)),
+                |item| item.committed_event_count,
+            );
             let committed_offset = committed_snapshot.map(|item| item.offset);
             let visible_offset = last_offset.or(committed_offset).unwrap_or(0);
 
@@ -292,6 +328,7 @@ impl StreamFamilyState {
                         realm: &key.realm,
                         area: &key.area,
                         resource: &key.resource,
+                        committed_event_count,
                         offset: visible_offset,
                         watermark: visible_offset,
                         size_bytes: committed_size_bytes,
@@ -299,6 +336,59 @@ impl StreamFamilyState {
                     },
                 ),
             );
+        }
+    }
+
+    fn overlay_live_subscription_snapshots(&self, streams: &mut StreamAdminSnapshotMap) {
+        for (family_id, subscriptions) in &self.subscriptions.families {
+            for subscription in subscriptions.values() {
+                if let Ok(crate::domains::stream::route_grammar::StreamRouteShape::Resource {
+                    realm,
+                    area,
+                    resource,
+                }) = crate::domains::stream::route_grammar::classify_stream_route_shape(
+                    subscription.pattern.route(),
+                ) {
+                    let key = (
+                        *family_id,
+                        realm.to_string(),
+                        area.to_string(),
+                        resource.to_string(),
+                    );
+                    streams.entry(key).or_insert_with(|| {
+                        crate::control::admin::StreamInfo::snapshot(
+                            crate::control::admin::StreamInfoSnapshot {
+                                route_family: *family_id,
+                                realm,
+                                area,
+                                resource,
+                                committed_event_count: 0,
+                                offset: 0,
+                                watermark: 0,
+                                size_bytes: 0,
+                                sessions_active: 0,
+                            },
+                        )
+                    });
+                }
+            }
+        }
+
+        for ((family_id, realm, area, resource), stream) in streams.iter_mut() {
+            let route = format!("stream://{realm}/{area}/{resource}");
+            stream.subscriptions_active =
+                self.subscriptions
+                    .families
+                    .get(family_id)
+                    .map_or(0, |subscriptions| {
+                        subscriptions
+                            .matching_ids(
+                                crate::runtime::routing::RouteFamily::try_from(*family_id)
+                                    .expect("subscription family IDs originate from RouteFamily"),
+                                &route,
+                            )
+                            .len()
+                    });
         }
     }
 

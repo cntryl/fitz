@@ -842,37 +842,12 @@ impl DomainFrameDispatcher {
         }
     }
 
+    /// Authorize BEGIN by the mode the KV codec itself decodes, so ingress can
+    /// never admit a BEGIN the domain would reject as malformed.
     pub(super) fn kv_begin_access(payload: &[u8]) -> Result<crate::auth::Access, String> {
-        if payload.len() < 6 {
-            return Err("BEGIN payload too short".to_string());
-        }
-
-        let route_len =
-            u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
-        let mode_offset = 4 + route_len;
-
-        if mode_offset > payload.len() {
-            return Err("BEGIN route overflow".to_string());
-        }
-
-        if mode_offset >= payload.len() {
-            return Err("BEGIN mode byte missing".to_string());
-        }
-
-        let access = match payload[mode_offset] {
-            0 => crate::auth::Access::Read,
-            1 => crate::auth::Access::Write,
-            _ => return Err("Invalid transaction mode".to_string()),
-        };
-
-        let durability_offset = mode_offset + 1;
-        if durability_offset >= payload.len() {
-            return Err("BEGIN durability byte missing".to_string());
-        }
-
-        match payload[durability_offset] {
-            0 | 1 => Ok(access),
-            value => Err(format!("Invalid durability mode: {value}")),
-        }
+        Ok(match crate::protocol::kv_codec::begin_mode(payload)? {
+            crate::domains::kv::TxMode::ReadOnly => crate::auth::Access::Read,
+            crate::domains::kv::TxMode::ReadWrite => crate::auth::Access::Write,
+        })
     }
 }

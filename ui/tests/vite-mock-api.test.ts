@@ -19,6 +19,54 @@ function laneStates(body: { lanes: { id: string; state: string }[] }) {
 }
 
 describe("Vite mock API", () => {
+  it("returns each domain's own resource metrics instead of queue-shaped rows", () => {
+    // Arrange
+    const expected: Record<string, { has: string[]; lacks: string[] }> = {
+      kv: { has: ["estimated_record_count", "read_latency_p95_ms"], lacks: ["messages_ready"] },
+      lease: {
+        has: ["active_leases", "waiters", "oldest_lease_age_seconds"],
+        lacks: ["messages_ready"],
+      },
+      notice: { has: ["subscriptions_active", "publishes_per_minute"], lacks: ["messages_ready"] },
+      queue: { has: ["messages_ready", "messages_dead_lettered"], lacks: ["read_latency_p95_ms"] },
+      rpc: { has: ["workers_registered", "requests_pending"], lacks: ["messages_ready"] },
+      schedule: {
+        has: ["schedules_active", "pending_claims", "next_run"],
+        lacks: ["messages_ready"],
+      },
+      stream: { has: ["committed_event_count", "size_bytes"], lacks: ["messages_ready"] },
+    };
+
+    for (const [domain, fields] of Object.entries(expected)) {
+      // Act
+      const body = jsonBody(
+        mockFitzResponse("GET", `/api/v1/2/${domain}/realms/acme/areas/payments/resources`),
+      );
+
+      // Assert
+      for (const resource of body.resources) {
+        for (const field of fields.has)
+          expect(resource, `${domain}.${field}`).toHaveProperty(field);
+        for (const field of fields.lacks)
+          expect(resource, `${domain}.${field}`).not.toHaveProperty(field);
+      }
+    }
+  });
+
+  it("reports pending handoffs on schedule observations", () => {
+    // Act
+    const body = jsonBody(
+      mockFitzResponse(
+        "GET",
+        "/api/v1/2/schedule/realms/acme/areas/payments/resources/invoices/executions",
+      ),
+    );
+
+    // Assert
+    expect(body.observations[0]).toHaveProperty("pending_handoffs");
+    expect(body.observations[0]).toHaveProperty("delivery_mode");
+  });
+
   it("returns typed structured family metrics", () => {
     const response = mockFitzResponse("GET", "/api/v1/2/metrics");
 

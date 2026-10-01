@@ -88,6 +88,21 @@ same position. This is a clean client wire break; older CREATE payloads are
 rejected and there is no negotiation shim. New writes use versioned rows that
 persist the mode.
 
+## Midge 0.3 cloud storage metadata
+
+Fitz now embeds `cntryl-midge` 0.3.0. For provider-backed cloud storage it
+commits immutable `FORMAT`, manifest, journal, and intent generations under
+`metadata/generations/`, fenced by a version 2 lease descriptor and a version 2
+DDL registry. It rejects the legacy lease and mutable metadata written by Midge
+0.2.0, so an existing cloud prefix cannot be opened in place. This is a
+breaking storage change for `FITZ_STORAGE_MODE=cloud` only; the local format
+(FORMAT 4, SST V4) and all Fitz row encodings are unchanged.
+
+Upgrade requires a logical export with the old broker and import into a new
+empty prefix, or a fresh prefix rebuilt from the operator's source of truth.
+Rollback returns to the preserved original prefix with the previous broker.
+See [../operations/migration-guide.md](../operations/migration-guide.md).
+
 ## Single-generation storage formats
 
 Every domain store now reads exactly the one on-disk generation it writes.

@@ -70,7 +70,7 @@ vi.mock("@/features/search/search-query", () => ({
 }));
 
 vi.mock("@/features/queue/queue-query", () => ({
-  createQueueDeadLettersQuery: () => mocks.queryStates.queueDeadLetters,
+  createQueueDeadLettersQuery: vi.fn(() => mocks.queryStates.queueDeadLetters),
   createQueueAreaQuery: () => mocks.queryStates.queueArea,
   createQueueOverviewQuery: () => mocks.queryStates.queue,
   createQueueRealmQuery: () => mocks.queryStates.queueRealm,
@@ -79,7 +79,7 @@ vi.mock("@/features/queue/queue-query", () => ({
 
 vi.mock("@/features/queue/queue-resource-query", () => ({
   createQueueResourceQuery: () => mocks.queryStates.queueResource,
-  createQueueResourceInflightQuery: () => mocks.queryStates.queueInflight,
+  createQueueResourceInflightQuery: vi.fn(() => mocks.queryStates.queueInflight),
   createQueueResourceTimelineQuery: () => mocks.queryStates.queueTimeline,
 }));
 
@@ -93,11 +93,11 @@ vi.mock("@/features/kv/kv-query", () => ({
 }));
 
 vi.mock("@/features/kv/kv-rows-query", () => ({
-  createKvRowsQuery: () => mocks.queryStates.kvRows,
+  createKvRowsQuery: vi.fn(() => mocks.queryStates.kvRows),
 }));
 
 vi.mock("@/features/kv/kv-value-query", () => ({
-  createKvValueQuery: () => mocks.queryStates.kvValue,
+  createKvValueQuery: vi.fn(() => mocks.queryStates.kvValue),
 }));
 
 vi.mock("@/features/lease/lease-query", () => ({
@@ -137,6 +137,7 @@ vi.mock("@/features/stream/stream-query", () => ({
   createStreamAreaQuery: () => mocks.queryStates.streamArea,
   createStreamOverviewQuery: () => mocks.queryStates.stream,
   createStreamRealmQuery: () => mocks.queryStates.streamRealm,
+  createStreamRecordsQuery: vi.fn(() => mocks.queryStates.streamRecords),
   createStreamResourceQuery: () => mocks.queryStates.streamResource,
 }));
 
@@ -273,7 +274,8 @@ export function resetQueries() {
   mocks.queryStates.stream = queryState.fresh(streamOverview, queryOptions());
   mocks.queryStates.streamRealm = queryState.fresh(streamRealm, queryOptions());
   mocks.queryStates.streamArea = queryState.fresh(streamArea, queryOptions());
-  mocks.queryStates.streamResource = queryState.fresh(streamResource, queryOptions());
+  mocks.queryStates.streamResource = queryState.fresh(streamResource.detail, queryOptions());
+  mocks.queryStates.streamRecords = queryState.fresh(streamResource.records, queryOptions());
   mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
   mocks.queryStates.kvRows = queryState.fresh(kvRows, queryOptions());
   mocks.queryStates.kvValue = queryState.fresh(

@@ -716,6 +716,18 @@ pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build STREAM UNSUBSCRIBE frame (`msg_type` 608)
+#[must_use]
+pub fn build_stream_unsubscribe(route_pattern: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(u32_len(route_pattern.len()));
+    buf.put_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(608, &buf);
+    builder.build()
+}
+
 /// Parse STREAM response
 #[must_use]
 pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {

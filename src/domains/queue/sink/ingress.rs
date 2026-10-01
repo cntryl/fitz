@@ -194,6 +194,15 @@ impl QueueFamilyState {
             return;
         };
 
+        if outcome.mark_admin_snapshot_dirty {
+            self.mark_admin_snapshot_dirty();
+            self.mark_fast_flush_dirty(route_family);
+        }
+
+        for (key, notification) in &outcome.ready_notifications {
+            self.route_queue_ready_notification(key, *notification);
+        }
+
         if matches!(
             &outcome.response,
             crate::domains::queue::QueueResponse::Received { messages } if messages.is_empty()
@@ -203,6 +212,14 @@ impl QueueFamilyState {
         ) {
             if let Some(wait_seconds) = wait_seconds.filter(|seconds| *seconds > 0) {
                 if envelope.source().is_some() {
+                    if !self.reservation_book.can_enqueue(meta.session_id) {
+                        let response = crate::domains::queue::QueueResponse::Error {
+                            message: "queue pending reserve capacity reached".to_string(),
+                        };
+                        self.route_queue_response(envelope, meta, &response);
+                        self.record_operation_metrics(request_started, &response, op_kind);
+                        return;
+                    }
                     let mut message = pending_message;
                     if let crate::domains::queue::protocol::QueueMessage::Receive {
                         wait_seconds,
@@ -224,15 +241,6 @@ impl QueueFamilyState {
                     return;
                 }
             }
-        }
-
-        if outcome.mark_admin_snapshot_dirty {
-            self.mark_admin_snapshot_dirty();
-            self.mark_fast_flush_dirty(route_family);
-        }
-
-        for (key, notification) in outcome.ready_notifications {
-            self.route_queue_ready_notification(&key, notification);
         }
 
         let delivered = self.route_queue_response(envelope, meta, &outcome.response);

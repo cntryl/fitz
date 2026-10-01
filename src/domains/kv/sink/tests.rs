@@ -15,6 +15,7 @@ mod configuration;
 mod correctness;
 mod fault_injection;
 mod lifecycle;
+mod snapshot;
 mod subscriptions;
 
 #[inline]

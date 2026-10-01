@@ -16,7 +16,6 @@ import {
   scopeDomainResourceInventoryRows,
 } from "@/components/shared/domain-resource-inventory-table";
 import DomainHeader from "@/components/shared/domain-header";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
 import {
   QueryCompactEmptyState,
@@ -550,6 +549,25 @@ describe("shared UI polish contracts", () => {
     expect(breadcrumbs?.textContent).not.toContain("Settings");
   });
 
+  it("labels Route Family, realm, area, and resource as separate breadcrumb scopes", async () => {
+    const root = await mount(
+      () => (
+        <AppLayout>
+          <DomainPageFrame>
+            <section>Resource content</section>
+          </DomainPageFrame>
+        </AppLayout>
+      ),
+      "/admin/1/kv/default/operations/primary",
+    );
+    const breadcrumbs = root.querySelector('[aria-label="Resource hierarchy"]');
+
+    expect(breadcrumbs?.textContent).toContain("Route Family 1");
+    expect(breadcrumbs?.textContent).toContain("Realm: default");
+    expect(breadcrumbs?.textContent).toContain("Area: operations");
+    expect(breadcrumbs?.textContent).toContain("Resource: primary");
+  });
+
   it("renders auth pages in a focused full-viewport shell", async () => {
     const root = await mount(
       () => (
@@ -630,24 +648,6 @@ describe("shared UI polish contracts", () => {
     expect(root.textContent).toContain("No resources");
     expect(root.textContent).toContain("Network failed");
     expect(root.querySelector('[role="alert"]')).toBeTruthy();
-  });
-
-  it("displays Route Family and realm as separate scope values without fallback", async () => {
-    const root = await mount(() => (
-      <main>
-        <OperatorScopeStrip routeFamily="41" area="ops" resource="primary" freshness="Live" />
-        <OperatorScopeStrip routeFamily="7" realm="default" area="ops" resource="primary" />
-      </main>
-    ));
-
-    const strips = root.querySelectorAll(".operator-scope-strip");
-
-    expect(strips[0]?.textContent).toContain("Route Family");
-    expect(strips[0]?.textContent).toContain("Route Family 41");
-    expect(strips[0]?.textContent).not.toContain("Realm41");
-    expect(strips[0]?.textContent).not.toContain("RealmRoute Family 41");
-    expect(strips[1]?.textContent).toContain("Route Family 7");
-    expect(strips[1]?.textContent).toContain("Realmdefault");
   });
 
   it("renders flat resource inventory with virtual table links and metric typography", async () => {

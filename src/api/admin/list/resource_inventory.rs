@@ -94,12 +94,16 @@ pub fn collect_stream_resources(
                     committed_event_count: 0,
                     size_bytes: 0,
                     sessions_active: 0,
+                    subscriptions_active: 0,
                 });
         entry.committed_event_count = entry
             .committed_event_count
-            .saturating_add(stream.offset.saturating_add(1));
+            .saturating_add(stream.committed_event_count);
         entry.size_bytes = entry.size_bytes.saturating_add(stream.size_bytes);
         entry.sessions_active = entry.sessions_active.saturating_add(stream.sessions_active);
+        entry.subscriptions_active = entry
+            .subscriptions_active
+            .saturating_add(stream.subscriptions_active);
     }
     StreamResourceCollection {
         realm: realm.to_string(),

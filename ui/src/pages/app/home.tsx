@@ -4,7 +4,6 @@ import { ArrowUpRightIcon, CheckCircle2Icon, CircleAlertIcon } from "@askrjs/luc
 import { Alert, Badge, Block } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import {
   buildOverviewStatus,
@@ -14,8 +13,8 @@ import {
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
-import { formatRelativeTime } from "@/shared/format";
 import { formatUnknownError } from "@/shared/errors/format";
+import { formatRelativeTime, formatTimestamp } from "@/shared/format";
 
 function toneVariant(tone: OverviewTone) {
   if (tone === "danger") return "danger";
@@ -36,6 +35,14 @@ function OverviewStatusBand({ overview }: { overview: OverviewStatus }) {
         <p class="domain-header-kicker">Current status</p>
         <h2>{overview.overall.title}</h2>
         <p>{overview.overall.description}</p>
+        {overview.generatedAt ? (
+          <p class="overview-status-updated">
+            Snapshot generated{" "}
+            <time dateTime={overview.generatedAt} title={formatTimestamp(overview.generatedAt)}>
+              {formatRelativeTime(overview.generatedAt)}
+            </time>
+          </p>
+        ) : null}
       </div>
       <Badge variant={toneVariant(overview.overall.tone)}>{overview.overall.label}</Badge>
     </section>
@@ -60,7 +67,7 @@ function OverviewIssues({ overview }: { overview: OverviewStatus }) {
             <strong>{overview.complete ? "No active issues" : "Issue status incomplete"}</strong>
             <p>
               {overview.complete
-                ? "Open a domain below when you need to inspect normal activity or resource detail."
+                ? "Use the Domains navigation to inspect normal activity or resource detail."
                 : "Load both topology and system counters before treating the selected Route Family as healthy."}
             </p>
           </div>
@@ -88,41 +95,6 @@ function OverviewIssues({ overview }: { overview: OverviewStatus }) {
           </For>
         </ol>
       </Show>
-    </section>
-  );
-}
-
-function DomainHealth({ overview }: { overview: OverviewStatus }) {
-  return (
-    <section class="domain-section" aria-label="Domain health">
-      <div class="domain-section-header">
-        <div>
-          <h2>Domain health</h2>
-          <p>Compact state by Fitz domain, with the next useful drill-down.</p>
-        </div>
-      </div>
-
-      <ul class="overview-domain-grid">
-        <For each={overview.domains} by={(domain) => domain.href}>
-          {(domain) => (
-            <li class={`overview-domain-card overview-domain-card-${domain.tone}`}>
-              <div class="overview-domain-heading">
-                <strong>{domain.title}</strong>
-                <Badge variant={toneVariant(domain.tone)}>{domain.state}</Badge>
-              </div>
-              <p>{domain.signal}</p>
-              <Link
-                href={domain.href}
-                class="overview-action-link"
-                aria-label={`Open ${domain.title} inventory`}
-              >
-                <span>Open {domain.title}</span>
-                <ArrowUpRightIcon size={13} />
-              </Link>
-            </li>
-          )}
-        </For>
-      </ul>
     </section>
   );
 }
@@ -201,20 +173,19 @@ export default function Home() {
                 void systemQuery.refresh();
               },
             }}
-            status={{
-              detail: overview.generatedAt
-                ? `Updated ${formatRelativeTime(overview.generatedAt)}`
-                : "Loading broker status signals.",
-              label: refreshState,
-              tone:
-                topologyQuery.refreshing || systemQuery.refreshing
-                  ? "info"
-                  : topologyQuery.stale || systemQuery.stale || sourceUnavailable
-                    ? "warning"
-                    : overview.overall.tone,
-            }}
+            status={
+              // Health lives in the status band below; the badge flags abnormal freshness only.
+              refreshState === "Live"
+                ? undefined
+                : {
+                    label: refreshState,
+                    tone:
+                      refreshState === "Refreshing" || refreshState === "Loading"
+                        ? "info"
+                        : "warning",
+                  }
+            }
           />
-          <OperatorScopeStrip freshness={refreshState} />
 
           <Show when={operationalLoading}>
             <QueryLoadingState description="Loading overview status signals..." />
@@ -249,7 +220,6 @@ export default function Home() {
 
             <OverviewStatusBand overview={overview} />
             <OverviewIssues overview={overview} />
-            <DomainHealth overview={overview} />
             <BrokerVitals overview={overview} />
           </Show>
         </Block>

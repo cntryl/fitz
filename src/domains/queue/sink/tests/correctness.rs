@@ -237,3 +237,32 @@ fn should_reject_queue_operation_given_wildcard_queue_route() {
     );
     assert!(sink.actors_are_empty_for_tests());
 }
+
+#[test]
+fn should_count_queue_family_failed_closed_when_family_handler_panics() {
+    // Arrange
+    let metric = crate::domains::queue::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL;
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::BestEffort,
+    );
+    let before = crate::observability::metrics().counter_get(metric);
+
+    // Act
+    sink.panic_actor_for_failpoint();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while crate::observability::metrics().counter_get(metric) == before
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::yield_now();
+    }
+
+    // Assert
+    assert!(crate::observability::metrics().counter_get(metric) > before);
+    assert_eq!(
+        sink.family_health_snapshot().failed_families,
+        vec![RouteFamily::new(1)]
+    );
+}

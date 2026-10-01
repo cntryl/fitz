@@ -6,6 +6,11 @@ use crate::runtime::routing::RouteFamily;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Bound retained waiters per family; excess long-polls receive an immediate error.
+pub(super) const MAX_PENDING_QUEUE_RESERVES_PER_FAMILY: usize = 128;
+/// Prevent one client session from occupying the family's entire waiter budget.
+pub(super) const MAX_PENDING_QUEUE_RESERVES_PER_SESSION: usize = 16;
+
 pub(super) struct ReservationBook {
     known_queue_keys: HashSet<QueueKey>,
     inventory_error: Option<String>,
@@ -98,6 +103,16 @@ impl ReservationBook {
 
     pub(super) fn enqueue(&mut self, pending: PendingQueueReserve) {
         self.pending_reserves.push_back(pending);
+    }
+
+    pub(super) fn can_enqueue(&self, session_id: u64) -> bool {
+        self.pending_reserves.len() < MAX_PENDING_QUEUE_RESERVES_PER_FAMILY
+            && self
+                .pending_reserves
+                .iter()
+                .filter(|pending| pending.meta.session_id == session_id)
+                .count()
+                < MAX_PENDING_QUEUE_RESERVES_PER_SESSION
     }
 
     pub(super) fn take_pending(&mut self) -> VecDeque<PendingQueueReserve> {

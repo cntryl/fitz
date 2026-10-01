@@ -11,6 +11,9 @@ use std::sync::Arc;
 use super::sink::KvResourceLockKey;
 
 const KV_LATENCY_SAMPLE_LIMIT: usize = 256;
+/// Bound retained telemetry; new resource keys evict the oldest insertion.
+/// Churn may therefore leave a resource without a latency snapshot.
+pub(super) const KV_LATENCY_RESOURCE_LIMIT: usize = 128;
 
 #[allow(clippy::cast_precision_loss)]
 fn usize_to_f64(value: usize) -> f64 {
@@ -60,6 +63,38 @@ struct KvResourceLatency {
     writes: KvRollingLatency,
 }
 
+#[derive(Default)]
+struct KvLatencyState {
+    resources: HashMap<KvResourceLockKey, KvResourceLatency>,
+    insertion_order: VecDeque<KvResourceLockKey>,
+}
+
+impl KvLatencyState {
+    fn record(&mut self, key: &KvResourceLockKey, latency_ms: f64, is_read: bool) {
+        if let Some(resource) = self.resources.get_mut(key) {
+            Self::record_latency(resource, latency_ms, is_read);
+            return;
+        }
+
+        if self.resources.len() >= KV_LATENCY_RESOURCE_LIMIT {
+            if let Some(oldest) = self.insertion_order.pop_front() {
+                self.resources.remove(&oldest);
+            }
+        }
+        self.insertion_order.push_back(key.clone());
+        let resource = self.resources.entry(key.clone()).or_default();
+        Self::record_latency(resource, latency_ms, is_read);
+    }
+
+    fn record_latency(resource: &mut KvResourceLatency, latency_ms: f64, is_read: bool) {
+        if is_read {
+            resource.reads.record(latency_ms);
+        } else {
+            resource.writes.record(latency_ms);
+        }
+    }
+}
+
 /// Admin projection for the KV domain.
 ///
 /// Applies live transaction changes incrementally and keeps admin state
@@ -69,7 +104,7 @@ pub(crate) struct KvAdminProjection {
     read_model: Arc<AdminReadModel>,
     #[cfg(test)]
     dirty: AtomicBool,
-    latencies: Mutex<HashMap<KvResourceLockKey, KvResourceLatency>>,
+    latencies: Mutex<KvLatencyState>,
 }
 
 impl KvAdminProjection {
@@ -79,7 +114,7 @@ impl KvAdminProjection {
             read_model,
             #[cfg(test)]
             dirty: AtomicBool::new(false),
-            latencies: Mutex::new(HashMap::new()),
+            latencies: Mutex::new(KvLatencyState::default()),
         }
     }
 
@@ -113,21 +148,11 @@ impl KvAdminProjection {
     }
 
     pub(crate) fn record_read_latency(&self, key: &KvResourceLockKey, latency_ms: f64) {
-        self.latencies
-            .lock()
-            .entry(key.clone())
-            .or_default()
-            .reads
-            .record(latency_ms);
+        self.latencies.lock().record(key, latency_ms, true);
     }
 
     pub(crate) fn record_write_latency(&self, key: &KvResourceLockKey, latency_ms: f64) {
-        self.latencies
-            .lock()
-            .entry(key.clone())
-            .or_default()
-            .writes
-            .record(latency_ms);
+        self.latencies.lock().record(key, latency_ms, false);
     }
 
     pub(crate) fn latency_snapshots(
@@ -136,9 +161,15 @@ impl KvAdminProjection {
     ) -> (KvLatencySnapshot, KvLatencySnapshot) {
         self.latencies
             .lock()
+            .resources
             .get(key)
             .map(|latency| (latency.reads.snapshot(), latency.writes.snapshot()))
             .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn latency_resource_count(&self) -> usize {
+        self.latencies.lock().resources.len()
     }
 }
 

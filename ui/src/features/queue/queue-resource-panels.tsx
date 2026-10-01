@@ -33,7 +33,7 @@ import {
 export function QueueResourceCurrentValuesPanel({ detail }: { detail: QueueResourceDetail }) {
   return (
     <DomainSummaryStrip
-      class="queue-resource-summary"
+      class="queue-resource-summary domain-detail-summary"
       title="Current values"
       description="Broker-visible queue counters and live reservations for this scope."
       items={[
@@ -84,9 +84,6 @@ export function QueueResourceInflightPanel({ messages }: { messages: QueueInflig
         />
       ) : (
         <Block direction="column" gap="xs">
-          <Text tone="muted" size="sm">
-            Scroll the table horizontally to inspect ownership and expiry details.
-          </Text>
           <QueueInflightTable messages={messages} />
         </Block>
       )}
@@ -125,9 +122,6 @@ export function QueueResourceDeadLettersPanel({
         />
       ) : (
         <Block direction="column" gap="xs">
-          <Text tone="muted" size="sm">
-            Scroll the table horizontally to reach all actions.
-          </Text>
           <QueueDeadLetterTable
             messages={messages}
             onReplay={onReplay}

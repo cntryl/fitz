@@ -9,7 +9,7 @@ export const SYSTEM_OVERVIEW_KEY = systemQueries.key("overview");
 
 const systemOverviewQuery = defineQuery<{ family: string }, SystemOverview>({
   key: ({ family }) => systemOverviewQueryKey(family),
-  fetch: ({ family, signal }) => systemService.getOverview(family, { signal }),
+  fetch: ({ family }, { signal }) => systemService.getOverview(family, { signal }),
 });
 
 export function systemOverviewQueryKey(family = currentRouteFamilySegment()) {

@@ -170,7 +170,7 @@ pub fn stream_realm_watermark_detail(
         let streams = runtime
             .stream_list_streams(Some(realm))
             .into_iter()
-            .filter(|stream| stream.route_family == family)
+            .filter(|stream| stream.route_family == family && stream.committed_event_count > 0)
             .collect::<Vec<_>>();
         detail.area_count = streams
             .iter()
@@ -201,7 +201,11 @@ pub fn stream_area_watermark_detail(
         detail.resource_count = runtime
             .stream_list_streams(Some(realm))
             .into_iter()
-            .filter(|stream| stream.route_family == family && stream.area == area)
+            .filter(|stream| {
+                stream.route_family == family
+                    && stream.area == area
+                    && stream.committed_event_count > 0
+            })
             .count();
     }
 
@@ -242,10 +246,6 @@ pub fn lease_detail(
 }
 
 #[must_use]
-/// # Panics
-///
-/// Panics if the filtered schedule list reports exactly one item but that item
-/// cannot be retrieved from the iterator.
 pub fn schedule_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -261,11 +261,6 @@ pub fn schedule_detail(
         .collect::<Vec<_>>();
     if schedules.is_empty() {
         return ScheduleResourceDetail::empty(path);
-    }
-
-    if schedules.len() == 1 {
-        let item = schedules.into_iter().next().expect("single schedule");
-        return ScheduleResourceDetail::from_schedule(item);
     }
 
     ScheduleResourceDetail::aggregate(path, &schedules)

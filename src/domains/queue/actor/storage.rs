@@ -2,7 +2,7 @@ use super::{
     Bytes, DlqReason, Instant, MessageId, QueueActor, QueueCommit, QueueRecord, QueueState,
 };
 #[cfg(test)]
-use super::{FAIL_NEXT_ACK_COMMIT, FAIL_NEXT_REDELIVERY_COMMIT};
+use super::{FAIL_NEXT_ACK_COMMIT, FAIL_NEXT_RECORD_LOAD, FAIL_NEXT_REDELIVERY_COMMIT};
 use crate::observability as obs;
 
 impl QueueActor {
@@ -51,6 +51,13 @@ impl QueueActor {
         &self,
         id: MessageId,
     ) -> Result<QueueRecord, String> {
+        #[cfg(test)]
+        if FAIL_NEXT_RECORD_LOAD.with(|cell| cell.replace(false)) {
+            return Err(format!(
+                "Injected queue record load failure for message {id}"
+            ));
+        }
+
         let cf_id = self.queue_key.family.id();
         let header_key = self.cached_header_key(id);
         let txn = self
@@ -263,5 +270,10 @@ impl QueueActor {
     #[cfg(test)]
     pub(super) fn fail_next_redelivery_commit_for_tests() {
         FAIL_NEXT_REDELIVERY_COMMIT.with(|cell| cell.set(true));
+    }
+
+    #[cfg(test)]
+    pub(super) fn fail_next_record_load_for_tests() {
+        FAIL_NEXT_RECORD_LOAD.with(|cell| cell.set(true));
     }
 }

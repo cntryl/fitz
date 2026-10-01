@@ -85,6 +85,11 @@ impl Runtime {
     }
 
     #[must_use]
+    pub fn kv_inventory_estimate_update_failures_total(&self) -> u64 {
+        metric_counter(crate::domains::kv::metrics::METRIC_INVENTORY_UPDATE_FAILURES_TOTAL)
+    }
+
+    #[must_use]
     pub fn kv_notify_drops_total(&self) -> u64 {
         metric_counter(crate::domains::kv::metrics::METRIC_NOTIFY_DROPS_TOTAL)
     }
@@ -180,6 +185,11 @@ impl Runtime {
     #[must_use]
     pub fn queue_notify_drops_total(&self) -> u64 {
         metric_counter(crate::domains::queue::metrics::METRIC_NOTIFY_DROPS_TOTAL)
+    }
+
+    #[must_use]
+    pub fn queue_fast_flush_failures_total(&self) -> u64 {
+        metric_counter(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL)
     }
 
     #[must_use]
@@ -316,7 +326,13 @@ impl Runtime {
     #[must_use]
     pub fn stream_active(&self) -> usize {
         self.domain_admins.read().as_ref().map_or_else(
-            || self.admin_read_model.streams(None).len(),
+            || {
+                self.admin_read_model
+                    .streams(None)
+                    .into_iter()
+                    .filter(|stream| stream.committed_event_count > 0)
+                    .count()
+            },
             DomainAdminPorts::stream_count,
         )
     }

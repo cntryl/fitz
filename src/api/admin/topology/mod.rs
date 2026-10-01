@@ -71,7 +71,7 @@ pub fn handle_family_topology(runtime: &Runtime, family: u64) -> Response {
     topology.broker.messages_per_second = 0.0;
     topology.broker.router_backpressure_total = 0;
     topology.broker.router_high_lane_backpressure_total = 0;
-    topology.diagnostics = super::troubleshooting::healthy_global_diagnostics();
+    topology.diagnostics = super::troubleshooting::build_family_troubleshooting(runtime, family);
     topology.lanes.iter_mut().for_each(|lane| {
         lane.top_scoped_resources
             .retain(|resource| resource.scope.route_family == Some(family));

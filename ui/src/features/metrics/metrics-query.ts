@@ -6,7 +6,7 @@ import type { MetricsOverview } from "./metrics-models";
 const metricsQueries = queryScope("metrics");
 const metricsOverviewQuery = defineQuery<{ family: string }, MetricsOverview>({
   key: ({ family }) => metricsQueries.key("overview", family),
-  fetch: ({ family, signal }) => metricsService.getOverview(family, { signal }),
+  fetch: ({ family }, { signal }) => metricsService.getOverview(family, { signal }),
 });
 
 export function createMetricsOverviewQuery(family = currentRouteFamilySegment()) {

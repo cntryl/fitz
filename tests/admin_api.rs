@@ -4,6 +4,7 @@ mod admin_api {
     mod auth_startup;
     mod common;
     mod domain_inventory;
+    mod family_troubleshooting;
     mod metrics_primary;
     mod queue_resource_actions;
     mod schedule_run_now_contract;

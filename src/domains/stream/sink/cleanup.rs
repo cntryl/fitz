@@ -32,6 +32,13 @@ impl SessionScoped for StreamFamilyState {
     }
 
     fn release_session_resources(&mut self, session_id: u64) {
+        let subscriptions_removed = self
+            .subscriptions
+            .families
+            .values()
+            .map(|state| state.subscription_count_for_session(session_id))
+            .sum::<usize>()
+            > 0;
         self.unsubscribe_all(session_id);
 
         let mut removed_sessions = Vec::new();
@@ -42,6 +49,7 @@ impl SessionScoped for StreamFamilyState {
                 advanced_families.insert(key.family.as_u64());
             }
         }
+        let sessions_removed = !removed_sessions.is_empty();
 
         for family_id in advanced_families {
             self.handle_visibility_advance(
@@ -56,8 +64,11 @@ impl SessionScoped for StreamFamilyState {
                 self.session_owners.remove(stream_session_id);
             }
             self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
-            self.observability.mark_dirty();
         }
-        self.refresh_metrics_gauges();
+        if subscriptions_removed || sessions_removed {
+            self.mark_admin_snapshot_dirty();
+        } else {
+            self.refresh_metrics_gauges();
+        }
     }
 }

@@ -2,7 +2,7 @@ import DomainInventoryPage from "@/components/shared/domain-inventory-page";
 import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
-import { formatNumber } from "@/shared/format";
+import { formatCount, formatNumber } from "@/shared/format";
 
 const rpcMetricColumns: readonly DomainResourceMetricColumn[] = [
   {
@@ -21,6 +21,7 @@ const rpcMetricColumns: readonly DomainResourceMetricColumn[] = [
   },
   {
     id: "slowest-latency",
+    rollup: "worst",
     header: "Slowest avg ms",
     width: "18%",
     cell: (row) =>
@@ -58,6 +59,10 @@ function summarizeRpcHealth(stats: {
         unassignedRequests === 1 ? "request is" : "requests are"
       } not covered by a registered worker. ${historyDetail} Historical totals do not identify a current incident.`,
       label: "Pressure" as const,
+      reason: `${formatCount(stats.requestsPending, "request is", "requests are")} pending for ${formatCount(
+        stats.workersRegistered,
+        "registered worker",
+      )}. Sort realms by Pending to find the busy route.`,
       tone: "warning" as const,
     };
   }
@@ -66,13 +71,15 @@ function summarizeRpcHealth(stats: {
     return {
       detail: `${baseDetail} Registered workers cover the current pending count. ${historyDetail} Historical totals do not identify a current incident.`,
       label: "Active" as const,
+      reason: "Registered workers cover every waiting request.",
       tone: "info" as const,
     };
   }
 
   return {
     detail: `${baseDetail} No pending demand is visible. ${historyDetail} Historical totals do not identify a current incident.`,
-    label: "Live" as const,
+    label: "Healthy" as const,
+    reason: "No requests are waiting for a worker.",
     tone: "success" as const,
   };
 }
@@ -114,6 +121,7 @@ export default function RpcPage() {
       emptyDescription="No RPC resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={rpcMetricColumns}
+      reason={stats ? health.reason : undefined}
       stats={[
         { label: "Pending", value: stats ? formatNumber(stats.requestsPending) : "--" },
         { label: "Workers", value: stats ? formatNumber(stats.workersRegistered) : "--" },

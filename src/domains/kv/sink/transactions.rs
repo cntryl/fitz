@@ -69,6 +69,8 @@ impl KvFamilyRuntime<'_> {
             admin_update,
             commit_notification,
         } = self.dispatch_actor_operation(session_id, meta, kv_message);
+        self.collect_inventory_repairs(session_id);
+        self.retry_inventory_repairs();
         if matches!(
             &response,
             KvResponse::Error {

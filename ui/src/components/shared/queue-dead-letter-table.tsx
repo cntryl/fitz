@@ -1,4 +1,5 @@
 import DataTable, { type DataTableColumn } from "./data-table";
+import TitledCell from "./titled-cell";
 import { RefreshCwIcon, Trash2Icon } from "@askrjs/lucide";
 import { Button } from "@askrjs/themes/components";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
@@ -24,45 +25,27 @@ export default function QueueDeadLetterTable({
     {
       id: "message",
       header: "Message",
-      width: hasActions ? "12%" : "16%",
+      width: hasActions ? "52%" : "76%",
       cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={String(row.messageId)}>
+        <TitledCell
+          subtitle={`${row.reason} · dead-lettered ${formatTimestamp(row.deadLetteredAt)}`}
+        >
           {row.messageId}
-        </span>
+        </TitledCell>
       ),
     },
     {
       id: "attempts",
       header: "Attempts",
-      width: hasActions ? "12%" : "14%",
+      width: hasActions ? "16%" : "24%",
       cellComponent: ({ row }) => <span>{row.attempts}</span>,
-    },
-    {
-      id: "dead-lettered",
-      header: "Dead-lettered",
-      width: hasActions ? "20%" : "24%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={formatTimestamp(row.deadLetteredAt)}>
-          {formatTimestamp(row.deadLetteredAt)}
-        </span>
-      ),
-    },
-    {
-      id: "reason",
-      header: "Reason",
-      width: hasActions ? "30%" : "46%",
-      cellComponent: ({ row }) => (
-        <span class="queue-dead-letter-reason" title={row.reason}>
-          {row.reason}
-        </span>
-      ),
     },
     ...(hasActions
       ? [
           {
             id: "actions",
             header: "Actions",
-            width: "26%",
+            width: "32%",
             cellComponent: ({ row }) => (
               <div class="queue-action-cell">
                 {onReplay ? (

@@ -1,23 +1,10 @@
 import type { DiagnosticHotspot, DiagnosticSeverity, IncidentSummary } from "@/adapters";
 import type { SystemOverview } from "@/features/system/system-models";
-import type {
-  MessagingTopologyOverview,
-  TopologyDomain,
-  TopologyLane,
-  TopologyState,
-} from "@/features/topology/topology-models";
+import type { MessagingTopologyOverview, TopologyLane } from "@/features/topology/topology-models";
 import { hotspotHref, humanizeSeconds, scopeText } from "@/features/topology/topology-view";
-import {
-  overviewDomainIssueDescriptors,
-  overviewDomainSignal,
-} from "@/features/overview/overview-domain-rules";
+import { overviewDomainIssueDescriptors } from "@/features/overview/overview-domain-rules";
 import { formatNumber } from "@/shared/format";
-import {
-  adminChildHref,
-  domainHref,
-  domainLinks,
-  type DomainSegment,
-} from "@/shared/navigation/domains";
+import { adminChildHref, domainLinks, type DomainSegment } from "@/shared/navigation/domains";
 
 export type OverviewTone = "danger" | "info" | "success" | "warning";
 
@@ -33,16 +20,6 @@ export interface OverviewIssue {
   tone: OverviewTone;
 }
 
-export interface OverviewDomainStatus {
-  description: string;
-  href: string;
-  issueCount: number;
-  signal: string;
-  state: string;
-  title: string;
-  tone: OverviewTone;
-}
-
 export interface OverviewVital {
   caption?: string;
   label: string;
@@ -51,7 +28,6 @@ export interface OverviewVital {
 
 export interface OverviewStatus {
   complete: boolean;
-  domains: OverviewDomainStatus[];
   generatedAt?: string;
   issues: OverviewIssue[];
   overall: {
@@ -84,12 +60,9 @@ function severityTone(severity: DiagnosticSeverity): OverviewTone {
   return "success";
 }
 
-function stateLabel(state: TopologyState | undefined, issueCount: number) {
-  if (issueCount > 0) return issueCount === 1 ? "Issue" : `${issueCount} issues`;
-  if (state === "flowing") return "Live";
-  if (state === "quiet") return "Quiet";
-  if (state === "blocked" || state === "pressure") return "Watch";
-  return "Unknown";
+/** Broker-reported labels arrive lowercase; issue titles read as sentences. */
+function sentenceCase(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function actionForHref(href: string, domain?: DomainSegment) {
@@ -147,9 +120,10 @@ function hotspotIssue(hotspot: DiagnosticHotspot): OverviewIssue | null {
     id: `hotspot:${hotspot.domain}:${hotspot.realm ?? "*"}:${hotspot.area ?? "*"}:${hotspot.resource ?? "*"}:${hotspot.current_stage}`,
     scope: scopeText(hotspot) || "Broker",
     severity: hotspot.severity,
-    title:
+    title: sentenceCase(
       hotspot.likely_bottleneck ??
-      `${domainLinkBySegment.get(domain!)?.title ?? hotspot.domain} pressure`,
+        `${domainLinkBySegment.get(domain!)?.title ?? hotspot.domain} pressure`,
+    ),
     tone: severityTone(hotspot.severity),
   };
 }
@@ -221,66 +195,29 @@ function systemIssues(system: SystemOverview | null | undefined) {
   return issues;
 }
 
+/**
+ * A lane issue only says "this domain is under pressure". Once a hotspot or system
+ * signal names the same domain at the same or higher severity, the lane repeats it.
+ */
+function withoutRedundantLaneIssues(issues: readonly OverviewIssue[]) {
+  return issues.filter(
+    (issue) =>
+      !issue.id.startsWith("lane:") ||
+      !issues.some(
+        (other) =>
+          other !== issue &&
+          !other.id.startsWith("lane:") &&
+          other.domain === issue.domain &&
+          severityRank[other.severity] >= severityRank[issue.severity],
+      ),
+  );
+}
+
 function issueSort(left: OverviewIssue, right: OverviewIssue) {
   return (
     severityRank[right.severity] - severityRank[left.severity] ||
     left.title.localeCompare(right.title)
   );
-}
-
-function laneSignal(lane: TopologyLane | undefined) {
-  if (!lane) return null;
-
-  const normalState = lane.state === "flowing" || lane.state === "quiet";
-  const primary = lane.counters
-    .filter(
-      (counter) =>
-        counter.value > 0 &&
-        !(normalState && /(pressure|fail|reject|drop|timeout|error)/.test(counter.key)),
-    )
-    .slice(0, 2)
-    .map((counter) => `${counter.label} ${formatNumber(counter.value)}`);
-
-  if (primary.length > 0) return primary.join(" / ");
-  if (lane.activityPerSecond > 0) return `${lane.activityPerSecond.toFixed(2)} act/sec`;
-  return null;
-}
-
-function domainStatuses(
-  topology: MessagingTopologyOverview | null | undefined,
-  system: SystemOverview | null | undefined,
-  issues: OverviewIssue[],
-): OverviewDomainStatus[] {
-  const laneById = new Map<TopologyDomain, TopologyLane>(
-    topology?.lanes.map((lane) => [lane.id, lane]) ?? [],
-  );
-
-  return domainLinks.map((link) => {
-    const lane = laneById.get(link.segment);
-    const domainIssues = issues.filter((issue) => issue.domain === link.segment);
-    const topIssue = domainIssues[0];
-    const tone = topIssue
-      ? topIssue.tone
-      : lane?.state === "flowing"
-        ? "success"
-        : lane?.state === "quiet"
-          ? "info"
-          : "info";
-
-    return {
-      description: link.description,
-      href: domainHref(link.segment),
-      issueCount: domainIssues.length,
-      signal:
-        topIssue?.description ??
-        laneSignal(lane) ??
-        overviewDomainSignal(link.segment, system?.domains) ??
-        link.description,
-      state: stateLabel(lane?.state, domainIssues.length),
-      title: link.title,
-      tone,
-    };
-  });
 }
 
 function brokerVitals(
@@ -343,7 +280,7 @@ export function buildOverviewStatus({
     addIssue(issueMap, laneIssue(lane));
   }
 
-  const issues = Array.from(issueMap.values()).sort(issueSort);
+  const issues = withoutRedundantLaneIssues(Array.from(issueMap.values())).sort(issueSort);
   const topIssue = issues[0];
   const complete = Boolean(system && topology);
   const overall = topIssue
@@ -370,7 +307,6 @@ export function buildOverviewStatus({
 
   return {
     complete,
-    domains: domainStatuses(topology, system, issues),
     generatedAt: topology?.generatedAt ?? system?.fetchedAt,
     issues,
     overall,

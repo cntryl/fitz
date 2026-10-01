@@ -55,4 +55,13 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         runtime.kv_invalid_transaction_rejects_total()
     );
     output.push('\n');
+
+    output.push_str("# HELP fitz_kv_inventory_estimate_update_failures_total Total KV inventory estimate updates that failed after a successful data commit and were queued for repair\n");
+    output.push_str("# TYPE fitz_kv_inventory_estimate_update_failures_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_kv_inventory_estimate_update_failures_total {}",
+        runtime.kv_inventory_estimate_update_failures_total()
+    );
+    output.push('\n');
 }

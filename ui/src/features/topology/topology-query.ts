@@ -13,7 +13,7 @@ export function messagingTopologyQueryKey(family = currentRouteFamilySegment()) 
 
 const messagingTopologyQuery = defineQuery<{ family: string }, MessagingTopologyOverview>({
   key: ({ family }) => messagingTopologyQueryKey(family),
-  fetch: ({ family, signal }) => topologyService.getOverview(family, { signal }),
+  fetch: ({ family }, { signal }) => topologyService.getOverview(family, { signal }),
 });
 
 export function createMessagingTopologyQuery(family = currentRouteFamilySegment()) {
