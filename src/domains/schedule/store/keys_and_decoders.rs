@@ -88,7 +88,10 @@ impl ScheduleStore {
         let operation = std::str::from_utf8(operation)
             .map_err(|e| format!("Invalid schedule operation encoding: {e}"))?;
 
-        Ok(format!("schedule://{realm}/{area}/{resource}/{operation}"))
+        let route = format!("schedule://{realm}/{area}/{resource}/{operation}");
+        parse_concrete_schedule_route(&route)
+            .map_err(|error| format!("Invalid persisted schedule route: {error}"))?;
+        Ok(route)
     }
 
     pub(super) fn encode_prefixed_route_key_from_realm(
