@@ -15,7 +15,7 @@ misleading, mass-produced, or unsupported submissions to protect review capacity
 
 ## Dev Setup
 
-- Install Rust stable.
+- Install the Rust toolchain pinned for CI in `.github/workflows/ci.yml` (currently 1.98.1). Advance it intentionally after pedantic Clippy, build, and workspace tests pass on the candidate stable release.
 - Install shared tooling when working on benchmark reports:
   - `cargo install --git https://github.com/cntryl/tools --locked`
 - Clone the repo and run the workspace tests:
