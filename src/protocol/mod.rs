@@ -23,6 +23,7 @@ pub mod payload_codec;
 pub mod queue_codec;
 pub mod rpc_codec;
 pub mod schedule_codec;
+pub mod session_metadata;
 pub mod stream_codec;
 #[cfg(test)]
 pub(crate) mod test_support;

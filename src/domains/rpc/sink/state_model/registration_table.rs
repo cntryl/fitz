@@ -1,13 +1,21 @@
 use super::{
-    BTreeMap, FxBuildHasher, HashMap, Route, RouteFamily, RpcFastMap, RpcRegistrationId, RpcWorker,
-    RpcWorkerKey, RpcWorkerRegistration,
+    BTreeMap, FxBuildHasher, HashMap, HashSet, Route, RouteFamily, RpcFastMap, RpcRegistrationId,
+    RpcWorker, RpcWorkerKey, RpcWorkerRegistration,
 };
 
 /// Owns registration identity, lookup, and lifecycle bookkeeping.
 pub(in crate::domains::rpc::sink) struct RegistrationTable {
     by_id: BTreeMap<RpcRegistrationId, RpcWorker>,
     by_registration: RpcFastMap<RpcWorkerKey, RpcRegistrationId>,
+    by_session: HashMap<u64, HashSet<RpcWorkerKey>>,
+    session_counts: HashMap<u64, SessionRegistrationCount>,
     next_id: RpcRegistrationId,
+}
+
+#[derive(Default)]
+struct SessionRegistrationCount {
+    total: usize,
+    wildcard: usize,
 }
 
 impl RegistrationTable {
@@ -15,6 +23,8 @@ impl RegistrationTable {
         Self {
             by_id: BTreeMap::new(),
             by_registration: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
+            by_session: HashMap::new(),
+            session_counts: HashMap::new(),
             next_id: 1,
         }
     }
@@ -32,11 +42,9 @@ impl RegistrationTable {
             return Some(RpcWorkerRegistration::Existing);
         }
         let session_wildcard_count = self
-            .by_id
-            .values()
-            .filter(|existing| existing.session_id == registration.session_id)
-            .filter(|existing| existing.is_wildcard())
-            .count();
+            .session_counts
+            .get(&registration.session_id)
+            .map_or(0, |counts| counts.wildcard);
         crate::domains::subscription_state::wildcard_registration_limit_reached(
             registration.pattern(),
             session_wildcard_count,
@@ -64,11 +72,11 @@ impl RegistrationTable {
         session_id: u64,
     ) -> Vec<RouteFamily> {
         let mut families = self
-            .by_id
-            .values()
-            .filter_map(|registration| {
-                (registration.session_id == session_id).then_some(*registration.addr.family())
-            })
+            .by_session
+            .get(&session_id)
+            .into_iter()
+            .flatten()
+            .map(|key| *key.addr.family())
             .collect::<Vec<_>>();
         families.sort_by_key(RouteFamily::id);
         families.dedup();
@@ -96,8 +104,21 @@ impl RegistrationTable {
     ) -> RpcRegistrationId {
         let registration_id = self.allocate_id();
         registration.assign_registration_id(registration_id);
-        self.by_registration.insert(key, registration_id);
+        let counts = self
+            .session_counts
+            .entry(registration.session_id)
+            .or_default();
+        counts.total = counts.total.saturating_add(1);
+        if registration.is_wildcard() {
+            counts.wildcard = counts.wildcard.saturating_add(1);
+        }
+        self.by_registration.insert(key.clone(), registration_id);
+        self.by_session
+            .entry(registration.session_id)
+            .or_default()
+            .insert(key);
         self.by_id.insert(registration_id, registration);
+        crate::domains::subscription_state::record_registration_delta("rpc", true);
         registration_id
     }
 
@@ -150,6 +171,23 @@ impl RegistrationTable {
             .by_id
             .remove(&registration_id)
             .expect("indexed RPC registration");
+        let session_id = registration.session_id;
+        if let Some(keys) = self.by_session.get_mut(&session_id) {
+            keys.remove(key);
+            if keys.is_empty() {
+                self.by_session.remove(&session_id);
+            }
+        }
+        if let Some(counts) = self.session_counts.get_mut(&session_id) {
+            counts.total = counts.total.saturating_sub(1);
+            if registration.is_wildcard() {
+                counts.wildcard = counts.wildcard.saturating_sub(1);
+            }
+            if counts.total == 0 {
+                self.session_counts.remove(&session_id);
+            }
+        }
+        crate::domains::subscription_state::record_registration_delta("rpc", false);
         Some((registration_id, registration))
     }
 
@@ -158,13 +196,30 @@ impl RegistrationTable {
         session_id: u64,
     ) -> Vec<(RpcRegistrationId, RpcWorker)> {
         let keys = self
-            .by_registration
-            .keys()
-            .filter(|key| key.session_id == session_id)
+            .by_session
+            .get(&session_id)
             .cloned()
-            .collect::<Vec<_>>();
+            .unwrap_or_default();
         keys.into_iter()
             .filter_map(|key| self.remove_by_key(&key))
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(in crate::domains::rpc::sink) fn registration_count_for_session(
+        &self,
+        session_id: u64,
+    ) -> usize {
+        self.session_counts
+            .get(&session_id)
+            .map_or(0, |counts| counts.total)
+    }
+}
+
+impl Drop for RegistrationTable {
+    fn drop(&mut self) {
+        for _ in 0..self.by_id.len() {
+            crate::domains::subscription_state::record_registration_delta("rpc", false);
+        }
     }
 }

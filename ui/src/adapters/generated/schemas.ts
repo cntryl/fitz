@@ -927,6 +927,7 @@ export type ScheduleStats = {
 
 export type SessionInfo = {
   "session_id"?: string;
+  "service_name"?: string;
   "route_family"?: number;
   "subject"?: string;
   "identity_claim"?: string;

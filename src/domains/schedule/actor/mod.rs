@@ -12,6 +12,8 @@ pub(super) const SCAN_DEDUP_WINDOW: std::time::Duration = std::time::Duration::f
 pub(super) const MAX_DUE_CLAIMS_PER_SCAN: usize = 32;
 /// Definitions own their parsed cron; this cache only accelerates repeated inputs.
 pub(super) const MAX_CACHED_CRON_EXPRESSIONS: usize = 128;
+/// Keeps pending-fire acknowledgement transactions within the due-scan batch bound.
+pub(super) const MAX_PENDING_FIRE_ACKS_PER_SCAN: usize = MAX_DUE_CLAIMS_PER_SCAN;
 
 fn retry_persistence<T>(
     mut operation: impl FnMut() -> Result<T, crate::domains::schedule::store::SchedulePersistenceError>,

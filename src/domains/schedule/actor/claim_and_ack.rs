@@ -7,7 +7,7 @@ use crate::domains::schedule::store::{
 use bytes::Bytes;
 use rustc_hash::FxBuildHasher;
 use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::collections::{Bound::Excluded, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{info, warn};
@@ -163,15 +163,31 @@ impl ScheduleActor {
         let take = usize::try_from(limit)
             .unwrap_or(MAX_LIMIT)
             .clamp(1, MAX_LIMIT);
-        let mut ordered = self.list_entries.clone();
-        ordered.sort_unstable_by(|left, right| left.route.cmp(&right.route));
         let family_prefix = format!("schedule-list-v1:{}:", self.family.as_u64());
-        let start = cursor
-            .and_then(|value| value.strip_prefix(&family_prefix))
-            .and_then(|value| ordered.iter().position(|entry| entry.route == value))
-            .map_or(0, |index| index.saturating_add(1));
-        let start = start.min(ordered.len());
-        let requested = start.saturating_add(take).min(ordered.len()) - start;
+        let cursor_route = cursor
+            .map(|value| {
+                value
+                    .strip_prefix(&family_prefix)
+                    .filter(|route| !route.is_empty())
+                    .ok_or_else(|| "invalid schedule list cursor".to_string())
+            })
+            .transpose()?;
+        let mut ordered: Vec<_> = if let Some(route) = cursor_route {
+            self.list_entries_by_route
+                .range((Excluded(route.to_string()), std::ops::Bound::Unbounded))
+                .take(take.saturating_add(1))
+                .map(|(_, entry)| Arc::clone(entry))
+                .collect()
+        } else {
+            self.list_entries_by_route
+                .values()
+                .take(take.saturating_add(1))
+                .map(Arc::clone)
+                .collect()
+        };
+        let has_more_after_count = ordered.len() > take;
+        ordered.truncate(take);
+        let requested = ordered.len();
         // Reserve room for the continuation field, which re-encodes
         // `family_prefix + route` for whichever entry ends up last on the
         // page - on top of that route already being counted once inside the
@@ -180,14 +196,14 @@ impl ScheduleActor {
         let fitted = if requested == 0 {
             0
         } else {
-            Self::bounded_page_len(&ordered, start, requested, |entry| {
+            Self::bounded_page_len(&ordered, 0, requested, |entry| {
                 family_prefix_len.saturating_add(entry.route.len())
             })?
         };
-        let end = start.saturating_add(fitted);
-        let entries = Arc::new(ordered[start..end].to_vec());
-        let has_more = end < ordered.len();
-        let continuation = has_more.then(|| format!("{family_prefix}{}", ordered[end - 1].route));
+        let entries = Arc::new(ordered[..fitted].to_vec());
+        let has_more = fitted < ordered.len() || has_more_after_count;
+        let continuation =
+            has_more.then(|| format!("{family_prefix}{}", ordered[fitted - 1].route));
         Ok((entries, has_more, continuation))
     }
 

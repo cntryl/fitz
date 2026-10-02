@@ -87,6 +87,7 @@ impl ScheduleActor {
             cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
             cron_cache_order: std::collections::VecDeque::new(),
             list_entries: Vec::new(),
+            list_entries_by_route: BTreeMap::new(),
             list_cache: None,
             write_policy,
             last_scan_time: now,

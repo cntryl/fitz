@@ -92,6 +92,32 @@ impl RuntimeIngress {
 }
 
 impl DomainFrameDispatcher {
+    pub(super) fn update_session_metadata(
+        &self,
+        session_id: u64,
+        channel_id: crate::protocol::frame::ChannelId,
+        payload: &[u8],
+    ) -> IngressDecision {
+        if channel_id != crate::protocol::frame::ChannelId::Control {
+            return IngressDecision::Close(
+                "session metadata must use the control channel".to_string(),
+            );
+        }
+        let service_name = match crate::protocol::session_metadata::decode_service_name(payload) {
+            Ok(service_name) => service_name,
+            Err(error) => return IngressDecision::Close(error),
+        };
+        let Some(session) = self.registry.session(session_id) else {
+            return IngressDecision::Close(format!("unknown session: {session_id}"));
+        };
+
+        session.metadata.set_service_name(service_name);
+        if let Some(admin_read_model) = &self.registry.admin_read_model {
+            admin_read_model.record_session_update(&session);
+        }
+        IngressDecision::Accept
+    }
+
     pub(super) fn dispatch_timeout_outcome() -> &'static str {
         "indeterminate"
     }

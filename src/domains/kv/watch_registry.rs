@@ -26,6 +26,10 @@ struct KvWatchSubscription {
 }
 
 impl RoutedSubscription for KvWatchSubscription {
+    fn metric_domain() -> &'static str {
+        "kv"
+    }
+
     fn pattern(&self) -> &Pattern {
         &self.pattern
     }

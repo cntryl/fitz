@@ -73,6 +73,12 @@ export default function SessionTable({ sessions }: SessionTableProps) {
                   </span>
                 </p>
                 <dl class="session-list-metadata">
+                  <Show when={session.serviceName}>
+                    <div>
+                      <dt>Service</dt>
+                      <dd>{session.serviceName}</dd>
+                    </div>
+                  </Show>
                   <div>
                     <dt>Remote</dt>
                     <dd class="session-table-cell-wrap">{session.remoteAddress ?? "Unknown"}</dd>

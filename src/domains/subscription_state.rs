@@ -2,6 +2,7 @@ use crate::runtime::matcher::Pattern;
 use crate::runtime::routing::{Route, RouteFamily};
 use crate::runtime::{DomainPublishEvent, SubscriptionId, SubscriptionIndex};
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 /// Per-session wildcard registration cap shared by every wildcard-capable domain.
 pub(crate) const MAX_WILDCARD_REGISTRATIONS_PER_SESSION: usize = 128;
@@ -14,12 +15,61 @@ pub(crate) fn wildcard_registration_limit_reached(
 }
 
 pub(crate) trait RoutedSubscription {
+    fn metric_domain() -> &'static str;
     fn pattern(&self) -> &Pattern;
     fn session_id(&self) -> u64;
     fn subscription_id(&self) -> u64;
 }
 
-pub(crate) struct RoutedSubscriptionSet<T> {
+#[derive(Default)]
+struct RegistrationTelemetry {
+    current: usize,
+    high_water: usize,
+    crossed_128: bool,
+    crossed_1024: bool,
+    crossed_10000: bool,
+}
+
+static REGISTRATION_TELEMETRY: OnceLock<
+    parking_lot::Mutex<HashMap<&'static str, RegistrationTelemetry>>,
+> = OnceLock::new();
+
+pub(crate) fn record_registration_delta(domain: &'static str, added: bool) {
+    let telemetry = REGISTRATION_TELEMETRY.get_or_init(|| parking_lot::Mutex::new(HashMap::new()));
+    let mut telemetry = telemetry.lock();
+    let state = telemetry.entry(domain).or_default();
+    if added {
+        state.current = state.current.saturating_add(1);
+    } else {
+        state.current = state.current.saturating_sub(1);
+    }
+    state.high_water = state.high_water.max(state.current);
+
+    let metrics = crate::observability::metrics();
+    metrics.gauge_set(
+        &format!("fitz_{domain}_registrations"),
+        u64::try_from(state.current).unwrap_or(u64::MAX),
+    );
+    metrics.gauge_set(
+        &format!("fitz_{domain}_registrations_high_water"),
+        u64::try_from(state.high_water).unwrap_or(u64::MAX),
+    );
+    let high_water = state.high_water;
+    for (threshold, crossed) in [
+        (128, &mut state.crossed_128),
+        (1024, &mut state.crossed_1024),
+        (10_000, &mut state.crossed_10000),
+    ] {
+        if !*crossed && high_water >= threshold {
+            *crossed = true;
+            metrics.counter_inc(&format!(
+                "fitz_{domain}_registration_threshold_{threshold}_total"
+            ));
+        }
+    }
+}
+
+pub(crate) struct RoutedSubscriptionSet<T: RoutedSubscription> {
     subscriptions: HashMap<u64, T>,
     session_patterns: HashMap<u64, HashMap<String, u64>>,
     session_subscription_ids: HashMap<u64, HashSet<u64>>,
@@ -141,6 +191,7 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         }
 
         self.subscriptions.insert(subscription_id, subscription);
+        record_registration_delta(T::metric_domain(), true);
     }
 
     pub(crate) fn remove_session_pattern(
@@ -232,6 +283,7 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
 
     fn remove_subscription(&mut self, family_id: RouteFamily, subscription_id: u64) {
         if let Some(subscription) = self.subscriptions.remove(&subscription_id) {
+            record_registration_delta(T::metric_domain(), false);
             let session_id = subscription.session_id();
             let pattern = subscription.pattern().route();
 
@@ -288,5 +340,83 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
                 }
             }
         }
+    }
+}
+
+impl<T: RoutedSubscription> Drop for RoutedSubscriptionSet<T> {
+    fn drop(&mut self) {
+        for _ in 0..self.subscription_count() {
+            record_registration_delta(T::metric_domain(), false);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestSubscription {
+        pattern: Pattern,
+        session_id: u64,
+        subscription_id: u64,
+    }
+
+    impl RoutedSubscription for TestSubscription {
+        fn metric_domain() -> &'static str {
+            "subscription_metrics_test"
+        }
+
+        fn pattern(&self) -> &Pattern {
+            &self.pattern
+        }
+
+        fn session_id(&self) -> u64 {
+            self.session_id
+        }
+
+        fn subscription_id(&self) -> u64 {
+            self.subscription_id
+        }
+    }
+
+    #[test]
+    fn should_report_aggregate_registration_high_water_threshold_and_cleanup() {
+        // Arrange
+        let metrics = crate::observability::metrics();
+        let domain = TestSubscription::metric_domain();
+        let mut registrations = RoutedSubscriptionSet::new();
+
+        // Act
+        for id in 1..=128 {
+            let route = format!("test://realm/area/resource-{id}");
+            registrations.insert(
+                RouteFamily::new(1),
+                TestSubscription {
+                    pattern: Pattern::new(&route),
+                    session_id: 9,
+                    subscription_id: id,
+                },
+            );
+        }
+        registrations.remove_session_pattern(
+            RouteFamily::new(1),
+            9,
+            "test://realm/area/resource-1",
+        );
+        drop(registrations);
+
+        // Assert
+        assert_eq!(
+            metrics.gauge_get(&format!("fitz_{domain}_registrations")),
+            0
+        );
+        assert_eq!(
+            metrics.gauge_get(&format!("fitz_{domain}_registrations_high_water")),
+            128
+        );
+        assert_eq!(
+            metrics.counter_get(&format!("fitz_{domain}_registration_threshold_128_total")),
+            1
+        );
     }
 }

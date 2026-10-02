@@ -509,6 +509,8 @@ pub struct SchedulePendingClaimInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_name: Option<String>,
     pub route_family: u64,
     pub subject: String,
     pub identity_claim: String,

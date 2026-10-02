@@ -9,6 +9,21 @@ use std::time::{Duration, Instant};
 /// Maximum retry window after a subscriber reports mailbox backpressure.
 const NOTICE_MAILBOX_RETRY_TIMEOUT: Duration = Duration::from_millis(5);
 const NOTICE_DELIVERY_WORKER_CAPACITY: usize = 64;
+const NOTICE_DELIVERY_TARGETS_PER_JOB: usize = 64;
+
+pub(super) fn push_notice_delivery_target(
+    targets: &mut NoticeDeliveryTargets,
+    target: NoticeDeliveryTarget,
+) -> Option<NoticeDeliveryTargets> {
+    targets.push(target);
+    (targets.len() == NOTICE_DELIVERY_TARGETS_PER_JOB).then(|| std::mem::take(targets))
+}
+
+pub(super) fn flush_notice_delivery_targets(
+    targets: &mut NoticeDeliveryTargets,
+) -> Option<NoticeDeliveryTargets> {
+    (!targets.is_empty()).then(|| std::mem::take(targets))
+}
 
 pub(super) struct NoticeDeliveryJob {
     targets: NoticeDeliveryTargets,
@@ -202,4 +217,42 @@ fn build_notify_envelope(
     );
 
     Envelope::new(target.subscriber.clone(), notification)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{flush_notice_delivery_targets, push_notice_delivery_target};
+    use crate::domains::notice::sink::model::{NoticeDeliveryTarget, NoticeDeliveryTargets};
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+
+    #[test]
+    fn should_keep_notice_delivery_batches_within_job_target_limit() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let mut targets = NoticeDeliveryTargets::new();
+        let mut batch_sizes = Vec::new();
+
+        // Act
+        for session_id in 1..=130 {
+            if let Some(batch) = push_notice_delivery_target(
+                &mut targets,
+                NoticeDeliveryTarget {
+                    session_id,
+                    subscription_id: session_id,
+                    subscriber: RouteAddress::new(
+                        family,
+                        Route::new(format!("inbox://session/{session_id}")),
+                    ),
+                },
+            ) {
+                batch_sizes.push(batch.len());
+            }
+        }
+        if let Some(batch) = flush_notice_delivery_targets(&mut targets) {
+            batch_sizes.push(batch.len());
+        }
+
+        // Assert
+        assert_eq!(batch_sizes, [64, 64, 2]);
+    }
 }
