@@ -113,7 +113,7 @@ pub struct McpToolDescriptor {
     pub budget: McpCostBudget,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct McpResourceDetailRequest {
     pub scheme: String,
     pub realm: String,
@@ -133,6 +133,8 @@ impl McpResourceDetailRequest {
         )
     }
 }
+
+pub mod catalog;
 
 mod audit;
 pub use audit::{McpAuditDecision, McpAuditRecord, McpExecutionContext};

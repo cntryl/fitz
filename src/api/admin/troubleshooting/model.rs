@@ -5,7 +5,7 @@ use super::{is_recent, rfc3339, score_usize};
 
 pub(crate) const RECENT_WINDOW_SECS: i64 = 300;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticTrend {
     Growing,
@@ -15,7 +15,7 @@ pub enum DiagnosticTrend {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
     Informational,
@@ -25,7 +25,7 @@ pub enum DiagnosticSeverity {
     Critical,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IncidentStatus {
     Healthy,
@@ -154,14 +154,14 @@ pub(crate) fn canonical_explanation_hints(
     hints
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConfidenceJustification {
     pub signals_matched: Vec<String>,
     pub signals_missing: Vec<String>,
     pub rationale: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SuggestedQuery {
     pub priority: u8,
     pub title: String,
@@ -170,7 +170,7 @@ pub struct SuggestedQuery {
     pub remediation: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticSnapshot {
     pub current_stage: String,
     pub trend: DiagnosticTrend,
@@ -625,7 +625,7 @@ fn summarize_signal_names(signals: &[String]) -> String {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DomainDiagnostics {
     #[serde(flatten)]
     pub snapshot: DiagnosticSnapshot,
@@ -643,7 +643,7 @@ impl DomainDiagnostics {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticHotspot {
     pub domain: String,
     pub realm: Option<String>,
@@ -846,7 +846,7 @@ impl DiagnosticHotspot {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IncidentSummary {
     pub status: IncidentStatus,
     pub title: String,
@@ -858,7 +858,7 @@ pub struct IncidentSummary {
     pub suggested_next_queries: Vec<SuggestedQuery>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GlobalTroubleshootingDiagnostics {
     pub incident_summary: IncidentSummary,
     pub top_bottleneck: Option<DiagnosticHotspot>,
@@ -866,7 +866,7 @@ pub struct GlobalTroubleshootingDiagnostics {
     pub hotspots: Vec<DiagnosticHotspot>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RuntimeDiagnostics {
     pub global: GlobalTroubleshootingDiagnostics,
     pub kv: DomainDiagnostics,

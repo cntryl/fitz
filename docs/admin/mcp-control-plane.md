@@ -57,3 +57,26 @@ This policy does not authorize administrative actions: the future action
 admission path must require an audit sink that can accept its mandatory record
 and fail closed when that acceptance is unavailable. No mutations or MCP HTTP
 transport are enabled by this retention change.
+
+## Protocol catalog foundation
+
+The protocol dependency is pinned to `rmcp = 3.5.0`. Fitz's contract selects
+`2026-07-28` as the primary revision and `2025-11-25` as explicit compatibility.
+The SDK defines different lifecycles: the primary revision does not initialize;
+compatibility initializes before operational requests. This dependency and
+catalog do not by themselves mount an HTTP endpoint or implement OAuth.
+
+`McpToolRegistry::protocol_tools()` preserves the five existing tool names and
+returns them in lexicographic order. Input schemas describe the current registry
+arguments; output schemas derive from shared REST DTOs, including all seven
+resource-detail variants and resource timelines. Read-only annotations are hints,
+not authorization. Every invocation still checks its authenticated principal,
+route permissions, route-family authority and capability before collecting data.
+
+Catalog metadata records REST source, authority, snapshot freshness, pagination,
+and the current budget enforcement. Encoded registry result bytes and timeline
+result-event counts are bounded. Collection scans and hard runtime deadlines are
+not yet bounded by these descriptors, and the complete protocol envelope still
+needs a transport-level budget. Do not use the candidate 50/100/200ms values as
+latency promises. Current `queue_family` scopes Queue only; other domains and
+global tools require wildcard family authority until their scoped builders ship.
