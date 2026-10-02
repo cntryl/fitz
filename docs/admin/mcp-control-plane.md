@@ -10,7 +10,7 @@ Required checks:
 
 1. Authenticate the principal.
 2. Resolve route scope and realm from the request.
-3. Authorize against Fitz route permissions.
+3. Authorize against Fitz route permissions and the principal's separate route-family authority. All-family tools require wildcard family authority. Queue detail/timeline requests with an explicit `queue_family` require access to that family; supplying `queue_family` on another domain does not scope its read. Restricted principals receive `ScopeDenied` for unscoped reads, and denials are audited.
 4. Authorize against MCP capability policy.
 5. Enforce argument validation and response-size budget.
 6. Execute through shared control-plane read models or approved admin commands.
