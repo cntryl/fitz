@@ -39,6 +39,7 @@ This index is the public reading path. It keeps product usage, operations, clien
 - [Resource limits](operations/resource-limits.md)
 - [Performance tuning](operations/performance-tuning.md)
 - [Release checklist](operations/release-checklist.md)
+- [v0.2.0 qualification record](operations/v0.2.0-qualification.md)
 - [Migration guide](operations/migration-guide.md)
 - [Admin API](admin/admin-api.md)
 - [MCP control-plane safety](admin/mcp-control-plane.md)
