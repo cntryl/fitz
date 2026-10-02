@@ -10,6 +10,8 @@ pub(super) const SCAN_DEDUP_WINDOW: std::time::Duration = std::time::Duration::f
 /// Keeps each synchronous Schedule persistence transaction short enough to
 /// yield the actor lock between due-storm batches.
 pub(super) const MAX_DUE_CLAIMS_PER_SCAN: usize = 32;
+/// Definitions own their parsed cron; this cache only accelerates repeated inputs.
+pub(super) const MAX_CACHED_CRON_EXPRESSIONS: usize = 128;
 
 fn retry_persistence<T>(
     mut operation: impl FnMut() -> Result<T, crate::domains::schedule::store::SchedulePersistenceError>,

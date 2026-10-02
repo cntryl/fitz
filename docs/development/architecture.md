@@ -969,19 +969,9 @@ for subscriber in matched_subscribers {
 router.deliver_batch(batch);
 ```
 ### Monitoring
-Add tracing for performance insights:
-```rust
-use tracing::{instrument, span, Level};
-#[instrument(skip(msg))]
-pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
-    let span = span!(Level::DEBUG, "domain_handler");
-    let _guard = span.enter();
-    
-    tracing::debug!("handling message");
-    // ... logic
-    tracing::debug!("response ready");
-}
-```
+
+See [Architecture monitoring](architecture-monitoring.md) for the tracing example.
+
 ### Tuning Parameters
 | Parameter | Default | Use Case |
 |---|---:|---|
@@ -1001,3 +991,6 @@ domain response errors, and retry/idempotency guidance.
 - Codecs: `src/protocol/*_codec.rs`
 - Boot: `src/boot/mod.rs`
 - Tests: `tests/`, `benches/`
+
+Derived Schedule parse and Stream actor retention is described in
+[Derived cache retention](derived-cache-retention.md).

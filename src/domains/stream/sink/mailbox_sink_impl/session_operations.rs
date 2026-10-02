@@ -326,6 +326,7 @@ impl StreamFamilyState {
         match commit_result {
             Ok(commit) => {
                 self.session_owners.remove(session_id);
+                self.actors.remove(&owner.key);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
                 self.observability.record_events(commit.batch_size);
                 let watermark_commit = WatermarkCommit {
@@ -390,6 +391,7 @@ impl StreamFamilyState {
         match rollback_result {
             Ok(()) => {
                 self.session_owners.remove(session_id);
+                self.actors.remove(&owner.key);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
                 self.handle_visibility_advance(meta.route_family);
                 (
