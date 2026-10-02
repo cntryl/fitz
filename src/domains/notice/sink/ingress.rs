@@ -52,7 +52,7 @@ impl NoticeFamilyState {
         // jumped ahead of it. Reject rather than silently recreating a
         // subscription for a session that is already gone and will never be
         // cleaned up again.
-        if reject_cleaned_up_session && self.is_cleaned_up_session(meta.session_id) {
+        if reject_cleaned_up_session && self.is_cleaned_up_request(meta.session_id, envelope) {
             self.reject_with(envelope, meta, "session already closed", request_started);
             return Ok(());
         }

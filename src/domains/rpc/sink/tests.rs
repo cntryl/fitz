@@ -15,3 +15,5 @@ mod request_queueing;
 mod response_sequence;
 mod timeouts_and_capacity;
 mod wildcard_registrations;
+
+mod stale_cleanup_eviction;

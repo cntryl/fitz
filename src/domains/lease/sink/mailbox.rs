@@ -6,6 +6,7 @@ use crate::runtime::{DeliveryError, Envelope, MailboxSink};
 
 impl MailboxSink for LeaseDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let envelope = self.config.router.retain_session_work(envelope);
         if let Some(session_id) = crate::runtime::session_cleanup_id(&envelope) {
             return self.cleanup_family_session(*envelope.destination().family(), session_id);
         }
@@ -18,6 +19,7 @@ impl MailboxSink for LeaseDomain {
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let envelope = self.config.router.retain_session_work(envelope);
         if let Some(session_id) = crate::runtime::session_cleanup_id(&envelope) {
             return self.cleanup_family_session(*envelope.destination().family(), session_id);
         }

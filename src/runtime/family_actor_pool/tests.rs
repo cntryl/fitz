@@ -583,3 +583,5 @@ fn should_fail_pool_closed_after_every_family_panics() {
     assert!(!family_health.running);
     assert!(family_health.failed_closed);
 }
+
+mod cleanup_ordering;
