@@ -70,6 +70,7 @@ impl fmt::Display for CloseReason {
 struct SessionLiveStats {
     connected_at: SystemTime,
     last_activity: Mutex<Instant>,
+    service_name: Mutex<Option<String>>,
     messages_received: AtomicU64,
     messages_sent: AtomicU64,
 }
@@ -79,6 +80,7 @@ impl Default for SessionLiveStats {
         Self {
             connected_at: SystemTime::now(),
             last_activity: Mutex::new(Instant::now()),
+            service_name: Mutex::new(None),
             messages_received: AtomicU64::new(0),
             messages_sent: AtomicU64::new(0),
         }
@@ -136,6 +138,17 @@ impl SessionMetadata {
     #[must_use]
     pub fn messages_sent(&self) -> u64 {
         self.live.messages_sent.load(Ordering::Relaxed)
+    }
+
+    /// Return the optional name reported by the connected client.
+    #[must_use]
+    pub fn service_name(&self) -> Option<String> {
+        self.live.service_name.lock().clone()
+    }
+
+    /// Store the optional name reported by the connected client.
+    pub fn set_service_name(&self, service_name: String) {
+        *self.live.service_name.lock() = Some(service_name);
     }
 
     pub fn record_frame_received(&self) {

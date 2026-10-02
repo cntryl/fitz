@@ -6302,6 +6302,9 @@ components:
       type: object
       properties:
         session_id: { type: string }
+        service_name:
+          type: string
+          description: Optional service name reported by the connected client after protocol capability negotiation.
         route_family:
           type: integer
           description: Resolved Fitz route family for this active session.

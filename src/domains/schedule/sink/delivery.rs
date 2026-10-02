@@ -194,12 +194,15 @@ impl ScheduleDomainRuntime<'_> {
         for pending_key in ack_candidates {
             tracked.insert(pending_key.clone(), PendingFireState::HandedOff);
         }
-        match actor.ack_pending_fire_claims(ack_candidates) {
+        let ack_batch = &ack_candidates[..ack_candidates
+            .len()
+            .min(crate::domains::schedule::actor::MAX_PENDING_FIRE_ACKS_PER_SCAN)];
+        match actor.ack_pending_fire_claims(ack_batch) {
             Ok((acked, acknowledged_at_ms)) if acked > 0 => {
-                for pending_key in ack_candidates {
+                for pending_key in ack_batch {
                     tracked.insert(pending_key.clone(), PendingFireState::Acknowledged);
                 }
-                Self::clear_ack_retry_candidates(family_id, ack_candidates, pending_ack_retries);
+                Self::clear_ack_retry_candidates(family_id, ack_batch, pending_ack_retries);
                 self.record_recent_acknowledgements(acked, acknowledged_at_ms);
                 true
             }
