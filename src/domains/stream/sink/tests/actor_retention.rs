@@ -20,6 +20,21 @@ fn should_not_retain_idle_actors_after_high_cardinality_reads() {
                     .core
                     .encode_metadata_response_data(family, &route)
                     .expect("metadata");
+                runtime
+                    .core
+                    .encode_read_response_data(
+                        crate::domains::stream::sink::model::StreamReadExecution {
+                            family_id: family,
+                            route: &route,
+                            from_offset: 0,
+                            limit: 10,
+                            max_bytes: None,
+                            filter: None,
+                            cursor_fingerprint: None,
+                            captured_watermark: None,
+                        },
+                    )
+                    .expect("read");
             }
             runtime.core.actors.len()
         });
