@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{rfc3339, DiagnosticSnapshot};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceTimelineKind {
     Observation,
@@ -16,7 +16,7 @@ pub enum ResourceTimelineKind {
     Registration,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ResourceTimelineEvent {
     pub domain: String,
     pub kind: ResourceTimelineKind,
@@ -35,7 +35,7 @@ pub struct ResourceTimelineEvent {
     pub attempts: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ResourceTimeline {
     pub domain: String,
     pub realm: String,

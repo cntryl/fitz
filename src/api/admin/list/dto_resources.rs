@@ -191,7 +191,7 @@ pub struct ResourceRef {
     pub resource: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 /// Live in-memory KV resource detail for the current broker process.
 ///
 /// `transactions_active` counts session-scoped transactions only. It resets
@@ -220,7 +220,7 @@ pub struct KvResourceDetail {
 /// eviction or broker restart, and do not represent a durable inventory of all
 /// accepted queues. `backlog_age_buckets` groups ready + delayed work by age
 /// so operators can see whether pressure is fresh or stale.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueueResourceDetail {
     pub realm: String,
     pub area: String,
@@ -250,7 +250,7 @@ pub struct QueueResourceDetail {
 /// from committed stream metadata. `sessions_active` and `subscriptions_active`
 /// count only live broker-local state and reset on disconnect cleanup or broker
 /// restart.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StreamResourceDetail {
     pub realm: String,
     pub area: String,
@@ -268,7 +268,7 @@ pub struct StreamResourceDetail {
 /// `active_leases` counts only leases currently tracked in memory for this
 /// resource. The count drops on disconnect cleanup, resets after broker
 /// restart, and does not imply durable recovery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LeaseResourceDetail {
     pub realm: String,
     pub area: String,
@@ -285,7 +285,7 @@ pub struct LeaseResourceDetail {
 /// them: `enabled` is true when any schedule is enabled, `next_run` is the
 /// earliest next run among enabled schedules, and `executions_total` sums persisted acknowledged live
 /// handoffs. A single schedule's cron belongs to that schedule, never here.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScheduleResourceDetail {
     pub realm: String,
     pub area: String,
@@ -301,7 +301,7 @@ pub struct ScheduleResourceDetail {
 /// `subscriptions_active` counts only currently active subscriptions matching
 /// this resource. The count drops on disconnect cleanup, resets after broker
 /// restart, and does not imply durable or replayable pub/sub state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoticeResourceDetail {
     pub realm: String,
     pub area: String,
@@ -310,7 +310,7 @@ pub struct NoticeResourceDetail {
     pub diagnostics: DiagnosticSnapshot,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OperationCollection {
     pub realm: String,
     pub area: String,
@@ -320,7 +320,7 @@ pub struct OperationCollection {
     pub operations: Vec<OperationEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OperationEntry {
     pub operation: String,
     pub workers_registered: usize,

@@ -14,7 +14,7 @@ mod stats;
 mod topology;
 pub(crate) mod troubleshooting;
 
-pub(crate) use stats::{build_global_stats, build_global_troubleshooting};
+pub(crate) use stats::{build_global_stats, build_global_troubleshooting, GlobalStats};
 
 pub use handlers::handle_request;
 pub use list::{
