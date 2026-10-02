@@ -141,7 +141,7 @@ impl SessionCleanupCoordinator {
             return;
         };
 
-        let Ok(_permit) = self.cleanup_permits.clone().acquire_owned().await else {
+        let Ok(permit) = self.cleanup_permits.clone().acquire_owned().await else {
             self.record_failure(
                 session_id,
                 route_family,
@@ -153,6 +153,8 @@ impl SessionCleanupCoordinator {
 
         let router = router.clone();
         match tokio::task::spawn_blocking(move || {
+            // The job keeps its capacity even if its async waiter is canceled.
+            let _permit = permit;
             dispatch_session_cleanup(router.as_ref(), route_family, session_id)
         })
         .await
