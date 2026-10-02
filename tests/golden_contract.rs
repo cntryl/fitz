@@ -74,11 +74,7 @@ fn should_keep_message_manifest_stable() {
     let mut actual = String::new();
 
     // Act
-    // Capability-gated additions have separate assertions below.
-    for entry in MESSAGE_MANIFEST
-        .iter()
-        .filter(|entry| entry.message_id != MessageType::SESSION_METADATA.as_u16())
-    {
+    for entry in MESSAGE_MANIFEST {
         let _ = writeln!(
             actual,
             "{entry:?} channel={:?}",
@@ -86,9 +82,6 @@ fn should_keep_message_manifest_stable() {
         );
     }
     for id in 0..=999_u16 {
-        if id == MessageType::SESSION_METADATA.as_u16() {
-            continue;
-        }
         let message_type = MessageType::new(id);
         let client = manifest::client_entry(message_type).map(|entry| entry.message_id);
         if client != Err("unsupported message type") {
@@ -117,20 +110,4 @@ fn should_keep_idempotency_classification_stable() {
 
     // Assert
     assert_golden("idempotency_classification", &actual);
-}
-
-#[test]
-fn should_register_negotiated_session_metadata_as_control() {
-    // Arrange
-    let message_type = MessageType::SESSION_METADATA;
-    let mapping = TypeMapping::new();
-
-    // Act
-    let entry = manifest::client_entry(message_type).unwrap();
-
-    // Assert
-    assert_eq!(message_type.as_u16(), 5);
-    assert_eq!(entry.domain, "control");
-    assert_eq!(entry.route_scheme, None);
-    assert_eq!(mapping.get_channel(5), mapping.get_channel(1));
 }
