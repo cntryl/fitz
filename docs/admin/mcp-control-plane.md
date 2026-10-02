@@ -36,3 +36,24 @@ Required checks:
 - Audit both allowed and denied calls.
 
 The parity tests in [../../tests/mcp_parity.rs](../../tests/mcp_parity.rs) verify that the current MCP read tools mirror their REST control-plane sources.
+
+## Current registry audit retention
+
+The Rust registry retains the most recent 1,024 audit records per execution
+context. Clones share that bounded buffer and its saturating eviction counter,
+exposed by `dropped_audit_records()`. Readback returns records in invocation
+order. Retention is process-local and ends when the last context clone is
+released; it is not durable operating evidence or a remote audit exporter.
+
+Each stored string field is capped at 512 UTF-8 bytes. Control characters are
+replaced with spaces. Arguments are represented only as `provided`, `absent`,
+or `redacted`; the registry does not serialize argument values into audit
+records. Unknown tool names are stored as `unknown`. Validation failures and
+handler failures receive fixed outcome labels. Authorized/denied resource
+scope and provisioned principal names remain bounded operational identifiers.
+
+Read-only calls continue when the buffer is full, evicting its oldest record.
+This policy does not authorize administrative actions: the future action
+admission path must require an audit sink that can accept its mandatory record
+and fail closed when that acceptance is unavailable. No mutations or MCP HTTP
+transport are enabled by this retention change.
