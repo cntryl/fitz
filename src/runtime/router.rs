@@ -302,6 +302,7 @@ impl RouteRegistry {
 #[derive(Clone)]
 pub struct Router {
     registry: Arc<RouteRegistry>,
+    session_work: super::session_work::SessionWorkRegistry,
 }
 
 #[derive(Clone, Copy)]
@@ -443,11 +444,28 @@ impl Router {
         }
     }
 
+    /// Attach the session's disconnect flag before admission. Domains also call
+    /// this for direct mailbox delivery. Cleanup invalidates outstanding work
+    /// even when its control-lane delivery must be retried.
+    pub(crate) fn retain_session_work(&self, mut envelope: Envelope) -> Envelope {
+        if let Some(cleanup) = envelope.payload::<super::SessionCleanup>() {
+            self.session_work
+                .close(*envelope.destination().family(), cleanup.session_id);
+        } else if let Some(work) = envelope
+            .source()
+            .and_then(|source| self.session_work.admit(source))
+        {
+            envelope.retain_session_work(work);
+        }
+        envelope
+    }
+
     /// Create a new router with an empty registry
     #[must_use]
     pub fn new() -> Self {
         Self {
             registry: Arc::new(RouteRegistry::new()),
+            session_work: super::session_work::SessionWorkRegistry::default(),
         }
     }
 
@@ -554,6 +572,7 @@ impl Router {
     /// - No retries or queuing on failure
     /// - Deadlines in envelope are not enforced (sink's responsibility)
     pub fn route(&self, envelope: Envelope) -> Result<(), RouteError> {
+        let envelope = self.retain_session_work(envelope);
         let dest = envelope.destination().clone();
         let started_at = Self::route_match_started_at();
 
@@ -581,6 +600,7 @@ impl Router {
     /// fallback. Internal family-owned publishers use this to avoid
     /// synchronously re-entering their own domain sink.
     pub(crate) fn route_exact(&self, envelope: Envelope) -> Result<(), RouteError> {
+        let envelope = self.retain_session_work(envelope);
         let dest = envelope.destination().clone();
         let started_at = Self::route_match_started_at();
         let sink = self
@@ -600,6 +620,7 @@ impl Router {
     /// Returns `RouteError` when no domain sink is registered or the sink
     /// rejects the envelope.
     pub fn route_to_domain(&self, domain: &str, envelope: Envelope) -> Result<(), RouteError> {
+        let envelope = self.retain_session_work(envelope);
         let sink = self.registry.get_by_domain(domain);
 
         Self::route_with_resolved_sink(envelope, domain, MissingRouteKind::KnownDomainPattern, sink)
@@ -625,6 +646,7 @@ impl Router {
     /// - Caller must handle `HighLaneFull` as a critical error (control plane saturated)
     /// - Managed actors read high-priority envelopes before normal data messages
     pub(crate) fn route_high_priority(&self, envelope: Envelope) -> Result<(), RouteError> {
+        let envelope = self.retain_session_work(envelope);
         let dest = envelope.destination().clone();
 
         // Mirror `route()`'s exact-then-domain-pattern fallback. Every

@@ -75,7 +75,7 @@ impl LeaseFamilyRuntime<'_> {
         // jumped ahead of it. Reject rather than silently recreating a
         // lease, waiter, or subscription for a session that is already gone
         // and will never be cleaned up again.
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = Self::error_response("session already closed");
             let response_meta = Self::response_meta_for_source(envelope, meta);
             self.route_lease_response(envelope, response_meta, &response, request_started);
@@ -107,7 +107,7 @@ impl LeaseFamilyRuntime<'_> {
     ) {
         let meta = request.meta;
         let request_started = self.record_request_start();
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = Self::error_response("session already closed");
             self.route_lease_response(envelope, meta, &response, request_started);
             return;
