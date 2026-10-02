@@ -4,7 +4,7 @@ use crate::auth::default_anonymous_permissions;
 use crate::runtime::Router;
 use std::sync::Arc;
 
-fn context() -> McpExecutionContext {
+pub(super) fn context() -> McpExecutionContext {
     McpExecutionContext::authenticated(
         AdminPrincipal {
             username: "scoped-admin".to_string(),

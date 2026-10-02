@@ -3,7 +3,7 @@
 //! Metadata describes current enforcement; candidate runtime/item budgets are
 //! not advertised as hard execution limits before the transport enforces them.
 
-use super::{McpResourceDetailRequest, McpToolDescriptor, McpToolRegistry};
+use super::{McpScopedResourceRequest, McpToolDescriptor, McpToolRegistry};
 use crate::api::admin::troubleshooting::{GlobalTroubleshootingDiagnostics, ResourceTimeline};
 use crate::api::admin::{
     KvResourceDetail, LeaseResourceDetail, NoticeResourceDetail, OperationCollection,
@@ -63,7 +63,7 @@ impl McpToolRegistry {
 fn protocol_tool(descriptor: McpToolDescriptor) -> Tool {
     let resource = descriptor.name.starts_with("inspect_resource_");
     let scope = if resource {
-        "resource READ; concrete queue_family for Queue; wildcard family authority for other domains"
+        "resource READ; explicit route_family authority; omitted family requires wildcard authority; queue_family is a legacy Queue-only argument"
     } else {
         "wildcard route READ and wildcard route-family authority"
     };
@@ -93,7 +93,7 @@ fn protocol_tool(descriptor: McpToolDescriptor) -> Tool {
     .with_annotations(ToolAnnotations::new().read_only(true).open_world(false))
     .with_meta(rmcp::model::MetaObject(metadata));
     let tool = if resource {
-        tool.with_input_schema::<McpResourceDetailRequest>()
+        tool.with_input_schema::<McpScopedResourceRequest>()
     } else {
         tool.with_input_schema::<EmptyArguments>()
     };

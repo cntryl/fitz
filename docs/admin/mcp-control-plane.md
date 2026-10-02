@@ -10,7 +10,7 @@ Required checks:
 
 1. Authenticate the principal.
 2. Resolve route scope and realm from the request.
-3. Authorize against Fitz route permissions and the principal's separate route-family authority. All-family tools require wildcard family authority. Queue detail/timeline requests with an explicit `queue_family` require access to that family; supplying `queue_family` on another domain does not scope its read. Restricted principals receive `ScopeDenied` for unscoped reads, and denials are audited.
+3. Authorize against Fitz route permissions and the principal's separate route-family authority. All-family tools require wildcard route READ permission and wildcard family authority. Resource detail/timeline requests accept an explicit `route_family` independently of `realm`. Legacy `queue_family` scopes Queue only; conflicting Queue selectors are rejected, and supplying it on another domain does not scope its read. Restricted principals receive `ScopeDenied` for unscoped reads, and denials are audited.
 4. Authorize against MCP capability policy.
 5. Enforce argument validation and response-size budget.
 6. Execute through shared control-plane read models or approved admin commands.
@@ -78,5 +78,12 @@ and the current budget enforcement. Encoded registry result bytes and timeline
 result-event counts are bounded. Collection scans and hard runtime deadlines are
 not yet bounded by these descriptors, and the complete protocol envelope still
 needs a transport-level budget. Do not use the candidate 50/100/200ms values as
-latency promises. Current `queue_family` scopes Queue only; other domains and
-global tools require wildcard family authority until their scoped builders ship.
+latency promises. All seven resource domains accept `route_family`; omission requires wildcard
+family authority. Global tools also require READ permissions covering all routes in every
+registered domain, either one global grant or equivalent per-domain grants. The original Rust `McpResourceDetailRequest` remains available;
+`McpScopedResourceRequest` adds scope without changing its fields. Timeline
+snapshots filter realm and family before shared builders, and explicit scope is
+included in timeline/event family fields. Scoped Schedule timelines omit
+broker-global pressure notes because those counters have no resource/family
+attribution; omission does not imply zero pressure. Global timelines retain the
+existing REST notes. No historical events or payload contents are invented.
