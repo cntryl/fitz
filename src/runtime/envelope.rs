@@ -120,6 +120,9 @@ pub struct Envelope {
     /// Shared one-shot claim for the terminal response to this request.
     reply_claim: ReplyClaim,
 
+    /// Disconnect flag shared by admitted work from one session.
+    session_work: Option<Arc<super::session_work::SessionWork>>,
+
     /// Type-erased message payload (must be Send + Sync)
     payload: Box<dyn Any + Send + Sync>,
 }
@@ -135,6 +138,7 @@ impl Envelope {
             deadline: None,
             queued_at: None,
             reply_claim: ReplyClaim::default(),
+            session_work: None,
             payload: Box::new(payload),
         }
     }
@@ -153,6 +157,7 @@ impl Envelope {
             deadline: None,
             queued_at: None,
             reply_claim: ReplyClaim::default(),
+            session_work: None,
             payload: Box::new(payload),
         }
     }
@@ -200,6 +205,7 @@ impl Envelope {
             deadline: self.deadline,
             queued_at: None,
             reply_claim: ReplyClaim::default(),
+            session_work: None,
             payload: Box::new(payload),
         }
     }
@@ -219,6 +225,7 @@ impl Envelope {
             deadline: self.deadline,
             queued_at: None,
             reply_claim: ReplyClaim::default(),
+            session_work: None,
             payload: Box::new(payload),
         })
     }
@@ -246,8 +253,19 @@ impl Envelope {
             deadline: self.deadline,
             queued_at: None,
             reply_claim: self.reply_claim.clone(),
+            session_work: self.session_work.clone(),
             payload: Box::new(()),
         }
+    }
+
+    pub(super) fn retain_session_work(&mut self, work: Arc<super::session_work::SessionWork>) {
+        self.session_work = Some(work);
+    }
+
+    pub(crate) fn is_closed_session_work(&self, session_id: u64) -> bool {
+        self.session_work
+            .as_ref()
+            .is_some_and(|work| work.is_closed(session_id))
     }
 
     /// Get the message ID
@@ -380,6 +398,7 @@ impl fmt::Debug for Envelope {
             .field("deadline", &self.deadline)
             .field("queued_at", &self.queued_at)
             .field("reply_claim", &self.reply_claim)
+            .field("session_work", &self.session_work.is_some())
             .field("payload", &"<type-erased>")
             .finish()
     }

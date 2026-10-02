@@ -9,7 +9,9 @@
 //! [`SessionScoped`] owns that protocol: the cleaned-up record, marking a
 //! session *before* any state is released, and recognizing the cleanup
 //! envelope. Each domain supplies only
-//! [`SessionScoped::release_session_resources`].
+//! [`SessionScoped::release_session_resources`]. Routed requests also retain a
+//! disconnect flag for their lifetime. The bounded recent history is only a
+//! fast fallback: evicting a session ID cannot revalidate admitted work.
 
 use crate::runtime::{Envelope, SessionCleanup};
 use std::collections::{HashSet, VecDeque};
@@ -40,6 +42,11 @@ pub trait SessionScoped {
     /// Whether disconnect cleanup already ran for `session_id`.
     fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
         self.cleaned_up_sessions().contains(session_id)
+    }
+
+    /// Reject cleaned-up work even after the bounded recent history evicts its ID.
+    fn is_cleaned_up_request(&mut self, session_id: u64, envelope: &Envelope) -> bool {
+        envelope.is_closed_session_work(session_id) || self.is_cleaned_up_session(session_id)
     }
 
     /// Mark `session_id` cleaned up, then release its resources.

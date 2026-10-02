@@ -36,7 +36,7 @@ impl RpcFamilyRuntime<'_> {
         // jumped ahead of it. Reject rather than silently recreating a worker
         // registration or pending request for a session that is already gone
         // and will never be cleaned up again.
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response_meta = Self::response_meta_for_source(envelope, meta);
             self.route_rpc_client_response(
                 envelope,

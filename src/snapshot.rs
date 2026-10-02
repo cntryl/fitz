@@ -98,7 +98,8 @@ impl SnapshotArtifact {
     /// # Errors
     ///
     /// Returns an error when the selector is not for KV, the route is outside
-    /// its match set, or the record count cannot be represented.
+    /// its match set, a resource route is non-concrete, or the record count cannot
+    /// be represented.
     pub fn from_kv_resource(
         selector: &SnapshotSelector,
         route: &str,
@@ -118,7 +119,8 @@ impl SnapshotArtifact {
     /// # Errors
     ///
     /// Returns an error when the selector is not for KV, a resource is outside
-    /// its match set, or the record count cannot be represented.
+    /// its match set, a resource route is non-concrete, or the record count cannot
+    /// be represented.
     pub fn from_kv_resources(
         selector: &SnapshotSelector,
         resources: Vec<SnapshotKvResource>,
@@ -159,7 +161,8 @@ impl SnapshotArtifact {
     ///
     /// # Errors
     /// Returns an error when the selector is not for Stream, a resource is
-    /// outside its match set, or the record count cannot be represented.
+    /// outside its match set, a resource route is non-concrete, or the record count
+    /// cannot be represented.
     pub fn from_stream_resources(
         selector: &SnapshotSelector,
         resources: Vec<SnapshotStreamResource>,
@@ -309,6 +312,7 @@ impl SnapshotArtifact {
                     return Err("exact KV snapshot must include its selected resource".to_string());
                 }
                 for resource in &payload.resources {
+                    selector.validate_resource_route(&resource.route)?;
                     if !selector.matches(payload.domain, route_family, &resource.route) {
                         return Err("snapshot resource is outside its selector".to_string());
                     }
@@ -341,6 +345,7 @@ impl SnapshotArtifact {
                     );
                 }
                 for resource in &payload.stream_resources {
+                    selector.validate_resource_route(&resource.route)?;
                     if !selector.matches(payload.domain, route_family, &resource.route) {
                         return Err("Stream resource is outside its selector".to_string());
                     }
@@ -423,6 +428,15 @@ impl SnapshotSelector {
         })
     }
 
+    fn validate_resource_route(&self, route: &str) -> Result<(), String> {
+        let resource = Self::new(self.domain, self.route_family, route)
+            .map_err(|error| format!("invalid snapshot resource route: {error}"))?;
+        if !resource.is_exact_resource() {
+            return Err("snapshot resource route must be concrete".to_string());
+        }
+        Ok(())
+    }
+
     /// Return whether a concrete domain route belongs to this selector.
     #[must_use]
     pub fn matches(&self, domain: SnapshotDomain, route_family: RouteFamily, route: &str) -> bool {
@@ -457,7 +471,11 @@ impl SnapshotSelector {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support;
+
+#[cfg(test)]
 mod tests {
+    mod invalid_routes;
     use super::{SnapshotArtifact, SnapshotDomain, SnapshotKvEntry, SnapshotSelector};
     use crate::runtime::routing::RouteFamily;
 
@@ -603,6 +621,28 @@ mod tests {
             decoded.stream_resources()[0].records[1].metadata.as_deref(),
             Some(&b"meta"[..])
         );
+    }
+
+    #[test]
+    fn should_reject_wildcard_route_in_stream_snapshot_resource() {
+        // Arrange
+        let selector = SnapshotSelector::new(
+            SnapshotDomain::Stream,
+            RouteFamily::new(7),
+            "stream://acme/**",
+        )
+        .expect("valid Stream selector");
+        let resource = super::SnapshotStreamResource {
+            route: "stream://acme/jobs/*".to_string(),
+            captured_watermark: 0,
+            records: Vec::new(),
+        };
+
+        // Act
+        let artifact = SnapshotArtifact::from_stream_resources(&selector, vec![resource]);
+
+        // Assert
+        assert!(artifact.is_err(), "resource routes must be concrete");
     }
 
     #[test]
