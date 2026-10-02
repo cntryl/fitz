@@ -15,6 +15,9 @@ The multi-family Stream admin refresh characterization and its clean-family
 fast-path results are in the
 [Stream admin refresh report](stream-admin-refresh-characterization.md).
 
+The actor-level Schedule due-burst/control measurements, raw artifact and model
+limits are recorded in the [Schedule control latency characterization](schedule-control-latency-characterization.md).
+
 ## Philosophy
 
 Benchmarks measure real broker performance across routes, domains, and

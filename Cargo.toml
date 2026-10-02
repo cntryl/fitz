@@ -162,6 +162,11 @@ harness = false
 path = "benches/tier2_subsystem_schedule_churn.rs"
 
 [[bench]]
+name = "tier2_subsystem_schedule_control_latency"
+harness = false
+path = "benches/tier2_subsystem_schedule_control_latency.rs"
+
+[[bench]]
 name = "tier2_subsystem_schedule_fire"
 harness = false
 path = "benches/tier2_subsystem_schedule_fire.rs"
@@ -346,8 +351,3 @@ path = "benches/tier4_stream_mixed.rs"
 name = "tier4_stream_shapes"
 harness = false
 path = "benches/tier4_stream_shapes.rs"
-
-[[bench]]
-name = "tier2_subsystem_schedule_control_latency"
-harness = false
-path = "benches/tier2_subsystem_schedule_control_latency.rs"
