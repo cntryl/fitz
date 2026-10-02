@@ -38,8 +38,12 @@ pub const CAP_CORRELATION: u32 = 1 << 0;
 /// Broker accepts client-reported service names in `SESSION_METADATA`.
 pub const CAP_SESSION_METADATA: u32 = 1 << 1;
 
+/// Broker accepts the optional exclusive-start byte on KV SCAN requests.
+pub const CAP_KV_SCAN_EXCLUSIVE: u32 = 1 << 2;
+
 /// Every capability this broker implements.
-pub const SUPPORTED_CAPABILITIES: u32 = CAP_CORRELATION | CAP_SESSION_METADATA;
+pub const SUPPORTED_CAPABILITIES: u32 =
+    CAP_CORRELATION | CAP_SESSION_METADATA | CAP_KV_SCAN_EXCLUSIVE;
 
 /// Why a correlation record could not be accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +168,18 @@ mod tests {
         // Assert
         assert_eq!(encoded.len(), 6);
         assert_eq!(decoded, (PROTOCOL_VERSION, SUPPORTED_CAPABILITIES));
+    }
+
+    #[test]
+    fn should_advertise_implemented_exclusive_kv_scan() {
+        // Arrange
+        let hello = encode_server_hello(PROTOCOL_VERSION, SUPPORTED_CAPABILITIES);
+
+        // Act
+        let (_, capabilities) = decode_server_hello(&hello).expect("server hello");
+
+        // Assert
+        assert_ne!(capabilities & (1 << 2), 0);
     }
 
     #[test]

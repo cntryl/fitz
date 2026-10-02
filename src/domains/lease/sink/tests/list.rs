@@ -28,6 +28,16 @@ impl crate::runtime::MailboxSink for FullResponseSink {
     }
 }
 
+fn continuation_payload(pattern: &str, cursor: LeaseListCursor, limit: u32) -> Bytes {
+    let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+    encoder.put_string(pattern);
+    encoder.put_u8(1);
+    encoder.put_u64(cursor.snapshot_id);
+    encoder.put_u32(cursor.offset);
+    encoder.put_u32(limit);
+    Bytes::from(encoder.finish())
+}
+
 fn new_list_test_sink() -> LeaseDomain {
     LeaseDomain::new(
         Arc::new(Router::new()),
@@ -472,12 +482,7 @@ fn should_preserve_lease_list_cursor_when_continuation_reply_cannot_be_delivered
     else {
         panic!("expected a continuation cursor, got {first:?}");
     };
-    let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
-    encoder.put_string("lease://acme/renderers/*");
-    encoder.put_u8(1);
-    encoder.put_u64(cursor.snapshot_id);
-    encoder.put_u32(cursor.offset);
-    encoder.put_u32(1);
+    let payload = continuation_payload("lease://acme/renderers/*", cursor, 1);
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -487,7 +492,7 @@ fn should_preserve_lease_list_cursor_when_continuation_reply_cannot_be_delivered
             session_id,
             ChannelId::Lease,
             MessageType::new(crate::dispatch::protocol::lease_codec::msg_type::LIST),
-            Bytes::from(encoder.finish()),
+            payload,
             family,
         ),
     ))

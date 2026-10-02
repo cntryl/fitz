@@ -88,6 +88,14 @@ a transport frame with nothing after it. Closing is correct here and nowhere
 else: a misplaced label means the client's own request-to-response mapping is
 already ambiguous, so there is no caller left to answer.
 
+### Exclusive KV SCAN capability
+
+`CAP_KV_SCAN_EXCLUSIVE` (bit 2) advertises the implemented optional trailing
+`start_exclusive` boolean on KV SCAN. Clients MUST omit that byte when the
+capability is absent. Without the byte, starts remain inclusive. With the
+capability and `start_exclusive=true`, resume excludes the start key in the
+selected scan direction; this does not change transaction or snapshot scope.
+
 ### Client-reported service name
 
 After observing `SERVER_HELLO` with `CAP_SESSION_METADATA`, a client MAY send

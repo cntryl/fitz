@@ -106,7 +106,8 @@ impl LeaseFamilyRuntime<'_> {
                 session_id,
                 reply,
             ) => {
-                runtime.apply_list_for_tests(family_id, pattern, cursor, limit, session_id, reply);
+                runtime
+                    .apply_list_for_tests(family_id, &pattern, cursor, limit, session_id, &reply);
             }
             LeaseDomainCommand::PanicForFailpoint => {
                 panic!("injected Lease domain actor panic");
@@ -133,13 +134,13 @@ impl LeaseFamilyRuntime<'_> {
     fn apply_list_for_tests(
         &mut self,
         family_id: crate::runtime::routing::RouteFamily,
-        pattern: crate::runtime::routing::Route,
+        pattern: &crate::runtime::routing::Route,
         cursor: Option<crate::domains::lease::protocol::LeaseListCursor>,
         limit: Option<u32>,
         session_id: u64,
-        reply: crossbeam_channel::Sender<crate::domains::lease::protocol::LeaseResponse>,
+        reply: &crossbeam_channel::Sender<crate::domains::lease::protocol::LeaseResponse>,
     ) {
-        let response = self.handle_list(family_id, &pattern, cursor, limit, session_id);
+        let response = self.handle_list(family_id, pattern, cursor, limit, session_id);
         self.finish_list_response_delivery(
             family_id,
             pattern.as_str(),
