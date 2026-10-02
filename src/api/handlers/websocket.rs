@@ -342,9 +342,9 @@ where
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(8);
     let last_pong = Arc::new(AtomicU64::new(epoch_millis()));
 
-    let sink = std::sync::Arc::new(crate::api::outbound::SessionOutboundSink::new(
-        outbound_tx.clone(),
-    ));
+    let (sink, mut close_signal) =
+        crate::api::outbound::SessionOutboundSink::with_close_signal(outbound_tx.clone());
+    let sink = Arc::new(sink);
     let mut inbox_route =
         crate::runtime::routing::session_inbox_address(session.info().route_family, session_id);
     tracing::debug!(
@@ -385,6 +385,10 @@ where
     let runtime_for_shutdown = runtime.clone();
     let mut writer_already_joined = false;
     let result = tokio::select! {
+        _ = close_signal.changed() => {
+            writer_handle.abort();
+            Err(close_signal.borrow().unwrap_or("session close control ended").to_string())
+        }
         result = process_websocket_frames(
             &mut ws_receiver,
             WebSocketFrameContext {
