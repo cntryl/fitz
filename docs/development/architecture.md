@@ -119,6 +119,11 @@ This is a hard Fitz rule:
 - Session state exists only for the lifetime of the active connection.
 - Disconnect immediately destroys session-owned state.
 - Reconnect always creates a new session identity.
+- Internal `SessionCloseRequest` payloads request transport shutdown through the
+  registered session inbox. A bounded, coalescing control signal remains usable
+  when outbound data is saturated. TCP and WebSocket tasks stop and invoke the
+  existing session finalizer; removing an inbox alone is not transport closure.
+  This signal does not stop or reverse application side effects.
 - Client work admitted from a canonical session inbox through routing or a domain
   mailbox retains a shared disconnect flag until its last envelope
   reference drains, including deferred replies. Routing disconnect cleanup marks

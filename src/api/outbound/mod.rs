@@ -15,12 +15,33 @@ use tracing::{debug, trace, warn};
 /// `MailboxSink` that forwards domain responses to a session's outbound channel
 pub struct SessionOutboundSink {
     tx: mpsc::Sender<Bytes>,
+    close_signal: Option<tokio::sync::watch::Sender<Option<&'static str>>>,
 }
 
 impl SessionOutboundSink {
     #[must_use]
     pub fn new(tx: mpsc::Sender<Bytes>) -> Self {
-        Self { tx }
+        Self {
+            tx,
+            close_signal: None,
+        }
+    }
+}
+
+impl SessionOutboundSink {
+    /// Creates a sink with a bounded control signal independent of outbound data.
+    #[must_use]
+    pub fn with_close_signal(
+        tx: mpsc::Sender<Bytes>,
+    ) -> (Self, tokio::sync::watch::Receiver<Option<&'static str>>) {
+        let (close_signal, receiver) = tokio::sync::watch::channel(None);
+        (
+            Self {
+                tx,
+                close_signal: Some(close_signal),
+            },
+            receiver,
+        )
     }
 }
 
@@ -28,6 +49,24 @@ impl MailboxSink for SessionOutboundSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         let _deliver_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_OUTBOUND_DELIVER_LATENCY);
+        if let Some(request) = envelope.payload::<crate::runtime::SessionCloseRequest>() {
+            let signal = self
+                .close_signal
+                .as_ref()
+                .ok_or(DeliveryError::UnsupportedPayload)?;
+            if signal.is_closed() {
+                return Err(DeliveryError::ActorStopped);
+            }
+            // Preserve the first cause and coalesce duplicate close requests.
+            signal.send_if_modified(|reason| {
+                if reason.is_some() {
+                    return false;
+                }
+                *reason = Some(request.reason);
+                true
+            });
+            return Ok(());
+        }
         if let Some(ctx) = envelope.payload::<FrameContext>() {
             return self.deliver_frame_context(ctx);
         }
@@ -373,6 +412,9 @@ pub(super) fn encode_single_tlv_frame(
     out.extend_from_slice(payload);
     Ok(out.freeze())
 }
+
+#[cfg(test)]
+mod close_tests;
 
 #[cfg(test)]
 mod tests {
