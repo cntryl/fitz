@@ -106,6 +106,14 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
     // it unconditionally is safe; a client that never sees it stays
     // uncorrelated.
     server(4, "control", None, ManifestDecoder::Control),
+    // Sent only when the broker advertises `CAP_SESSION_METADATA`.
+    client(
+        5,
+        "control",
+        None,
+        ManifestAuthorization::None,
+        ManifestDecoder::Control,
+    ),
     client(
         100,
         "kv",
@@ -626,10 +634,11 @@ mod tests {
         // Assert
         assert_eq!(connects.len(), 1);
         assert!(
-            other_client_control
-                .iter()
-                .all(|entry| entry.message_id == MessageType::CORRELATE.as_u16()),
-            "only CONNECT and CORRELATE may be client-to-server control messages"
+            other_client_control.iter().all(|entry| {
+                entry.message_id == MessageType::CORRELATE.as_u16()
+                    || entry.message_id == MessageType::SESSION_METADATA.as_u16()
+            }),
+            "client-to-server control messages must be CONNECT or negotiated controls"
         );
     }
 

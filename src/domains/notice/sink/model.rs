@@ -1,6 +1,6 @@
 use crate::domains::subscription_state::RoutedSubscription;
 use smallvec::SmallVec;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 pub(super) const NOTICE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(super) type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
-pub(super) type NoticeMatchedRoutePatterns = SmallVec<[Arc<str>; 8]>;
+pub(super) type NoticeMatchedRoutePatterns = HashSet<Arc<str>, rustc_hash::FxBuildHasher>;
 pub(super) type NoticeRouteStatsKey = (crate::runtime::routing::RouteFamily, Arc<str>);
 
 /// Delivery-only projection of `NoticeSubscription`; matching state stays in the index.
@@ -76,6 +76,10 @@ pub(super) struct NoticeSubscription {
 }
 
 impl RoutedSubscription for NoticeSubscription {
+    fn metric_domain() -> &'static str {
+        "notice"
+    }
+
     fn pattern(&self) -> &crate::runtime::matcher::Pattern {
         &self.pattern
     }

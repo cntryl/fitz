@@ -2,6 +2,14 @@ use super::super::RpcQueuedDispatch;
 use super::*;
 
 impl RpcState {
+    pub(in crate::domains::rpc::sink) fn registration_count_for_session(
+        &self,
+        session_id: u64,
+    ) -> usize {
+        self.registrations
+            .registration_count_for_session(session_id)
+    }
+
     pub(in crate::domains::rpc::sink) fn registration_count_for_family(
         &self,
         family: RouteFamily,

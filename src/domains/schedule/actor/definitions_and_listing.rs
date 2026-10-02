@@ -466,6 +466,8 @@ impl ScheduleActor {
             payload: payload.clone(),
         });
         let index = self.list_entries.len();
+        self.list_entries_by_route
+            .insert(entry.route.clone(), entry.clone());
         self.list_entries.push(entry);
         index
     }
@@ -510,6 +512,8 @@ impl ScheduleActor {
             delivery_mode,
             payload: payload.clone(),
         });
+        self.list_entries_by_route
+            .insert(route.to_string(), entry.clone());
         if let Some(index) = current_index {
             self.list_entries[index] = entry.clone();
             self.sync_cached_upsert(Some(index), entry);
@@ -527,6 +531,8 @@ impl ScheduleActor {
             return;
         }
 
+        self.list_entries_by_route
+            .remove(&self.list_entries[index].route);
         self.list_entries.swap_remove(index);
         self.sync_cached_remove(index);
         if let Some(swapped_entry) = self.list_entries.get(index) {

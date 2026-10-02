@@ -6,6 +6,38 @@
 use super::*;
 use crate::domains::lease::protocol::{LeaseListCursor, LEASE_LIST_MAX_CANDIDATES_PER_SCAN};
 
+struct FullResponseSink {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl crate::runtime::MailboxSink for FullResponseSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), crate::runtime::DeliveryError> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Err(crate::runtime::DeliveryError::MailboxFull {
+            capacity: 1,
+            current_len: 1,
+        })
+    }
+
+    fn deliver_high_priority(
+        &self,
+        envelope: Envelope,
+    ) -> Result<(), crate::runtime::DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+fn continuation_payload(pattern: &str, cursor: LeaseListCursor, limit: u32) -> Bytes {
+    let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+    encoder.put_string(pattern);
+    encoder.put_u8(1);
+    encoder.put_u64(cursor.snapshot_id);
+    encoder.put_u32(cursor.offset);
+    encoder.put_u32(limit);
+    Bytes::from(encoder.finish())
+}
+
 fn new_list_test_sink() -> LeaseDomain {
     LeaseDomain::new(
         Arc::new(Router::new()),
@@ -404,6 +436,114 @@ fn should_reject_cursor_with_a_tampered_offset() {
         1,
     );
     assert!(matches!(continued, LeaseResponse::ListPage { .. }));
+}
+
+#[test]
+fn should_preserve_lease_list_cursor_when_continuation_reply_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("lease://inbound"));
+    let response_attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let router = Arc::new(Router::new());
+    router.register(
+        source.clone(),
+        Arc::new(FullResponseSink {
+            calls: response_attempts.clone(),
+        }),
+    );
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let sink = LeaseDomain::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    )
+    .with_metrics(metrics.clone());
+    for route in ["a", "b", "c"] {
+        acquire_immediate(
+            &sink,
+            family,
+            &format!("lease://acme/renderers/{route}"),
+            session_id,
+            "owner",
+        );
+    }
+    let first = sink.list_for_tests(
+        family,
+        Route::new("lease://acme/renderers/*"),
+        None,
+        Some(1),
+        session_id,
+    );
+    let LeaseResponse::ListPage {
+        next_cursor: Some(cursor),
+        ..
+    } = first
+    else {
+        panic!("expected a continuation cursor, got {first:?}");
+    };
+    let payload = continuation_payload("lease://acme/renderers/*", cursor, 1);
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            session_id,
+            ChannelId::Lease,
+            MessageType::new(crate::dispatch::protocol::lease_codec::msg_type::LIST),
+            payload,
+            family,
+        ),
+    ))
+    .expect("deliver continuation request");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        let served_count = sink
+            .config
+            .list_snapshots
+            .lock()
+            .get(&cursor.snapshot_id)
+            .map(|snapshot| snapshot.served_count);
+        let response_was_attempted =
+            response_attempts.load(std::sync::atomic::Ordering::Relaxed) == 1;
+        if response_was_attempted && served_count == Some(cursor.offset) {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        response_attempts.load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    assert_eq!(
+        metrics.counter_get(crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL),
+        1,
+        "full client mailbox should reject the continuation response"
+    );
+    assert_eq!(
+        sink.config
+            .list_snapshots
+            .lock()
+            .get(&cursor.snapshot_id)
+            .map(|snapshot| snapshot.served_count),
+        Some(cursor.offset),
+        "undelivered continuation should restore the previous offset"
+    );
+
+    // Assert
+    let retry = sink.list_for_tests(
+        family,
+        Route::new("lease://acme/renderers/*"),
+        Some(cursor),
+        Some(1),
+        session_id,
+    );
+    let LeaseResponse::ListPage { items, .. } = retry else {
+        panic!("expected retryable page after failed delivery, got {retry:?}");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].route.as_str(), "lease://acme/renderers/b");
 }
 
 #[test]

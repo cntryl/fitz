@@ -303,8 +303,11 @@ queue is declared empty. Watches are readiness hints, not delivery or replay.
 
 Notice is ephemeral fanout. Exact subscriptions use a direct map and wildcard
 subscriptions use the shared trie. Publishing is proportional to matching
-registrations plus delivery cost. Per-session backlog and total fanout are
-bounded; slow-consumer policy is explicit. No catalog, cursor, watermark, or
+registrations plus delivery cost. A delivery job carries at most 64 targets,
+and each family delivery queue holds at most 64 jobs plus the one currently
+being delivered. Larger fanouts are split into bounded jobs; if the queue fills,
+some batches may be dropped and the delivery-drop metric increments once for
+that publish. Delivery remains best-effort. No catalog, cursor, watermark, or
 replay state is created.
 
 ### 7.4 RPC
