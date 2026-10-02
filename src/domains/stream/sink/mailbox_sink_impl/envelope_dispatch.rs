@@ -64,7 +64,7 @@ impl super::super::model::StreamFamilyRuntime {
                         | crate::domains::stream::protocol::StreamMessage::Rollback { .. }
                 )
         );
-        if session_mutation && self.core.is_cleaned_up_session(meta.session_id) {
+        if session_mutation && self.core.is_cleaned_up_request(meta.session_id, envelope) {
             let response = StreamFamilyState::stream_error_response("session has been cleaned up");
             self.core
                 .route_stream_response(envelope, meta, &response, request_started);

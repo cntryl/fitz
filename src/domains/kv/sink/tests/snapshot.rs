@@ -180,6 +180,59 @@ fn should_capture_empty_realm_pattern_without_inventing_resources() {
 }
 
 #[test]
+fn should_reject_kv_restore_given_wildcard_resource_route_before_mutating_destination() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sink = KvDomain::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1, 2]),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let selector = crate::snapshot::SnapshotSelector::new(
+        crate::snapshot::SnapshotDomain::Kv,
+        family,
+        "kv://acme/**",
+    )
+    .expect("valid KV selector");
+    let artifact = crate::snapshot::SnapshotArtifact::from_kv_resources(
+        &selector,
+        vec![
+            crate::snapshot::SnapshotKvResource {
+                route: "kv://acme/jobs/orders".to_string(),
+                entries: vec![crate::snapshot::SnapshotKvEntry {
+                    key: b"hidden".to_vec(),
+                    value: b"value".to_vec(),
+                }],
+            },
+            crate::snapshot::SnapshotKvResource {
+                route: "kv://acme/jobs/zzorders".to_string(),
+                entries: vec![crate::snapshot::SnapshotKvEntry {
+                    key: b"hidden".to_vec(),
+                    value: b"value".to_vec(),
+                }],
+            },
+        ],
+    )
+    .expect("valid concrete artifact");
+
+    // Act
+    let restored = sink.restore_kv_snapshot(&crate::snapshot::test_support::with_resource_route(
+        &artifact,
+        1,
+        "kv://acme/jobs/zz*",
+    ));
+    let value = sink
+        .admin_get_committed_value(family, "acme", "jobs", "orders", b"hidden")
+        .expect("read valid earlier resource directly");
+
+    // Assert
+    assert!(
+        restored.is_err() && value.is_none(),
+        "restore must reject wildcard resource routes before writing even an earlier valid resource; result={restored:?}, value={value:?}"
+    );
+}
+
+#[test]
 fn should_reject_corrupt_snapshot_before_restore_mutates_destination() {
     // Arrange
     let family = RouteFamily::new(1);

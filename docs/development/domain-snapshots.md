@@ -8,8 +8,11 @@ explicitly; the family is never inferred from the realm or route pattern.
 
 Artifacts are versioned JSON envelopes with a SHA-256 checksum. Restore parses
 and validates the complete artifact, selector, family, counts, and contents
-before it sends a mutation command. Keep the encoded bytes with the application
-backup that owns them; Fitz does not schedule, upload, or inventory artifacts.
+before it sends a mutation command. Resource identities must be exact concrete
+routes under the selected domain's grammar; wildcard patterns are allowed only
+in selectors. A malformed resource invalidates the complete artifact, even when
+its checksum is valid or other resources are valid. Keep the encoded bytes with
+the application backup that owns them; Fitz does not schedule, upload, or inventory artifacts.
 
 ## KV
 
