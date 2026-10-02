@@ -135,6 +135,8 @@ impl McpResourceDetailRequest {
 }
 
 pub mod catalog;
+mod scope;
+pub use scope::McpScopedResourceRequest;
 
 mod audit;
 pub use audit::{McpAuditDecision, McpAuditRecord, McpExecutionContext};
@@ -142,36 +144,35 @@ pub use audit::{McpAuditDecision, McpAuditRecord, McpExecutionContext};
 #[derive(Debug, Clone)]
 enum McpInvocation {
     Global,
-    Resource(McpResourceDetailRequest),
+    Resource(McpScopedResourceRequest),
 }
 
 impl McpInvocation {
     fn scope_route(&self) -> Option<String> {
         match self {
             McpInvocation::Global => None,
-            McpInvocation::Resource(request) => Some(request.scope_route()),
+            McpInvocation::Resource(request) => Some(request.resource.scope_route()),
         }
     }
 
     fn allows_family_access(&self, principal: &AdminPrincipal) -> bool {
+        self.route_family().map_or_else(
+            || principal.route_family_access.is_wildcard(),
+            |family| principal.route_family_access.allows(&family.to_string()),
+        )
+    }
+
+    fn route_family(&self) -> Option<u64> {
         match self {
-            Self::Resource(request)
-                if crate::runtime::DomainKind::from_scheme(&request.scheme)
-                    == Some(crate::runtime::DomainKind::Queue) =>
-            {
-                request.queue_family.map_or_else(
-                    || principal.route_family_access.is_wildcard(),
-                    |family| principal.route_family_access.allows(&family.to_string()),
-                )
-            }
-            Self::Global | Self::Resource(_) => principal.route_family_access.is_wildcard(),
+            Self::Global => None,
+            Self::Resource(request) => request.effective_family(),
         }
     }
 
     fn resource_request(&self) -> Option<&McpResourceDetailRequest> {
         match self {
             McpInvocation::Global => None,
-            McpInvocation::Resource(request) => Some(request),
+            McpInvocation::Resource(request) => Some(&request.resource),
         }
     }
 }
@@ -547,12 +548,18 @@ fn prepare_invocation(tool_name: &str, arguments: Option<&Value>) -> McpToolResu
                 reason: "missing request payload".to_string(),
             })?;
 
-            let request: McpResourceDetailRequest = serde_json::from_value(arguments.clone())
+            let request: McpScopedResourceRequest = serde_json::from_value(arguments.clone())
                 .map_err(|error| McpToolError::InvalidArguments {
                     tool_name: tool_name.to_string(),
                     reason: error.to_string(),
                 })?;
 
+            request
+                .validate()
+                .map_err(|reason| McpToolError::InvalidArguments {
+                    tool_name: tool_name.to_string(),
+                    reason,
+                })?;
             Ok(McpInvocation::Resource(request))
         }
         _ => Ok(McpInvocation::Global),
@@ -566,13 +573,20 @@ fn authorize_scope(
     scope_route: Option<&str>,
     argument_summary: &str,
 ) -> McpToolResult<()> {
-    if scope_route
+    if scope_route.as_ref().map_or_else(
+        || {
+            crate::runtime::DomainKind::ALL.into_iter().all(|domain| {
+                context.permissions.allows_registration_pattern(
+                    &crate::runtime::matcher::Pattern::new(domain.wildcard_route()),
+                    Access::Read,
+                )
+            })
+        },
+        |route| context.permissions.allows_route(route, Access::Read),
+    ) && context
+        .principal
         .as_ref()
-        .is_none_or(|route| context.permissions.allows_route(route, Access::Read))
-        && context
-            .principal
-            .as_ref()
-            .is_some_and(|principal| invocation.allows_family_access(principal))
+        .is_some_and(|principal| invocation.allows_family_access(principal))
     {
         return Ok(());
     }
@@ -617,142 +631,14 @@ fn serialize_tool_output<T: Serialize>(tool_name: &str, output: T) -> McpToolRes
     })
 }
 
-fn build_resource_detail_value(
-    runtime: &Runtime,
-    invocation: &McpInvocation,
-) -> McpToolResult<Value> {
-    let tool_name = "inspect_resource_detail";
-    let request = invocation
-        .resource_request()
-        .ok_or_else(|| McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: "missing request payload".to_string(),
-        })?;
-
-    let path = ResourcePath {
-        realm: &request.realm,
-        area: &request.area,
-        resource: &request.resource,
-    };
-
-    match crate::runtime::DomainKind::from_scheme(&request.scheme) {
-        Some(crate::runtime::DomainKind::Kv) => {
-            serialize_tool_output(tool_name, kv_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Queue) => serialize_tool_output(
-            tool_name,
-            queue_detail(runtime, &path, request.queue_family),
-        ),
-        Some(crate::runtime::DomainKind::Stream) => {
-            serialize_tool_output(tool_name, stream_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Lease) => {
-            serialize_tool_output(tool_name, lease_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Schedule) => {
-            serialize_tool_output(tool_name, schedule_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Notice) => {
-            serialize_tool_output(tool_name, notice_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Rpc) => {
-            serialize_tool_output(tool_name, rpc_operations(runtime, &path, None))
-        }
-        None => Err(McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: format!("unsupported resource scheme: {}", request.scheme),
-        }),
-    }
-}
-
-fn build_resource_timeline_value(
-    runtime: &Runtime,
-    invocation: &McpInvocation,
-) -> McpToolResult<Value> {
-    let tool_name = "inspect_resource_timeline";
-    let request = invocation
-        .resource_request()
-        .ok_or_else(|| McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: "missing request payload".to_string(),
-        })?;
-
-    let limit = request
-        .limit
-        .unwrap_or_else(|| McpCostBudget::timeline().max_result_items)
-        .clamp(1, McpCostBudget::timeline().max_result_items);
-    let path = ResourcePath {
-        realm: &request.realm,
-        area: &request.area,
-        resource: &request.resource,
-    };
-    let read_model = runtime.admin_read_model();
-
-    match crate::runtime::DomainKind::from_scheme(&request.scheme) {
-        Some(crate::runtime::DomainKind::Kv) => serialize_tool_output(
-            tool_name,
-            kv_resource_timeline(&read_model.kv_transactions(None), &path, limit),
-        ),
-        Some(crate::runtime::DomainKind::Queue) => serialize_tool_output(
-            tool_name,
-            queue_resource_timeline(
-                &read_model.queues(None),
-                &read_model.queue_inflight(None),
-                &read_model.queue_dead_letters(None),
-                &path,
-                request.queue_family,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Stream) => serialize_tool_output(
-            tool_name,
-            stream_resource_timeline(&read_model.streams(None), &path, limit),
-        ),
-        Some(crate::runtime::DomainKind::Lease) => serialize_tool_output(
-            tool_name,
-            lease_resource_timeline(&read_model.leases(None), &path, limit),
-        ),
-        Some(crate::runtime::DomainKind::Notice) => serialize_tool_output(
-            tool_name,
-            notice_resource_timeline(
-                &read_model.notice_subscriptions(None, None),
-                &read_model.notice_routes(None),
-                &path,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Rpc) => serialize_tool_output(
-            tool_name,
-            rpc_resource_timeline(
-                &read_model.rpc_workers(None),
-                &read_model.rpc_pending(None),
-                &path,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Schedule) => serialize_tool_output(
-            tool_name,
-            schedule_resource_timeline(
-                &read_model.schedules(None),
-                runtime.schedule_pending_fire_claims(),
-                runtime.schedule_pending_ack_retries(),
-                runtime.schedule_oldest_pending_claim_age_seconds(),
-                runtime.schedule_notify_failures(),
-                runtime.schedule_ack_failures(),
-                runtime.schedule_overdue_normalizations(),
-                &path,
-                limit,
-            ),
-        ),
-        None => Err(McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: format!("unsupported resource scheme: {}", request.scheme),
-        }),
-    }
-}
+mod resources;
+use resources::{build_resource_detail_value, build_resource_timeline_value};
 
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod family_tests;
+
+#[cfg(test)]
+mod scope_tests;
