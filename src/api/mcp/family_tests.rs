@@ -2,6 +2,7 @@ use super::*;
 use crate::api::admin::auth::AdminRouteFamilyAccess;
 use crate::auth::default_anonymous_permissions;
 use crate::runtime::Router;
+use std::sync::Arc;
 
 fn context() -> McpExecutionContext {
     McpExecutionContext::authenticated(

@@ -16,13 +16,10 @@ use crate::api::admin::{
 };
 use crate::auth::Access;
 use crate::boot::Runtime;
-use crate::session::permissions::SessionPermissions;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -137,64 +134,8 @@ impl McpResourceDetailRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum McpAuditDecision {
-    Allowed,
-    Denied,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpAuditRecord {
-    pub principal: Option<String>,
-    pub tool_name: String,
-    pub capability: McpCapabilityClass,
-    pub scope_route: Option<String>,
-    pub argument_summary: String,
-    pub decision: McpAuditDecision,
-    pub result_summary: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct McpExecutionContext {
-    pub principal: Option<AdminPrincipal>,
-    pub permissions: SessionPermissions,
-    audit_log: Arc<Mutex<Vec<McpAuditRecord>>>,
-}
-
-impl McpExecutionContext {
-    #[must_use]
-    pub fn authenticated(principal: AdminPrincipal, permissions: SessionPermissions) -> Self {
-        Self {
-            principal: Some(principal),
-            permissions,
-            audit_log: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    #[must_use]
-    pub fn anonymous(permissions: SessionPermissions) -> Self {
-        Self {
-            principal: None,
-            permissions,
-            audit_log: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    #[must_use]
-    pub fn audit_records(&self) -> Vec<McpAuditRecord> {
-        self.audit_log.lock().clone()
-    }
-
-    fn record_audit(&self, record: McpAuditRecord) {
-        self.audit_log.lock().push(record);
-    }
-
-    fn principal_name(&self) -> Option<String> {
-        self.principal
-            .as_ref()
-            .map(|principal| principal.username.clone())
-    }
-}
+mod audit;
+pub use audit::{McpAuditDecision, McpAuditRecord, McpExecutionContext};
 
 #[derive(Debug, Clone)]
 enum McpInvocation {
@@ -381,18 +322,23 @@ impl McpToolRegistry {
         policy: &McpCapabilityPolicy,
         arguments: Option<&Value>,
     ) -> McpToolResult<Value> {
-        let tool = self
-            .tools
-            .iter()
-            .find(|tool| tool.descriptor.name == tool_name)
-            .ok_or_else(|| McpToolError::UnknownTool {
-                tool_name: tool_name.to_string(),
-            })?;
+        let tool = self.find_tool(tool_name, context)?;
 
-        let argument_summary = arguments
-            .and_then(|value| serde_json::to_string(value).ok())
-            .unwrap_or_else(|| "null".to_string());
-        let invocation = prepare_invocation(tool_name, arguments)?;
+        let argument_summary = arguments.map_or("absent", |_| "provided").to_string();
+        let invocation = match prepare_invocation(tool_name, arguments) {
+            Ok(invocation) => invocation,
+            Err(error) => {
+                record_audit(
+                    context,
+                    &tool.descriptor,
+                    None,
+                    argument_summary,
+                    McpAuditDecision::Denied,
+                    "invalid_arguments".to_string(),
+                );
+                return Err(error);
+            }
+        };
         let scope_route = invocation.scope_route();
 
         if context.principal.is_none() {
@@ -434,13 +380,26 @@ impl McpToolRegistry {
             return Err(error);
         }
 
-        let value = (tool.handler)(runtime, &invocation)?;
+        let value = match (tool.handler)(runtime, &invocation) {
+            Ok(value) => value,
+            Err(error) => {
+                record_audit(
+                    context,
+                    &tool.descriptor,
+                    scope_route,
+                    argument_summary,
+                    McpAuditDecision::Denied,
+                    "handler_error".to_string(),
+                );
+                return Err(error);
+            }
+        };
         let encoded = serde_json::to_vec(&value).map_err(|error| McpToolError::Serialization {
             tool_name: tool.descriptor.name.clone(),
             reason: error.to_string(),
         })?;
 
-        if !tool.descriptor.budget.allows_value(&value) {
+        if encoded.len() > tool.descriptor.budget.max_result_bytes {
             let error = McpToolError::BudgetExceeded {
                 tool_name: tool.descriptor.name.clone(),
                 observed_bytes: encoded.len(),
@@ -467,6 +426,30 @@ impl McpToolRegistry {
         );
 
         Ok(value)
+    }
+
+    fn find_tool(
+        &self,
+        tool_name: &str,
+        context: &McpExecutionContext,
+    ) -> McpToolResult<&McpToolDefinition> {
+        self.tools
+            .iter()
+            .find(|tool| tool.descriptor.name == tool_name)
+            .ok_or_else(|| {
+                context.record_audit(McpAuditRecord {
+                    principal: context.principal_name(),
+                    tool_name: "unknown".to_string(),
+                    capability: McpCapabilityClass::Summary,
+                    scope_route: None,
+                    argument_summary: "redacted".to_string(),
+                    decision: McpAuditDecision::Denied,
+                    result_summary: "unknown_tool".to_string(),
+                });
+                McpToolError::UnknownTool {
+                    tool_name: tool_name.to_string(),
+                }
+            })
     }
 
     fn global_stats_tool() -> McpToolDefinition {
