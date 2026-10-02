@@ -989,3 +989,6 @@ domain response errors, and retry/idempotency guidance.
 - Codecs: `src/protocol/*_codec.rs`
 - Boot: `src/boot/mod.rs`
 - Tests: `tests/`, `benches/`
+
+Derived Schedule parse and Stream actor retention is described in
+[Derived cache retention](derived-cache-retention.md).

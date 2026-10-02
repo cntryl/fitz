@@ -85,6 +85,7 @@ impl ScheduleActor {
             store,
             schedules: HashMap::with_capacity_and_hasher(128, FxBuildHasher),
             cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
+            cron_cache_order: std::collections::VecDeque::new(),
             list_entries: Vec::new(),
             list_cache: None,
             write_policy,
@@ -197,10 +198,9 @@ impl ScheduleActor {
             executions_total,
         } = entry;
         let route_parts = parse_concrete_schedule_route(&route)?;
-        let parsed_cron = CronSchedule::parse(&cron).map_err(|error| {
+        let parsed_cron = self.parsed_cron_for(&cron).map_err(|error| {
             format!("parse persisted schedule cron failed for {route} with cron {cron:?}: {error}")
         })?;
-        self.cron_cache.insert(cron.clone(), parsed_cron.clone());
 
         let (effective_next_fire_time, effective_next_fire_ms) = self.resolve_preloaded_fire_time(
             &route,
