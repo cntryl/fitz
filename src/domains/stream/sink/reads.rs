@@ -115,6 +115,20 @@ impl StreamFamilyState {
         }
     }
 
+    fn with_read_actor<T>(
+        &mut self,
+        key: &StreamResourceScope,
+        read: impl FnOnce(&StreamActor) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let actor = self.get_or_create_actor(key)?;
+        let result = read(actor);
+        let idle = !actor.has_active_session();
+        if idle {
+            self.actors.remove(key);
+        }
+        result
+    }
+
     fn empty_global_read_cursor(
         &mut self,
         request: &StreamReadExecution<'_>,
@@ -188,12 +202,14 @@ impl StreamFamilyState {
             }
             ReadScope::Resource => {
                 let key = Self::actor_key_for_route(request.family_id, request.route)?;
-                let response = self.get_or_create_actor(&key)?.read_with_filter(
-                    request.from_offset,
-                    request.limit,
-                    request.max_bytes,
-                    request.filter,
-                )?;
+                let response = self.with_read_actor(&key, |actor| {
+                    actor.read_with_filter(
+                        request.from_offset,
+                        request.limit,
+                        request.max_bytes,
+                        request.filter,
+                    )
+                })?;
                 (response.items, response.cursor)
             }
             ReadScope::Global => self.stream_store.read_global_posting(
@@ -339,14 +355,14 @@ impl StreamFamilyState {
             return Ok(Vec::new());
         }
         let key = Self::actor_key_for_route(family_id, route)?;
-        let actor = self.get_or_create_actor(&key)?;
-        let data = actor
-            .last()?
-            .record
-            .as_ref()
-            .map(Self::encode_stream_last_data)
-            .unwrap_or_default();
-        Ok(data)
+        self.with_read_actor(&key, |actor| {
+            Ok(actor
+                .last()?
+                .record
+                .as_ref()
+                .map(Self::encode_stream_last_data)
+                .unwrap_or_default())
+        })
     }
 
     pub(in crate::domains::stream::sink) fn encode_metadata_response_data(
@@ -360,8 +376,10 @@ impl StreamFamilyState {
             return Ok(Vec::new());
         }
         let key = Self::actor_key_for_route(family_id, route)?;
-        let actor = self.get_or_create_actor(&key)?;
-        let metadata = actor.metadata()?.metadata;
-        Ok(Self::encode_stream_metadata_data(&metadata))
+        self.with_read_actor(&key, |actor| {
+            Ok(Self::encode_stream_metadata_data(
+                &actor.metadata()?.metadata,
+            ))
+        })
     }
 }

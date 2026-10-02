@@ -36,6 +36,7 @@ impl StreamDomain {
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
+        let envelope = self.config.router.retain_session_work(envelope);
         let runtime = &self.family_runtime;
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let family = *envelope.destination().family();

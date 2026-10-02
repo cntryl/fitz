@@ -42,12 +42,17 @@ impl SessionScoped for StreamFamilyState {
         self.unsubscribe_all(session_id);
 
         let mut removed_sessions = Vec::new();
+        let mut idle_keys = Vec::new();
         let mut advanced_families = std::collections::BTreeSet::new();
         for (key, actor) in &mut self.actors {
             if let Some(stream_session_id) = actor.cleanup_session(session_id) {
                 removed_sessions.push(stream_session_id);
+                idle_keys.push(key.clone());
                 advanced_families.insert(key.family.as_u64());
             }
+        }
+        for key in idle_keys {
+            self.actors.remove(&key);
         }
         let sessions_removed = !removed_sessions.is_empty();
 

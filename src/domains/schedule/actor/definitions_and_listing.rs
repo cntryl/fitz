@@ -28,11 +28,21 @@ impl ScheduleActor {
     ///
     /// Returns an error when the cron expression is invalid.
     pub(super) fn parsed_cron_for(&mut self, cron: &str) -> Result<CronSchedule, String> {
-        if let Some(parsed) = self.cron_cache.get(cron) {
-            return Ok(parsed.clone());
+        if let Some(parsed) = self.cron_cache.get(cron).cloned() {
+            if let Some(index) = self.cron_cache_order.iter().position(|entry| entry == cron) {
+                self.cron_cache_order.remove(index);
+            }
+            self.cron_cache_order.push_back(cron.to_string());
+            return Ok(parsed);
         }
 
         let parsed = CronSchedule::parse(cron)?;
+        if self.cron_cache.len() == super::MAX_CACHED_CRON_EXPRESSIONS {
+            if let Some(oldest) = self.cron_cache_order.pop_front() {
+                self.cron_cache.remove(&oldest);
+            }
+        }
+        self.cron_cache_order.push_back(cron.to_string());
         self.cron_cache.insert(cron.to_string(), parsed.clone());
         Ok(parsed)
     }

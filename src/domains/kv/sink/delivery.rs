@@ -28,7 +28,7 @@ impl KvFamilyRuntime<'_> {
         // per-session state -- an actor and, for a write BEGIN, a resource
         // lock -- for a session that is already gone and will never be
         // cleaned up again.
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = Self::error_response("session already closed");
             let response_meta = Self::response_meta_for_source(envelope, meta);
             self.route_kv_response(envelope, response_meta, &response, request_started)?;

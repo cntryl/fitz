@@ -126,7 +126,7 @@ fn should_preserve_sibling_stream_live_gauges_after_cleanup() {
         .expect("deliver Stream cleanup");
 
     // Assert
-    assert_eq!(live_gauges(&metrics), (2, 1, 1));
+    assert_eq!(live_gauges(&metrics), (1, 1, 1));
 }
 
 #[test]
