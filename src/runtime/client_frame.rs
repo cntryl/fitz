@@ -71,3 +71,11 @@ impl EncodedClientFrame {
         Self { meta, payload }
     }
 }
+
+/// Internal request to stop a session through its transport lifecycle.
+///
+/// This is an in-process control payload, never a client wire message.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionCloseRequest {
+    pub reason: &'static str,
+}

@@ -17,7 +17,9 @@ fn histogram_tail_ratio(slow_tail_count: usize, total: usize) -> f64 {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct QueueAgeBuckets {
     pub under_1m: usize,
     pub under_5m: usize,
@@ -137,7 +139,9 @@ pub struct StreamInfo {
     pub subscriptions_active: usize,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct StreamLagBuckets {
     pub caught_up: usize,
     pub under_10: usize,
@@ -166,7 +170,9 @@ impl StreamLagBuckets {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct StreamLatencyBuckets {
     pub under_1ms: usize,
     pub under_5ms: usize,
@@ -215,7 +221,9 @@ impl StreamLatencyBuckets {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct ScheduleLatencyBuckets {
     pub under_1ms: usize,
     pub under_5ms: usize,
@@ -407,7 +415,7 @@ pub(crate) struct QueueDeadLetterSnapshot<'a> {
     pub(crate) reason: &'a str,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RpcWorker {
     pub route_family: u64,
     pub session_id: String,
@@ -418,7 +426,9 @@ pub struct RpcWorker {
     pub average_latency_ms: f64,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct RpcLatencyBuckets {
     pub under_5ms: usize,
     pub under_25ms: usize,

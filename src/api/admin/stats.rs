@@ -16,14 +16,14 @@ use crate::runtime::routing::RouteFamily;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GlobalStats {
     pub broker: BrokerStats,
     pub domains: DomainStats,
     pub diagnostics: troubleshooting::GlobalTroubleshootingDiagnostics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BrokerStats {
     pub uptime_seconds: u64,
     pub connections: usize,
@@ -34,7 +34,7 @@ pub struct BrokerStats {
     pub router_high_lane_backpressure_total: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DomainStats {
     pub kv: KvStats,
     pub stream: StreamStats,
@@ -45,7 +45,7 @@ pub struct DomainStats {
     pub schedule: ScheduleStats,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct KvStats {
     pub transactions_active: usize,
     pub keys_total: usize,
@@ -55,7 +55,7 @@ pub struct KvStats {
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StreamStats {
     pub streams_active: usize,
     pub append_sessions_active: usize,
@@ -74,7 +74,7 @@ pub struct StreamStats {
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoticeStats {
     pub subscriptions_active: usize,
     pub routes_active: usize,
@@ -89,7 +89,7 @@ pub struct NoticeStats {
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueueStats {
     pub messages_ready: usize,
     pub messages_delayed: usize,
@@ -116,7 +116,7 @@ pub struct QueueStats {
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RpcStats {
     pub workers_registered: usize,
     pub requests_pending: usize,
@@ -140,7 +140,7 @@ pub struct RpcStats {
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LeaseStats {
     pub leases_active: usize,
     pub waiter_depth: usize,
@@ -156,7 +156,7 @@ pub struct LeaseStats {
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScheduleStats {
     pub schedules_active: usize,
     pub executions_per_minute: f64,
