@@ -119,6 +119,18 @@ This is a hard Fitz rule:
 - Session state exists only for the lifetime of the active connection.
 - Disconnect immediately destroys session-owned state.
 - Reconnect always creates a new session identity.
+- Client work admitted from a canonical session inbox through routing or a domain
+  mailbox retains a shared disconnect flag until its last envelope
+  reference drains, including deferred replies. Routing disconnect cleanup marks
+  that flag before attempting control-lane delivery, so an admitted request stays
+  invalid even if later cleanup traffic evicts its ID from a domain's bounded
+  recent-cleanup history. The flag registry retains only weak references and
+  removes an entry when the last work reference drops; it stores no permanent
+  closed-session history. Family keys remain separate, and older live sessions
+  are not rejected merely because newer sessions disconnected.
+- Independent disconnect cleanup dispatches retain their concurrency permits in
+  the synchronous jobs, so canceling an async close waiter does not release
+  capacity while its blocking cleanup is still running.
 - Recovery is client-driven, explicit, and deterministic.
 
 ## Layer Responsibilities
@@ -957,19 +969,9 @@ for subscriber in matched_subscribers {
 router.deliver_batch(batch);
 ```
 ### Monitoring
-Add tracing for performance insights:
-```rust
-use tracing::{instrument, span, Level};
-#[instrument(skip(msg))]
-pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
-    let span = span!(Level::DEBUG, "domain_handler");
-    let _guard = span.enter();
-    
-    tracing::debug!("handling message");
-    // ... logic
-    tracing::debug!("response ready");
-}
-```
+
+See [Architecture monitoring](architecture-monitoring.md) for the tracing example.
+
 ### Tuning Parameters
 | Parameter | Default | Use Case |
 |---|---:|---|
@@ -989,3 +991,6 @@ domain response errors, and retry/idempotency guidance.
 - Codecs: `src/protocol/*_codec.rs`
 - Boot: `src/boot/mod.rs`
 - Tests: `tests/`, `benches/`
+
+Derived Schedule parse and Stream actor retention is described in
+[Derived cache retention](derived-cache-retention.md).

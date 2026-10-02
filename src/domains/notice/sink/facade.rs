@@ -257,6 +257,7 @@ impl NoticeDomain {
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
+        let envelope = self.config.router.retain_session_work(envelope);
         let family = *envelope.destination().family();
         let lane = if high_priority {
             crate::runtime::FamilyActorLane::Control

@@ -152,6 +152,70 @@ fn should_round_trip_readable_stream_history_for_selected_family_and_pattern() {
 }
 
 #[test]
+fn should_reject_restore_given_wildcard_resource_route_before_mutating_destination() {
+    // Arrange
+    let context = setup_test_context();
+    let selector = crate::snapshot::SnapshotSelector::new(
+        crate::snapshot::SnapshotDomain::Stream,
+        context.family,
+        "stream://acme/**",
+    )
+    .expect("valid Stream selector");
+    let artifact = crate::snapshot::SnapshotArtifact::from_stream_resources(
+        &selector,
+        vec![
+            crate::snapshot::SnapshotStreamResource {
+                route: "stream://acme/jobs/orders".to_string(),
+                captured_watermark: 1,
+                records: vec![crate::snapshot::SnapshotStreamRecord {
+                    body: b"hidden".to_vec(),
+                    metadata: None,
+                }],
+            },
+            crate::snapshot::SnapshotStreamResource {
+                route: "stream://acme/jobs/zzorders".to_string(),
+                captured_watermark: 1,
+                records: vec![crate::snapshot::SnapshotStreamRecord {
+                    body: b"hidden".to_vec(),
+                    metadata: None,
+                }],
+            },
+        ],
+    )
+    .expect("valid concrete artifact");
+
+    // Act
+    let restored =
+        context
+            .sink
+            .restore_stream_snapshot(&crate::snapshot::test_support::with_resource_route(
+                &artifact,
+                1,
+                "stream://acme/jobs/zz*",
+            ));
+    let (earlier_records, _) = context
+        .sink
+        .config
+        .stream_store
+        .read_resource(&crate::domains::stream::store::ReadResourceParams {
+            family: context.family.as_u64(),
+            realm: "acme",
+            area: "jobs",
+            resource: "orders",
+            from_offset: 0,
+            limit: 10,
+            max_bytes: None,
+        })
+        .expect("read valid earlier resource directly");
+
+    // Assert
+    assert!(
+        restored.is_err() && earlier_records.is_empty(),
+        "restore must reject wildcard resource routes before writing even an earlier valid resource; result={restored:?}, records={earlier_records:?}"
+    );
+}
+
+#[test]
 fn should_reject_restore_when_any_selected_stream_history_exists() {
     // Arrange
     let source = setup_test_context();

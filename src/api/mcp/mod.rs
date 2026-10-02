@@ -210,6 +210,21 @@ impl McpInvocation {
         }
     }
 
+    fn allows_family_access(&self, principal: &AdminPrincipal) -> bool {
+        match self {
+            Self::Resource(request)
+                if crate::runtime::DomainKind::from_scheme(&request.scheme)
+                    == Some(crate::runtime::DomainKind::Queue) =>
+            {
+                request.queue_family.map_or_else(
+                    || principal.route_family_access.is_wildcard(),
+                    |family| principal.route_family_access.allows(&family.to_string()),
+                )
+            }
+            Self::Global | Self::Resource(_) => principal.route_family_access.is_wildcard(),
+        }
+    }
+
     fn resource_request(&self) -> Option<&McpResourceDetailRequest> {
         match self {
             McpInvocation::Global => None,
@@ -395,23 +410,13 @@ impl McpToolRegistry {
             return Err(error);
         }
 
-        if let Some(scope_route) = scope_route.clone() {
-            if !context.permissions.allows_route(&scope_route, Access::Read) {
-                let error = McpToolError::ScopeDenied {
-                    tool_name: tool.descriptor.name.clone(),
-                    scope_route: scope_route.clone(),
-                };
-                record_audit(
-                    context,
-                    &tool.descriptor,
-                    Some(scope_route),
-                    argument_summary,
-                    McpAuditDecision::Denied,
-                    error.to_string(),
-                );
-                return Err(error);
-            }
-        }
+        authorize_scope(
+            context,
+            &tool.descriptor,
+            &invocation,
+            scope_route.as_deref(),
+            &argument_summary,
+        )?;
 
         if !policy.allows(tool.descriptor.capability) {
             let error = McpToolError::CapabilityDenied {
@@ -567,6 +572,38 @@ fn prepare_invocation(tool_name: &str, arguments: Option<&Value>) -> McpToolResu
         }
         _ => Ok(McpInvocation::Global),
     }
+}
+
+fn authorize_scope(
+    context: &McpExecutionContext,
+    descriptor: &McpToolDescriptor,
+    invocation: &McpInvocation,
+    scope_route: Option<&str>,
+    argument_summary: &str,
+) -> McpToolResult<()> {
+    if scope_route
+        .as_ref()
+        .is_none_or(|route| context.permissions.allows_route(route, Access::Read))
+        && context
+            .principal
+            .as_ref()
+            .is_some_and(|principal| invocation.allows_family_access(principal))
+    {
+        return Ok(());
+    }
+    let error = McpToolError::ScopeDenied {
+        tool_name: descriptor.name.clone(),
+        scope_route: scope_route.unwrap_or("all route families").to_string(),
+    };
+    record_audit(
+        context,
+        descriptor,
+        scope_route.map(str::to_string),
+        argument_summary.to_string(),
+        McpAuditDecision::Denied,
+        error.to_string(),
+    );
+    Err(error)
 }
 
 fn record_audit(
@@ -731,3 +768,6 @@ fn build_resource_timeline_value(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod family_tests;

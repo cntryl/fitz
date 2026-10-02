@@ -429,6 +429,7 @@ fn stream_read_response(
 }
 
 mod active_subscriptions;
+mod actor_retention;
 mod correctness;
 mod fault_injection;
 mod global_reads;

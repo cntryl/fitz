@@ -276,6 +276,61 @@ fn should_deny_resource_detail_given_missing_scope() {
 }
 
 #[test]
+fn should_exclude_unauthorized_family_from_resource_detail() {
+    // Arrange
+    let read_model = AdminReadModel::new();
+    read_model.upsert_lease(crate::control::admin::LeaseInfo::snapshot(
+        2,
+        "acme",
+        "locks",
+        "billing",
+        "family-2-owner",
+        "2026-10-01T12:00:00Z",
+        "2026-10-01T12:05:00Z".to_string(),
+        0,
+        7,
+    ));
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), read_model);
+    let registry = McpToolRegistry::read_only();
+    let context = McpExecutionContext::authenticated(
+        AdminPrincipal {
+            username: "family-1-admin".to_string(),
+            route_family_access: crate::api::admin::auth::AdminRouteFamilyAccess::Explicit(vec![
+                "1".to_string(),
+            ]),
+        },
+        SessionPermissions::from_permissions(vec![crate::auth::Permission {
+            raw: "lease://acme/locks/billing".to_string(),
+            access: Access::Read,
+        }]),
+    );
+    let policy = McpCapabilityPolicy::read_only();
+    let arguments = serde_json::json!({
+        "scheme": "lease",
+        "realm": "acme",
+        "area": "locks",
+        "resource": "billing"
+    });
+
+    // Act
+    let result = registry.execute(
+        "inspect_resource_detail",
+        &runtime,
+        &context,
+        &policy,
+        Some(&arguments),
+    );
+
+    // Assert
+    if let Ok(output) = result {
+        assert_eq!(
+            output["active_leases"], 0,
+            "a family-1 principal must not observe a lease owned by family 2"
+        );
+    }
+}
+
+#[test]
 fn should_execute_explain_tools_given_empty_runtime() {
     // Arrange
     let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), AdminReadModel::new());
