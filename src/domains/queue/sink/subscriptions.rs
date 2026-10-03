@@ -145,11 +145,12 @@ impl QueueFamilyState {
                         false,
                     );
                 }
-                let Ok(id) = self.next_sub_id.fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |current| current.checked_add(1),
-                ) else {
+                let Ok(id) =
+                    self.next_sub_id
+                        .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                            current.checked_add(1)
+                        })
+                else {
                     let state_empty = state.is_empty();
                     if state_empty {
                         families.remove(&family_id.as_u64());

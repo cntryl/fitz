@@ -97,7 +97,7 @@ where
 
     // Assert
     let read = parse_stream_read_response(&response);
-    assert!(read.records.is_empty());
+    assert_eq!(read.records, Vec::new());
     assert_eq!(read.cursor.last_resource_offset, 1);
     assert_eq!(read.cursor.last_area_offset, None);
     assert_eq!(read.cursor.last_realm_offset, None);
@@ -334,7 +334,7 @@ where
     let read = parse_stream_read_response(&response);
 
     // Assert
-    assert!(read.records.is_empty());
+    assert_eq!(read.records, Vec::new());
     assert_eq!(read.cursor.last_resource_offset, 0);
     assert_eq!(read.cursor.last_area_offset, None);
     assert_eq!(read.cursor.last_realm_offset, None);

@@ -116,9 +116,10 @@ fn due_worker(
             .bench_ack_pending_fire_claims(&delivered)
             .expect("ACK due burst");
         assert_eq!(acked, DUE_COUNT);
-        assert!(actor
-            .bench_pending_claimed_occurrences_for_publish()
-            .is_empty());
+        assert_eq!(
+            actor.bench_pending_claimed_occurrences_for_publish(),
+            Vec::new()
+        );
         done_tx.send(acked).expect("finished");
     }
 }

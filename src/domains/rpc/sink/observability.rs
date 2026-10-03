@@ -18,7 +18,7 @@ impl RpcFamilyRuntime<'_> {
         if count == 0 {
             return;
         }
-        let _ = self.core.global_pending_count.fetch_update(
+        let _ = self.core.global_pending_count.try_update(
             Ordering::AcqRel,
             Ordering::Acquire,
             |current| Some(current.saturating_sub(count)),

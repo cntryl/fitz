@@ -448,7 +448,7 @@ mod tests {
         let mut tm = TimerManager::new();
         let timer_id = tm.schedule_once(Duration::from_millis(50));
         let fired = tm.fired_timers();
-        assert!(fired.is_empty());
+        assert_eq!(fired, Vec::new());
 
         // Act
         thread::sleep(Duration::from_millis(100));
@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(fired.len(), 1);
         assert_eq!(fired[0], timer_id);
         let fired_again = tm.fired_timers();
-        assert!(fired_again.is_empty());
+        assert_eq!(fired_again, Vec::new());
     }
 
     #[test]
@@ -472,7 +472,7 @@ mod tests {
         let fired = tm.fired_timers();
 
         // Assert
-        assert!(!fired.is_empty());
+        assert_ne!(fired, Vec::new());
         assert_eq!(fired[0], timer_id);
         thread::sleep(Duration::from_millis(60));
         let fired_again = tm.fired_timers();
@@ -493,7 +493,7 @@ mod tests {
 
         // Assert
         assert!(cancelled);
-        assert!(fired.is_empty());
+        assert_eq!(fired, Vec::new());
     }
 
     #[test]
@@ -548,7 +548,7 @@ mod tests {
         let next_deadline = tm.next_deadline();
 
         // Assert
-        assert!(fired.is_empty());
+        assert_eq!(fired, Vec::new());
         assert_eq!(next_deadline, expected_deadline);
     }
 
@@ -568,7 +568,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Assert
-        assert!(!fired.is_empty());
+        assert_ne!(fired, Vec::new());
         assert!(elapsed < Duration::from_millis(1));
     }
 }

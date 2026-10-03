@@ -499,5 +499,8 @@ async fn should_exclude_other_family_rpc_operations_from_resource_detail() {
 
     // Assert
     assert_eq!(payload["workers_registered"], 0);
-    assert!(payload["operations"].as_array().unwrap().is_empty());
+    assert_eq!(
+        payload["operations"].as_array().unwrap().as_slice(),
+        &[] as &[serde_json::Value]
+    );
 }

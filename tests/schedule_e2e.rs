@@ -88,7 +88,7 @@ where
             u32::from_be_bytes(data[1..5].try_into().expect("schedule error length")) as usize;
         assert_eq!(data.len(), 5 + length);
         let message = String::from_utf8(data[5..].to_vec()).expect("schedule error UTF-8");
-        assert!(!message.is_empty());
+        assert_ne!(message, "");
     }
 }
 

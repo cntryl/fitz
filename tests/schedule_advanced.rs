@@ -378,7 +378,7 @@ fn should_skip_missed_occurrences_given_forward_epoch_jump() {
 
     // Assert
     assert_eq!(first_fire.len(), 1);
-    assert!(second_fire.is_empty());
+    assert_eq!(second_fire, Vec::new());
 }
 
 #[test]
@@ -405,7 +405,7 @@ fn should_not_fire_given_backward_epoch_jump_before_due_time() {
     let after_due = actor.collect_due_occurrences_for_publish();
 
     // Assert
-    assert!(before_due.is_empty());
+    assert_eq!(before_due, Vec::new());
     assert_eq!(after_due.len(), 1);
 }
 

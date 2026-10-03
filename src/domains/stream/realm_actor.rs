@@ -371,7 +371,7 @@ mod tests {
 
         // Assert
         assert_eq!(actor.realm_watermark, Some(6));
-        assert!(actor.committed_ranges().is_empty());
+        assert_eq!(actor.committed_ranges(), Vec::new());
     }
 
     #[test]
@@ -385,7 +385,7 @@ mod tests {
         // Assert
         assert_eq!(actor.realm_watermark, Some(0));
         assert_eq!(actor.watermark(), 0);
-        assert!(actor.committed_ranges().is_empty());
+        assert_eq!(actor.committed_ranges(), Vec::new());
     }
 
     #[test]
@@ -445,7 +445,7 @@ mod tests {
 
         // Assert
         assert_eq!(actor.watermark(), 3);
-        assert!(!actor.committed_ranges().is_empty()); // Buffered future ranges
+        assert_ne!(actor.committed_ranges(), Vec::new()); // Buffered future ranges
     }
 
     #[test]

@@ -78,7 +78,7 @@ impl KvWatchRegistry {
 
         let subscription_id = self
             .next_sub_id
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| crate::domains::kv::KvError::SubscriptionLimit)?;

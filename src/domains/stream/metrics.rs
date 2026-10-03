@@ -115,7 +115,7 @@ impl StreamDurableMetrics {
     pub(crate) fn record_events(&self, count: usize) {
         let _ = self
             .events_total
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 Some(current.saturating_add(count))
             });
     }
