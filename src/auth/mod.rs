@@ -88,6 +88,14 @@ impl Permission {
 
         crate::utils::route_shape::validate_route_shape(route_part)
             .map_err(|error| format!("invalid permission route: {error}"))?;
+        let path = route_part
+            .split_once("://")
+            .map_or(route_part, |(_scheme, path)| path);
+        if path.split('/').any(str::is_empty) {
+            return Err(
+                "invalid permission route: route must not contain empty path segments".to_string(),
+            );
+        }
         let access = Access::from_str(access_part)?;
 
         Ok(Self { raw, access })
