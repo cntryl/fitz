@@ -351,11 +351,7 @@ impl std::fmt::Display for KvError {
             KvError::InvalidSubscriptionPattern(msg) => {
                 write!(f, "Invalid subscription pattern: {msg}")
             }
-            KvError::SubscriptionLimit => write!(
-                f,
-                "Wildcard subscription limit exceeded ({} per session)",
-                crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
-            ),
+            KvError::SubscriptionLimit => write!(f, "Subscription registration limit exceeded"),
             KvError::InvalidRealm => write!(f, "Invalid realm"),
             KvError::InvalidRouteFamily => {
                 write!(f, "Invalid route family (cannot be zero)")

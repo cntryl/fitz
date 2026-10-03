@@ -203,18 +203,22 @@ their cron or payload is malformed.
 
 ### Subscription registration contract
 
-KV, Queue, Notice, Stream, RPC, and Schedule now share strict whole-segment
-`*`/`**` registration validation and a 128-wildcard-registration session limit.
-Exact registrations do not count, and duplicates remain idempotent. Clients
-must surface the domain-specific validation and limit codes: KV 1012/1013,
-Stream 2010/2011, Notice 3002/3003, Queue 4010/4011, RPC 6012/6013, and Schedule
-7006/7007.
+KV, Queue, Notice, Stream, RPC, Schedule, and Lease now share strict
+whole-segment `*`/`**` registration validation, a 1,024-total-registration
+session limit, and a separate 128-wildcard-registration limit. Duplicates
+remain idempotent and do not consume an additional slot. Clients must recognize
+the domain-specific validation and limit responses: KV
+1012/1013, Stream 2010/2011, Notice 3002/3003, Queue 4010/4011, and RPC
+6012/6013 use their existing codes. Schedule SUBSCRIBE/UNSUBSCRIBE errors are
+uncoded, while LIST uses 7006/7007. Lease uses its existing uncoded
+subscription-error response.
 
 Lease `SUBSCRIBE` and `UNSUBSCRIBE` now accept the shared generic
 three-segment selector grammar, including whole-segment `*` and valid
 non-adjacent `**` forms. Existing exact subscriptions remain wire compatible;
 new wildcard callers must use an updated SDK that applies the same grammar as
-the broker and handles the 128-wildcard-registration session limit. `LIST`
+the broker and handles both the 1,024-total and 128-wildcard registration
+limits. `LIST`
 (message 410) is a clean protocol addition with typed 5011/5012
 cursor/selector failures, and each supported SDK now provides a high-level
 subscribe-before-list inventory observer. Upgrade broker and observer clients

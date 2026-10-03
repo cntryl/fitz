@@ -16,20 +16,21 @@ invalid, and structured-domain patterns must be capable of matching their
 concrete route depth (three segments for KV, Queue, and Stream; four for
 Schedule). Notice and RPC have flexible depth.
 
-Each wildcard-capable domain permits 128 wildcard registrations per session.
-Exact registrations do not count. Duplicate `(session, original registration
-string)` requests are idempotent and checked before the limit. Matching never
-crosses `RouteFamily`; overlaps remain independent and exact registrations have
-no precedence. Notifications include the matching subscription identifier and
-the exact concrete route.
+Each domain permits 1,024 retained registrations per session, counting exact
+and wildcard registrations together. The wildcard subset is separately limited
+to 128 per session. Duplicate `(session, original registration string)` requests
+are idempotent and checked before either limit. Matching never crosses
+`RouteFamily`; overlaps remain independent and exact registrations have no
+precedence. Notifications include the matching subscription identifier and the
+exact concrete route.
 
 Lease's exact mutation operations (`ACQUIRE`, `EXTEND`, `RELEASE`) still
 require an exact `lease://realm/area/resource` route; only they can grant,
 renew, or release a lease. Lease's observation operations (`SUBSCRIBE`,
 `UNSUBSCRIBE`, `LIST`) instead accept the same generic fixed-depth pattern
-language as KV, Queue, Stream, and Schedule, and share the same 128-per-session
-wildcard-registration quota — observing a route this way never changes its
-ownership.
+language as KV, Queue, Stream, and Schedule, and share the same per-session
+total and wildcard registration limits — observing a route this way never
+changes its ownership.
 
 ### KV Domain (Key-Value Store)
 
@@ -217,8 +218,8 @@ operations above; in particular, portable clients use offset/limit `List` 702.
 
 **Constraints:**
 - Cron-style scheduling (precise timing, best-effort delivery)
-- Exact and whole-segment `*`/`**` registration patterns are session-scoped and
-  limited to 128 wildcard registrations per session
+- Exact and whole-segment `*`/`**` registration patterns are session-scoped,
+  limited to 1,024 total registrations and 128 wildcard registrations per session
 - NOTIFY carries `[subscription_id][exact_route][payload]` and is best-effort
   (may be dropped under backpressure)
 - No matching registration or an entirely rejected handoff still advances the

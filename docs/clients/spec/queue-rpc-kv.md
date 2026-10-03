@@ -159,8 +159,9 @@ The success response uses the "optional u64" encoding pattern: a 1-byte flag fol
 - The scheme must be `queue://`, segments must be non-empty, wildcards must be
   whole segments, and the pattern must be capable of matching a concrete
   three-segment Queue route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 4010
-- A session may retain at most 128 wildcard registrations. Exact registrations
-  do not count, and a duplicate is checked before the limit; overflow returns 4011
+- A session may retain at most 1,024 registrations total and 128 wildcard
+  registrations. A duplicate is checked before either limit; overflow returns
+  4011
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 - Notifications are sent when messages become available in matching queues
@@ -548,7 +549,7 @@ Every operation includes full context:
 | 6010 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Inspect the error text; do not blindly retry malformed-request parse failures, and retry only when the message indicates a transient backend or infrastructure failure |
 | 6011 | ERR_INVALID_ROUTE | An RPC call route is malformed or contains a wildcard | Correct the call to use a concrete `rpc://` route |
 | 6012 | ERR_INVALID_SUBSCRIPTION_PATTERN | A worker registration has the wrong scheme, an empty segment, or a partial wildcard token | Correct the registration to use whole-segment `*` or `**` wildcards |
-| 6013 | ERR_SUBSCRIPTION_LIMIT | A session attempted to exceed 128 wildcard worker registrations | Unregister an existing wildcard pattern before registering another |
+| 6013 | ERR_SUBSCRIPTION_LIMIT | A session attempted to exceed 1,024 total or 128 wildcard worker registrations | Unregister an existing registration before registering another |
 
 #### Acceptance Tests
 
@@ -760,9 +761,9 @@ Invalid SUBSCRIBE or UNSUBSCRIBE input returns 1012.
 
 Registrations are session-scoped and isolated by `RouteFamily`. Overlapping
 registrations remain independent and exact registrations have no precedence. A
-session may retain at most 128 wildcard registrations; exact registrations do
-not count. Duplicate `(session, original registration string)` requests are
-idempotent and checked before the limit. Overflow returns 1013.
+session may retain at most 1,024 registrations total and 128 wildcard
+registrations. Duplicate `(session, original registration string)` requests are
+idempotent and checked before either limit. Overflow returns 1013.
 
 #### UNSUBSCRIBE Request
 

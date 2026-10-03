@@ -41,6 +41,63 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
     assert_eq!(sink.subscription_count(), 0);
 }
 
+#[test]
+fn should_enforce_exact_and_wildcard_schedule_registration_limits_per_session() {
+    // Arrange
+    let exact_fixture = create_unsubscribe_fixture();
+    for index in 0..crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION {
+        let route = format!("schedule://acme/jobs/resource-{index}/run");
+        let address = RouteAddress::new(exact_fixture.family, Route::new(&route));
+        subscribe_fixture_route(
+            &exact_fixture,
+            &address,
+            &route,
+            "subscribe exact schedule route",
+        );
+    }
+    let wildcard_fixture = create_unsubscribe_fixture();
+    for index in 0..crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION {
+        let route = format!("schedule://acme/jobs/area{index}/*");
+        let address = RouteAddress::new(wildcard_fixture.family, Route::new(&route));
+        subscribe_fixture_route(
+            &wildcard_fixture,
+            &address,
+            &route,
+            "subscribe wildcard schedule route",
+        );
+    }
+
+    // Act
+    let exact_overflow = "schedule://acme/jobs/overflow/run";
+    let exact_overflow_address =
+        RouteAddress::new(exact_fixture.family, Route::new(exact_overflow));
+    subscribe_fixture_route(
+        &exact_fixture,
+        &exact_overflow_address,
+        exact_overflow,
+        "subscribe over-limit exact schedule route",
+    );
+    let wildcard_overflow = "schedule://acme/jobs/overflow/*";
+    let wildcard_overflow_address =
+        RouteAddress::new(wildcard_fixture.family, Route::new(wildcard_overflow));
+    subscribe_fixture_route(
+        &wildcard_fixture,
+        &wildcard_overflow_address,
+        wildcard_overflow,
+        "subscribe over-limit wildcard schedule route",
+    );
+
+    // Assert
+    assert_eq!(
+        exact_fixture.sink.subscription_count(),
+        crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION
+    );
+    assert_eq!(
+        wildcard_fixture.sink.subscription_count(),
+        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+    );
+}
+
 struct UnsubscribeFixture {
     family: RouteFamily,
     session_id: u64,
