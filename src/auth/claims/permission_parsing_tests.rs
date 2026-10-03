@@ -52,3 +52,15 @@ fn should_reject_permission_route_over_segment_limit() {
     // Assert
     assert!(result.is_err());
 }
+
+#[test]
+fn should_reject_permission_with_empty_path_segments() {
+    // Arrange
+    let permission = "queue://acme//orders/**#write";
+
+    // Act
+    let result = Permission::parse(permission);
+
+    // Assert
+    assert!(result.is_err());
+}

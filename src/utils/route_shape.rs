@@ -3,7 +3,7 @@
 /// Maximum UTF-8 byte length of a route or route-shaped permission pattern.
 pub const MAX_ROUTE_BYTES: usize = 4 * 1024;
 
-/// Maximum number of non-empty path segments in a route or pattern.
+/// Maximum number of path segments in a route or pattern.
 pub const MAX_ROUTE_SEGMENTS: usize = 64;
 
 /// Whether a route or pattern contains a control character.
@@ -16,12 +16,12 @@ pub fn contains_control_character(route: &str) -> bool {
     route.chars().any(char::is_control)
 }
 
-/// Validate the resource bounds shared by routes and permission patterns.
+/// Validate the segment grammar and resource bounds shared by routes and permission patterns.
 ///
 /// # Errors
 ///
-/// Returns an error when the route contains a control character or exceeds
-/// the byte or segment limit.
+/// Returns an error when the route contains a control character or empty
+/// segment, or exceeds the byte or segment limit.
 pub fn validate_route_shape(route: &str) -> Result<(), String> {
     if contains_control_character(route) {
         return Err("route must not contain control characters".to_string());
@@ -35,10 +35,10 @@ pub fn validate_route_shape(route: &str) -> Result<(), String> {
     let path = route
         .split_once("://")
         .map_or(route, |(_scheme, path)| path);
-    let segment_count = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .count();
+    if path.split('/').any(str::is_empty) {
+        return Err("route must not contain empty path segments".to_string());
+    }
+    let segment_count = path.split('/').count();
     if segment_count > MAX_ROUTE_SEGMENTS {
         return Err(format!(
             "route exceeds maximum of {MAX_ROUTE_SEGMENTS} segments"
@@ -74,5 +74,11 @@ mod tests {
     fn should_accept_route_at_segment_limit() {
         let route = format!("notice://{}", vec!["a"; MAX_ROUTE_SEGMENTS].join("/"));
         assert!(validate_route_shape(&route).is_ok());
+    }
+
+    #[test]
+    fn should_reject_route_with_empty_path_segments() {
+        assert!(validate_route_shape("queue://acme//orders/**").is_err());
+        assert!(validate_route_shape("queue://acme/").is_err());
     }
 }
