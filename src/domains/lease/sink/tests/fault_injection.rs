@@ -170,3 +170,42 @@ fn should_leave_lease_held_when_release_carries_a_stale_fencing_token() {
     assert_eq!(sink.lease_count(), 1);
     assert!(sink.session_leases_contain_for_tests(owner_session_id, &key));
 }
+
+#[test]
+fn should_reject_previous_fencing_token_after_same_owner_reacquires_expired_lease() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let route = "lease://acme/locks/reacquire-after-expiry";
+    let key = lease_key(family, route);
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = LeaseDomain::new(Arc::new(Router::new()), admin_read_model.clone());
+    let LeaseResponse::Acquired {
+        fencing_token: old_token,
+    } = sink.acquire_for_bench(&key, session_id, "owner", 30, family)
+    else {
+        panic!("expected first acquisition");
+    };
+    assert!(sink.expire_lease_for_tests(&key));
+    let LeaseResponse::Acquired {
+        fencing_token: new_token,
+    } = sink.acquire_for_bench(&key, session_id, "owner", 30, family)
+    else {
+        panic!("expected reacquisition");
+    };
+
+    // Act
+    let stale_release = sink.release_for_bench(&key, "owner", old_token);
+    let current_leases = admin_read_model.leases(None);
+
+    // Assert
+    assert_ne!(new_token, old_token);
+    assert_eq!(
+        stale_release,
+        LeaseResponse::Fenced {
+            current_token: new_token
+        }
+    );
+    assert_eq!(current_leases.len(), 1);
+    assert_eq!(current_leases[0].fencing_token, new_token);
+}
