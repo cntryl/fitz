@@ -155,6 +155,49 @@ fn should_reject_symbolic_route_family_grants_at_login() {
 
 #[test]
 #[serial]
+fn should_reject_empty_admin_route_family_entries_at_login() {
+    for setting in [",", ",,", "1,", ",1", "1,,2"] {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ROOT_PASSWORD", "pwd123");
+        std::env::set_var("FITZ_ADMIN_ROUTE_FAMILIES", setting);
+        let auth = AdminAuth::from_env();
+
+        // Act
+        let result = auth.authenticate_credentials("root", "pwd123");
+
+        // Assert
+        assert!(
+            matches!(result, Err(AuthFailure::Unavailable)),
+            "malformed setting {setting:?} must fail closed"
+        );
+    }
+}
+
+#[test]
+#[serial]
+fn should_preserve_wildcard_admin_route_family_grants_at_login() {
+    for setting in [None, Some(""), Some("*")] {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ROOT_PASSWORD", "pwd123");
+        if let Some(setting) = setting {
+            std::env::set_var("FITZ_ADMIN_ROUTE_FAMILIES", setting);
+        }
+        let auth = AdminAuth::from_env();
+
+        // Act
+        let principal = auth
+            .authenticate_credentials("root", "pwd123")
+            .expect("valid wildcard setting should authenticate");
+
+        // Assert
+        assert!(principal.route_family_access.is_wildcard());
+    }
+}
+
+#[test]
+#[serial]
 fn should_allow_open_admin_without_credentials() {
     // Arrange
     reset_admin_env();
