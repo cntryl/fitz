@@ -1,5 +1,5 @@
 import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
-import type { StreamRecordsResponse } from "@/adapters";
+import type { StreamRecordsResponse, StreamResourceDetail } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
 import {
@@ -12,7 +12,6 @@ import type {
   StreamOverview,
   StreamRealmRollup,
   StreamRecordSearchRequest,
-  StreamResourceView,
 } from "./stream-models";
 
 async function getOverview(options: RouteFamilyRequestOptions = {}): Promise<StreamOverview> {
@@ -142,45 +141,31 @@ async function getAreaRollup(
   };
 }
 
-async function getResourceView(
-  request: Required<
-    Pick<StreamRecordSearchRequest, "area" | "realm" | "resource" | "routeFamily">
-  > &
-    Pick<StreamRecordSearchRequest, "discriminator" | "fromOffset" | "limit">,
+async function getResourceDetail(
+  request: Required<Pick<StreamRecordSearchRequest, "area" | "realm" | "resource" | "routeFamily">>,
   options: ServiceRequestOptions = {},
-): Promise<StreamResourceView> {
-  const family = apiRouteFamilySegment(request.routeFamily);
-  const [detail, records] = await Promise.all([
-    apiv1.getStreamResource(
+): Promise<StreamResourceDetail> {
+  return unwrapResponse(
+    await apiv1.getStreamResource(
       apiParams(
-        { area: request.area, family, realm: request.realm, resource: request.resource },
-        options,
-      ),
-    ),
-    apiv1.readStreamResourceRecords(
-      apiParamsQuery(
-        { area: request.area, family, realm: request.realm, resource: request.resource },
         {
-          discriminator: request.discriminator,
-          from_offset: request.fromOffset,
-          limit: request.limit,
+          area: request.area,
+          family: apiRouteFamilySegment(request.routeFamily),
+          realm: request.realm,
+          resource: request.resource,
         },
         options,
       ),
     ),
-  ]);
-
-  return {
-    detail: unwrapResponse(detail, "Unable to load stream resource"),
-    records: unwrapResponse(records, "Unable to read stream records"),
-  };
+    "Unable to load stream resource",
+  );
 }
 
 export const streamService = {
   getAreaRollup,
   getOverview,
   getRealmRollup,
-  getResourceView,
+  getResourceDetail,
   readResourceRecords,
   searchRecords,
 };

@@ -647,7 +647,10 @@ async fn should_not_expose_route_family_grants_from_protected_features() {
 
     // Assert
     assert_eq!(payload["admin_auth_required"], true);
-    assert!(payload["route_families"].as_array().unwrap().is_empty());
+    assert_eq!(
+        payload["route_families"].as_array().unwrap().as_slice(),
+        &[] as &[serde_json::Value]
+    );
     assert_eq!(payload["route_families_wildcard"], false);
 }
 

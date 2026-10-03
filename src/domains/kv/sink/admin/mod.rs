@@ -56,6 +56,29 @@ impl std::fmt::Display for AdminKvRowsError {
 impl std::error::Error for AdminKvRowsError {}
 
 impl KvDomain {
+    /// Restore a validated KV snapshot, replacing selected resources one at a time.
+    ///
+    /// # Errors
+    /// Returns an error when decoding, validation, family dispatch, or storage fails.
+    pub fn restore_kv_snapshot(&self, bytes: &[u8]) -> Result<Vec<String>, String> {
+        let artifact = crate::snapshot::SnapshotArtifact::from_bytes(bytes)?;
+        if artifact.domain() != crate::snapshot::SnapshotDomain::Kv {
+            return Err("KV snapshot restore requires a KV artifact".to_string());
+        }
+        let family = RouteFamily::try_from(artifact.route_family())
+            .map_err(|_| "snapshot route family is invalid".to_string())?;
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.try_send(
+            family,
+            crate::runtime::FamilyActorLane::Control,
+            super::commands::KvDomainCommand::RestoreSnapshot(artifact, reply_tx),
+        )
+        .map_err(|error| error.to_string())?;
+        reply_rx
+            .recv()
+            .map_err(|error| format!("KV snapshot restore did not complete: {error}"))?
+    }
+
     #[cfg(test)]
     /// Read one family directly for storage-backed admin regression tests.
     pub(super) fn admin_inventory_for_family_for_tests(
@@ -154,5 +177,34 @@ impl KvDomain {
     ) -> Result<AdminKvRowsResult, AdminKvRowsError> {
         let mut core = self.admin_core();
         KvFamilyRuntime { core: &mut core }.admin_scan_committed_rows(request)
+    }
+
+    pub(crate) fn capture_kv_snapshot(
+        &self,
+        selector: &crate::snapshot::SnapshotSelector,
+    ) -> Result<crate::snapshot::SnapshotArtifact, String> {
+        if selector.domain() != crate::snapshot::SnapshotDomain::Kv {
+            return Err("KV snapshot capture requires a KV selector".to_string());
+        }
+        let mut core = self.admin_core();
+        let mut resources =
+            KvFamilyRuntime { core: &mut core }.admin_snapshot_committed_resources(selector)?;
+        if selector.is_exact_resource() && resources.is_empty() {
+            let route = selector.route_pattern();
+            let parts = crate::runtime::routing::route_exact_triplet(route).ok_or_else(|| {
+                "KV snapshot selector must name one concrete resource".to_string()
+            })?;
+            if [parts.realm, parts.area, parts.resource]
+                .iter()
+                .any(|part| part.is_empty() || part.contains('*'))
+            {
+                return Err("KV snapshot selector must name one concrete resource".to_string());
+            }
+            resources.push(crate::snapshot::SnapshotKvResource {
+                route: route.to_string(),
+                entries: Vec::new(),
+            });
+        }
+        crate::snapshot::SnapshotArtifact::from_kv_resources(selector, resources)
     }
 }

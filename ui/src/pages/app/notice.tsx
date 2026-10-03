@@ -9,8 +9,7 @@ import DomainOperationTable, {
 import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
-import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryErrorState,
   QueryLoadingState,
@@ -42,6 +41,7 @@ const noticeMetricColumns: readonly DomainResourceMetricColumn[] = [
   },
   {
     id: "delivered",
+    priority: "secondary",
     header: "Delivered",
     width: "14%",
     cell: (row) => formatNumber(row.notificationsReceived ?? 0),
@@ -86,13 +86,16 @@ function summarizeNoticeHealth(stats: {
     stats.wildcardLimitRejectsTotal,
   )} wildcard ${stats.wildcardLimitRejectsTotal === 1 ? "rejection" : "rejections"}.`;
 
+  const active = stats.subscriptionsActive > 0 || stats.publishesPerSecond > 0;
+
   return {
     detail: `${baseDetail} ${historicalDetail} Historical totals do not identify a current fanout incident.`,
-    label: "Live" as const,
-    tone:
-      stats.subscriptionsActive > 0 || stats.publishesPerSecond > 0
-        ? ("success" as const)
-        : ("info" as const),
+    label: active ? ("Healthy" as const) : ("Idle" as const),
+    reason:
+      stats.subscriptionsActive > 0
+        ? `${formatCount(stats.subscriptionsActive, "subscriber is", "subscribers are")} receiving live fanout.`
+        : "No subscribers are listening right now.",
+    tone: active ? ("success" as const) : ("info" as const),
   };
 }
 
@@ -125,6 +128,7 @@ function NoticeLandingPage() {
       emptyDescription="No notice resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={noticeMetricColumns}
+      reason={stats ? health.reason : undefined}
       stats={[
         {
           label: "Active operation routes",
@@ -210,12 +214,6 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
               : "",
             unavailable: "Notice operations are unavailable for this resource.",
           })}
-        />
-        <OperatorScopeStrip
-          realm={props.realm}
-          area={props.area}
-          resource={props.resource}
-          freshness={queryFreshness(rowsQuery)}
         />
         <Show when={!data && rowsQuery.loading}>
           <QueryLoadingState description="Loading notice operation rows..." />

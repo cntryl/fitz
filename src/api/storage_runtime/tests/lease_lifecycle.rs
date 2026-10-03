@@ -93,7 +93,7 @@ async fn should_cancel_local_disk_lease_retry_given_shutdown_request() {
     // Assert
     assert!(matches!(outcome, StorageInitOutcome::ShutdownRequested));
     assert!(
-        holder.get_runtime_metrics().is_ok(),
+        holder.metrics().get_runtime_metrics().is_ok(),
         "holder remains active"
     );
     shutdown_store(holder);

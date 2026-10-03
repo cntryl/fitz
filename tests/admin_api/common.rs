@@ -689,10 +689,12 @@ pub(crate) fn seed_stream_latency_pressure_data(runtime: &Arc<Runtime>) {
         realm: "prod".to_string(),
         area: "logs".to_string(),
         resource: "application".to_string(),
+        committed_event_count: 1,
         offset: 0,
         watermark: 0,
         size_bytes: 0,
         sessions_active: 0,
+        subscriptions_active: 0,
     }]);
 }
 
@@ -704,20 +706,24 @@ pub(crate) fn seed_cross_family_stream_watermark_data(runtime: &Arc<Runtime>) {
             realm: "prod".to_string(),
             area: "logs".to_string(),
             resource: "application".to_string(),
+            committed_event_count: 5,
             offset: 4,
             watermark: 3,
             size_bytes: 32,
             sessions_active: 0,
+            subscriptions_active: 0,
         },
         StreamInfo {
             route_family: 2,
             realm: "prod".to_string(),
             area: "logs".to_string(),
             resource: "security".to_string(),
+            committed_event_count: 10,
             offset: 9,
             watermark: 8,
             size_bytes: 64,
             sessions_active: 0,
+            subscriptions_active: 0,
         },
     ]);
     read_model.replace_stream_realm_watermarks(vec![StreamRealmWatermarkDetail {

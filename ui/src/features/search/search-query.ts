@@ -16,7 +16,7 @@ const adminSearchQuery = defineQuery<AdminSearchRequest, AdminSearchResults>({
       request.operation ?? "any",
       request.limit ?? 50,
     ),
-  fetch: ({ signal, ...request }) => {
+  fetch: (request, { signal }) => {
     if (!request.query.trim()) {
       return Promise.resolve({
         limit: request.limit ?? 50,

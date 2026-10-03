@@ -88,8 +88,4 @@ impl QueueActor {
             other => Err(format!("Unsupported queue index meta version {other}")),
         }
     }
-
-    pub(in crate::domains::queue::actor) fn decode_next_id(bytes: Option<&[u8]>) -> u64 {
-        bytes.and_then(Self::decode_meta).unwrap_or(1)
-    }
 }

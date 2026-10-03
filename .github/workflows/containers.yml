@@ -1,11 +1,12 @@
 name: Containers
 
 on:
-  # Keep the moving development images synchronized with protected main. Stable
+  # Keep moving branch images synchronized with their source branches. Stable
   # SemVer tags remain an explicit release operation below.
   push:
     branches:
       - main
+      - develop
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -16,7 +17,7 @@ on:
         default: false
     outputs:
       semver:
-        description: SemVer calculated for the workflow
+        description: Fitz package version from Cargo.toml
         value: ${{ jobs.version.outputs.semver }}
 
 concurrency:
@@ -30,6 +31,8 @@ env:
 jobs:
   version:
     uses: ./.github/workflows/version.yml
+    permissions:
+      contents: read
 
   validate:
     name: Validate publish request
@@ -48,7 +51,7 @@ jobs:
       - name: Require a version
         run: |
           if [[ -z "${SEMVER}" ]]; then
-            echo "GitVersion returned an empty SemVer" >&2
+            echo "Cargo package version is empty" >&2
             exit 1
           fi
 
@@ -218,6 +221,9 @@ jobs:
           if [[ "${REF}" == "refs/heads/main" ]]; then
             tags+=(-t "${image}:main" -t "${image}:latest")
             inspect_tag="latest"
+          elif [[ "${REF}" == "refs/heads/develop" ]]; then
+            tags+=(-t "${image}:develop")
+            inspect_tag="develop"
           fi
 
           sources=()
@@ -226,7 +232,9 @@ jobs:
           done
 
           if [[ -n "${semver_tag}" ]]; then
-            inspect_tag="${SEMVER}"
+            if [[ -z "${inspect_tag}" ]]; then
+              inspect_tag="${SEMVER}"
+            fi
             docker buildx imagetools create --dry-run "${sources[@]}" > /tmp/proposed-manifest.json
 
             if docker buildx imagetools inspect --raw "${semver_tag}" > /tmp/published-manifest.json 2>/dev/null; then

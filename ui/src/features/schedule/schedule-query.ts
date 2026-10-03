@@ -112,12 +112,12 @@ export function scheduleMissedHandoffsQueryKey(
 
 const scheduleOverviewQuery = defineQuery<{ family: string }, ScheduleOverview>({
   key: ({ family }) => scheduleQueries.key("overview", family),
-  fetch: ({ family, signal }) => scheduleService.getOverview({ routeFamily: family, signal }),
+  fetch: ({ family }, { signal }) => scheduleService.getOverview({ routeFamily: family, signal }),
 });
 
 const scheduleRealmQuery = defineQuery<{ family: string; realm: string }, ScheduleRealmInventory>({
   key: ({ family, realm }) => scheduleRealmQueryKey(realm, family),
-  fetch: ({ family, realm, signal }) =>
+  fetch: ({ family, realm }, { signal }) =>
     scheduleService.listScheduleAreas(realm, { routeFamily: family, signal }),
 });
 
@@ -126,7 +126,7 @@ const scheduleAreaQuery = defineQuery<
   ScheduleAreaInventory
 >({
   key: ({ area, family, realm }) => scheduleAreaQueryKey(realm, area, family),
-  fetch: ({ area, family, realm, signal }) =>
+  fetch: ({ area, family, realm }, { signal }) =>
     scheduleService.listScheduleResources(realm, area, { routeFamily: family, signal }),
 });
 
@@ -141,7 +141,7 @@ interface ScheduleResourceQueryInput {
 
 const scheduleResourceQuery = defineQuery<ScheduleResourceQueryInput, ScheduleResourceView>({
   key: ({ family, ...request }) => scheduleResourceQueryKey(request, family),
-  fetch: ({ family, signal, ...request }) =>
+  fetch: ({ family, ...request }, { signal }) =>
     scheduleService.getScheduleResource({ ...request, routeFamily: family }, { signal }),
 });
 
@@ -156,7 +156,7 @@ interface ScheduleOperationQueryInput {
 
 const scheduleOperationQuery = defineQuery<ScheduleOperationQueryInput, ScheduleOperationView>({
   key: ({ family, ...request }) => scheduleOperationQueryKey(request, family),
-  fetch: ({ family, signal, ...request }) =>
+  fetch: ({ family, ...request }, { signal }) =>
     scheduleService.getScheduleOperation({ ...request, routeFamily: family }, { signal }),
 });
 
@@ -169,7 +169,7 @@ const scheduleExecutionQuery = defineQuery<
   ScheduleExecutionObservationList
 >({
   key: ({ family, ...request }) => scheduleExecutionObservationsQueryKey(request, family),
-  fetch: ({ family, signal, ...request }) =>
+  fetch: ({ family, ...request }, { signal }) =>
     scheduleService.listExecutionObservations({ ...request, routeFamily: family }, { signal }),
 });
 
@@ -184,7 +184,7 @@ interface ScheduleMissedQueryInput {
 
 const scheduleMissedQuery = defineQuery<ScheduleMissedQueryInput, ScheduleMissedObservationList>({
   key: ({ family, ...request }) => scheduleMissedHandoffsQueryKey(request, family),
-  fetch: ({ family, signal, ...request }) =>
+  fetch: ({ family, ...request }, { signal }) =>
     scheduleService.searchMissedHandoffs({ ...request, routeFamily: family }, { signal }),
 });
 

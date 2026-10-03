@@ -1,8 +1,14 @@
 # Fitz Documentation
 
-Fitz is a single-node application broker with seven primitives: Stream, Queue,
-Notice, RPC, KV, Lease, and Schedule. Their persistence and session semantics
-are documented separately.
+Fitz is a container-friendly application broker with one active writer per
+storage namespace and seven primitives: Stream, Queue, Notice, RPC, KV, Lease,
+and Schedule. Cloud-backed durable state can be recovered by a replacement
+process, while scale-out uses explicit sharding across independent deployments.
+Each domain's persistence and session semantics are documented separately.
+
+Fitz is pre-GA and is already used in production deployments. The support matrix
+describes validated targets; it is not a blanket certification or service-level
+commitment.
 
 This index is the public reading path. It keeps product usage, operations, client implementation, and contributor internals separate.
 
@@ -33,6 +39,7 @@ This index is the public reading path. It keeps product usage, operations, clien
 - [Resource limits](operations/resource-limits.md)
 - [Performance tuning](operations/performance-tuning.md)
 - [Release checklist](operations/release-checklist.md)
+- [v0.2.0 qualification record](operations/v0.2.0-qualification.md)
 - [Migration guide](operations/migration-guide.md)
 - [Admin API](admin/admin-api.md)
 - [MCP control-plane safety](admin/mcp-control-plane.md)
@@ -56,7 +63,7 @@ This index is the public reading path. It keeps product usage, operations, clien
 - [Recovery internals](development/recovery-internals.md)
 - [Format compatibility](development/format-compatibility.md)
 - [Release policy](development/release-policy.md)
-- [Support matrix](development/support-matrix.md)
+- [Support and validation matrix](development/support-matrix.md)
 - [Testing](development/testing.md)
 - [Benchmark guidelines](development/benchmarks.md)
 - [Stress benchmark contract](development/stress-bench-contract.md)

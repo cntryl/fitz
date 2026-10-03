@@ -84,6 +84,71 @@ impl LeaseFamilyRuntime<'_> {
         }
     }
 
+    /// Commits a page only after its reply was accepted by the caller's
+    /// mailbox. On failed delivery, restore a continuation page so its cursor
+    /// remains retryable; a failed first page discards its undisclosed cursor.
+    pub(super) fn finish_list_response_delivery(
+        &mut self,
+        family_id: RouteFamily,
+        pattern_route: &str,
+        cursor: Option<LeaseListCursor>,
+        session_id: u64,
+        response: &LeaseResponse,
+        delivered: bool,
+    ) {
+        let LeaseResponse::ListPage { items, next_cursor } = response else {
+            return;
+        };
+        let mut snapshots = self.core.list_snapshots.lock();
+
+        match (cursor, delivered) {
+            (Some(cursor), false) => {
+                let Some(snapshot) = snapshots.get_mut(&cursor.snapshot_id) else {
+                    return;
+                };
+                if snapshot.session_id != session_id
+                    || snapshot.family_id != family_id
+                    || snapshot.pattern_route != pattern_route
+                    || snapshot.served_count
+                        != cursor
+                            .offset
+                            .saturating_add(usize_to_u32_saturating(items.len()))
+                {
+                    return;
+                }
+                let restored_bytes = items.iter().map(encoded_item_bytes).sum::<usize>();
+                snapshot.items.splice(0..0, items.iter().cloned());
+                snapshot.retained_bytes = snapshot.retained_bytes.saturating_add(restored_bytes);
+                snapshot.served_count = cursor.offset;
+                snapshot.last_touched_at = Instant::now();
+            }
+            (Some(cursor), true) if next_cursor.is_none() => {
+                if snapshots.get(&cursor.snapshot_id).is_some_and(|snapshot| {
+                    snapshot.session_id == session_id
+                        && snapshot.family_id == family_id
+                        && snapshot.pattern_route == pattern_route
+                }) {
+                    snapshots.remove(&cursor.snapshot_id);
+                }
+            }
+            (None, false) => {
+                if let Some(next_cursor) = next_cursor {
+                    if snapshots
+                        .get(&next_cursor.snapshot_id)
+                        .is_some_and(|snapshot| {
+                            snapshot.session_id == session_id
+                                && snapshot.family_id == family_id
+                                && snapshot.pattern_route == pattern_route
+                        })
+                    {
+                        snapshots.remove(&next_cursor.snapshot_id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn start_list_scan(
         &mut self,
         family_id: RouteFamily,
@@ -219,7 +284,6 @@ impl LeaseFamilyRuntime<'_> {
             .saturating_add(usize_to_u32_saturating(end));
 
         if snapshot.items.is_empty() {
-            snapshots.remove(&cursor.snapshot_id);
             LeaseResponse::ListPage {
                 items: page,
                 next_cursor: None,
@@ -260,7 +324,7 @@ impl LeaseFamilyRuntime<'_> {
         let served_count = usize_to_u32_saturating(page.len());
         let retained_bytes = remainder.iter().map(encoded_item_bytes).sum::<usize>();
 
-        let Ok(snapshot_id) = self.core.next_list_snapshot_id.fetch_update(
+        let Ok(snapshot_id) = self.core.next_list_snapshot_id.try_update(
             Ordering::Relaxed,
             Ordering::Relaxed,
             |current| current.checked_add(1),

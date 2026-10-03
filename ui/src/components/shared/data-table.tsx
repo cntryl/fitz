@@ -14,6 +14,8 @@ export interface DataTableColumn<Row> {
   cellComponent: (props: DataTableCellProps<Row>) => JSXElement | JSX.Element | null;
   header: JSXElement | string;
   id: string;
+  /** Secondary columns give way to a folded detail line when the table is narrow. */
+  priority?: "secondary";
   width?: number | string;
 }
 
@@ -50,6 +52,7 @@ export default function DataTable<Row>({
           <For each={columns} by={(column) => column.id}>
             {(column) => (
               <col
+                data-priority={column.priority}
                 style={{
                   width: typeof column.width === "number" ? `${column.width}px` : column.width,
                 }}
@@ -61,7 +64,9 @@ export default function DataTable<Row>({
           <TableRow>
             <For each={columns} by={(column) => column.id}>
               {(column) => (
-                <TableHeaderCell data-column-id={column.id}>{column.header}</TableHeaderCell>
+                <TableHeaderCell data-column-id={column.id} data-priority={column.priority}>
+                  {column.header}
+                </TableHeaderCell>
               )}
             </For>
           </TableRow>
@@ -80,7 +85,7 @@ export default function DataTable<Row>({
                 >
                   <For each={columns} by={(column) => column.id}>
                     {(column) => (
-                      <TableCell data-column-id={column.id}>
+                      <TableCell data-column-id={column.id} data-priority={column.priority}>
                         {column.cellComponent({
                           column,
                           row,

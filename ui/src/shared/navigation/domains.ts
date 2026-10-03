@@ -1,3 +1,4 @@
+import { currentRoute } from "@askrjs/askr/router";
 import {
   DatabaseIcon,
   FileLockIcon,
@@ -88,6 +89,23 @@ export function routeFamilyFromPath(path: string) {
 }
 
 export function currentRouteFamilySegment() {
+  try {
+    const family = currentRoute().params.family;
+    if (isRouteFamilyPathSegment(family)) {
+      return family;
+    }
+  } catch (error) {
+    // URL helpers also run outside render, where Askr disallows currentRoute().
+    if (
+      !(error instanceof Error) ||
+      !error.message.startsWith(
+        "currentRoute() can only be called during component render execution.",
+      )
+    ) {
+      throw error;
+    }
+  }
+
   if (typeof window === "undefined") {
     return DEFAULT_ROUTE_FAMILY_SEGMENT;
   }

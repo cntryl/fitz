@@ -1,6 +1,9 @@
 use super::*;
 use crate::api::runtime_ingress::domain_frame_dispatcher::DomainFrameDispatcher;
 
+#[path = "domain_backpressure_stream.rs"]
+mod stream;
+
 struct AlwaysBackpressuredSink;
 
 impl MailboxSink for AlwaysBackpressuredSink {
@@ -49,7 +52,7 @@ impl MailboxSink for TransientBackpressuredSink {
     fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
         let previous = self
             .failures_remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 remaining.checked_sub(1)
             })
             .unwrap_or(0);

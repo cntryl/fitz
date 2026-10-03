@@ -406,6 +406,89 @@ fn should_reject_invalid_admin_inventory_route_family_without_panicking() {
 }
 
 #[test]
+fn should_read_active_transaction_counts_from_domain_state_when_projection_is_empty() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let second_family = RouteFamily::new(2);
+    let session_id = 7;
+    let second_session_id = 8;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let second_kv_address = RouteAddress::new(second_family, Route::new(kv_route));
+    let source_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let second_source_address = RouteAddress::new(second_family, Route::new("inbox://session/8"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let second_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(source_address.clone(), mailbox.clone());
+    router.register(second_source_address.clone(), second_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let sink = KvDomain::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1, 2]),
+        router,
+        admin_read_model.clone(),
+    )
+    .with_metrics(metrics.clone());
+    sink.deliver(Envelope::from_route(
+        source_address,
+        kv_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+    let response = receive_frame(&mailbox, "begin acknowledgment");
+    assert_eq!(response.payload[0], 0);
+    sink.deliver(Envelope::from_route(
+        second_source_address,
+        second_kv_address,
+        FrameContext::new(
+            second_session_id,
+            ChannelId::Sub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            second_family,
+        ),
+    ))
+    .expect("begin KV transaction in second family");
+    let second_response = receive_frame(&second_mailbox, "second begin acknowledgment");
+    assert_eq!(second_response.payload[0], 0);
+
+    // Act
+    admin_read_model.replace_kv_transactions(Vec::new());
+    let resource_count = sink.run_on_family_for_tests(family, move |runtime| {
+        runtime.active_transactions_for_resource(&KvResourceLockKey::new(
+            family.as_u64(),
+            "acme",
+            "app",
+            "users",
+        ))
+    });
+    let second_resource_count = sink.run_on_family_for_tests(second_family, move |runtime| {
+        runtime.active_transactions_for_resource(&KvResourceLockKey::new(
+            second_family.as_u64(),
+            "acme",
+            "app",
+            "users",
+        ))
+    });
+
+    // Assert
+    assert_eq!(sink.active_transaction_count(), 2);
+    assert_eq!(resource_count, 1);
+    assert_eq!(second_resource_count, 1);
+    assert_eq!(
+        metrics.gauge_get(crate::domains::kv::metrics::METRIC_ACTIVE_GAUGE),
+        2
+    );
+}
+
+#[test]
 fn should_reject_kv_request_when_source_and_destination_families_differ() {
     // Arrange
     let source_family = RouteFamily::new(2);

@@ -49,3 +49,53 @@ fn should_validate_drain_independently_of_invalid_storage() {
     // Assert
     assert!(result.is_ok());
 }
+
+#[test]
+#[serial]
+fn should_reject_configured_http_ws_origin_even_when_env_origins_are_valid() {
+    with_auth_env(
+        &[("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com")],
+        || {
+            // Arrange
+            let origin = crate::api::origin::parse_exact_origin("http://app.example.com")
+                .expect("parse origin");
+            let config = auth_ready_config()
+                .with_bind_addr("0.0.0.0".to_string())
+                .with_assume_external_tls(true)
+                .with_ws_allowed_origins(vec![origin]);
+
+            // Act
+            let result = config.validate();
+
+            // Assert
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_WS_ALLOWED_ORIGINS entries must use https"));
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn should_reject_configured_empty_ws_origins_even_when_env_origins_are_valid() {
+    with_auth_env(
+        &[("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com")],
+        || {
+            // Arrange
+            let config = auth_ready_config()
+                .with_bind_addr("0.0.0.0".to_string())
+                .with_assume_external_tls(true)
+                .with_ws_allowed_origins(Vec::new());
+
+            // Act
+            let result = config.validate();
+
+            // Assert
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_WS_ALLOWED_ORIGINS is required"));
+        },
+    );
+}

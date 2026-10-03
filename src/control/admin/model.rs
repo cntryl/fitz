@@ -17,7 +17,9 @@ fn histogram_tail_ratio(slow_tail_count: usize, total: usize) -> f64 {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct QueueAgeBuckets {
     pub under_1m: usize,
     pub under_5m: usize,
@@ -129,13 +131,17 @@ pub struct StreamInfo {
     pub realm: String,
     pub area: String,
     pub resource: String,
+    pub committed_event_count: u64,
     pub offset: u64,
     pub watermark: u64,
     pub size_bytes: u64,
     pub sessions_active: usize,
+    pub subscriptions_active: usize,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct StreamLagBuckets {
     pub caught_up: usize,
     pub under_10: usize,
@@ -164,7 +170,9 @@ impl StreamLagBuckets {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct StreamLatencyBuckets {
     pub under_1ms: usize,
     pub under_5ms: usize,
@@ -213,7 +221,9 @@ impl StreamLatencyBuckets {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct ScheduleLatencyBuckets {
     pub under_1ms: usize,
     pub under_5ms: usize,
@@ -405,7 +415,7 @@ pub(crate) struct QueueDeadLetterSnapshot<'a> {
     pub(crate) reason: &'a str,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RpcWorker {
     pub route_family: u64,
     pub session_id: String,
@@ -416,7 +426,9 @@ pub struct RpcWorker {
     pub average_latency_ms: f64,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct RpcLatencyBuckets {
     pub under_5ms: usize,
     pub under_25ms: usize,
@@ -507,6 +519,8 @@ pub struct SchedulePendingClaimInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_name: Option<String>,
     pub route_family: u64,
     pub subject: String,
     pub identity_claim: String,
@@ -525,6 +539,7 @@ pub(crate) struct StreamInfoSnapshot<'a> {
     pub realm: &'a str,
     pub area: &'a str,
     pub resource: &'a str,
+    pub committed_event_count: u64,
     pub offset: u64,
     pub watermark: u64,
     pub size_bytes: u64,
@@ -562,10 +577,12 @@ impl StreamInfo {
             realm: snapshot.realm.to_string(),
             area: snapshot.area.to_string(),
             resource: snapshot.resource.to_string(),
+            committed_event_count: snapshot.committed_event_count,
             offset: snapshot.offset,
             watermark: snapshot.watermark,
             size_bytes: snapshot.size_bytes,
             sessions_active: snapshot.sessions_active,
+            subscriptions_active: 0,
         }
     }
 }

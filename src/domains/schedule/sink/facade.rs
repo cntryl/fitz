@@ -262,7 +262,7 @@ impl ScheduleDomain {
     }
 
     pub(crate) fn is_active(&self) -> bool {
-        debug_assert!(!self.route_families.is_empty());
+        debug_assert_ne!(self.route_families, Vec::<RouteFamily>::new());
         self.active.load(Ordering::Relaxed)
     }
 

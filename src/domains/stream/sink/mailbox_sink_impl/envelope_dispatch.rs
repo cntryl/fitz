@@ -64,7 +64,7 @@ impl super::super::model::StreamFamilyRuntime {
                         | crate::domains::stream::protocol::StreamMessage::Rollback { .. }
                 )
         );
-        if session_mutation && self.core.is_cleaned_up_session(meta.session_id) {
+        if session_mutation && self.core.is_cleaned_up_request(meta.session_id, envelope) {
             let response = StreamFamilyState::stream_error_response("session has been cleaned up");
             self.core
                 .route_stream_response(envelope, meta, &response, request_started);
@@ -191,7 +191,7 @@ impl StreamFamilyState {
         request_started: Option<std::time::Instant>,
     ) -> bool {
         // One request gets exactly one terminal frame. Stream `deliver` blocks
-        // on the actor for `STREAM_ACTOR_REPLY_TIMEOUT`, so a stalled actor
+        // on the actor for the lane's reply timeout, so a stalled actor
         // lets ingress answer the request as indeterminate while this response
         // is still in flight. Without the claim both reach the wire, and a
         // client matching responses positionally stays desynchronized for the

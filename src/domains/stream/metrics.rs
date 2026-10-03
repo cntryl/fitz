@@ -77,6 +77,7 @@ impl StreamDurableMetricsSnapshot {
 #[derive(Default)]
 pub(crate) struct StreamDurableMetrics {
     events_total: AtomicUsize,
+    watermark_generation: std::sync::atomic::AtomicU64,
     realm_watermarks: RwLock<BTreeMap<(u64, String), u64>>,
     area_watermarks: RwLock<BTreeMap<(u64, String, String), u64>>,
 }
@@ -114,21 +115,33 @@ impl StreamDurableMetrics {
     pub(crate) fn record_events(&self, count: usize) {
         let _ = self
             .events_total
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 Some(current.saturating_add(count))
             });
     }
 
     pub(crate) fn set_realm_watermark(&self, family: u64, realm: &str, watermark: u64) {
-        self.realm_watermarks
+        let previous = self
+            .realm_watermarks
             .write()
             .insert((family, realm.to_string()), watermark);
+        if previous != Some(watermark) {
+            self.watermark_generation.fetch_add(1, Ordering::Release);
+        }
     }
 
     pub(crate) fn set_area_watermark(&self, family: u64, realm: &str, area: &str, watermark: u64) {
-        self.area_watermarks
+        let previous = self
+            .area_watermarks
             .write()
             .insert((family, realm.to_string(), area.to_string()), watermark);
+        if previous != Some(watermark) {
+            self.watermark_generation.fetch_add(1, Ordering::Release);
+        }
+    }
+
+    pub(crate) fn watermark_generation(&self) -> u64 {
+        self.watermark_generation.load(Ordering::Acquire)
     }
 
     pub(crate) fn snapshot(&self) -> StreamDurableMetricsSnapshot {
@@ -296,5 +309,21 @@ mod tests {
         assert_eq!(snapshot.events_total, 5);
         assert_eq!(snapshot.realm_watermarks[0].watermark, 4);
         assert_eq!(snapshot.area_watermarks[0].watermark, 4);
+    }
+
+    #[test]
+    fn should_advance_watermark_generation_only_when_a_watermark_changes() {
+        // Arrange
+        let metrics = StreamDurableMetrics::default();
+
+        // Act
+        metrics.set_realm_watermark(1, "prod", 4);
+        let after_realm = metrics.watermark_generation();
+        metrics.set_realm_watermark(1, "prod", 4);
+        metrics.set_area_watermark(1, "prod", "audit", 4);
+
+        // Assert
+        assert_eq!(after_realm, 1);
+        assert_eq!(metrics.watermark_generation(), 2);
     }
 }

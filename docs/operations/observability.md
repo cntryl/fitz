@@ -179,6 +179,18 @@ pub fn process_frame(session: &Session, frame: &[u8]) -> Result<Message> {
 - `fitz_permission_denials_total` (counter)
 - `fitz_permission_check_latency_us` (histogram)
 
+### Domain registration growth
+
+Subscription-capable domains expose process-wide, unlabeled registration
+gauges: `fitz_{domain}_registrations` reports the current total and
+`fitz_{domain}_registrations_high_water` retains the process high-water mark.
+The domains are `notice`, `stream`, `kv`, `queue`, `rpc`, `lease`, and
+`schedule`. Each domain also exports
+`fitz_{domain}_registration_threshold_{128|1024|10000}_total`; each counter
+increments once when that domain's process total first reaches the threshold.
+These metrics describe usage only and do not reject registrations. The
+existing per-session wildcard limit and Notice total limit remain independent.
+
 ---
 
 ### Layer 3: Runtime/Router (Sync)

@@ -77,7 +77,7 @@ fn should_fail_closed_after_stream_actor_panic() {
     let health = sink.family_health_snapshot();
 
     // Assert
-    assert!(health.healthy_families.is_empty());
+    assert_eq!(health.healthy_families, Vec::new());
     assert_eq!(health.panic_count, 1);
     assert_eq!(health.failed_families, vec![RouteFamily::new(1)]);
     assert!(matches!(result, Err(DeliveryError::ActorStopped)));
@@ -533,6 +533,37 @@ fn should_include_second_family_live_session_in_admin_projection() {
 }
 
 #[test]
+fn should_reuse_live_overlay_snapshot_and_refresh_after_commit() {
+    // Arrange
+    let context = setup_test_context();
+    let route = "stream://bench/events/orders";
+    seed_committed_stream_route(&context, route, 1, b"first");
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let session_id = begin_stream(&context, route);
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let live_snapshot = context.admin_read_model.streams(None);
+
+    // Act
+    let append_frame = build_stream_append(session_id, 1, b"second");
+    let (append_type, append_payload) = extract_single_tlv_field(&append_frame);
+    let _ = request(&context, route, append_type, append_payload);
+    let commit_frame = crate::benchkit::build_stream_commit(session_id, 1);
+    let (commit_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+    let _ = request(&context, route, commit_type, commit_payload);
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let committed_snapshot = context.admin_read_model.streams(None);
+
+    // Assert
+    assert_eq!(live_snapshot.len(), 1);
+    assert_eq!(live_snapshot[0].committed_event_count, 1);
+    assert_eq!(live_snapshot[0].sessions_active, 1);
+    assert_eq!(committed_snapshot.len(), 1);
+    assert_eq!(committed_snapshot[0].committed_event_count, 2);
+    assert_eq!(committed_snapshot[0].offset, 1);
+    assert_eq!(committed_snapshot[0].sessions_active, 0);
+}
+
+#[test]
 fn should_project_persisted_unprovisioned_family_into_admin_snapshot() {
     // Arrange
     let engine = crate::testkit::create_test_engine_with_cfs(vec![1, 2]);
@@ -589,8 +620,15 @@ fn should_clear_failed_family_live_sessions_without_losing_committed_admin_row()
     let route = "stream://bench/events/orders";
     seed_committed_stream_route(&context, route, 1, b"persisted");
     let _active_session_id = begin_stream(&context, route);
+    let subscribe_frame = build_stream_subscribe(route);
+    let (message_type, payload) = extract_single_tlv_field(&subscribe_frame);
+    let _subscribe_response = request(&context, route, message_type, payload);
     context.sink.refresh_admin_snapshot_if_dirty();
     assert_eq!(context.admin_read_model.streams(None)[0].sessions_active, 1);
+    assert_eq!(
+        context.admin_read_model.streams(None)[0].subscriptions_active,
+        1
+    );
     context
         .sink
         .panic_family_actor_for_failpoint(context.family);
@@ -628,6 +666,7 @@ fn should_clear_failed_family_live_sessions_without_losing_committed_admin_row()
     // Assert
     assert_eq!(first_family_stream.resource, "orders");
     assert_eq!(first_family_stream.sessions_active, 0);
+    assert_eq!(first_family_stream.subscriptions_active, 0);
     assert_eq!(context.admin_read_model.stream_events_total(), 2);
 }
 

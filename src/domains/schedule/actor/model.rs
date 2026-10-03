@@ -7,7 +7,7 @@ use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use rustc_hash::FxBuildHasher;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -58,8 +58,11 @@ pub struct ScheduleActor {
     pub(super) schedules: FastMap<String, ScheduleDef>,
     /// Parsed cron expressions reused across repeated creates/upserts.
     pub(super) cron_cache: FastMap<String, CronSchedule>,
+    pub(super) cron_cache_order: VecDeque<String>,
     /// Canonical mutable LIST backing store.
     pub(super) list_entries: Vec<Arc<ScheduleListEntry>>,
+    /// Route-ordered index used to serve bounded v2 pages without sorting all definitions.
+    pub(super) list_entries_by_route: BTreeMap<String, Arc<ScheduleListEntry>>,
     /// Cached full LIST snapshot reused by the common `offset=0, limit=0` path.
     pub(super) list_cache: Option<Arc<Vec<Arc<ScheduleListEntry>>>>,
     /// Write options for persistence.

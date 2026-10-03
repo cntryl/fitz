@@ -15,7 +15,7 @@ misleading, mass-produced, or unsupported submissions to protect review capacity
 
 ## Dev Setup
 
-- Install Rust stable.
+- Install the Rust toolchain pinned for CI in `.github/workflows/ci.yml` (currently 1.99.0). Advance it intentionally after pedantic Clippy, build, and workspace tests pass on the candidate stable release.
 - Install shared tooling when working on benchmark reports:
   - `cargo install --git https://github.com/cntryl/tools --locked`
 - Clone the repo and run the workspace tests:
@@ -30,6 +30,13 @@ cargo fmt --all -- --check
 cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```
+
+## Branch Flow
+
+- Open feature pull requests against `develop`. The `ci.yml` workflow runs backend and frontend format, lint, build, and test checks.
+- Promote `develop` to `main` only when preparing a release. The same CI jobs run on the promotion pull request.
+- CodeQL runs through GitHub's default setup, outside `ci.yml`.
+- Squash feature pull requests into `develop`. Merge promotion pull requests with a merge commit so later promotions retain ancestry.
 
 ## Running Locally
 

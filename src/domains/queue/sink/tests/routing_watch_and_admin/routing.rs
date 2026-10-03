@@ -136,7 +136,7 @@ pub(super) fn should_clear_dirty_fast_queue_family_after_flush_window() {
 }
 
 #[test]
-pub(super) fn should_keep_dirty_fast_queue_family_when_flush_cannot_find_cf() {
+pub(super) fn should_drop_dirty_fast_queue_family_when_flush_cannot_find_cf() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
@@ -153,8 +153,9 @@ pub(super) fn should_keep_dirty_fast_queue_family_when_flush_cannot_find_cf() {
     // Act
     sink.sweep_runtime_state_at(Instant::now() + Duration::from_millis(100));
 
-    // Assert
-    assert!(sink.dirty_fast_flush_contains_family_for_tests(99));
+    // Assert: column families are created only at boot, so a missing one is
+    // permanent; retrying it every interval would only raise false alerts.
+    assert!(!sink.dirty_fast_flush_contains_family_for_tests(99));
 }
 
 #[test]

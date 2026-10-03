@@ -142,4 +142,13 @@ fn append_counter_metrics(output: &mut String, runtime: &Runtime) {
         runtime.queue_notify_drops_total()
     );
     output.push('\n');
+
+    output.push_str("# HELP fitz_queue_fast_flush_failures_total Total failed fast-mode Queue flush attempts; a sustained non-zero rate means accepted writes are outliving the loss window unflushed\n");
+    output.push_str("# TYPE fitz_queue_fast_flush_failures_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_queue_fast_flush_failures_total {}",
+        runtime.queue_fast_flush_failures_total()
+    );
+    output.push('\n');
 }

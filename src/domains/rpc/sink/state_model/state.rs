@@ -1,10 +1,9 @@
 use super::{
-    BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, HashSet, Instant,
-    RegistrationTable, Route, RouteAddress, RouteFamily, RouteReadyQueue, RpcCorrelationKey,
-    RpcFastMap, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
-    RpcPendingTable, RpcPendingTimeoutResult, RpcQueuedRequest, RpcRegistrationId,
-    RpcRequestDispatch, RpcRequestRejection, RpcRouteState, RpcSessionCleanupResult, RpcWorker,
-    RpcWorkerCleanupResult, RpcWorkerDispatch, RpcWorkerKey,
+    FxBuildHasher, HashMap, HashSet, Instant, RegistrationTable, Route, RouteAddress, RouteFamily,
+    RouteReadyQueue, RpcCorrelationKey, RpcFastMap, RpcPendingDispatchInfo,
+    RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingTable, RpcPendingTimeoutResult,
+    RpcQueuedRequest, RpcRegistrationId, RpcRequestDispatch, RpcRequestRejection, RpcRouteState,
+    RpcSessionCleanupResult, RpcWorker, RpcWorkerCleanupResult, RpcWorkerDispatch, RpcWorkerKey,
 };
 
 /// Coordinates registration, route fairness, and pending-request collaborators.
@@ -14,8 +13,6 @@ pub(in crate::domains::rpc::sink) struct RpcState {
     pub(super) ready_routes: RouteReadyQueue,
     next_route_sequence: u64,
     pub(in crate::domains::rpc::sink) pending: RpcPendingTable,
-    pub(in crate::domains::rpc::sink) queued: RpcFastMap<RpcCorrelationKey, RpcQueuedRequest>,
-    pub(in crate::domains::rpc::sink) queued_expirations: BinaryHeap<ExpiringPendingRequest>,
 }
 
 pub(in crate::domains::rpc::sink) enum RpcWorkerRegistration {
@@ -190,8 +187,6 @@ impl RpcState {
             ready_routes: RouteReadyQueue::new(),
             next_route_sequence: 1,
             pending: RpcPendingTable::new(),
-            queued: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
-            queued_expirations: BinaryHeap::with_capacity(256),
         }
     }
 
@@ -200,11 +195,10 @@ impl RpcState {
         registration: RpcWorker,
     ) -> RpcWorkerRegistration {
         let key = RpcWorkerKey::from_parts(&registration.addr, registration.session_id);
-        if self.registrations.contains_registration(&key) {
-            return RpcWorkerRegistration::Existing;
-        }
-
-        if let Some(violation) = self.registration_policy_violation(&registration) {
+        if let Some(violation) = self
+            .registrations
+            .registration_policy_violation(&key, &registration)
+        {
             return violation;
         }
 
@@ -236,25 +230,6 @@ impl RpcState {
         self.registrations.contains_registration(&key)
     }
 
-    fn registration_policy_violation(
-        &self,
-        registration: &RpcWorker,
-    ) -> Option<RpcWorkerRegistration> {
-        let session_wildcard_count = self
-            .registrations
-            .values()
-            .filter(|existing| existing.session_id == registration.session_id)
-            .filter(|existing| existing.is_wildcard())
-            .count();
-        if crate::domains::subscription_state::wildcard_registration_limit_reached(
-            registration.pattern(),
-            session_wildcard_count,
-        ) {
-            return Some(RpcWorkerRegistration::WildcardLimit);
-        }
-        None
-    }
-
     pub(in crate::domains::rpc::sink) fn registration_count(&self) -> usize {
         self.registrations.len()
     }
@@ -268,15 +243,7 @@ impl RpcState {
         if !self.routes.contains_key(&key) {
             let first_seen_sequence = self.next_route_sequence;
             self.next_route_sequence = self.next_route_sequence.wrapping_add(1).max(1);
-            let registration_ids = self
-                .registrations
-                .iter()
-                .filter_map(|(registration_id, registration)| {
-                    registration
-                        .matches(family, route)
-                        .then_some(*registration_id)
-                })
-                .collect();
+            let registration_ids = self.registrations.matching_ids(family, route);
             self.routes.insert(
                 key.clone(),
                 RpcRouteState::new(first_seen_sequence, registration_ids),
@@ -348,20 +315,6 @@ impl RpcState {
         for route_state in self.routes.values_mut() {
             route_state.remove_registrations(registration_ids);
         }
-    }
-
-    fn release_slot(
-        &mut self,
-        registration_id: RpcRegistrationId,
-        latency_us: Option<u64>,
-    ) -> Option<RouteFamily> {
-        let registration = self.registrations.get_mut(registration_id)?;
-        let was_available = registration.is_available();
-        if let Some(latency_us) = latency_us {
-            registration.record_completion(latency_us);
-        }
-        registration.release_slot();
-        (!was_available && registration.is_available()).then_some(*registration.addr.family())
     }
 
     pub(super) fn mark_route_ready_if_eligible(&mut self, family: RouteFamily, route: &Route) {
@@ -473,15 +426,7 @@ impl RpcState {
         &mut self,
         session_id: u64,
     ) -> RpcSessionCleanupResult {
-        let mut affected_families: Vec<RouteFamily> = self
-            .registrations
-            .values()
-            .filter_map(|registration| {
-                (registration.session_id == session_id).then_some(*registration.addr.family())
-            })
-            .collect();
-        affected_families.sort_by_key(RouteFamily::id);
-        affected_families.dedup();
+        let affected_families = self.registrations.families_for_session(session_id);
         let removed_registration_ids = self.remove_registrations_for_session(session_id);
         let pending_cleanup = self.pending.cleanup_session(session_id);
         let queued_removed = self.cleanup_queued_session(session_id);
@@ -535,14 +480,10 @@ impl RpcState {
     ) -> bool {
         self.pending
             .contains_correlation_in_family(family, correlation_id)
-            || self.queued.contains_key(&RpcCorrelationKey {
-                family,
-                correlation_id: *correlation_id,
-            })
     }
 
     pub(in crate::domains::rpc::sink) fn live_request_count(&self) -> usize {
-        self.pending.len() + self.queued.len()
+        self.pending.live_len()
     }
 
     fn check_duplicate(&self, family: RouteFamily, correlation_id: &uuid::Uuid) -> bool {
@@ -560,32 +501,6 @@ impl RpcState {
             .is_some_and(|state| {
                 state.has_queued_requests() && state.queued_len() >= route_pending_capacity
             })
-    }
-
-    /// Reserves one unit of global pending capacity without oversubscribing the shared limit.
-    fn reserve_global_capacity(
-        global_pending_count: Option<&std::sync::atomic::AtomicUsize>,
-        local_live_request_count: usize,
-        global_pending_capacity: usize,
-    ) -> Option<bool> {
-        let Some(global_pending_count) = global_pending_count else {
-            return (local_live_request_count < global_pending_capacity).then_some(false);
-        };
-        let mut current = global_pending_count.load(std::sync::atomic::Ordering::Acquire);
-        loop {
-            if current >= global_pending_capacity {
-                return None;
-            }
-            match global_pending_count.compare_exchange_weak(
-                current,
-                current.saturating_add(1),
-                std::sync::atomic::Ordering::AcqRel,
-                std::sync::atomic::Ordering::Acquire,
-            ) {
-                Ok(_) => return Some(true),
-                Err(observed) => current = observed,
-            }
-        }
     }
 
     fn select_action(
@@ -646,11 +561,10 @@ impl RpcState {
             };
         }
 
-        let Some(reserved_global_capacity) = Self::reserve_global_capacity(
-            global_pending_count,
-            local_live_request_count,
-            global_pending_capacity,
-        ) else {
+        let Some(reserved_global_capacity) = self
+            .pending
+            .reserve_global_capacity(global_pending_count, global_pending_capacity)
+        else {
             self.prune_route_if_unused(family, &route);
             return RpcRequestDispatch::Rejected {
                 request,
@@ -681,13 +595,8 @@ impl RpcState {
                     caller_inbox_addr,
                     expires_at,
                 );
-                let key = RpcCorrelationKey {
-                    family,
-                    correlation_id,
-                };
-                self.queued_expirations
-                    .push(ExpiringPendingRequest { expires_at, key });
-                self.queued.insert(key, queued);
+                self.pending
+                    .track_queued_for_family(family, correlation_id, queued);
                 self.mark_route_ready_if_eligible(family, &route);
                 RpcRequestDispatch::Queued {
                     route,
@@ -727,11 +636,9 @@ impl RpcState {
         family: RouteFamily,
         correlation_id: &uuid::Uuid,
     ) -> Option<RpcQueuedRequest> {
-        let key = RpcCorrelationKey {
-            family,
-            correlation_id: *correlation_id,
-        };
-        let queued = self.queued.remove(&key)?;
+        let queued = self
+            .pending
+            .remove_queued_for_family(family, correlation_id)?;
         let route = queued.request.route.clone();
         if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
             route_state.remove_queued_request(correlation_id);
@@ -751,7 +658,10 @@ impl RpcState {
             family,
             correlation_id: *correlation_id,
         })?;
-        if let Some(family) = self.release_slot(pending.dispatch_info.registration_id, None) {
+        if let Some(family) = self
+            .registrations
+            .release_slot(pending.dispatch_info.registration_id, None)
+        {
             self.enqueue_eligible_routes_for_family(family);
         }
         self.prune_route_if_unused(pending.dispatch_info.family, &pending.dispatch_info.route);
@@ -763,7 +673,10 @@ impl RpcState {
         pending: &RpcPendingRequest,
         latency_us: Option<u64>,
     ) {
-        if let Some(family) = self.release_slot(pending.dispatch_info.registration_id, latency_us) {
+        if let Some(family) = self
+            .registrations
+            .release_slot(pending.dispatch_info.registration_id, latency_us)
+        {
             self.enqueue_eligible_routes_for_family(family);
         }
         self.prune_route_if_unused(pending.dispatch_info.family, &pending.dispatch_info.route);
@@ -774,7 +687,10 @@ impl RpcState {
         pending: &RpcPendingDispatchInfo,
         latency_us: Option<u64>,
     ) {
-        if let Some(family) = self.release_slot(pending.registration_id, latency_us) {
+        if let Some(family) = self
+            .registrations
+            .release_slot(pending.registration_id, latency_us)
+        {
             self.enqueue_eligible_routes_for_family(family);
         }
         self.prune_route_if_unused(pending.family, &pending.route);
@@ -784,15 +700,10 @@ impl RpcState {
         &mut self,
         session_id: u64,
     ) -> usize {
-        let queued_to_remove: Vec<(RouteFamily, uuid::Uuid)> = self
-            .queued
-            .iter()
-            .filter(|(_, queued)| queued.caller_session_id == session_id)
-            .map(|(key, _)| (key.family, key.correlation_id))
-            .collect();
+        let queued_to_remove = self.pending.queued_keys_for_session(session_id);
 
-        for (family, correlation_id) in &queued_to_remove {
-            self.remove_queued_request_for_family(*family, correlation_id);
+        for key in &queued_to_remove {
+            self.remove_queued_request_for_family(key.family, &key.correlation_id);
         }
         queued_to_remove.len()
     }
@@ -805,31 +716,13 @@ impl RpcState {
         let mut removed_pending = 0usize;
         let mut closed_caller_drops = 0usize;
 
-        while let Some(expiring) = self.pending.expirations.peek() {
-            if expiring.expires_at > now {
-                break;
-            }
-            let expiring = self
-                .pending
-                .expirations
-                .pop()
-                .expect("pending expiration entry");
-            let Some(pending) = self.pending.pending.get(&expiring.key) else {
-                continue;
-            };
-            if pending.expires_at != expiring.expires_at {
-                continue;
-            }
-
-            let pending = self
-                .pending
-                .remove(&expiring.key)
-                .expect("tracked pending request");
+        while let Some(key) = self.pending.next_expired_pending_key(now) {
+            let pending = self.pending.remove(&key).expect("tracked pending request");
             self.release_registration_for_pending(&pending, None);
             removed_pending = removed_pending.saturating_add(1);
             if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {
                 timeout_deliveries.push(RpcPendingErrorDelivery {
-                    correlation_id: expiring.key.correlation_id,
+                    correlation_id: key.correlation_id,
                     caller_session_id: pending.dispatch_info.caller_session_id,
                     caller_inbox_addr,
                 });
@@ -838,27 +731,13 @@ impl RpcState {
             }
         }
 
-        while let Some(expiring) = self.queued_expirations.peek() {
-            if expiring.expires_at > now {
-                break;
-            }
-            let expiring = self
-                .queued_expirations
-                .pop()
-                .expect("queued expiration entry");
-            let Some(queued) = self.queued.get(&expiring.key) else {
-                continue;
-            };
-            if queued.expires_at != expiring.expires_at {
-                continue;
-            }
-
+        while let Some(key) = self.pending.next_expired_queued_key(now) {
             let queued = self
-                .remove_queued_request_for_family(expiring.key.family, &expiring.key.correlation_id)
+                .remove_queued_request_for_family(key.family, &key.correlation_id)
                 .expect("tracked queued request");
             removed_pending = removed_pending.saturating_add(1);
             timeout_deliveries.push(RpcPendingErrorDelivery {
-                correlation_id: expiring.key.correlation_id,
+                correlation_id: key.correlation_id,
                 caller_session_id: queued.caller_session_id,
                 caller_inbox_addr: queued.caller_inbox_addr,
             });

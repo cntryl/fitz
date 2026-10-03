@@ -142,7 +142,7 @@ async fn should_stop_standby_startup_given_shutdown_while_writer_lease_is_held()
     result.expect("standby shutdown");
     driver.await.expect("standby driver");
     assert!(
-        holder.get_runtime_metrics().is_ok(),
+        holder.metrics().get_runtime_metrics().is_ok(),
         "holder remains active"
     );
     storage::shutdown_store(holder)

@@ -9,6 +9,7 @@
 | 2 | CORRELATE | Client→Server |
 | 3 | CORRELATED | Server→Client |
 | 4 | SERVER_HELLO | Server→Client |
+| 5 | SESSION_METADATA | Client→Server |
 **KV Domain (100–111):**
 | Value | Name |
 |---:|---|
@@ -324,6 +325,7 @@ Value: [u16 BE protocol_version][u32 BE capability_bits]
 | Bit | Name | Meaning |
 |---:|---|---|
 | 0 | `CAP_CORRELATION` | Broker accepts `CORRELATE` and echoes `CORRELATED` |
+| 1 | `CAP_SESSION_METADATA` | Broker accepts client-reported session metadata (message type 5) |
 
 Rules:
 

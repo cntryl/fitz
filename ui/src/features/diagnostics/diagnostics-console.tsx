@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@askrjs/themes/components";
 import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
+import TitledCell from "@/components/shared/titled-cell";
 import type { DiagnosticHotspot, SuggestedQuery } from "@/adapters";
 import {
   QueryCompactEmptyState,
@@ -355,33 +356,19 @@ export default function DiagnosticsConsole({
     {
       id: "signal",
       header: "Signal",
-      width: "22%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.signal}>
-          {row.signal}
-        </span>
-      ),
+      width: "52%",
+      cellComponent: ({ row }) => <TitledCell subtitle={row.detail}>{row.signal}</TitledCell>,
     },
     {
       id: "value",
       header: "Value",
-      width: "18%",
+      width: "20%",
       cellComponent: ({ row }) => <span class="diagnostics-value-cell">{row.value}</span>,
-    },
-    {
-      id: "detail",
-      header: "Diagnostic meaning",
-      width: "38%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.detail}>
-          {row.detail}
-        </span>
-      ),
     },
     {
       id: "action",
       header: "Action",
-      width: "22%",
+      width: "28%",
       cellComponent: ({ row }) => (
         <Link class="text-link" href={row.href}>
           {row.action}
@@ -393,37 +380,29 @@ export default function DiagnosticsConsole({
     {
       id: "domain",
       header: "Domain",
-      width: "18%",
+      width: "48%",
       cellComponent: ({ row }) => (
-        <Link class="text-link" href={row.href}>
-          {row.domain}
-        </Link>
+        <TitledCell subtitle={row.internals}>
+          <Link class="text-link" href={row.href}>
+            {row.domain}
+          </Link>
+        </TitledCell>
       ),
     },
     {
       id: "activity",
       header: "Current activity",
-      width: "18%",
+      width: "24%",
       cellComponent: ({ row }) => <span>{formatNumber(row.activity)}</span>,
     },
     {
       id: "cumulative-failures",
       header: "Cumulative signals",
-      width: "22%",
+      width: "28%",
       cellComponent: ({ row }) => (
         <Badge variant="outline">
           {row.cumulativeFailures === null ? "--" : formatNumber(row.cumulativeFailures)}
         </Badge>
-      ),
-    },
-    {
-      id: "internals",
-      header: "Internals",
-      width: "42%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.internals}>
-          {row.internals}
-        </span>
       ),
     },
   ];
@@ -431,26 +410,30 @@ export default function DiagnosticsConsole({
     {
       id: "scope",
       header: "Route",
-      width: "28%",
+      width: "56%",
       cellComponent: ({ row }) => {
         const href = hotspotHref(row);
         const label = scopeText(row) || "Broker";
 
-        return href ? (
-          <Link class="text-link" href={href}>
-            {label}
-          </Link>
-        ) : (
-          <span class="domain-table-cell-truncate" title={label}>
-            {label}
-          </span>
+        return (
+          <TitledCell
+            subtitle={row.explanation_hints[0] ?? row.likely_bottleneck ?? "Review diagnostics"}
+          >
+            {href ? (
+              <Link class="text-link" href={href}>
+                {label}
+              </Link>
+            ) : (
+              label
+            )}
+          </TitledCell>
         );
       },
     },
     {
       id: "severity",
       header: "Severity",
-      width: "16%",
+      width: "18%",
       cellComponent: ({ row }) => (
         <Badge variant={badgeVariantForTone(severityTone(row.severity))}>{row.severity}</Badge>
       ),
@@ -458,23 +441,10 @@ export default function DiagnosticsConsole({
     {
       id: "stage",
       header: "Stage",
-      width: "22%",
+      width: "26%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={row.current_stage}>
           {row.current_stage}
-        </span>
-      ),
-    },
-    {
-      id: "evidence",
-      header: "Evidence",
-      width: "34%",
-      cellComponent: ({ row }) => (
-        <span
-          class="domain-table-cell-truncate"
-          title={row.explanation_hints[0] ?? row.likely_bottleneck ?? "Review diagnostics"}
-        >
-          {row.explanation_hints[0] ?? row.likely_bottleneck ?? "Review diagnostics"}
         </span>
       ),
     },
@@ -489,17 +459,15 @@ export default function DiagnosticsConsole({
     {
       id: "title",
       header: "Query",
-      width: "26%",
+      width: "50%",
       cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.title}>
-          {row.title}
-        </span>
+        <TitledCell subtitle={row.remediation || row.rationale}>{row.title}</TitledCell>
       ),
     },
     {
       id: "endpoint",
       header: "Endpoint",
-      width: "26%",
+      width: "36%",
       cellComponent: ({ row }) => (
         <a
           class="text-link diagnostics-code-cell"
@@ -511,52 +479,34 @@ export default function DiagnosticsConsole({
         </a>
       ),
     },
-    {
-      id: "remediation",
-      header: "Why",
-      width: "34%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.remediation || row.rationale}>
-          {row.remediation || row.rationale}
-        </span>
-      ),
-    },
   ];
   const metricColumns: readonly DataTableColumn<MetricFamilyRow>[] = [
     {
       id: "name",
       header: "Family",
-      width: "34%",
+      width: "64%",
       cellComponent: ({ row }) => (
-        <Link
-          class="text-link"
-          href={`${adminChildHref("metrics")}?q=${encodeURIComponent(row.name)}`}
-        >
-          {row.name}
-        </Link>
+        <TitledCell subtitle={row.help}>
+          <Link
+            class="text-link"
+            href={`${adminChildHref("metrics")}?q=${encodeURIComponent(row.name)}`}
+          >
+            {row.name}
+          </Link>
+        </TitledCell>
       ),
     },
     {
       id: "type",
       header: "Type",
-      width: "14%",
+      width: "18%",
       cellComponent: ({ row }) => <span>{row.type}</span>,
     },
     {
       id: "samples",
       header: "Samples",
-      width: "14%",
+      width: "18%",
       cellComponent: ({ row }) => <span>{formatNumber(row.samples)}</span>,
-    },
-    {
-      id: "help",
-      header: "Help",
-      width: "38%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.help}>
-          {row.help}
-        </span>
-      ),
     },
   ];
 

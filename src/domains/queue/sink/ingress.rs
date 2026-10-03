@@ -50,7 +50,7 @@ impl QueueFamilyState {
         // lane) and jumped ahead of it. Reject rather than silently
         // recreating a subscription or pending reserve for a session that is
         // already gone and will never be cleaned up again.
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = crate::domains::queue::QueueResponse::BadRequest {
                 reason: "session already closed".to_string(),
             };
@@ -194,6 +194,15 @@ impl QueueFamilyState {
             return;
         };
 
+        if outcome.mark_admin_snapshot_dirty {
+            self.mark_admin_snapshot_dirty();
+            self.mark_fast_flush_dirty(route_family);
+        }
+
+        for (key, notification) in &outcome.ready_notifications {
+            self.route_queue_ready_notification(key, *notification);
+        }
+
         if matches!(
             &outcome.response,
             crate::domains::queue::QueueResponse::Received { messages } if messages.is_empty()
@@ -203,6 +212,14 @@ impl QueueFamilyState {
         ) {
             if let Some(wait_seconds) = wait_seconds.filter(|seconds| *seconds > 0) {
                 if envelope.source().is_some() {
+                    if !self.reservation_book.can_enqueue(meta.session_id) {
+                        let response = crate::domains::queue::QueueResponse::Error {
+                            message: "queue pending reserve capacity reached".to_string(),
+                        };
+                        self.route_queue_response(envelope, meta, &response);
+                        self.record_operation_metrics(request_started, &response, op_kind);
+                        return;
+                    }
                     let mut message = pending_message;
                     if let crate::domains::queue::protocol::QueueMessage::Receive {
                         wait_seconds,
@@ -214,7 +231,7 @@ impl QueueFamilyState {
                     let deadline = Instant::now()
                         .checked_add(Duration::from_secs(wait_seconds))
                         .unwrap_or_else(Instant::now);
-                    self.pending_reserves.push_back(PendingQueueReserve {
+                    self.reservation_book.enqueue(PendingQueueReserve {
                         envelope: envelope.clone_for_deferred_reply(),
                         meta,
                         request_started,
@@ -224,15 +241,6 @@ impl QueueFamilyState {
                     return;
                 }
             }
-        }
-
-        if outcome.mark_admin_snapshot_dirty {
-            self.mark_admin_snapshot_dirty();
-            self.mark_fast_flush_dirty(route_family);
-        }
-
-        for (key, notification) in outcome.ready_notifications {
-            self.route_queue_ready_notification(&key, notification);
         }
 
         let delivered = self.route_queue_response(envelope, meta, &outcome.response);

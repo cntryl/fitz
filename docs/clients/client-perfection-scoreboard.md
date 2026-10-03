@@ -2,12 +2,19 @@
 
 This document is the execution board for strict all-client completion.
 
+The execution ledger below records verification artifacts from August 1–8,
+2026. These are historical results, not a live compatibility status. Refresh
+the exact broker/client matrix before using them to claim current SDK
+compatibility. Conformance results do not define Fitz's release stage or a
+support SLA.
+
 The shared CS-001–CS-017 suite proves the common protocol contract; it does not
 by itself prove operational readiness features such as explicit durability,
 managed leases, safe retry boundaries, reconnect defaults, heartbeat,
 observability, error ergonomics, or documentation truth. The independent
-five-client review is tracked in [four-client-parity-ledger.md](four-client-parity-ledger.md)
-and [four-client-parity-ledger.csv](four-client-parity-ledger.csv).
+five-client review is tracked in
+[five-client-parity-ledger.md](five-client-parity-ledger.md) and
+[five-client-parity-ledger.csv](five-client-parity-ledger.csv).
 
 ## Frozen Gate
 
@@ -108,34 +115,34 @@ Update this table after each matrix run.
 
 | Repo        | Transport | Auth Mode            | P0 Pass Rate | P1 Pass Rate | Overall | Artifact Path                                                                    | Must-Fix? | Notes                                                                          |
 | ----------- | --------- | -------------------- | ------------ | ------------ | ------- | -------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------ |
-| fitz-go     | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-go/artifacts/conformance-ws-anonymous.json`                                | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-go     | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-go/artifacts/conformance-ws-valid_jwt.json`                                | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-go     | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-go/artifacts/conformance-tcp-anonymous.json`                               | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-go     | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-go/artifacts/conformance-tcp-valid_jwt.json`                               | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
+| fitz-go     | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-go/artifacts/conformance-ws-anonymous.json`                                | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-go     | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-go/artifacts/conformance-ws-valid_jwt.json`                                | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-go     | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-go/artifacts/conformance-tcp-anonymous.json`                               | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-go     | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-go/artifacts/conformance-tcp-valid_jwt.json`                               | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
 | fitz-go     | websocket | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `go test ./test/conformance -run TestConformanceSuite/CS-002_auth_failure (ws)`  | no        | Focused auth-failure check passed                                              |
 | fitz-go     | tcp       | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `go test ./test/conformance -run TestConformanceSuite/CS-002_auth_failure (tcp)` | no        | Focused auth-failure check passed                                              |
-| fitz-ts     | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-ts/artifacts/conformance-ws-anonymous.json`                                | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-ts     | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-ts/artifacts/conformance-ws-valid_jwt.json`                                | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-ts     | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-ts/artifacts/conformance-tcp-anonymous.json`                               | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-ts     | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-ts/artifacts/conformance-tcp-valid_jwt.json`                               | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
+| fitz-ts     | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-ts/artifacts/conformance-ws-anonymous.json`                                | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-ts     | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-ts/artifacts/conformance-ws-valid_jwt.json`                                | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-ts     | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-ts/artifacts/conformance-tcp-anonymous.json`                               | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-ts     | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-ts/artifacts/conformance-tcp-valid_jwt.json`                               | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
 | fitz-ts     | websocket | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `fitz-ts/artifacts/conformance-ws-anonymous.json`                                | no        | CS-002 passes in full suite; standalone invalid_jwt mode unsupported           |
 | fitz-ts     | tcp       | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `fitz-ts/artifacts/conformance-tcp-anonymous.json`                               | no        | CS-002 passes in full suite; standalone invalid_jwt mode unsupported           |
-| fitz-py     | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-py CI run 31256620334: conformance-ws-anonymous`                           | no        | Fresh 2026-08-08 artifact; CS-001–CS-017 passed                               |
-| fitz-py     | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-py CI run 31256620334: conformance-ws-valid_jwt`                           | no        | Fresh 2026-08-08 artifact; CS-001–CS-017 passed                               |
-| fitz-py     | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-py CI run 31256620334: conformance-tcp-anonymous`                          | no        | Fresh 2026-08-08 artifact; CS-001–CS-017 passed                               |
-| fitz-py     | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-py CI run 31256620334: conformance-tcp-valid_jwt`                          | no        | Fresh 2026-08-08 artifact; CS-001–CS-017 passed                               |
+| fitz-py     | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-py CI run 31256620334: conformance-ws-anonymous`                           | no        | Artifact dated 2026-08-08; CS-001–CS-017 passed                               |
+| fitz-py     | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-py CI run 31256620334: conformance-ws-valid_jwt`                           | no        | Artifact dated 2026-08-08; CS-001–CS-017 passed                               |
+| fitz-py     | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-py CI run 31256620334: conformance-tcp-anonymous`                          | no        | Artifact dated 2026-08-08; CS-001–CS-017 passed                               |
+| fitz-py     | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-py CI run 31256620334: conformance-tcp-valid_jwt`                          | no        | Artifact dated 2026-08-08; CS-001–CS-017 passed                               |
 | fitz-py     | websocket | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `pytest tests/conformance -k cs002 (ws)`                                         | no        | Focused auth-failure check passed                                              |
 | fitz-py     | tcp       | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `pytest tests/conformance -k cs002 (tcp)`                                        | no        | Focused auth-failure check passed                                              |
-| fitz-rs     | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-rs/artifacts/conformance-ws-anonymous.json`                                | no        | Fresh 2026-08-01 artifact; CS-010 uses same-client real transport loss              |
-| fitz-rs     | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-rs/artifacts/conformance-ws-valid_jwt.json`                                | no        | Fresh 2026-08-01 artifact; CS-010 uses same-client real transport loss              |
-| fitz-rs     | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-rs/artifacts/conformance-tcp-anonymous.json`                               | no        | Fresh 2026-08-01 artifact; CS-010 uses same-client real transport loss              |
-| fitz-rs     | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-rs/artifacts/conformance-tcp-valid_jwt.json`                               | no        | Fresh 2026-08-01 artifact; CS-010 uses same-client real transport loss              |
+| fitz-rs     | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-rs/artifacts/conformance-ws-anonymous.json`                                | no        | Artifact dated 2026-08-01; CS-010 uses same-client real transport loss              |
+| fitz-rs     | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-rs/artifacts/conformance-ws-valid_jwt.json`                                | no        | Artifact dated 2026-08-01; CS-010 uses same-client real transport loss              |
+| fitz-rs     | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-rs/artifacts/conformance-tcp-anonymous.json`                               | no        | Artifact dated 2026-08-01; CS-010 uses same-client real transport loss              |
+| fitz-rs     | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-rs/artifacts/conformance-tcp-valid_jwt.json`                               | no        | Artifact dated 2026-08-01; CS-010 uses same-client real transport loss              |
 | fitz-rs     | websocket | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `fitz-rs/artifacts/conformance-ws-valid_jwt.json`                                | no        | CS-002 passes in full suite (Transport or ConnectionClosed accepted)           |
 | fitz-rs     | tcp       | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `fitz-rs/artifacts/conformance-tcp-valid_jwt.json`                               | no        | CS-002 passes in full suite (Transport or ConnectionClosed accepted)           |
-| fitz-dotnet | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-dotnet/artifacts/conformance-ws-anonymous.json`                            | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-dotnet | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-dotnet/artifacts/conformance-ws-valid_jwt.json`                            | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-dotnet | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-dotnet/artifacts/conformance-tcp-anonymous.json`                           | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
-| fitz-dotnet | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-dotnet/artifacts/conformance-tcp-valid_jwt.json`                           | no        | Fresh 2026-08-01 artifact; no non-pass scenarios                                  |
+| fitz-dotnet | websocket | anonymous            | 100%         | 100%         | pass    | `fitz-dotnet/artifacts/conformance-ws-anonymous.json`                            | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-dotnet | websocket | valid_jwt            | 100%         | 100%         | pass    | `fitz-dotnet/artifacts/conformance-ws-valid_jwt.json`                            | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-dotnet | tcp       | anonymous            | 100%         | 100%         | pass    | `fitz-dotnet/artifacts/conformance-tcp-anonymous.json`                           | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
+| fitz-dotnet | tcp       | valid_jwt            | 100%         | 100%         | pass    | `fitz-dotnet/artifacts/conformance-tcp-valid_jwt.json`                           | no        | Artifact dated 2026-08-01; no non-pass scenarios                                  |
 | fitz-dotnet | websocket | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `fitz-dotnet/artifacts/conformance-ws-anonymous.json`                            | no        | CS-002 verdict is pass (`auth_mode=invalid_jwt`) in artifact                   |
 | fitz-dotnet | tcp       | invalid_jwt (CS-002) | n/a          | n/a          | pass    | `fitz-dotnet/artifacts/conformance-tcp-anonymous.json`                           | no        | CS-002 verdict is pass (`auth_mode=invalid_jwt`) in artifact                   |
 

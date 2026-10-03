@@ -84,6 +84,7 @@ impl QueueDomain {
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
+        let envelope = self.config.router.retain_session_work(envelope);
         let family = *envelope.destination().family();
         let service = &self.config.delivery_service_us[&family.id()];
         // Admit BEFORE enqueueing so surplus load is refused as never-enqueued

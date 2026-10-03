@@ -68,17 +68,17 @@ export function queueDeadLettersQueryPrefix(resourceRef: QueueResourceRef) {
 
 const queueOverviewQuery = defineQuery<{ family: string }, QueueOverview>({
   key: ({ family }) => queueOverviewQueryKey(family),
-  fetch: ({ family, signal }) => queueService.getOverview({ routeFamily: family, signal }),
+  fetch: ({ family }, { signal }) => queueService.getOverview({ routeFamily: family, signal }),
 });
 
 const queueInventoryQuery = defineQuery<{ family: string }, QueueInventory>({
   key: ({ family }) => queueInventoryQueryKey(family),
-  fetch: ({ family, signal }) => queueService.listInventory({ routeFamily: family, signal }),
+  fetch: ({ family }, { signal }) => queueService.listInventory({ routeFamily: family, signal }),
 });
 
 const queueRealmQuery = defineQuery<{ family: string; realm: string }, QueueRealmDetail>({
   key: ({ family, realm }) => queueRealmQueryKey(realm, family),
-  fetch: ({ family, realm, signal }) =>
+  fetch: ({ family, realm }, { signal }) =>
     queueService.getRealm(realm, { routeFamily: family, signal }),
 });
 
@@ -87,7 +87,7 @@ const queueAreaQuery = defineQuery<
   QueueAreaDetail
 >({
   key: ({ area, family, realm }) => queueAreaQueryKey(realm, area, family),
-  fetch: ({ area, family, realm, signal }) =>
+  fetch: ({ area, family, realm }, { signal }) =>
     queueService.getArea(realm, area, { routeFamily: family, signal }),
 });
 
@@ -99,7 +99,7 @@ interface QueueDeadLettersQueryInput {
 
 const queueDeadLettersQuery = defineQuery<QueueDeadLettersQueryInput, DeadLetterMessage[]>({
   key: ({ family, filters, resourceRef }) => queueDeadLettersQueryKey(resourceRef, filters, family),
-  fetch: ({ family, filters, resourceRef, signal }) =>
+  fetch: ({ family, filters, resourceRef }, { signal }) =>
     queueService.listDeadLetters(resourceRef, filters, { routeFamily: family, signal }),
 });
 

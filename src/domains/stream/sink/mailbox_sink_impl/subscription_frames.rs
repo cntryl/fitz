@@ -16,7 +16,7 @@ impl StreamFamilyState {
     ) {
         use crate::domains::stream::protocol::StreamSubscriptionMessage;
 
-        let (response, inserted) = match sub_msg {
+        let (response, mut changed) = match sub_msg {
             StreamSubscriptionMessage::Subscribe {
                 family_id,
                 pattern,
@@ -32,33 +32,62 @@ impl StreamFamilyState {
                 let response = self.handle_stream_subscribe(
                     envelope, meta, family_id, &pattern, session_id, subscriber,
                 );
-                (response, !existed)
+                let inserted = !existed
+                    && matches!(
+                        &response,
+                        StreamClientResponseBody::Ok {
+                            session_id: Some(_),
+                            ..
+                        }
+                    );
+                (response, inserted)
             }
             StreamSubscriptionMessage::Unsubscribe {
                 family_id,
                 pattern,
                 session_id,
                 subscriber,
-            } => (
-                self.handle_stream_unsubscribe(
+            } => {
+                let existed = self
+                    .subscriptions
+                    .families
+                    .get(&family_id.as_u64())
+                    .and_then(|state| state.find_existing_id(session_id, pattern.as_str()))
+                    .is_some();
+                let response = self.handle_stream_unsubscribe(
                     envelope,
                     meta,
                     family_id,
                     &pattern,
                     session_id,
                     &subscriber,
-                ),
-                false,
-            ),
+                );
+                let changed = existed && !Self::stream_response_is_failure(&response);
+                (response, changed)
+            }
         };
 
-        self.refresh_metrics_gauges();
-        if !self.route_stream_response(envelope, meta, &response, request_started) && inserted {
+        let delivered = self.route_stream_response(envelope, meta, &response, request_started);
+        if !delivered
+            && changed
+            && matches!(
+                &response,
+                StreamClientResponseBody::Ok {
+                    session_id: Some(_),
+                    ..
+                }
+            )
+        {
             self.rollback_undeliverable_stream_subscribe(
                 meta.route_family,
                 meta.session_id,
                 &response,
             );
+            changed = false;
+        }
+        if changed {
+            self.mark_admin_snapshot_dirty();
+        } else {
             self.refresh_metrics_gauges();
         }
     }
@@ -120,7 +149,7 @@ impl StreamFamilyState {
                     crate::domains::stream::StreamSubscriptionFailure::Limit,
                 );
             }
-            if let Ok(subscription_id) = self.subscriptions.next_id.fetch_update(
+            if let Ok(subscription_id) = self.subscriptions.next_id.try_update(
                 Ordering::Relaxed,
                 Ordering::Relaxed,
                 |current| current.checked_add(1),

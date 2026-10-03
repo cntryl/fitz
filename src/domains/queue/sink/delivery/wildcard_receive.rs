@@ -1,6 +1,5 @@
 use super::{OperationOutcome, QueueFamilyState};
 use crate::runtime::routing::RouteFamily;
-use std::sync::atomic::Ordering;
 
 use crate::domains::queue::protocol::{
     MAX_QUEUE_RESPONSE_PAYLOAD_BYTES, RECEIVED_RESPONSE_HEADER_BYTES,
@@ -60,13 +59,15 @@ impl QueueFamilyState {
     const MAX_WILDCARD_RESERVE_MATCHES: usize = 4096;
 
     fn wildcard_inventory_error(&mut self) -> Option<OperationOutcome> {
-        self.inventory_error.clone().map(|error| OperationOutcome {
-            response: crate::domains::queue::QueueResponse::Error {
-                message: format!("Queue inventory unavailable: {error}"),
-            },
-            ready_notifications: Vec::new(),
-            mark_admin_snapshot_dirty: false,
-        })
+        self.reservation_book
+            .inventory_error()
+            .map(|error| OperationOutcome {
+                response: crate::domains::queue::QueueResponse::Error {
+                    message: format!("Queue inventory unavailable: {error}"),
+                },
+                ready_notifications: Vec::new(),
+                mark_admin_snapshot_dirty: false,
+            })
     }
 
     fn wildcard_reserve_preflight(
@@ -107,12 +108,7 @@ impl QueueFamilyState {
             return empty_wildcard_receive_outcome();
         }
 
-        let start = usize::try_from(
-            self.wildcard_reserve_sequence
-                .fetch_add(1, Ordering::Relaxed),
-        )
-        .unwrap_or(0)
-            % keys.len();
+        let start = self.reservation_book.next_wildcard_start(keys.len());
         let mut routed = Vec::with_capacity(limit);
         let mut notifications = Vec::new();
         let mut state_changed = false;
@@ -153,7 +149,7 @@ impl QueueFamilyState {
             };
             state_changed |= actor_outcome.changed;
             if actor_outcome.counts.total() > 0 {
-                self.known_queue_keys.insert(key.clone());
+                self.reservation_book.insert_key(key.clone());
             }
             if let Some(notification) = self.record_ready_state(key, actor_outcome.counts) {
                 notifications.push((key.clone(), notification));

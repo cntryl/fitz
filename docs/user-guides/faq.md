@@ -1,12 +1,20 @@
 # FAQ
 
-## What deployment model does Fitz implement?
+## Why does Fitz use one active broker per storage namespace?
 
-Fitz runs as a single broker process with one active storage writer. It does not
-provide consensus, transparent failover, or session recovery. Review
-[../README.md](../../README.md), the
-[operations runbook](../operations/operations-runbook.md), and
-[durability.md](durability.md) for the implemented boundaries.
+One active writer keeps ownership and storage coordination simple. In cloud
+storage mode, durable committed state is stored through the configured provider
+and can be recovered by a replacement process. Graceful shutdown releases the
+writer lease; after an ungraceful failure, the replacement waits for lease
+expiry. The process interruption is visible to clients, which reconnect and
+rebuild ephemeral session state. Fitz does not form a cluster or promise
+zero-downtime failover.
+
+When one broker is not enough, assign independent workloads or partitions to
+separate Fitz deployments and storage namespaces. Your application or edge router
+owns the shard assignment. This is explicit scale-out, not a transparent cluster
+or a RouteFamily mapping. See the
+[cloud deployment guide](../operations/cloud-setup.md#container-deployment-and-explicit-sharding).
 
 ## How do I choose route family values?
 

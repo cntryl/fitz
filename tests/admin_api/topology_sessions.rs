@@ -32,7 +32,7 @@ async fn should_isolate_family_admin_read_surfaces_and_global_authority() {
         realm: "family-one".to_string(),
         area: "jobs".to_string(),
         resource: "worker".to_string(),
-        subscriptions_active: 0,
+        subscriptions_active: 2,
         messages_ready: 3,
         messages_delayed: 0,
         messages_inflight: 0,
@@ -112,8 +112,9 @@ async fn should_isolate_family_admin_read_surfaces_and_global_authority() {
     assert_eq!(stats["domains"]["queue"]["requests_total"], 0);
     assert_eq!(
         stats["diagnostics"]["incident_summary"]["status"],
-        "healthy"
+        "stalled"
     );
+    assert_eq!(stats["diagnostics"]["top_bottleneck"]["family"], 1);
     assert_eq!(denied_family.status(), StatusCode::FORBIDDEN);
     assert_eq!(denied_global.status(), StatusCode::FORBIDDEN);
 }
@@ -379,10 +380,12 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         realm: "prod".to_string(),
         area: "events".to_string(),
         resource: "orders".to_string(),
+        committed_event_count: 43,
         offset: 42,
         watermark: 40,
         size_bytes: 4096,
         sessions_active: 1,
+        subscriptions_active: 2,
     }]);
     read_model.replace_schedules(vec![ScheduleInfo {
         route_family: 1,
@@ -447,6 +450,17 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         payload["lanes"][0]["top_scoped_resources"][0]["scope"]["realm"],
         "prod"
     );
+    let stream_lane = payload["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|lane| lane["id"] == "stream")
+        .expect("Stream topology lane");
+    assert!(stream_lane["top_scoped_resources"][0]["counters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|counter| counter["label"] == "Subscriptions" && counter["value"] == 2.0));
 
     let groups = payload["session_groups"].as_array().unwrap();
     let family_41 = groups

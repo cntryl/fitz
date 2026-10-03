@@ -93,6 +93,65 @@ fn should_accept_notice_publish_without_waiting_for_subscriber_delivery() {
 }
 
 #[test]
+fn should_deliver_large_notice_fanout_across_bounded_jobs() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let notice_pattern = "notice://acme/app/events";
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+    let publisher_address = RouteAddress::new(family, Route::new("inbox://session/1000"));
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomain::new(router.clone(), admin_read_model);
+    let subscribers = (1..=130)
+        .map(|session_id| {
+            let address =
+                RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}")));
+            let mailbox = Arc::new(Mailbox::new(8));
+            router.register(address.clone(), mailbox.clone());
+            subscribe_notice_pattern(
+                &sink,
+                &address,
+                &notice_address,
+                session_id,
+                notice_pattern,
+                family,
+            );
+            let _ = decode_notice_response(&mailbox);
+            mailbox
+        })
+        .collect::<Vec<_>>();
+
+    // Act
+    let request = crate::domains::notice::NoticeClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(1000, crate::runtime::ClientChannel::Pub, 500, family),
+        Ok(
+            crate::domains::notice::protocol::NotificationMessage::Publish(
+                crate::domains::notice::protocol::PublishMessage::new(
+                    family,
+                    Route::new(notice_pattern),
+                    Bytes::from_static(b"hello"),
+                ),
+            ),
+        ),
+    );
+    sink.deliver(Envelope::from_route(
+        publisher_address,
+        notice_address,
+        request,
+    ))
+    .expect("accept notice publish");
+
+    // Assert
+    for mailbox in subscribers {
+        mailbox
+            .receiver()
+            .recv_timeout(Duration::from_secs(1))
+            .expect("subscriber should receive notice");
+        assert!(mailbox.receiver().try_recv().is_err());
+    }
+}
+
+#[test]
 fn should_keep_notice_family_responsive_while_delivery_worker_is_blocked() {
     // Arrange
     let family = RouteFamily::new(1);

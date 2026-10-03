@@ -45,6 +45,7 @@ export function mapActiveSession(dto: SessionInfo): ActiveSession {
     messagesSent: dto.messages_sent,
     remoteAddress: dto.remote_addr,
     routeFamily: dto.route_family,
+    serviceName: dto.service_name,
     sessionId: dto.session_id,
     subject: dto.subject,
     transport: dto.transport,

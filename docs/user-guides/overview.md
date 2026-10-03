@@ -1,7 +1,15 @@
 # Fitz Overview
 
-Fitz is a single-node application broker with one route model and seven
-primitives.
+Fitz is a container-friendly application broker with one active writer per
+storage namespace, one route model, and seven primitives. Cloud-backed durable
+state can be recovered by a replacement broker process; independent workloads
+can scale across deployments through explicit sharding.
+
+This is a deliberate tradeoff: Fitz keeps broker ownership simple instead of
+coordinating a multi-node cluster. A replacement can recover persisted state,
+but clients reconnect and rebuild ephemeral session state. See the
+[deployment model](../operations/cloud-setup.md#container-deployment-and-explicit-sharding)
+for recovery and scale-out details.
 
 ## The Model
 

@@ -126,3 +126,33 @@ test("captures desktop domain navigation", async ({ page }, testInfo) => {
   await expect(page).toHaveURL(/\/admin\/1\/queue$/);
   await expect(page.locator("main#main-content")).toHaveCount(1);
 });
+
+test("applies the Fitz palette in every explicit and system color mode", async ({ page }) => {
+  // Arrange
+  const palette = () =>
+    page.evaluate(() => ({
+      background: getComputedStyle(document.body).backgroundColor,
+      primary: getComputedStyle(document.documentElement)
+        .getPropertyValue("--ak-color-primary")
+        .trim(),
+    }));
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openDashboard(page);
+  const toggle = page.getByRole("button", { name: "Toggle color theme" });
+
+  // Act
+  const systemLight = await palette();
+  await toggle.click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  const explicitDark = await palette();
+  await toggle.click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  const explicitLight = await palette();
+
+  // Assert
+  expect(systemLight.primary).toBe("#9a4a0f");
+  expect(explicitDark).toEqual({ background: "rgb(34, 27, 22)", primary: "#f5a750" });
+  expect(explicitLight.primary).toBe("#9a4a0f");
+});

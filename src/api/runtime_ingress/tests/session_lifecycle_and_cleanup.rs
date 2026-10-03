@@ -615,7 +615,7 @@ pub(super) fn should_dispatch_session_cleanup_to_all_registered_domains() {
     let failed_domains = dispatch_session_cleanup(&router, route_family, session_id);
 
     // Assert
-    assert!(failed_domains.is_empty());
+    assert_eq!(failed_domains, Vec::new());
     for (_, sink) in sinks {
         assert_eq!(sink.recorded_sessions(), vec![session_id]);
     }

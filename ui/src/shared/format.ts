@@ -1,5 +1,6 @@
+/** A missing or non-finite value renders as a placeholder, never as NaN. */
 export function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US").format(value);
+  return Number.isFinite(value) ? new Intl.NumberFormat("en-US").format(value) : "--";
 }
 
 export function formatCount(value: number, singular: string, plural = `${singular}s`) {

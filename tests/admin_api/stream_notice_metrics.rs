@@ -131,10 +131,12 @@ async fn should_classify_stream_latency_pressure_given_recorded_latency_tail_and
         realm: "prod".to_string(),
         area: "logs".to_string(),
         resource: "application".to_string(),
+        committed_event_count: 6,
         offset: 5,
         watermark: 1,
         size_bytes: 1024,
         sessions_active: 0,
+        subscriptions_active: 0,
     }]);
     let metrics = fitz::boot::observability::metrics();
     for _ in 0..10 {

@@ -21,6 +21,7 @@ export interface ActiveSession {
   messagesSent?: number;
   remoteAddress?: string;
   routeFamily?: number;
+  serviceName?: string;
   sessionId?: string;
   subject?: string;
   transport?: string;

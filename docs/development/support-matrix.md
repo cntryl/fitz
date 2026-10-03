@@ -1,6 +1,12 @@
-# Support Matrix
+# Support and Validation Matrix
 
-This matrix tracks officially validated environments and compatibility expectations.
+Fitz is pre-GA and is already used in production deployments. Production use and
+product release stage are separate facts: these deployments do not certify every
+configuration or establish a general service-level commitment.
+
+This matrix records the environments and compatibility expectations that have
+been explicitly validated. It is not a certification of every combination of
+runtime, transport, storage provider, and client version.
 
 ## Runtime Support
 
@@ -16,4 +22,6 @@ This matrix tracks officially validated environments and compatibility expectati
 
 ## Client SDK Status
 
-See sibling repositories for language-specific client maturity and release cadence.
+See sibling repositories for language-specific release versions and maintenance
+status. The cross-language conformance ledger is a dated verification snapshot;
+passing that suite does not imply a support SLA for every client version.

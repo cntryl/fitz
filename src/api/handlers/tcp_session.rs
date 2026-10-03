@@ -112,8 +112,11 @@ struct TcpFrameTaskContext {
 fn spawn_tcp_frame_task(
     frame_rx: tokio::sync::mpsc::Receiver<(u64, bytes::Bytes)>,
     context: TcpFrameTaskContext,
+    mut close_signal: tokio::sync::watch::Receiver<Option<&'static str>>,
 ) -> tokio::task::JoinHandle<Result<(), String>> {
     tokio::spawn(async move {
+        tokio::select! {
+        result = async move {
         let session_config = crate::session::NewSessionConfig::unauthenticated(
             crate::session::TransportKind::Tcp,
             None,
@@ -190,6 +193,9 @@ fn spawn_tcp_frame_task(
             );
         }
         Ok(())
+        } => result,
+        _ = close_signal.changed() => Err(close_signal.borrow().unwrap_or("session close control ended").to_string()),
+        }
     })
 }
 
@@ -332,9 +338,9 @@ pub(super) async fn handle_tcp_connection(
 
     let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
-    let sink = std::sync::Arc::new(crate::api::outbound::SessionOutboundSink::new(
-        outbound_tx.clone(),
-    ));
+    let (sink, close_signal) =
+        crate::api::outbound::SessionOutboundSink::with_close_signal(outbound_tx.clone());
+    let sink = Arc::new(sink);
     let initial_family = ingress
         .get_route_family(session_id)
         .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
@@ -379,6 +385,7 @@ pub(super) async fn handle_tcp_connection(
             session_id,
             connect_deadline: accepted_at + crate::api::ingress::CONNECT_DEADLINE,
         },
+        close_signal,
     );
 
     let handler_task = tokio::spawn(async move { handler.run().await });

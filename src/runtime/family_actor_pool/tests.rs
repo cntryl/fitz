@@ -460,8 +460,8 @@ fn should_reject_new_work_given_failed_family_actor() {
     );
     assert_eq!(runtime.health_snapshot().panic_count, 1);
     let health = runtime.health_snapshot();
-    assert!(health.healthy_families.is_empty());
-    assert!(health.degraded_families.is_empty());
+    assert_eq!(health.healthy_families, Vec::new());
+    assert_eq!(health.degraded_families, Vec::new());
     assert_eq!(health.failed_families, vec![family(1)]);
 }
 
@@ -504,7 +504,7 @@ fn should_keep_pool_running_given_one_of_several_families_panics() {
     assert_eq!(runtime.failed_family_count(), 1);
     let family_health = runtime.health_snapshot();
     assert_eq!(family_health.healthy_families, vec![family(2), family(3)]);
-    assert!(family_health.degraded_families.is_empty());
+    assert_eq!(family_health.degraded_families, Vec::new());
     assert_eq!(family_health.failed_families, vec![family(1)]);
     assert!(family_health.running);
     assert!(!family_health.failed_closed);
@@ -577,9 +577,11 @@ fn should_fail_pool_closed_after_every_family_panics() {
     assert!(!runtime.is_running());
     assert_eq!(runtime.failed_family_count(), families.len());
     let family_health = runtime.health_snapshot();
-    assert!(family_health.healthy_families.is_empty());
-    assert!(family_health.degraded_families.is_empty());
+    assert_eq!(family_health.healthy_families, Vec::new());
+    assert_eq!(family_health.degraded_families, Vec::new());
     assert_eq!(family_health.failed_families, families);
     assert!(!family_health.running);
     assert!(family_health.failed_closed);
 }
+
+mod cleanup_ordering;

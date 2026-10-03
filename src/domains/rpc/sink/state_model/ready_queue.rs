@@ -1,5 +1,5 @@
 use super::{
-    FxBuildHasher, HashMap, Route, RouteFamily, RpcCorrelationKey, RpcFastMap, RpcPendingRequest,
+    FxBuildHasher, HashMap, Route, RouteFamily, RpcFastMap, RpcPendingRequest,
     RpcPendingRequestInit, RpcQueuedDispatch, RpcQueuedRequest, RpcRouteState, RpcState, VecDeque,
 };
 
@@ -98,11 +98,8 @@ impl RpcState {
             .pop_queued_request()
             .expect("queued RPC correlation id for dispatch");
         let queued = self
-            .queued
-            .remove(&RpcCorrelationKey {
-                family,
-                correlation_id,
-            })
+            .pending
+            .remove_queued_for_family(family, &correlation_id)
             .expect("queued RPC request for dispatch");
         let RpcQueuedRequest {
             request,

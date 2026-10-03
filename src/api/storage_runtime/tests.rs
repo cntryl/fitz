@@ -111,7 +111,10 @@ async fn should_open_storage_with_configured_midge_memtable_size() {
 
     // Act
     let store = init(&config).await.expect("open memory store");
-    let metrics = store.get_runtime_metrics().expect("runtime metrics");
+    let metrics = store
+        .metrics()
+        .get_runtime_metrics()
+        .expect("runtime metrics");
 
     // Assert
     assert_eq!(metrics.memtable_size_limit, memtable_bytes);
@@ -183,7 +186,10 @@ fn should_respect_cloud_memtable_override_before_tuning() {
 
     // Assert
     let engine = cntryl_midge::Engine::open(tuned).expect("open tuned cloud engine");
-    let metrics = engine.get_runtime_metrics().expect("runtime metrics");
+    let metrics = engine
+        .metrics()
+        .get_runtime_metrics()
+        .expect("runtime metrics");
 
     assert_eq!(metrics.memtable_size_limit, memtable_bytes);
     assert_eq!(metrics.memtable_flush_threshold, memtable_bytes);
@@ -426,7 +432,10 @@ fn exercise_cloud_burst(
     }
 
     std::thread::sleep(wait_time);
-    let metrics = engine.get_runtime_metrics().expect("runtime metrics");
+    let metrics = engine
+        .metrics()
+        .get_runtime_metrics()
+        .expect("runtime metrics");
     engine
         .shutdown(crate::testkit::scaled_test_timeout(Duration::from_secs(10)))
         .expect("shutdown cloud-simulated engine");

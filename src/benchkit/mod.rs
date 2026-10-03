@@ -10,6 +10,7 @@ pub mod runtime;
 pub mod storage;
 pub mod stream;
 pub mod stream_admin;
+pub mod stream_response;
 pub mod transport;
 
 #[cfg(any(test, feature = "benchkit"))]
@@ -48,9 +49,9 @@ pub use transport::{
     build_stream_begin, build_stream_commit, build_stream_get_metadata, build_stream_last,
     build_stream_read, build_stream_read_with_cursor, build_stream_read_with_limit,
     build_stream_read_with_snapshot_cursor, build_stream_rollback, build_stream_subscribe,
-    count_stream_read_records_from_payload, ensure_schedule_ok, extract_single_tlv_field,
-    parse_kv_response, parse_kv_tx_id, parse_lease_extend_token_response, parse_lease_response,
-    parse_lease_token_response, parse_notice_delivery, parse_notice_response,
+    build_stream_unsubscribe, count_stream_read_records_from_payload, ensure_schedule_ok,
+    extract_single_tlv_field, parse_kv_response, parse_kv_tx_id, parse_lease_extend_token_response,
+    parse_lease_response, parse_lease_token_response, parse_notice_delivery, parse_notice_response,
     parse_notice_subscription_id, parse_queue_response, parse_rpc_response,
     parse_schedule_response, parse_stream_read_record_count, parse_stream_response,
     parse_stream_session_id, NoticeDelivery,

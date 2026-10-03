@@ -8,6 +8,10 @@ use std::time::Duration;
 pub(super) enum KvDomainCommand {
     Deliver(crate::runtime::Envelope),
     CleanupSession(u64, crossbeam_channel::Sender<()>),
+    RestoreSnapshot(
+        crate::snapshot::SnapshotArtifact,
+        crossbeam_channel::Sender<Result<Vec<String>, String>>,
+    ),
     #[cfg(test)]
     SyncAdminSnapshot(crossbeam_channel::Sender<()>),
     #[cfg(test)]
@@ -120,9 +124,9 @@ impl KvDomain {
             .expect("receive KV actor inspection reply");
     }
 
-    /// Return the number of live KV transactions, or zero if the actor does not reply.
+    /// Return the number of active KV transactions across all route families.
     #[must_use]
     pub fn active_transaction_count(&self) -> usize {
-        self.config.projection.active_transaction_count()
+        self.config.active_transactions.count()
     }
 }

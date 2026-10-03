@@ -180,7 +180,7 @@ impl RpcDomain {
 
     #[cfg(test)]
     pub(super) fn queued_request_count_for_tests(&self) -> usize {
-        self.inspect_primary_state_for_tests(|state| state.queued.len())
+        self.inspect_primary_state_for_tests(|state| state.pending.queued_len())
     }
 
     #[cfg(test)]

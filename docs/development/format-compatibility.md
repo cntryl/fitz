@@ -45,6 +45,12 @@ Unlike the generation-2 error envelope, this is not a clean break — both
 generations coexist indefinitely by design, because the uncorrelated path is
 also the legacy-broker path and clients keep it permanently.
 
+`SESSION_METADATA` (5) is a capability-gated client-to-server control message.
+Clients send it only after `SERVER_HELLO` advertises `CAP_SESSION_METADATA`, so
+new clients do not send an unknown message to older brokers. Its addition does
+not change CONNECT or any existing payload, and the optional active-session
+`service_name` field is omitted when no name is reported.
+
 ## Compatibility Rules
 
 1. Backward-incompatible wire changes require explicit release notes and migration guidance.
@@ -87,6 +93,21 @@ string (`0` = `broadcast`, `1` = `single`), and LIST returns the byte in the
 same position. This is a clean client wire break; older CREATE payloads are
 rejected and there is no negotiation shim. New writes use versioned rows that
 persist the mode.
+
+## Midge 0.3 cloud storage metadata
+
+Fitz now embeds `cntryl-midge` 0.3.0. For provider-backed cloud storage it
+commits immutable `FORMAT`, manifest, journal, and intent generations under
+`metadata/generations/`, fenced by a version 2 lease descriptor and a version 2
+DDL registry. It rejects the legacy lease and mutable metadata written by Midge
+0.2.0, so an existing cloud prefix cannot be opened in place. This is a
+breaking storage change for `FITZ_STORAGE_MODE=cloud` only; the local format
+(FORMAT 4, SST V4) and all Fitz row encodings are unchanged.
+
+Upgrade requires a logical export with the old broker and import into a new
+empty prefix, or a fresh prefix rebuilt from the operator's source of truth.
+Rollback returns to the preserved original prefix with the previous broker.
+See [../operations/migration-guide.md](../operations/migration-guide.md).
 
 ## Single-generation storage formats
 

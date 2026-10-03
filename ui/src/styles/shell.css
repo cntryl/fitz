@@ -1,3 +1,14 @@
+.operator-context-root {
+  /* A compact bar; the sticky sidebar offset reads the same token. */
+  --ak-layout-navbar-height: 3.25rem;
+}
+
+/* One hairline in the subtle border color instead of Askr's border plus shadow. */
+.operator-shell-header {
+  border-block-end-color: var(--ak-color-border-subtle);
+  box-shadow: none;
+}
+
 .operator-shell-navbar {
   grid-template-columns: minmax(0, 1fr) auto;
 }

@@ -40,6 +40,9 @@ impl RuntimeIngress {
             router: None,
             registry: registry.clone(),
             auth_required,
+            stream_dispatch_permits: Arc::new(tokio::sync::Semaphore::new(
+                super::domain_frame_dispatcher::STREAM_DISPATCH_CONCURRENCY,
+            )),
         };
         Self {
             registry,

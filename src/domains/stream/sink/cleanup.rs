@@ -32,16 +32,29 @@ impl SessionScoped for StreamFamilyState {
     }
 
     fn release_session_resources(&mut self, session_id: u64) {
+        let subscriptions_removed = self
+            .subscriptions
+            .families
+            .values()
+            .map(|state| state.subscription_count_for_session(session_id))
+            .sum::<usize>()
+            > 0;
         self.unsubscribe_all(session_id);
 
         let mut removed_sessions = Vec::new();
+        let mut idle_keys = Vec::new();
         let mut advanced_families = std::collections::BTreeSet::new();
         for (key, actor) in &mut self.actors {
             if let Some(stream_session_id) = actor.cleanup_session(session_id) {
                 removed_sessions.push(stream_session_id);
+                idle_keys.push(key.clone());
                 advanced_families.insert(key.family.as_u64());
             }
         }
+        for key in idle_keys {
+            self.actors.remove(&key);
+        }
+        let sessions_removed = !removed_sessions.is_empty();
 
         for family_id in advanced_families {
             self.handle_visibility_advance(
@@ -53,11 +66,14 @@ impl SessionScoped for StreamFamilyState {
         if !removed_sessions.is_empty() {
             let removed_count = super::model::usize_to_u64_saturating(removed_sessions.len());
             for stream_session_id in removed_sessions {
-                self.session_owners.remove(&stream_session_id);
+                self.session_owners.remove(stream_session_id);
             }
             self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
-            self.admin_snapshot.mark_dirty();
         }
-        self.refresh_metrics_gauges();
+        if subscriptions_removed || sessions_removed {
+            self.mark_admin_snapshot_dirty();
+        } else {
+            self.refresh_metrics_gauges();
+        }
     }
 }

@@ -9,7 +9,7 @@ import { formatCount, formatNumber, formatTimestamp } from "@/shared/format";
 const scheduleMetricColumns: readonly DomainResourceMetricColumn[] = [
   {
     id: "enabled",
-    header: "Enabled",
+    header: "Enabled schedules",
     width: "14%",
     cell: (row) => formatNumber(row.schedulesActive ?? 0),
     sortValue: (row) => row.schedulesActive,
@@ -23,7 +23,8 @@ const scheduleMetricColumns: readonly DomainResourceMetricColumn[] = [
   },
   {
     id: "next-run",
-    header: "Next run",
+    header: "Earliest next run",
+    rollup: "earliest",
     width: "20%",
     cell: (row) => (row.nextRun ? formatTimestamp(row.nextRun) : "--"),
     sortValue: (row) => {
@@ -36,6 +37,7 @@ const scheduleMetricColumns: readonly DomainResourceMetricColumn[] = [
 interface ScheduleHealth {
   detail: string;
   label: "Ready" | "Pressure" | "Attention";
+  reason: string;
   tone: "success" | "warning" | "danger";
 }
 
@@ -59,6 +61,7 @@ function summarizeScheduleHealth(stats: ScheduleOverview["stats"]): ScheduleHeal
     return {
       detail: `${baseDetail} Pending fire claims are waiting for live handoff. Cumulative failures describe process history, not a current incident.`,
       label: "Pressure",
+      reason: `${formatCount(stats.pendingFireClaims, "due run is", "due runs are")} waiting for a subscriber to claim them. Sort realms by Pending claims to find them.`,
       tone: "warning",
     };
   }
@@ -71,6 +74,7 @@ function summarizeScheduleHealth(stats: ScheduleOverview["stats"]): ScheduleHeal
           )} schedule ${stats.subscriptionsActive === 1 ? "subscription is" : "subscriptions are"} currently visible; downstream handling is not reported. Cumulative failures describe process history, not a current incident.`
         : `${baseDetail} No schedule subscriptions are currently visible; this does not prove downstream availability. Cumulative failures describe process history, not a current incident.`,
     label: "Ready",
+    reason: "No due runs are waiting to be claimed.",
     tone: "success",
   };
 }
@@ -108,6 +112,7 @@ export default function SchedulePage() {
       emptyDescription="No schedule resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={scheduleMetricColumns}
+      reason={stats ? health.reason : undefined}
       stats={[
         { label: "Active", value: stats ? formatNumber(stats.schedulesActive) : "--" },
         { label: "Pending claims", value: stats ? formatNumber(stats.pendingFireClaims) : "--" },

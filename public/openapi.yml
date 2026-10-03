@@ -4997,7 +4997,7 @@ components:
 
     StreamResourceCollection:
       type: object
-      description: Resource rollups combining durable committed Stream metadata with current-process append sessions.
+      description: Resource rollups combining durable committed Stream metadata with current-process append sessions and live subscriptions.
       required: [realm, area, resources]
       properties:
         realm: { type: string }
@@ -5007,13 +5007,14 @@ components:
           items: { $ref: "#/components/schemas/StreamResourceEntry" }
     StreamResourceEntry:
       type: object
-      description: "`committed_event_count` and `size_bytes` are durable committed metadata. `sessions_active` is live broker-local state and resets on disconnect cleanup or restart."
-      required: [resource, committed_event_count, size_bytes, sessions_active]
+      description: "`committed_event_count` and `size_bytes` are durable committed metadata. `sessions_active` and `subscriptions_active` are live broker-local state and reset on disconnect cleanup or restart. Exact subscriptions may create zero-committed resource rows; wildcard subscriptions count only on already-visible concrete rows."
+      required: [resource, committed_event_count, size_bytes, sessions_active, subscriptions_active]
       properties:
         resource: { type: string }
         committed_event_count: { type: integer, format: int64 }
         size_bytes: { type: integer, format: int64 }
         sessions_active: { type: integer }
+        subscriptions_active: { type: integer }
 
     LeaseResourceCollection:
       type: object
@@ -5902,9 +5903,9 @@ components:
 
     StreamResourceDetail:
       type: object
-      description: Durable committed stream metadata for one resource plus the current broker process's live append-session count. `offset`, `watermark`, and `size_bytes` survive restart; `sessions_active` is ephemeral and resets on disconnect cleanup or broker restart.
+      description: Durable committed stream metadata for one resource plus the current broker process's live append-session and subscription counts. `offset`, `watermark`, and `size_bytes` survive restart; `sessions_active` and `subscriptions_active` are ephemeral and reset on disconnect cleanup or broker restart.
       required:
-        [realm, area, resource, offset, watermark, size_bytes, sessions_active, diagnostics]
+        [realm, area, resource, offset, watermark, size_bytes, sessions_active, subscriptions_active, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -5913,6 +5914,7 @@ components:
         watermark: { type: integer }
         size_bytes: { type: integer }
         sessions_active: { type: integer }
+        subscriptions_active: { type: integer }
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
 
@@ -5986,17 +5988,16 @@ components:
 
     ScheduleResourceDetail:
       type: object
-      description: Durable, boot-loaded schedule definition detail for the current broker. This describes persisted timing intent, not durable subscriber delivery or durable execution history. `executions_total` remains a non-authoritative placeholder until durable execution history exists.
+      description: Rollup across the durable, boot-loaded schedules a resource groups. `enabled` is true when any schedule is enabled and `next_run` is the earliest next run among enabled schedules. A schedule's cron belongs to that schedule (see ScheduleExecutionObservation), never to the resource. This describes persisted timing intent, not durable subscriber delivery or durable execution history. `executions_total` remains a non-authoritative placeholder until durable execution history exists.
       required: [realm, area, resource, enabled, executions_total, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
         enabled: { type: boolean }
-        cron:
-          type: [string, "null"]
         next_run:
           type: [string, "null"]
+          description: Earliest next run across the resource's enabled schedules; null when none is enabled.
         executions_total:
           type: integer
           description: Non-authoritative current broker counter. This is not durable execution history.
@@ -6301,6 +6302,9 @@ components:
       type: object
       properties:
         session_id: { type: string }
+        service_name:
+          type: string
+          description: Optional service name reported by the connected client after protocol capability negotiation.
         route_family:
           type: integer
           description: Resolved Fitz route family for this active session.

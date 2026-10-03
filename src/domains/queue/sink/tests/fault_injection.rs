@@ -6,12 +6,16 @@
 //! table, and an admin purge on an unrelated queue racing a parked
 //! RESERVE.
 
+use super::reservation_book::{
+    MAX_PENDING_QUEUE_RESERVES_PER_FAMILY, MAX_PENDING_QUEUE_RESERVES_PER_SESSION,
+};
 use super::routing_watch_and_admin::{
     encode_queue_ack, encode_queue_reserve, encode_queue_reserve_wait, encode_queue_send,
     encode_queue_watch, new_queue_domain_sink, receive_queue_frame, receive_response_first_message,
     watch_response_subscription_id,
 };
 use super::*;
+use std::time::{Duration, Instant};
 
 fn queue_key(
     family: RouteFamily,
@@ -25,6 +29,184 @@ fn queue_key(
         area: area.to_string(),
         resource: resource.to_string(),
     }
+}
+
+fn pending_reserve_count(sink: &QueueDomain, family: RouteFamily) -> usize {
+    sink.inspect_family_for_tests(family, |state| state.reservation_book.pending_count())
+}
+
+fn park_queue_reserve(
+    sink: &QueueDomain,
+    family: RouteFamily,
+    queue_address: &RouteAddress,
+    session_id: u64,
+    inbox: &RouteAddress,
+) {
+    sink.deliver(Envelope::from_route(
+        inbox.clone(),
+        queue_address.clone(),
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve_wait("queue://acme/jobs/waiters", 30, 1, 30),
+            family,
+        ),
+    ))
+    .expect("queue long-poll reserve");
+}
+
+#[test]
+fn should_reject_long_poll_when_family_reserve_capacity_is_full() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let router = Arc::new(Router::new());
+    let mut clients = Vec::new();
+    for session_id in
+        1..=(MAX_PENDING_QUEUE_RESERVES_PER_FAMILY / MAX_PENDING_QUEUE_RESERVES_PER_SESSION) as u64
+    {
+        let inbox = RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}")));
+        let mailbox = Arc::new(Mailbox::new(MAX_PENDING_QUEUE_RESERVES_PER_SESSION + 1));
+        router.register(inbox.clone(), mailbox.clone());
+        clients.push((session_id, inbox, mailbox));
+    }
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router.clone(),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::Buffered,
+    );
+    for (session_id, inbox, _) in &clients {
+        for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
+            park_queue_reserve(&sink, family, &queue_address, *session_id, inbox);
+        }
+    }
+    let overflow_session = u64::try_from(clients.len()).expect("client count") + 1;
+    let overflow_inbox = RouteAddress::new(
+        family,
+        Route::new(format!("inbox://session/{overflow_session}")),
+    );
+    let overflow_mailbox = Arc::new(Mailbox::new(1));
+    router.register(overflow_inbox.clone(), overflow_mailbox.clone());
+
+    // Act
+    park_queue_reserve(
+        &sink,
+        family,
+        &queue_address,
+        overflow_session,
+        &overflow_inbox,
+    );
+    let response = receive_queue_frame(&overflow_mailbox, "over-capacity reserve response");
+
+    // Assert
+    assert_eq!(
+        pending_reserve_count(&sink, family),
+        MAX_PENDING_QUEUE_RESERVES_PER_FAMILY
+    );
+    assert_eq!(
+        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(&response.payload)
+            .get_u8()
+            .expect("queue error status"),
+        1
+    );
+}
+
+#[test]
+fn should_release_long_poll_capacity_when_session_is_cleaned_up() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let inbox = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let mailbox = Arc::new(Mailbox::new(MAX_PENDING_QUEUE_RESERVES_PER_SESSION + 1));
+    let router = Arc::new(Router::new());
+    router.register(inbox.clone(), mailbox);
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::Buffered,
+    );
+    for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
+        park_queue_reserve(&sink, family, &queue_address, 8, &inbox);
+    }
+
+    // Act
+    sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("queue://cleanup")),
+        crate::runtime::SessionCleanup { session_id: 8 },
+    ))
+    .expect("clean queue session");
+
+    // Assert
+    assert_eq!(pending_reserve_count(&sink, family), 0);
+    assert!(sink.inspect_family_for_tests(family, |state| state.reservation_book.can_enqueue(8)));
+}
+
+#[test]
+fn should_reject_long_poll_when_session_reserve_capacity_is_full() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let inbox = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let mailbox = Arc::new(Mailbox::new(MAX_PENDING_QUEUE_RESERVES_PER_SESSION + 1));
+    let router = Arc::new(Router::new());
+    router.register(inbox.clone(), mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::Buffered,
+    );
+    for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
+        park_queue_reserve(&sink, family, &queue_address, 8, &inbox);
+    }
+
+    // Act
+    park_queue_reserve(&sink, family, &queue_address, 8, &inbox);
+    let response = receive_queue_frame(&mailbox, "per-session capacity response");
+
+    // Assert
+    assert_eq!(
+        pending_reserve_count(&sink, family),
+        MAX_PENDING_QUEUE_RESERVES_PER_SESSION
+    );
+    assert_eq!(
+        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(&response.payload)
+            .get_u8()
+            .expect("queue error status"),
+        1
+    );
+}
+
+#[test]
+fn should_release_long_poll_capacity_when_reserves_expire() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let inbox = RouteAddress::new(family, Route::new("inbox://session/9"));
+    let mailbox = Arc::new(Mailbox::new(MAX_PENDING_QUEUE_RESERVES_PER_SESSION + 1));
+    let router = Arc::new(Router::new());
+    router.register(inbox.clone(), mailbox);
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::Buffered,
+    );
+    for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
+        park_queue_reserve(&sink, family, &queue_address, 9, &inbox);
+    }
+
+    // Act
+    sink.inspect_family_for_tests(family, |state| {
+        state.expire_pending_reserves_at(Instant::now() + Duration::from_secs(31));
+    });
+
+    // Assert
+    assert_eq!(pending_reserve_count(&sink, family), 0);
+    assert!(sink.inspect_family_for_tests(family, |state| state.reservation_book.can_enqueue(9)));
 }
 
 #[test]
@@ -391,5 +573,39 @@ fn should_not_wake_pending_reserve_when_an_unrelated_dead_letter_is_purged() {
     assert!(
         waiter_mailbox.receiver().try_recv().is_err(),
         "purge of an unrelated dead letter must not wake this parked reserve"
+    );
+}
+
+/// Sequence: fast mode marks a family dirty -> the background flush fails.
+///
+/// Invariant: the failure is counted for alerting and the family stays dirty,
+/// so the next flush pass retries instead of silently widening the loss window.
+#[test]
+fn should_count_and_retain_failed_fast_flushes() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::BestEffort,
+    );
+    let failures_before = crate::observability::metrics()
+        .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL);
+
+    // Act
+    let retained = sink.inspect_family_for_tests(family, |state| {
+        state.dirty_fast_flush_families.insert(1);
+        crate::domains::queue::actor::recovery_store::QueueStore::fail_next_flush_for_tests();
+        state.flush_dirty_fast_families();
+        state.dirty_fast_flush_families.contains(&1)
+    });
+
+    // Assert
+    assert!(retained);
+    assert!(
+        crate::observability::metrics()
+            .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL)
+            > failures_before
     );
 }

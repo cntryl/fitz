@@ -46,7 +46,27 @@ impl KvDomain {
         session_id: u64,
         actor: crate::domains::kv::KvActor,
     ) {
+        let started_at = chrono::Utc::now().to_rfc3339();
+        let transactions = actor
+            .active_transaction_snapshots()
+            .into_iter()
+            .map(|snapshot| {
+                crate::control::admin::KvTransaction::snapshot(
+                    snapshot.scope.route_family.as_u64(),
+                    snapshot.tx_id,
+                    session_id,
+                    &snapshot.scope.realm,
+                    &snapshot.scope.area,
+                    &snapshot.scope.resource,
+                    &started_at,
+                )
+            })
+            .collect::<Vec<_>>();
         self.inspect_for_tests(move |core| {
+            for transaction in &transactions {
+                core.active_transactions
+                    .upsert(session_id, transaction, None);
+            }
             core.actors.insert(session_id, actor);
         });
     }

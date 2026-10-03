@@ -75,7 +75,7 @@ impl QueueFamilyState {
             let Ok(key) = Self::queue_key_for_route(family_id, &route) else {
                 continue;
             };
-            let Some(warm_actor) = self.actors.get_mut(&key) else {
+            let Some(warm_actor) = self.actor_registry.get_mut(&key) else {
                 continue;
             };
             if warm_actor
@@ -226,8 +226,8 @@ impl QueueFamilyState {
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
     ) {
-        let actors = &self.actors;
-        let ready_snapshots: Vec<_> = actors
+        let ready_snapshots: Vec<_> = self
+            .actor_registry
             .iter()
             .filter(|(key, _)| key.family == family_id)
             .filter_map(|(key, warm_actor)| {
@@ -236,7 +236,6 @@ impl QueueFamilyState {
                 (counts.ready > 0 && pattern.matches(&route)).then_some((route, counts))
             })
             .collect();
-        let _ = actors;
 
         for (route, counts) in ready_snapshots {
             self.route_queue_notify_to_subscription(
@@ -532,7 +531,7 @@ impl QueueFamilyState {
             };
         self.observe_histogram_us(obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY, actor_lock_us);
         if counts.total() > 0 {
-            self.known_queue_keys.insert(key.clone());
+            self.reservation_book.insert_key(key.clone());
         }
         let notification = self.record_ready_state(key, counts);
         self.observe_histogram_us(obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY, actor_exec_us);

@@ -885,7 +885,6 @@ export type ScheduleResourceDetail = {
   "area": string;
   "resource": string;
   "enabled": boolean;
-  "cron"?: string | null;
   "next_run"?: string | null;
   "executions_total": number;
   "diagnostics": DiagnosticSnapshot;
@@ -928,6 +927,7 @@ export type ScheduleStats = {
 
 export type SessionInfo = {
   "session_id"?: string;
+  "service_name"?: string;
   "route_family"?: number;
   "subject"?: string;
   "identity_claim"?: string;
@@ -1032,6 +1032,7 @@ export type StreamResourceDetail = {
   "watermark": number;
   "size_bytes": number;
   "sessions_active": number;
+  "subscriptions_active": number;
   "diagnostics": DiagnosticSnapshot;
 };
 
@@ -1040,6 +1041,7 @@ export type StreamResourceEntry = {
   "committed_event_count": number;
   "size_bytes": number;
   "sessions_active": number;
+  "subscriptions_active": number;
 };
 
 export type StreamStats = {

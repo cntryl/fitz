@@ -23,7 +23,7 @@ impl KvFamilyRuntime<'_> {
             self.route_kv_response(envelope, meta, &response, request_started)?;
             return Ok(());
         }
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = Self::error_response("session already closed");
             self.route_kv_response(envelope, meta, &response, request_started)?;
             return Ok(());
@@ -69,6 +69,8 @@ impl KvFamilyRuntime<'_> {
             admin_update,
             commit_notification,
         } = self.dispatch_actor_operation(session_id, meta, kv_message);
+        self.collect_inventory_repairs(session_id);
+        self.retry_inventory_repairs();
         if matches!(
             &response,
             KvResponse::Error {
@@ -202,7 +204,10 @@ impl KvFamilyRuntime<'_> {
             );
             KvOperationOutcome::new(
                 response,
-                KvAdminTransactionUpdate::Upsert(transaction),
+                KvAdminTransactionUpdate::Upsert {
+                    session_id,
+                    transaction,
+                },
                 None,
             )
         } else {

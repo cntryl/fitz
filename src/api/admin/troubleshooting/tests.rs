@@ -215,10 +215,12 @@ fn should_not_classify_stream_latency_as_pressure_when_watermarks_are_caught_up(
         realm: "prod".to_string(),
         area: "events".to_string(),
         resource: "orders".to_string(),
+        committed_event_count: 1224,
         offset: 1223,
         watermark: 1223,
         size_bytes: 8192,
         sessions_active: 0,
+        subscriptions_active: 0,
     }];
     let latency_buckets = StreamLatencyBuckets {
         under_100ms: 1650,

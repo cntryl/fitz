@@ -51,7 +51,7 @@ fn should_persist_delayed_promotion_before_restart() {
     // Assert
     assert_eq!(actor.ready_len(), 1);
     assert_eq!(actor.persisted_delayed.len(), 0);
-    assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+    assert_eq!(read_delayed_index_entries(&store, &queue_key), Vec::new());
     assert_eq!(read_ready_index_ranges(&store, &queue_key).len(), 1);
     assert_eq!(recovered.ready_len(), 1);
     assert_eq!(recovered.persisted_delayed.len(), 0);
@@ -134,8 +134,8 @@ fn should_recover_mixed_batch_visibility_counts_after_restart() {
             QueueResponse::Acked
         );
     }
-    assert!(read_ready_index_ranges(&store, &queue_key).is_empty());
-    assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+    assert_eq!(read_ready_index_ranges(&store, &queue_key), Vec::new());
+    assert_eq!(read_delayed_index_entries(&store, &queue_key), Vec::new());
     assert_eq!(recovered.admin_snapshot().messages_total, 0);
 }
 
@@ -518,6 +518,66 @@ fn should_recover_reserved_unacked_message_as_ready_after_restart() {
 }
 
 #[test]
+fn should_keep_successfully_acked_message_absent_after_restart() {
+    // Arrange
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-acked-restart");
+    let message_id = {
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let QueueResponse::Sent { id } = actor.handle_send(Bytes::from_static(b"acked"), None)
+        else {
+            panic!("message should be sent");
+        };
+        let QueueResponse::Received { messages } =
+            actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1))
+        else {
+            panic!("message should be reserved");
+        };
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, id);
+        assert_eq!(
+            actor.handle_ack_for_session(TEST_SESSION_ID, id, messages[0].token),
+            QueueResponse::Acked
+        );
+        assert_eq!(actor.ready_len(), 0);
+        id
+    };
+
+    // Act
+    let mut recovered = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key.clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let response = recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+    // Assert
+    match response {
+        QueueResponse::NotFound => {}
+        QueueResponse::Received { messages } => assert_eq!(messages, Vec::new()),
+        other => panic!("acknowledged message {message_id} reappeared: {other:?}"),
+    }
+    assert_eq!(recovered.admin_snapshot().messages_total, 0);
+    assert_eq!(read_ready_index_ranges(&store, &queue_key), Vec::new());
+    assert_eq!(read_delayed_index_entries(&store, &queue_key), Vec::new());
+}
+
+#[test]
 fn should_dead_letter_unhydratable_head_plus_deliver_next_message() {
     // Arrange
     let store = Arc::new(
@@ -681,6 +741,43 @@ fn should_redeliver_message_on_retry_sweep_after_redelivery_commit_failure() {
     let (msg_id, _) = send_and_reserve_single_message(&mut actor, "test message");
     clock.advance(Duration::from_secs(31));
     QueueActor::fail_next_redelivery_commit_for_tests();
+    actor.process_expired_timers();
+    clock.advance(Duration::from_secs(1));
+
+    // Act
+    actor.process_expired_timers();
+
+    // Assert
+    assert_eq!(actor.ready_len(), 1);
+    assert_eq!(actor.inflight.len(), 0);
+    assert!(actor.ready_contains(msg_id));
+}
+
+#[test]
+fn should_redeliver_message_on_retry_sweep_after_redelivery_record_load_failure() {
+    // Arrange
+    let clock = MockClock::new();
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-redelivery-load-retry");
+    let mut actor = QueueActor::with_clock(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        Box::new(clock.clone()),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let (msg_id, _) = send_and_reserve_single_message(&mut actor, "test message");
+    actor.records.clear();
+    clock.advance(Duration::from_secs(31));
+    QueueActor::fail_next_record_load_for_tests();
     actor.process_expired_timers();
     clock.advance(Duration::from_secs(1));
 

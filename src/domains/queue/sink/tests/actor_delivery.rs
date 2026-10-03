@@ -205,6 +205,10 @@ fn should_wake_fifo_long_poll_reserve_when_matching_message_is_enqueued() {
         decode_concrete_reserve_response(&reserve),
         vec![b"late".to_vec()]
     );
+    assert_eq!(
+        sink.inspect_family_for_tests(family, |state| state.reservation_book.pending_count()),
+        0
+    );
 }
 
 fn seed_dead_letter(

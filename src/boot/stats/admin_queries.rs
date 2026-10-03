@@ -177,6 +177,70 @@ impl Runtime {
         domains.kv_admin_scan_committed_rows(request)
     }
 
+    /// Capture selected KV resources into a complete checksummed artifact.
+    ///
+    /// The selector binds capture to an explicit route family.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selector is not a KV selector or the
+    /// committed row scan fails.
+    pub fn capture_kv_snapshot(
+        &self,
+        selector: &crate::snapshot::SnapshotSelector,
+    ) -> Result<crate::snapshot::SnapshotArtifact, String> {
+        let domains = self
+            .domain_admins
+            .read()
+            .clone()
+            .ok_or_else(|| "KV domain is not initialized".to_string())?;
+        domains.kv_admin_capture_snapshot(selector)
+    }
+
+    /// Restore a validated KV snapshot through its selected family actor.
+    ///
+    /// # Errors
+    /// Returns an error when validation, family dispatch, or storage fails.
+    pub fn restore_kv_snapshot(&self, bytes: &[u8]) -> Result<Vec<String>, String> {
+        let domains = self
+            .domain_admins
+            .read()
+            .clone()
+            .ok_or_else(|| "KV domain is not initialized".to_string())?;
+        domains.kv_admin_restore_snapshot(bytes)
+    }
+
+    /// Capture committed readable Stream history through the family actor.
+    ///
+    /// # Errors
+    /// Returns an error when the selector is invalid, the family is
+    /// unavailable, or history cannot be read completely.
+    pub fn capture_stream_snapshot(
+        &self,
+        selector: &crate::snapshot::SnapshotSelector,
+    ) -> Result<crate::snapshot::SnapshotArtifact, String> {
+        let domains = self
+            .domain_admins
+            .read()
+            .clone()
+            .ok_or_else(|| "Stream domain is not initialized".to_string())?;
+        domains.stream_admin_capture_snapshot(selector)
+    }
+
+    /// Restore a Stream artifact into an empty matching destination.
+    ///
+    /// # Errors
+    /// Returns an error when validation fails, matching history exists, or
+    /// replay cannot complete.
+    pub fn restore_stream_snapshot(&self, bytes: &[u8]) -> Result<Vec<String>, String> {
+        let domains = self
+            .domain_admins
+            .read()
+            .clone()
+            .ok_or_else(|| "Stream domain is not initialized".to_string())?;
+        domains.stream_admin_restore_snapshot(bytes)
+    }
+
     #[must_use]
     pub fn stream_list_streams(
         &self,
@@ -441,6 +505,7 @@ impl Runtime {
                 let claims = session.claims.as_ref();
                 crate::control::admin::SessionInfo {
                     session_id: session.session_id.to_string(),
+                    service_name: session.metadata.service_name(),
                     route_family: session.route_family.as_u64(),
                     subject: claims.map(|claims| claims.sub.clone()).unwrap_or_default(),
                     identity_claim: claims

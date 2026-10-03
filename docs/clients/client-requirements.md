@@ -124,6 +124,8 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-023 (T0)** The client MUST NOT treat the presence of a correlation record as a response-vs-notification discriminator. `NOTIFY` frames are never correlated and MUST continue to be routed by message type and subscription id.
 
+**REQ-PROTO-024 (T1)** A client MAY report a service name using `SESSION_METADATA` (5) only after observing `SERVER_HELLO` with `CAP_SESSION_METADATA`. The payload is one length-prefixed UTF-8 string, 1–128 bytes after trimming, with no control characters. The client MUST NOT send this message to a broker that did not advertise the capability.
+
 ---
 
 ## 2. API Completeness

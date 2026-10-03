@@ -45,10 +45,6 @@ impl KvFamilyRuntime<'_> {
             .histogram_observe_ms(crate::domains::kv::metrics::METRIC_LATENCY_MS, elapsed_ms);
     }
 
-    pub(super) fn active_transaction_count(&self) -> usize {
-        self.core.projection.active_transaction_count()
-    }
-
     #[cfg(test)]
     pub(super) fn sync_admin_snapshot(&self) {
         let started_at = Utc::now().to_rfc3339();
@@ -82,10 +78,21 @@ impl KvFamilyRuntime<'_> {
     pub(super) fn apply_admin_transaction_update(&self, update: KvAdminTransactionUpdate) {
         match update {
             KvAdminTransactionUpdate::None => return,
-            KvAdminTransactionUpdate::Upsert(transaction) => {
+            KvAdminTransactionUpdate::Upsert {
+                session_id,
+                transaction,
+            } => {
+                self.core.active_transactions.upsert(
+                    session_id,
+                    &transaction,
+                    self.core.metrics.as_ref(),
+                );
                 self.core.projection.upsert_transaction(transaction);
             }
             KvAdminTransactionUpdate::Remove { session_id, tx_id } => {
+                self.core
+                    .active_transactions
+                    .remove(session_id, tx_id, self.core.metrics.as_ref());
                 self.core.projection.remove_transaction(session_id, tx_id);
             }
         }
@@ -94,7 +101,7 @@ impl KvFamilyRuntime<'_> {
 
     pub(super) fn refresh_metrics_gauges(&self) {
         if let Some(metrics) = &self.core.metrics {
-            metrics.set_active_transactions(self.active_transaction_count());
+            self.core.active_transactions.refresh_gauge(metrics);
             metrics.set_subscription_count(self.subscription_count());
         }
     }
@@ -111,12 +118,9 @@ impl KvFamilyRuntime<'_> {
         &self,
         resource_key: &KvResourceLockKey,
     ) -> usize {
-        self.core.projection.active_transactions_for_resource(
-            resource_key.family_id,
-            &resource_key.realm,
-            &resource_key.area,
-            &resource_key.resource,
-        )
+        self.core
+            .active_transactions
+            .count_for_resource(resource_key)
     }
 
     pub(super) fn latency_snapshots(

@@ -66,3 +66,6 @@ export interface RpcCallSearchRequest {
   resource?: string;
   routeFamily: number | string;
 }
+
+/** Handled counts sum the current exact-name workers; wildcard workers cannot be attributed. */
+export const RPC_HANDLED_CAPTION = "Current exact-name workers only; excludes wildcard workers";

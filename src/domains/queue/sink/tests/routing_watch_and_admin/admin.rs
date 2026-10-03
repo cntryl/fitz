@@ -368,5 +368,5 @@ pub(super) fn should_refresh_queue_admin_snapshot_with_live_queue_state() {
     assert_eq!(inflight[0].message_id, 1);
     assert_eq!(inflight[0].session_id, worker_session_id.to_string());
     assert_eq!(inflight[0].attempts, 1);
-    assert!(!inflight[0].expires_at.is_empty());
+    assert_ne!(inflight[0].expires_at, "");
 }

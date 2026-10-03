@@ -2,7 +2,7 @@ import DomainInventoryPage from "@/components/shared/domain-inventory-page";
 import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import { createQueueInventoryQuery, createQueueOverviewQuery } from "@/features/queue/queue-query";
 import type { QueueStatsSummary } from "@/features/queue/queue-models";
-import { formatDurationSeconds, formatNumber } from "@/shared/format";
+import { formatCount, formatDurationSeconds, formatNumber } from "@/shared/format";
 
 function queueVisibleCount(stats: QueueStatsSummary) {
   return (
@@ -41,14 +41,28 @@ function describeQueueStats(stats: QueueStatsSummary) {
 
 function queueStatus(stats: QueueStatsSummary) {
   if (stats.messagesDeadLettered > 0) {
-    return { label: "Attention" as const, tone: "danger" as const };
+    return {
+      label: "Attention" as const,
+      reason: `${formatCount(stats.messagesDeadLettered, "message is", "messages are")} dead-lettered and need inspection or replay. Sort realms by Dead-lettered to find them.`,
+      tone: "danger" as const,
+    };
   }
 
   if (queueVisibleCount(stats) > 0) {
-    return { label: "Active" as const, tone: "info" as const };
+    return {
+      label: "Active" as const,
+      reason: `Work is flowing with no dead letters; the oldest backlog has waited ${formatDurationSeconds(
+        stats.oldestBacklogAgeSeconds,
+      )}.`,
+      tone: "info" as const,
+    };
   }
 
-  return { label: "Live" as const, tone: "success" as const };
+  return {
+    label: "Healthy" as const,
+    reason: "No queued work is waiting.",
+    tone: "success" as const,
+  };
 }
 
 export default function QueuePage() {
@@ -66,6 +80,7 @@ export default function QueuePage() {
     },
     {
       id: "delayed",
+      priority: "secondary",
       header: "Delayed",
       width: "10%",
       cell: (row) => formatNumber(row.messagesDelayed ?? 0),
@@ -73,6 +88,7 @@ export default function QueuePage() {
     },
     {
       id: "inflight",
+      priority: "secondary",
       header: "In flight",
       width: "10%",
       cell: (row) => formatNumber(row.messagesInflight ?? 0),
@@ -87,10 +103,20 @@ export default function QueuePage() {
     },
     {
       id: "oldest",
+      rollup: "worst",
       header: "Oldest",
       width: "10%",
       cell: (row) => formatDurationSeconds(row.oldestBacklogAgeSeconds ?? 0),
       sortValue: (row) => row.oldestBacklogAgeSeconds,
+    },
+    {
+      id: "subscriptions",
+      priority: "secondary",
+      header: "Active subscriptions",
+      width: "16%",
+      cell: (row) => formatNumber(row.subscriptionsActive ?? 0),
+      sortValue: (row) => row.subscriptionsActive,
+      title: () => "Current live subscriptions matching this queue route.",
     },
   ];
 
@@ -110,6 +136,7 @@ export default function QueuePage() {
       emptyDescription="No queue resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={queueMetricColumns}
+      reason={currentStatus?.reason}
       stats={[
         { label: "Ready", value: stats ? formatNumber(stats.messagesReady) : "--" },
         { label: "In flight", value: stats ? formatNumber(stats.inflightActive) : "--" },

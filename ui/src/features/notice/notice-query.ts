@@ -67,12 +67,12 @@ export function noticeOperationRowsQueryKey(
 
 const noticeOverviewQuery = defineQuery<{ family: string }, NoticeOverview>({
   key: ({ family }) => noticeOverviewQueryKey(family),
-  fetch: ({ family, signal }) => noticeService.getOverview({ routeFamily: family, signal }),
+  fetch: ({ family }, { signal }) => noticeService.getOverview({ routeFamily: family, signal }),
 });
 
 const noticeRealmQuery = defineQuery<{ family: string; realm: string }, NoticeRealmInventory>({
   key: ({ family, realm }) => noticeRealmQueryKey(realm, family),
-  fetch: ({ family, realm, signal }) =>
+  fetch: ({ family, realm }, { signal }) =>
     noticeService.listNoticeAreas(realm, { routeFamily: family, signal }),
 });
 
@@ -81,7 +81,7 @@ const noticeAreaQuery = defineQuery<
   NoticeAreaResourceRows
 >({
   key: ({ area, family, realm }) => noticeAreaQueryKey(realm, area, family),
-  fetch: ({ area, family, realm, signal }) =>
+  fetch: ({ area, family, realm }, { signal }) =>
     noticeService.listNoticeResources(realm, area, { routeFamily: family, signal }),
 });
 
@@ -99,7 +99,7 @@ const noticeResourceRowsQuery = defineQuery<
 >({
   key: ({ area, family, limit, realm, resource }) =>
     noticeResourceRowsQueryKey(realm, area, resource, limit, family),
-  fetch: ({ area, family, limit, realm, resource, signal }) =>
+  fetch: ({ area, family, limit, realm, resource }, { signal }) =>
     noticeService.searchResourceRows(
       { area, limit, realm, resource, routeFamily: family },
       { signal },
@@ -113,7 +113,7 @@ interface NoticeOperationRowsQueryInput extends NoticeResourceRowsQueryInput {
 const noticeOperationRowsQuery = defineQuery<NoticeOperationRowsQueryInput, NoticeDeliveryRows>({
   key: ({ area, family, limit, operation, realm, resource }) =>
     noticeOperationRowsQueryKey(realm, area, resource, operation, limit, family),
-  fetch: ({ area, family, limit, operation, realm, resource, signal }) =>
+  fetch: ({ area, family, limit, operation, realm, resource }, { signal }) =>
     noticeService.searchOperationRows(
       { area, limit, operation, query: operation, realm, resource, routeFamily: family },
       { signal },

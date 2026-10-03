@@ -1,4 +1,5 @@
 import DataTable, { type DataTableColumn } from "./data-table";
+import TitledCell from "./titled-cell";
 import type { QueueInflightMessage } from "@/features/queue/queue-resource-models";
 import { formatTimestamp } from "@/shared/format";
 
@@ -11,48 +12,20 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
     {
       id: "message",
       header: "Message",
-      width: "12%",
+      width: "76%",
       cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={String(row.messageId)}>
+        <TitledCell
+          subtitle={`Expires ${formatTimestamp(row.expiresAt)} · session ${row.sessionId} · token ${row.inflightToken}`}
+        >
           {row.messageId}
-        </span>
-      ),
-    },
-    {
-      id: "token",
-      header: "Owner token",
-      width: "24%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.inflightToken}>
-          {row.inflightToken}
-        </span>
-      ),
-    },
-    {
-      id: "session",
-      header: "Session",
-      width: "20%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.sessionId}>
-          {row.sessionId}
-        </span>
+        </TitledCell>
       ),
     },
     {
       id: "attempts",
       header: "Attempts",
-      width: "12%",
+      width: "24%",
       cellComponent: ({ row }) => <span>{row.attempts}</span>,
-    },
-    {
-      id: "expires",
-      header: "Expires",
-      width: "32%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={formatTimestamp(row.expiresAt)}>
-          {formatTimestamp(row.expiresAt)}
-        </span>
-      ),
     },
   ];
   return (

@@ -142,6 +142,36 @@ fn should_reject_noncanonical_scan_flags() {
 }
 
 #[test]
+fn should_preserve_inclusive_start_for_legacy_scan_payload() {
+    // Arrange
+    let mut payload = Vec::new();
+    payload.put_u64(1);
+    put_route(&mut payload, "kv://acme/kv/users");
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // Act
+    let message = parse_request(msg_type::SCAN, RouteFamily::new(1), &payload).unwrap();
+
+    // Assert
+    assert!(matches!(message, KvMessage::Scan { query, .. } if !query.start_exclusive));
+}
+
+#[test]
+fn should_decode_optional_exclusive_start_for_scan_payload() {
+    // Arrange
+    let mut payload = Vec::new();
+    payload.put_u64(1);
+    put_route(&mut payload, "kv://acme/kv/users");
+    payload.extend_from_slice(&[0, 0, 0, 0, 1]);
+
+    // Act
+    let message = parse_request(msg_type::SCAN, RouteFamily::new(1), &payload).unwrap();
+
+    // Assert
+    assert!(matches!(message, KvMessage::Scan { query, .. } if query.start_exclusive));
+}
+
+#[test]
 fn should_reject_scan_with_any_required_flag_missing() {
     // Arrange
     let mut prefix = Vec::new();
@@ -186,7 +216,7 @@ fn should_encode_get_result_found() {
     let encoded = encode_response(&response);
 
     // Assert
-    assert!(!encoded.is_empty());
+    assert_ne!(encoded, Vec::<u8>::new());
     assert_eq!(encoded[0], 0); // status: success
     assert_eq!(encoded[1], 1); // found flag
 }
@@ -203,7 +233,7 @@ fn should_encode_get_result_not_found() {
     let encoded = encode_response(&response);
 
     // Assert
-    assert!(!encoded.is_empty());
+    assert_ne!(encoded, Vec::<u8>::new());
     assert_eq!(encoded[0], 0); // status: success
     assert_eq!(encoded[1], 0); // not found flag
 }

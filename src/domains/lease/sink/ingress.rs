@@ -75,7 +75,7 @@ impl LeaseFamilyRuntime<'_> {
         // jumped ahead of it. Reject rather than silently recreating a
         // lease, waiter, or subscription for a session that is already gone
         // and will never be cleaned up again.
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = Self::error_response("session already closed");
             let response_meta = Self::response_meta_for_source(envelope, meta);
             self.route_lease_response(envelope, response_meta, &response, request_started);
@@ -107,7 +107,7 @@ impl LeaseFamilyRuntime<'_> {
     ) {
         let meta = request.meta;
         let request_started = self.record_request_start();
-        if self.is_cleaned_up_session(meta.session_id) {
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
             let response = Self::error_response("session already closed");
             self.route_lease_response(envelope, meta, &response, request_started);
             return;
@@ -257,7 +257,25 @@ impl LeaseFamilyRuntime<'_> {
         };
         let domain_response =
             self.dispatch_actor_operation(envelope, meta, lease_msg, scoped_owner_id.as_deref());
-        if !self.route_lease_response(envelope, meta, &domain_response, request_started) {
+        let delivered =
+            self.route_lease_response(envelope, meta, &domain_response, request_started);
+        if let crate::domains::lease::protocol::LeaseMessage::List {
+            family_id,
+            pattern,
+            cursor,
+            ..
+        } = lease_msg
+        {
+            self.finish_list_response_delivery(
+                *family_id,
+                pattern.as_str(),
+                *cursor,
+                meta.session_id,
+                &domain_response,
+                delivered,
+            );
+        }
+        if !delivered {
             if let Some(key) = acquire_key.as_ref() {
                 self.rollback_undeliverable_acquire(key, meta.session_id, &domain_response);
             }

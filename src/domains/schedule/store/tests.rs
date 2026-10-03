@@ -487,6 +487,9 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
         .expect("delete schedule definition");
 
     // Act
+    let recovered = store
+        .load_pending_fire_claims(1)
+        .expect("recover orphan claim");
     store
         .ack_pending_fire_claims(
             1,
@@ -507,6 +510,8 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
         .expect("load schedules");
 
     // Assert
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].route, route);
     assert!(
         pending.is_empty(),
         "pending fire should be removed after ack"
@@ -591,4 +596,80 @@ fn should_reject_malformed_pending_fire_claim_on_load() {
     assert!(result
         .expect_err("malformed pending claim should fail recovery")
         .contains("decode pending schedule fire failed"));
+}
+
+fn store_with_wildcard_pending_claim() -> (ScheduleStore, Arc<cntryl_midge::Engine>, u64) {
+    let (store, db) = make_store();
+    let fire_ms = 1_700_000_000_000;
+    let mut key = ScheduleStore::encode_pending_fire_key(fire_ms, "schedule://acme/jobs/x/run");
+    let resource_byte = key
+        .iter()
+        .position(|byte| *byte == b'x')
+        .expect("resource byte");
+    key[resource_byte] = b'*';
+    put_raw(
+        &db,
+        1,
+        key,
+        ScheduleStore::encode_pending_fire_value(
+            &Bytes::from_static(b"payload"),
+            fire_ms,
+            ScheduleDeliveryMode::Broadcast,
+        ),
+    )
+    .expect("seed semantically malformed pending claim");
+    (store, db, fire_ms)
+}
+
+#[test]
+fn should_reject_pending_fire_claim_with_wildcard_resource_on_load() {
+    // Arrange
+    let (store, _, _) = store_with_wildcard_pending_claim();
+
+    // Act
+    let result = store.load_pending_fire_claims(1);
+
+    // Assert
+    let error = result.expect_err("invalid concrete claim route must fail recovery");
+    assert!(error.contains("decode pending schedule fire failed"));
+    assert!(error.contains("must not contain wildcards"));
+}
+
+#[test]
+fn should_fail_recovery_before_invalid_claim_can_block_valid_acknowledgements() {
+    // Arrange
+    let (store, db, fire_ms) = store_with_wildcard_pending_claim();
+    put_raw(
+        &db,
+        1,
+        ScheduleStore::encode_pending_fire_key(fire_ms + 1, "schedule://acme/jobs/valid/run"),
+        ScheduleStore::encode_pending_fire_value(
+            &Bytes::from_static(b"valid payload"),
+            fire_ms + 1,
+            ScheduleDeliveryMode::Broadcast,
+        ),
+    )
+    .expect("seed valid pending claim");
+
+    // Act
+    let recovered = crate::domains::schedule::ScheduleActor::try_new(
+        crate::runtime::routing::RouteFamily::new(1),
+        store,
+        WritePolicy::Buffered,
+    );
+    let (rejected, acknowledgement_error, claims_remaining) = match recovered {
+        Err(_) => (true, None, 0),
+        Ok(mut actor) => {
+            let pending: Vec<_> = actor
+                .pending_claimed_occurrences_for_publish()
+                .into_iter()
+                .map(|claim| (claim.fire_ms, claim.route))
+                .collect();
+            let acknowledged = actor.ack_pending_fire_claims(&pending);
+            (false, acknowledged.err(), actor.pending_fire_count())
+        }
+    };
+
+    // Assert
+    assert!(rejected, "malformed claim must fail startup; accepted state has acknowledgement_error={acknowledgement_error:?}, claims_remaining={claims_remaining}");
 }

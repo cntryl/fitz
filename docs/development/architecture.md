@@ -119,6 +119,23 @@ This is a hard Fitz rule:
 - Session state exists only for the lifetime of the active connection.
 - Disconnect immediately destroys session-owned state.
 - Reconnect always creates a new session identity.
+- Internal `SessionCloseRequest` payloads request transport shutdown through the
+  registered session inbox. A bounded, coalescing control signal remains usable
+  when outbound data is saturated. TCP and WebSocket tasks stop and invoke the
+  existing session finalizer; removing an inbox alone is not transport closure.
+  This signal does not stop or reverse application side effects.
+- Client work admitted from a canonical session inbox through routing or a domain
+  mailbox retains a shared disconnect flag until its last envelope
+  reference drains, including deferred replies. Routing disconnect cleanup marks
+  that flag before attempting control-lane delivery, so an admitted request stays
+  invalid even if later cleanup traffic evicts its ID from a domain's bounded
+  recent-cleanup history. The flag registry retains only weak references and
+  removes an entry when the last work reference drops; it stores no permanent
+  closed-session history. Family keys remain separate, and older live sessions
+  are not rejected merely because newer sessions disconnected.
+- Independent disconnect cleanup dispatches retain their concurrency permits in
+  the synchronous jobs, so canceling an async close waiter does not release
+  capacity while its blocking cleanup is still running.
 - Recovery is client-driven, explicit, and deterministic.
 
 ## Layer Responsibilities
@@ -554,7 +571,7 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: passive transaction views flow through the family-published `AdminReadModel`; exact live counts and committed value/inventory reads use family-targeted command/reply queries behind the KV admin facade.
 
 #### Queue
-- Actor owner: `QueueDomain` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each family worker directly owns one `QueueFamilyState`, serializing delivery, cleanup, sweeps, admin mutations, watch state, projections, reservation state, retry bookkeeping, and durable dead-letter transitions.
+- Actor owner: `QueueDomain` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each family worker directly owns one `QueueFamilyState`, serializing delivery, cleanup, sweeps, admin mutations, watch state, projections, reservation state, retry bookkeeping, and durable dead-letter transitions. The family state groups warm actors and idle rotation in `QueueActorRegistry`, wildcard inventory and waiting reservations in `ReservationBook`, and maintenance deadlines in `QueueMaintenanceClock`; all three remain on the same synchronous worker.
 - Persistence: durable backlog and dead-letter records live in storage; inflight reservations, watch subscriptions, and fast-flush state are ephemeral.
 - Cleanup: disconnect cleanup is enqueued on the Queue family control lane, which clears worker reservations and watch state without implying durable ownership continuity or hidden worker recovery.
 - `RouteFamily`/`realm`: queue data is isolated by exact `RouteFamily`, while `realm` remains an application-defined namespace inside the queue route.
@@ -570,6 +587,7 @@ Current Notice behavior is intentionally ephemeral:
 #### Stream
 - Actor owner: `StreamDomain` owns a `FamilyActorPoolRuntime`; every provisioned route family creates its `StreamFamilyState` on the owning worker, and both client and control commands execute serially through that family. Resource, area, and realm sequencing state is held directly by that family while committed history and recovery remain `StreamStore` authoritative.
 - Current runtime boundary: `StreamDomain` is the crate-private delivery adapter for client Stream frames and family-targeted control/admin commands.
+- Reply deadline: normal client commands wait up to four seconds for the family actor so queued synchronous disk commits can finish; control and admin commands retain a one-second wait. A deadline after admission reports an indeterminate outcome and does not authorize an automatic COMMIT retry.
 - Persistence: committed records, metadata, and watermarks are durable; live append sessions and subscriptions are ephemeral.
 - Cleanup: disconnect aborts append sessions and drops live subscriptions without restoring them on reconnect.
 - `RouteFamily`/`realm`: committed history is partitioned by exact `RouteFamily`, while realm and area indexes stay explicit storage keys rather than family aliases.
@@ -594,7 +612,7 @@ Current Notice behavior is intentionally ephemeral:
 #### Schedule
 - Actor owner: `ScheduleDomain` dispatches through a `FamilyActorPoolRuntime`; each family worker owns its `ScheduleFamilyState` definitions projection, watches, pending acknowledgement retries, execution counters, cleanup state, due scans, and admin snapshot refresh.
 - Current runtime boundary: client and control commands execute against the state created for their owning family, while durable claims remain authoritative in `ScheduleStore`.
-- Current scaling ceiling: work within one route family is deliberately serialized. A priority due-scan performs synchronous claim and acknowledgement commits for that family, so strict cloud durability or degraded provider latency can delay Create, List, and Cancel traffic in the same family without blocking sibling families.
+- Current scaling ceiling: work within one route family is deliberately serialized. A priority due-scan performs synchronous claim and acknowledgement commits in batches capped at 32 pending fires for that family, so strict cloud durability or degraded provider latency can delay Create, List, and Cancel traffic in the same family without blocking sibling families.
 - Persistence: schedule definitions, next-fire state, and pending claims are durable timing intent; subscriber watches and transient handoff coordination are ephemeral.
 - Cleanup: disconnect removes live watches but does not erase persisted schedule intent or imply replay of every missed interval after downtime.
 - Delivery boundary: `broadcast` attempts every matching live registration; `single` uses registration order and a per-concrete-route ephemeral round-robin cursor until one router handoff succeeds. A cursor is discarded when no live registration still matches its concrete route. Strict `*` and `**` registration patterns never cross RouteFamily boundaries. Zero accepted handoffs still acknowledge the pending claim and advance, because Schedule owns timing rather than durable consumer availability.
@@ -693,6 +711,11 @@ fn match_parts(route: &[&str], pattern: &[&str]) -> bool {
     }
 }
 ```
+### Domain snapshots
+
+Committed KV and readable Stream snapshot behavior, limitations, and restore
+semantics are specified in [domain-snapshots.md](domain-snapshots.md).
+
 ## Authentication & TLS
 ### JWT Validation (Layer 2: Session)
 Brokers MUST validate JWT in CONNECT handshake:
@@ -951,19 +974,9 @@ for subscriber in matched_subscribers {
 router.deliver_batch(batch);
 ```
 ### Monitoring
-Add tracing for performance insights:
-```rust
-use tracing::{instrument, span, Level};
-#[instrument(skip(msg))]
-pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
-    let span = span!(Level::DEBUG, "domain_handler");
-    let _guard = span.enter();
-    
-    tracing::debug!("handling message");
-    // ... logic
-    tracing::debug!("response ready");
-}
-```
+
+See [Architecture monitoring](architecture-monitoring.md) for the tracing example.
+
 ### Tuning Parameters
 | Parameter | Default | Use Case |
 |---|---:|---|
@@ -983,3 +996,6 @@ domain response errors, and retry/idempotency guidance.
 - Codecs: `src/protocol/*_codec.rs`
 - Boot: `src/boot/mod.rs`
 - Tests: `tests/`, `benches/`
+
+Derived Schedule parse and Stream actor retention is described in
+[Derived cache retention](derived-cache-retention.md).

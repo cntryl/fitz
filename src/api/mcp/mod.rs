@@ -16,13 +16,10 @@ use crate::api::admin::{
 };
 use crate::auth::Access;
 use crate::boot::Runtime;
-use crate::session::permissions::SessionPermissions;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -116,7 +113,7 @@ pub struct McpToolDescriptor {
     pub budget: McpCostBudget,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct McpResourceDetailRequest {
     pub scheme: String,
     pub realm: String,
@@ -137,83 +134,45 @@ impl McpResourceDetailRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum McpAuditDecision {
-    Allowed,
-    Denied,
-}
+pub mod catalog;
+mod scope;
+pub use scope::McpScopedResourceRequest;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpAuditRecord {
-    pub principal: Option<String>,
-    pub tool_name: String,
-    pub capability: McpCapabilityClass,
-    pub scope_route: Option<String>,
-    pub argument_summary: String,
-    pub decision: McpAuditDecision,
-    pub result_summary: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct McpExecutionContext {
-    pub principal: Option<AdminPrincipal>,
-    pub permissions: SessionPermissions,
-    audit_log: Arc<Mutex<Vec<McpAuditRecord>>>,
-}
-
-impl McpExecutionContext {
-    #[must_use]
-    pub fn authenticated(principal: AdminPrincipal, permissions: SessionPermissions) -> Self {
-        Self {
-            principal: Some(principal),
-            permissions,
-            audit_log: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    #[must_use]
-    pub fn anonymous(permissions: SessionPermissions) -> Self {
-        Self {
-            principal: None,
-            permissions,
-            audit_log: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    #[must_use]
-    pub fn audit_records(&self) -> Vec<McpAuditRecord> {
-        self.audit_log.lock().clone()
-    }
-
-    fn record_audit(&self, record: McpAuditRecord) {
-        self.audit_log.lock().push(record);
-    }
-
-    fn principal_name(&self) -> Option<String> {
-        self.principal
-            .as_ref()
-            .map(|principal| principal.username.clone())
-    }
-}
+mod audit;
+pub use audit::{McpAuditDecision, McpAuditRecord, McpExecutionContext};
 
 #[derive(Debug, Clone)]
 enum McpInvocation {
     Global,
-    Resource(McpResourceDetailRequest),
+    Resource(McpScopedResourceRequest),
 }
 
 impl McpInvocation {
     fn scope_route(&self) -> Option<String> {
         match self {
             McpInvocation::Global => None,
-            McpInvocation::Resource(request) => Some(request.scope_route()),
+            McpInvocation::Resource(request) => Some(request.resource.scope_route()),
+        }
+    }
+
+    fn allows_family_access(&self, principal: &AdminPrincipal) -> bool {
+        self.route_family().map_or_else(
+            || principal.route_family_access.is_wildcard(),
+            |family| principal.route_family_access.allows(&family.to_string()),
+        )
+    }
+
+    fn route_family(&self) -> Option<u64> {
+        match self {
+            Self::Global => None,
+            Self::Resource(request) => request.effective_family(),
         }
     }
 
     fn resource_request(&self) -> Option<&McpResourceDetailRequest> {
         match self {
             McpInvocation::Global => None,
-            McpInvocation::Resource(request) => Some(request),
+            McpInvocation::Resource(request) => Some(&request.resource),
         }
     }
 }
@@ -366,18 +325,23 @@ impl McpToolRegistry {
         policy: &McpCapabilityPolicy,
         arguments: Option<&Value>,
     ) -> McpToolResult<Value> {
-        let tool = self
-            .tools
-            .iter()
-            .find(|tool| tool.descriptor.name == tool_name)
-            .ok_or_else(|| McpToolError::UnknownTool {
-                tool_name: tool_name.to_string(),
-            })?;
+        let tool = self.find_tool(tool_name, context)?;
 
-        let argument_summary = arguments
-            .and_then(|value| serde_json::to_string(value).ok())
-            .unwrap_or_else(|| "null".to_string());
-        let invocation = prepare_invocation(tool_name, arguments)?;
+        let argument_summary = arguments.map_or("absent", |_| "provided").to_string();
+        let invocation = match prepare_invocation(tool_name, arguments) {
+            Ok(invocation) => invocation,
+            Err(error) => {
+                record_audit(
+                    context,
+                    &tool.descriptor,
+                    None,
+                    argument_summary,
+                    McpAuditDecision::Denied,
+                    "invalid_arguments".to_string(),
+                );
+                return Err(error);
+            }
+        };
         let scope_route = invocation.scope_route();
 
         if context.principal.is_none() {
@@ -395,23 +359,13 @@ impl McpToolRegistry {
             return Err(error);
         }
 
-        if let Some(scope_route) = scope_route.clone() {
-            if !context.permissions.allows_route(&scope_route, Access::Read) {
-                let error = McpToolError::ScopeDenied {
-                    tool_name: tool.descriptor.name.clone(),
-                    scope_route: scope_route.clone(),
-                };
-                record_audit(
-                    context,
-                    &tool.descriptor,
-                    Some(scope_route),
-                    argument_summary,
-                    McpAuditDecision::Denied,
-                    error.to_string(),
-                );
-                return Err(error);
-            }
-        }
+        authorize_scope(
+            context,
+            &tool.descriptor,
+            &invocation,
+            scope_route.as_deref(),
+            &argument_summary,
+        )?;
 
         if !policy.allows(tool.descriptor.capability) {
             let error = McpToolError::CapabilityDenied {
@@ -429,13 +383,26 @@ impl McpToolRegistry {
             return Err(error);
         }
 
-        let value = (tool.handler)(runtime, &invocation)?;
+        let value = match (tool.handler)(runtime, &invocation) {
+            Ok(value) => value,
+            Err(error) => {
+                record_audit(
+                    context,
+                    &tool.descriptor,
+                    scope_route,
+                    argument_summary,
+                    McpAuditDecision::Denied,
+                    "handler_error".to_string(),
+                );
+                return Err(error);
+            }
+        };
         let encoded = serde_json::to_vec(&value).map_err(|error| McpToolError::Serialization {
             tool_name: tool.descriptor.name.clone(),
             reason: error.to_string(),
         })?;
 
-        if !tool.descriptor.budget.allows_value(&value) {
+        if encoded.len() > tool.descriptor.budget.max_result_bytes {
             let error = McpToolError::BudgetExceeded {
                 tool_name: tool.descriptor.name.clone(),
                 observed_bytes: encoded.len(),
@@ -462,6 +429,30 @@ impl McpToolRegistry {
         );
 
         Ok(value)
+    }
+
+    fn find_tool(
+        &self,
+        tool_name: &str,
+        context: &McpExecutionContext,
+    ) -> McpToolResult<&McpToolDefinition> {
+        self.tools
+            .iter()
+            .find(|tool| tool.descriptor.name == tool_name)
+            .ok_or_else(|| {
+                context.record_audit(McpAuditRecord {
+                    principal: context.principal_name(),
+                    tool_name: "unknown".to_string(),
+                    capability: McpCapabilityClass::Summary,
+                    scope_route: None,
+                    argument_summary: "redacted".to_string(),
+                    decision: McpAuditDecision::Denied,
+                    result_summary: "unknown_tool".to_string(),
+                });
+                McpToolError::UnknownTool {
+                    tool_name: tool_name.to_string(),
+                }
+            })
     }
 
     fn global_stats_tool() -> McpToolDefinition {
@@ -557,16 +548,61 @@ fn prepare_invocation(tool_name: &str, arguments: Option<&Value>) -> McpToolResu
                 reason: "missing request payload".to_string(),
             })?;
 
-            let request: McpResourceDetailRequest = serde_json::from_value(arguments.clone())
+            let request: McpScopedResourceRequest = serde_json::from_value(arguments.clone())
                 .map_err(|error| McpToolError::InvalidArguments {
                     tool_name: tool_name.to_string(),
                     reason: error.to_string(),
                 })?;
 
+            request
+                .validate()
+                .map_err(|reason| McpToolError::InvalidArguments {
+                    tool_name: tool_name.to_string(),
+                    reason,
+                })?;
             Ok(McpInvocation::Resource(request))
         }
         _ => Ok(McpInvocation::Global),
     }
+}
+
+fn authorize_scope(
+    context: &McpExecutionContext,
+    descriptor: &McpToolDescriptor,
+    invocation: &McpInvocation,
+    scope_route: Option<&str>,
+    argument_summary: &str,
+) -> McpToolResult<()> {
+    if scope_route.as_ref().map_or_else(
+        || {
+            crate::runtime::DomainKind::ALL.into_iter().all(|domain| {
+                context.permissions.allows_registration_pattern(
+                    &crate::runtime::matcher::Pattern::new(domain.wildcard_route()),
+                    Access::Read,
+                )
+            })
+        },
+        |route| context.permissions.allows_route(route, Access::Read),
+    ) && context
+        .principal
+        .as_ref()
+        .is_some_and(|principal| invocation.allows_family_access(principal))
+    {
+        return Ok(());
+    }
+    let error = McpToolError::ScopeDenied {
+        tool_name: descriptor.name.clone(),
+        scope_route: scope_route.unwrap_or("all route families").to_string(),
+    };
+    record_audit(
+        context,
+        descriptor,
+        scope_route.map(str::to_string),
+        argument_summary.to_string(),
+        McpAuditDecision::Denied,
+        error.to_string(),
+    );
+    Err(error)
 }
 
 fn record_audit(
@@ -595,139 +631,14 @@ fn serialize_tool_output<T: Serialize>(tool_name: &str, output: T) -> McpToolRes
     })
 }
 
-fn build_resource_detail_value(
-    runtime: &Runtime,
-    invocation: &McpInvocation,
-) -> McpToolResult<Value> {
-    let tool_name = "inspect_resource_detail";
-    let request = invocation
-        .resource_request()
-        .ok_or_else(|| McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: "missing request payload".to_string(),
-        })?;
-
-    let path = ResourcePath {
-        realm: &request.realm,
-        area: &request.area,
-        resource: &request.resource,
-    };
-
-    match crate::runtime::DomainKind::from_scheme(&request.scheme) {
-        Some(crate::runtime::DomainKind::Kv) => {
-            serialize_tool_output(tool_name, kv_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Queue) => serialize_tool_output(
-            tool_name,
-            queue_detail(runtime, &path, request.queue_family),
-        ),
-        Some(crate::runtime::DomainKind::Stream) => {
-            serialize_tool_output(tool_name, stream_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Lease) => {
-            serialize_tool_output(tool_name, lease_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Schedule) => {
-            serialize_tool_output(tool_name, schedule_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Notice) => {
-            serialize_tool_output(tool_name, notice_detail(runtime, &path, None))
-        }
-        Some(crate::runtime::DomainKind::Rpc) => {
-            serialize_tool_output(tool_name, rpc_operations(runtime, &path, None))
-        }
-        None => Err(McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: format!("unsupported resource scheme: {}", request.scheme),
-        }),
-    }
-}
-
-fn build_resource_timeline_value(
-    runtime: &Runtime,
-    invocation: &McpInvocation,
-) -> McpToolResult<Value> {
-    let tool_name = "inspect_resource_timeline";
-    let request = invocation
-        .resource_request()
-        .ok_or_else(|| McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: "missing request payload".to_string(),
-        })?;
-
-    let limit = request
-        .limit
-        .unwrap_or_else(|| McpCostBudget::timeline().max_result_items)
-        .clamp(1, McpCostBudget::timeline().max_result_items);
-    let path = ResourcePath {
-        realm: &request.realm,
-        area: &request.area,
-        resource: &request.resource,
-    };
-    let read_model = runtime.admin_read_model();
-
-    match crate::runtime::DomainKind::from_scheme(&request.scheme) {
-        Some(crate::runtime::DomainKind::Kv) => serialize_tool_output(
-            tool_name,
-            kv_resource_timeline(&read_model.kv_transactions(None), &path, limit),
-        ),
-        Some(crate::runtime::DomainKind::Queue) => serialize_tool_output(
-            tool_name,
-            queue_resource_timeline(
-                &read_model.queues(None),
-                &read_model.queue_inflight(None),
-                &read_model.queue_dead_letters(None),
-                &path,
-                request.queue_family,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Stream) => serialize_tool_output(
-            tool_name,
-            stream_resource_timeline(&read_model.streams(None), &path, limit),
-        ),
-        Some(crate::runtime::DomainKind::Lease) => serialize_tool_output(
-            tool_name,
-            lease_resource_timeline(&read_model.leases(None), &path, limit),
-        ),
-        Some(crate::runtime::DomainKind::Notice) => serialize_tool_output(
-            tool_name,
-            notice_resource_timeline(
-                &read_model.notice_subscriptions(None, None),
-                &read_model.notice_routes(None),
-                &path,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Rpc) => serialize_tool_output(
-            tool_name,
-            rpc_resource_timeline(
-                &read_model.rpc_workers(None),
-                &read_model.rpc_pending(None),
-                &path,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Schedule) => serialize_tool_output(
-            tool_name,
-            schedule_resource_timeline(
-                &read_model.schedules(None),
-                runtime.schedule_pending_fire_claims(),
-                runtime.schedule_pending_ack_retries(),
-                runtime.schedule_oldest_pending_claim_age_seconds(),
-                runtime.schedule_notify_failures(),
-                runtime.schedule_ack_failures(),
-                runtime.schedule_overdue_normalizations(),
-                &path,
-                limit,
-            ),
-        ),
-        None => Err(McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: format!("unsupported resource scheme: {}", request.scheme),
-        }),
-    }
-}
+mod resources;
+use resources::{build_resource_detail_value, build_resource_timeline_value};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod family_tests;
+
+#[cfg(test)]
+mod scope_tests;

@@ -2,6 +2,50 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## Breaking: Midge 0.3 cloud storage metadata
+
+**A cloud-mode broker (`FITZ_STORAGE_MODE=cloud`) cannot open a storage prefix
+written by an earlier broker.** This release embeds `cntryl-midge` 0.3.0. It
+commits provider-backed control metadata as immutable generations under a
+version 2 lease descriptor and DDL registry, and it rejects the legacy lease and
+mutable metadata that earlier Fitz releases (Midge 0.2.0) wrote. The broker
+fails to start against an old prefix; nothing is migrated in place.
+
+`local` and `memory` storage modes are unaffected: the local on-disk format
+(Midge FORMAT 4, SST V4) is unchanged. Still preserve a verified copy of
+`FITZ_STORAGE_PATH` before upgrading.
+
+**Required procedure for cloud mode:**
+
+1. Drain the old broker (SIGTERM or `POST /api/v1/runtime/drain`) and let it
+   finish shutdown so it releases the Midge writer lease.
+2. Preserve the entire original `FITZ_STORAGE_PREFIX` and its
+   `FITZ_STORAGE_CACHE_PATH`. They are the only rollback path.
+3. Choose one path:
+   - **Logical migration.** While Midge 0.2.0 (the old broker's engine) can
+     still read the prefix, export every route-family column family's
+     key/value contents through Midge's public API. Then create a new empty
+     prefix and a fresh local cache with the new broker's Midge 0.3.0 and
+     import. Fitz does not ship an export/import tool. Public scans do not
+     return expiration timestamps, and Stream rows carry retention TTLs, so an
+     importer must recompute each Stream row's remaining TTL from its creation
+     time and the configured retention.
+   - **Fresh start.** Point the new broker at a new, empty `FITZ_STORAGE_PREFIX`
+     and a fresh `FITZ_STORAGE_CACHE_PATH`, then replay or rebuild state from
+     your own source of truth. Undelivered Queue messages, Stream history, KV
+     state, and Schedule definitions in the old prefix are not carried over.
+4. Never copy the old lease, DDL registry, WAL, or metadata objects into the
+   new prefix, and never let an old broker open the new prefix.
+5. Before switching clients, verify reads, writes, restart recovery, and
+   recovery after local-cache loss against the new prefix.
+
+**Rollback:** stop the new broker and return to the preserved original prefix
+and cache with the previous broker image. Writes accepted after cutover exist
+only in the new prefix and need application-level reconciliation.
+
+See [../development/format-compatibility.md](../development/format-compatibility.md)
+for the format detail.
+
 ## Stream error envelope generation 2
 
 Stream BEGIN, APPEND, COMMIT, ROLLBACK, LAST, GET_METADATA, SUBSCRIBE, and
@@ -34,6 +78,16 @@ request per message type.
 
 Broker rollback is safe at any point; correlated clients fall back to the
 one-at-a-time path on reconnect. No persisted data is affected.
+
+## Client-reported session service names
+
+The broker advertises `CAP_SESSION_METADATA` in `SERVER_HELLO`. A client that
+has a configured service name may send `SESSION_METADATA` (5) after seeing that
+capability. Older clients ignore `SERVER_HELLO`; newer clients omit the message
+when connecting to an older broker. The active-sessions API adds an optional
+`service_name` field, omitted when the client does not report one. The value is
+display metadata supplied by the client and is not an authenticated identity.
+No persisted data changes.
 
 Concurrency conflicts carry `2001`; unclassified backend errors carry `2012`.
 Preserve unknown codes and original exceptions. Never classify message wording

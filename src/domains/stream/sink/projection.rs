@@ -17,6 +17,16 @@ pub(super) struct StreamFamilyAdminSnapshot {
     pub(super) committed_events_total: usize,
 }
 
+/// Committed admin data cached separately from live session/subscription overlays.
+/// A successful Stream commit invalidates this snapshot before the next refresh.
+#[derive(Clone)]
+pub(super) struct StreamCommittedAdminSnapshot {
+    pub(super) streams: BTreeMap<(u64, String, String, String), StreamInfo>,
+    pub(super) realm_watermarks: Vec<StreamRealmWatermarkDetail>,
+    pub(super) area_watermarks: Vec<StreamAreaWatermarkDetail>,
+    pub(super) committed_events_total: usize,
+}
+
 pub(super) struct StreamAdminProjection {
     read_model: Arc<AdminReadModel>,
     durable_metrics: Arc<StreamDurableMetrics>,
@@ -48,11 +58,19 @@ impl StreamAdminProjection {
         };
         let mut changed = false;
         for stream in &mut snapshot.streams {
-            if stream.route_family == family && stream.sessions_active != 0 {
+            if stream.route_family == family
+                && (stream.sessions_active != 0 || stream.subscriptions_active != 0)
+            {
                 stream.sessions_active = 0;
+                stream.subscriptions_active = 0;
                 changed = true;
             }
         }
+        let previous_len = snapshot.streams.len();
+        snapshot
+            .streams
+            .retain(|stream| stream.route_family != family || stream.committed_event_count > 0);
+        changed |= snapshot.streams.len() != previous_len;
         if changed {
             self.publish_merged(&families);
         }

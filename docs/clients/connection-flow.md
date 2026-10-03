@@ -87,6 +87,11 @@ broker.
 See "Capability Negotiation" in `spec/registry-acceptance.md` for the payload
 and the capability bits.
 
+When configured with a service name, a client MAY send `SESSION_METADATA` (5)
+on the control channel after observing `CAP_SESSION_METADATA`. It MUST omit the
+message when the capability is absent; CONNECT and normal domain traffic remain
+usable without it.
+
 ### Step 4: Internal Broker Setup
 
 After a valid `CONNECT`, the broker may attach internal session metadata and

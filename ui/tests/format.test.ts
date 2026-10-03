@@ -14,6 +14,11 @@ describe("shared format helpers", () => {
     expect(formatNumber(42)).toBe("42");
   });
 
+  it("formats missing numbers as a placeholder instead of NaN", () => {
+    expect(formatNumber(Number.NaN)).toBe("--");
+    expect(formatNumber(Number.POSITIVE_INFINITY)).toBe("--");
+  });
+
   it("formats timestamps and preserves invalid values", () => {
     const timestamp = "2026-05-22T12:34:56.000Z";
     const expected = new Intl.DateTimeFormat(undefined, {
