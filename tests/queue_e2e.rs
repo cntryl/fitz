@@ -336,7 +336,7 @@ where
     assert_eq!(overflow_status, 1);
     assert_eq!(
         decode_plain_queue_error(&overflow_data),
-        "wildcard subscription limit exceeded"
+        "subscription registration limit exceeded"
     );
 }
 

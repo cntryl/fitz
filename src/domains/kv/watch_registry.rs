@@ -55,8 +55,8 @@ impl KvWatchRegistry {
 
     /// # Errors
     ///
-    /// Returns `KvError::SubscriptionLimit` when a new wildcard registration
-    /// would exceed the per-session wildcard quota.
+    /// Returns `KvError::SubscriptionLimit` when a new registration would
+    /// exceed either per-session quota.
     pub(crate) fn subscribe(
         &mut self,
         session_id: u64,
@@ -71,7 +71,8 @@ impl KvWatchRegistry {
         }
         if self
             .subscriptions
-            .wildcard_registration_limit_reached(session_id, &pattern)
+            .registration_limit_for_session(session_id, &pattern)
+            .is_some()
         {
             return Err(crate::domains::kv::KvError::SubscriptionLimit);
         }

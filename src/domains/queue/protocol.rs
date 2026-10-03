@@ -297,7 +297,7 @@ pub enum QueueResponse {
     /// Invalid exact or wildcard Queue subscription pattern.
     InvalidSubscriptionPattern { reason: String },
 
-    /// Per-session wildcard subscription limit reached.
+    /// Per-session registration limit reached.
     SubscriptionLimit,
 
     /// Queue does not exist

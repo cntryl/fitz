@@ -70,14 +70,12 @@ impl ScheduleDomainRuntime<'_> {
             } else {
                 if state
                     .subscriptions
-                    .wildcard_registration_limit_reached(session_id, &pattern)
+                    .registration_limit_for_session(session_id, &pattern)
+                    .is_some()
                 {
                     return ScheduleResponse::Error(ScheduleFailure::new(
                         ScheduleFailureCategory::SubscriptionLimit,
-                        format!(
-                        "wildcard subscription limit exceeded ({} per session)",
-                        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
-                    ),
+                        "subscription registration limit exceeded",
                     ));
                 }
                 let Ok(new_id) = self.core.next_sub_id.try_update(

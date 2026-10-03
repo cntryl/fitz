@@ -144,7 +144,10 @@ impl StreamFamilyState {
                     data: vec![],
                 };
             }
-            if state.wildcard_registration_limit_reached(session_id, &compiled) {
+            if state
+                .registration_limit_for_session(session_id, &compiled)
+                .is_some()
+            {
                 return StreamClientResponseBody::SubscriptionError(
                     crate::domains::stream::StreamSubscriptionFailure::Limit,
                 );

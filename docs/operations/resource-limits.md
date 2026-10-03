@@ -15,6 +15,13 @@ Resource limits prevent noisy-neighbor behavior and keep latency predictable.
 2. Define soft warning thresholds before hard rejection.
 3. Keep limits visible through admin stats and metrics.
 
+## Live Registration Limits
+
+Each registration domain retains at most 1,024 registrations per session,
+counting exact and wildcard registrations together. Wildcard registrations are
+also capped at 128 per session. Duplicate registrations remain idempotent and
+are checked before either cap.
+
 ## Operational Signals
 
 - Rising rejection counts by realm

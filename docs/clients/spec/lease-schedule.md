@@ -170,8 +170,8 @@
   is retained; this applies identically to SUBSCRIBE and UNSUBSCRIBE
 - Duplicate subscribe calls for the same `(session, original selector string)` return the existing `subscription_id`
 - Subscriptions are session-scoped and are removed automatically on disconnect
-- A wildcard subscription counts against the shared 128-wildcard-registrations-per-session
-  cap (checked after the duplicate check); exact subscriptions do not
+- A session may retain at most 1,024 Lease subscriptions total and 128 wildcard
+  subscriptions; both limits are checked after duplicate detection
 - Watching a route, exact or via a wildcard selector, is read-only: it never
   grants, renews, extends, or releases that lease. Only exact `ACQUIRE`,
   `EXTEND`, and `RELEASE` change ownership
@@ -701,7 +701,7 @@ record so existing clients keep decoding unchanged.
   SUBSCRIBE (703), UNSUBSCRIBE (704), CREATE_BATCH (706), and LIST_V2 (707)
   are uncoded: `[u8 1][u32 BE error_len][error_msg]`. On these operations an
   invalid cron, an unknown delivery mode, an invalid subscription pattern, and
-  the wildcard subscription limit are distinguished only by `error_msg`.
+  either subscription registration limit are distinguished only by `error_msg`.
 - Errors the Schedule domain returns for LIST (702) are coded:
   `[u8 1][u32 BE error_code][u32 BE error_len][error_msg]`.
 - Errors the broker raises before the request reaches the Schedule domain are
@@ -1015,8 +1015,8 @@ Response (status=1):
 - Client is responsible for local multiplexing when multiple handlers share the same route
 - Wildcards must occupy complete segments. Patterns that cannot match a concrete
   four-segment Schedule route are rejected with an uncoded error.
-- A session may retain at most 128 wildcard Schedule registrations; overflow is
-  rejected with an uncoded error.
+- A session may retain at most 1,024 Schedule registrations total and 128
+  wildcard registrations; overflow is rejected with an uncoded error.
 - Matching never crosses `RouteFamily` boundaries; overlapping registrations
   remain distinct.
 - When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with

@@ -666,10 +666,11 @@ KV, Queue, Notice, Stream, and Lease subscriptions, RPC worker registrations,
 and Schedule live notification registrations use the shared whole-segment
 wildcard matcher. The expected scheme, non-empty segments, whole-segment
 `*`/`**` syntax, and structured-domain matchable depth are validated before
-state mutation. Each domain permits 128 wildcard registrations per session;
-exact registrations do not count, and duplicate original registration strings
-are resolved before the limit. Matching and overlap handling stay isolated by
-`RouteFamily`, and notifications carry the exact concrete route. Lease uses
+state mutation. Each domain permits 1,024 total registrations per session,
+including exact and wildcard registrations, with a separate 128-wildcard cap.
+Duplicate original registration strings are resolved before either limit.
+Matching and overlap handling stay isolated by `RouteFamily`, and notifications
+carry the exact concrete route. Lease uses
 this matcher only for read-only `SUBSCRIBE`/`UNSUBSCRIBE`/`LIST` observation;
 `ACQUIRE`/`EXTEND`/`RELEASE` remain exact three-segment operations.
 

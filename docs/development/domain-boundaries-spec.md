@@ -277,10 +277,11 @@ patterns must be capable of matching four; Notice and RPC retain flexible
 depth. Wrong schemes, empty segments, partial wildcard tokens, and impossible
 depths are rejected before state mutation.
 
-Each wildcard-capable domain retains at most 128 wildcard registrations per
-session. Exact registrations do not count. A duplicate `(session, original
-registration string)` is idempotent and checked before the limit. Matching does
-not cross `RouteFamily`; exact and wildcard registrations are equal candidates,
+Each domain retains at most 1,024 registrations per session, counting exact
+and wildcard registrations together. The wildcard subset is separately capped
+at 128 per session. A duplicate `(session, original registration string)` is
+idempotent and checked before either limit. Matching does not cross
+`RouteFamily`; exact and wildcard registrations are equal candidates,
 overlapping registrations stay independent, and notifications report the exact
 concrete route.
 
@@ -288,12 +289,12 @@ Registration authorization covers the complete concrete-route match set. One
 granted permission pattern must contain the requested registration pattern;
 authorizing the literal wildcard-bearing string alone is insufficient.
 
-Lease participates in this wildcard contract for observation only: `SUBSCRIBE`,
-`UNSUBSCRIBE`, and `LIST` accept the same depth-three grammar and share the
-128-per-session wildcard-registration quota. Observation never changes
-ownership. Lease `ACQUIRE`, `EXTEND`, and `RELEASE` remain exact-route only and
-reject every wildcard, because those are the only operations that grant,
-renew, or release a lease.
+Lease participates in this registration contract for observation only:
+`SUBSCRIBE`, `UNSUBSCRIBE`, and `LIST` accept the same depth-three grammar and
+share the per-session total and wildcard-registration quotas. Observation never
+changes ownership. Lease `ACQUIRE`, `EXTEND`, and `RELEASE` remain exact-route
+only and reject every wildcard, because those are the only operations that
+grant, renew, or release a lease.
 
 ### Notice
 
@@ -390,7 +391,8 @@ RPC guarantees:
 - worker registrations accept strict whole-segment `*` and `**` patterns; calls remain concrete
 - registration credit is shared across every concrete route matched by that registration
 - exact and wildcard registrations are equal candidates; overlapping registrations remain distinct
-- at most 128 wildcard worker registrations are retained per session
+- at most 1,024 RPC worker registrations are retained per session, including
+  exact and wildcard registrations; the wildcard subset is capped at 128
 - queued concrete routes rotate fairly when they share wildcard registration credit
 - per-concrete-route dispatch state is removed when no call is queued or pending
 - successful request submission does not produce an immediate success frame
