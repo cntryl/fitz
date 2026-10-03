@@ -149,7 +149,7 @@ impl StreamFamilyState {
                     crate::domains::stream::StreamSubscriptionFailure::Limit,
                 );
             }
-            if let Ok(subscription_id) = self.subscriptions.next_id.fetch_update(
+            if let Ok(subscription_id) = self.subscriptions.next_id.try_update(
                 Ordering::Relaxed,
                 Ordering::Relaxed,
                 |current| current.checked_add(1),

@@ -229,5 +229,5 @@ fn should_queue_inventory_repair_when_estimate_update_fails_after_commit() {
     // Assert
     assert!(matches!(commit, KvResponse::CommitOk));
     assert_eq!(actor.take_inventory_repairs(), vec![(1, scope)]);
-    assert!(actor.take_inventory_repairs().is_empty());
+    assert_eq!(actor.take_inventory_repairs(), Vec::new());
 }

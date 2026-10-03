@@ -51,7 +51,7 @@ fn should_persist_delayed_promotion_before_restart() {
     // Assert
     assert_eq!(actor.ready_len(), 1);
     assert_eq!(actor.persisted_delayed.len(), 0);
-    assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+    assert_eq!(read_delayed_index_entries(&store, &queue_key), Vec::new());
     assert_eq!(read_ready_index_ranges(&store, &queue_key).len(), 1);
     assert_eq!(recovered.ready_len(), 1);
     assert_eq!(recovered.persisted_delayed.len(), 0);
@@ -134,8 +134,8 @@ fn should_recover_mixed_batch_visibility_counts_after_restart() {
             QueueResponse::Acked
         );
     }
-    assert!(read_ready_index_ranges(&store, &queue_key).is_empty());
-    assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+    assert_eq!(read_ready_index_ranges(&store, &queue_key), Vec::new());
+    assert_eq!(read_delayed_index_entries(&store, &queue_key), Vec::new());
     assert_eq!(recovered.admin_snapshot().messages_total, 0);
 }
 

@@ -177,7 +177,7 @@ fn should_bound_reserve_batch_to_tlv_payload_capacity() {
     assert_eq!(messages.len(), 62);
     assert_eq!(actor.ready_len(), 38);
     assert_eq!(actor.inflight.len(), 62);
-    assert!(actor.admin_dead_letters().is_empty());
+    assert_eq!(actor.admin_dead_letters(), Vec::new());
     assert!(wire_budget_exhausted);
 }
 

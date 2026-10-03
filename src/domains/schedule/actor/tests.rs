@@ -659,12 +659,14 @@ fn should_delete_pending_occurrence_given_cancel_after_due_claim() {
 
     // Assert
     assert_eq!(actor.pending_fire_count(), 0);
-    assert!(actor.pending_fire_times_for_route(route).is_empty());
-    assert!(actor
-        .store
-        .load_pending_fire_claims(actor.family.as_u64())
-        .expect("load pending claims")
-        .is_empty());
+    assert_eq!(actor.pending_fire_times_for_route(route), Vec::<u64>::new());
+    assert_eq!(
+        actor
+            .store
+            .load_pending_fire_claims(actor.family.as_u64())
+            .expect("load pending claims"),
+        Vec::new()
+    );
 }
 
 include!("tests/more.rs");

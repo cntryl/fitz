@@ -9,6 +9,8 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
     env:
       FITZ_LOG_LEVEL: off
       OTEL_ENABLED: false

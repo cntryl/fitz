@@ -132,11 +132,13 @@ impl LeaseFamilyRuntime<'_> {
                     crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
                 ));
             }
-            if let Ok(subscription_id) = self.core.next_sub_id.fetch_update(
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-                |current| current.checked_add(1),
-            ) {
+            if let Ok(subscription_id) =
+                self.core
+                    .next_sub_id
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                        current.checked_add(1)
+                    })
+            {
                 state.insert(
                     family_id,
                     LeaseSubscription {

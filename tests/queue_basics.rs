@@ -234,7 +234,7 @@ fn should_reject_queue_complete_given_token_from_previous_reservation() {
     assert_ne!(reserved[0].token, 0);
     assert_eq!(completed, QueueResponse::InvalidToken);
     assert_eq!(completed_with_current_token, QueueResponse::Acked);
-    assert!(harness.reserve(30, 1).is_empty());
+    assert_eq!(harness.reserve(30, 1), Vec::new());
 }
 
 #[test]
@@ -336,7 +336,7 @@ fn should_allow_fast_policy_loss_given_unflushed_recent_enqueue() {
     // Assert
     assert_eq!(reserved[0].body, Bytes::from_static(b"durable"));
     assert_eq!(completed, QueueResponse::Acked);
-    assert!(harness.reserve(30, 1).is_empty());
+    assert_eq!(harness.reserve(30, 1), Vec::new());
 }
 
 #[test]

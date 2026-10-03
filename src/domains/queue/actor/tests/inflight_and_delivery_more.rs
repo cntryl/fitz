@@ -55,7 +55,7 @@ fn should_not_requeue_completed_dead_letter_given_restart() {
     assert_eq!(recovered.dlq_count, 1);
     match reserve_response {
         QueueResponse::NotFound => {}
-        QueueResponse::Received { messages } => assert!(messages.is_empty()),
+        QueueResponse::Received { messages } => assert_eq!(messages, Vec::new()),
         other => panic!("Expected empty queue after restart, found {other:?}"),
     }
 
@@ -210,7 +210,7 @@ fn should_recover_replayed_dead_letter_as_ready_after_restart() {
 
     // Assert
     assert!(replayed);
-    assert!(read_dlq_index_entries(&store, &queue_key).is_empty());
+    assert_eq!(read_dlq_index_entries(&store, &queue_key), Vec::new());
     assert_eq!(recovered.dlq_count, 0);
     assert_eq!(recovered.ready_len(), 0);
     match reserve_response {
@@ -266,7 +266,7 @@ fn should_purge_dead_letter_given_retained_dlq_message() {
     assert_eq!(actor.dlq_count, 0);
     match reserve_response {
         QueueResponse::NotFound => {}
-        QueueResponse::Received { messages } => assert!(messages.is_empty()),
+        QueueResponse::Received { messages } => assert_eq!(messages, Vec::new()),
         other => panic!("Expected empty queue after purge, found {other:?}"),
     }
 }
@@ -310,11 +310,11 @@ fn should_keep_purged_dead_letter_deleted_after_restart() {
 
     // Assert
     assert!(purged);
-    assert!(read_dlq_index_entries(&store, &queue_key).is_empty());
+    assert_eq!(read_dlq_index_entries(&store, &queue_key), Vec::new());
     assert_eq!(recovered.dlq_count, 0);
     assert_eq!(recovered.ready_len(), 0);
     match reserve_response {
-        QueueResponse::Received { messages } => assert!(messages.is_empty()),
+        QueueResponse::Received { messages } => assert_eq!(messages, Vec::new()),
         other => panic!("Expected empty queue after purge restart, found {other:?}"),
     }
     assert!(recovered.load_record_metadata_from_store(msg_id).is_err());
@@ -430,7 +430,7 @@ fn should_not_dead_letter_message_that_only_a_wildcard_reserve_cannot_carry() {
     let QueueResponse::Received { messages } = response else {
         panic!("Expected Received response");
     };
-    assert!(messages.is_empty());
+    assert_eq!(messages, Vec::new());
     assert!(
         actor.admin_dead_letters().is_empty(),
         "message deliverable by a concrete reserve must not be dead-lettered"
@@ -517,7 +517,7 @@ fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
         1,
         "the rejected bodies must not be stored"
     );
-    assert!(actor.admin_dead_letters().is_empty());
+    assert_eq!(actor.admin_dead_letters(), Vec::new());
 }
 
 #[test]

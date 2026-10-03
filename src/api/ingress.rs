@@ -202,8 +202,8 @@ mod tests {
         // non-empty and distinct from one another.
         let too_many = format!("{}", IngressError::TooManyConnections);
         let backpressure = format!("{}", IngressError::BackpressureFull);
-        assert!(!too_many.is_empty());
-        assert!(!backpressure.is_empty());
+        assert_ne!(too_many, "");
+        assert_ne!(backpressure, "");
         assert_ne!(too_many, backpressure);
     }
 }
