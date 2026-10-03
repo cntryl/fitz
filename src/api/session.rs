@@ -324,6 +324,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_reject_correlation_when_request_is_incomplete_at_frame_end() {
+        // Arrange
+        let mut session = test_session();
+        let mut correlation = TlvEncoder::new();
+        correlation.encode(MessageType::CORRELATE, &correlate_bytes(77));
+        let mut frame = correlation.finish().to_vec();
+        let mut request = TlvEncoder::new();
+        request.encode(MessageType::new(200), b"mutation");
+        let request_bytes = request.finish();
+        frame.extend_from_slice(&request_bytes[..request_bytes.len() - 1]);
+        let ingress = RecordingIngress::default();
+
+        // Act
+        let result = process_session_frame(&mut session, Bytes::from(frame), &ingress).await;
+
+        // Assert
+        assert!(matches!(
+            result,
+            Err(SessionError::IngressClose(reason))
+                if reason.contains("CORRELATE must label a request")
+        ));
+        assert!(ingress.message_types.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn should_reject_a_correlate_that_labels_another_correlate() {
         // Arrange
         let mut session = test_session();
