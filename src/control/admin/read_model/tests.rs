@@ -28,7 +28,7 @@ fn should_insert_enabled_schedule_snapshot_given_upsert_schedule_fields() {
     assert!(schedules[0].enabled);
     assert!(schedules[0].last_run.is_none());
     assert_eq!(schedules[0].executions_total, 0);
-    assert!(!schedules[0].next_run.is_empty());
+    assert_ne!(schedules[0].next_run, "");
 }
 
 #[test]

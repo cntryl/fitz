@@ -316,7 +316,7 @@ pub(super) fn try_admit_queue_delivery(
     use std::sync::atomic::Ordering;
 
     inflight
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             (current < window).then_some(current + 1)
         })
         .map(|_| QueueAdmissionSlot {

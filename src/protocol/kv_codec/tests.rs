@@ -216,7 +216,7 @@ fn should_encode_get_result_found() {
     let encoded = encode_response(&response);
 
     // Assert
-    assert!(!encoded.is_empty());
+    assert_ne!(encoded, Vec::<u8>::new());
     assert_eq!(encoded[0], 0); // status: success
     assert_eq!(encoded[1], 1); // found flag
 }
@@ -233,7 +233,7 @@ fn should_encode_get_result_not_found() {
     let encoded = encode_response(&response);
 
     // Assert
-    assert!(!encoded.is_empty());
+    assert_ne!(encoded, Vec::<u8>::new());
     assert_eq!(encoded[0], 0); // status: success
     assert_eq!(encoded[1], 0); // not found flag
 }

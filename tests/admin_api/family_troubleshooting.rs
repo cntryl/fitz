@@ -74,7 +74,10 @@ async fn should_exclude_other_family_hotspots_from_family_troubleshooting() {
     // Assert
     assert_eq!(payload["incident_summary"]["status"], "healthy");
     assert!(payload["top_bottleneck"].is_null());
-    assert!(payload["hotspots"].as_array().unwrap().is_empty());
+    assert_eq!(
+        payload["hotspots"].as_array().unwrap().as_slice(),
+        &[] as &[serde_json::Value]
+    );
 }
 
 #[tokio::test]

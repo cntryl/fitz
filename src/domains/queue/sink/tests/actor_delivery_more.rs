@@ -125,7 +125,7 @@ fn should_mark_fast_flush_plus_admin_dirty_when_wildcard_poll_only_expires_work(
     sink.refresh_admin_snapshot_if_dirty();
 
     // Assert
-    assert!(decode_routed_reserve_response(&response).is_empty());
+    assert_eq!(decode_routed_reserve_response(&response), Vec::new());
     assert!(sink.dirty_fast_flush_contains_family_for_tests(1));
     assert_eq!(admin_read_model.queues(None)[0].messages_dead_lettered, 1);
 }
@@ -421,7 +421,7 @@ fn should_clear_runtime_sweep_pending_when_sweep_panics() {
     }
 
     // Assert
-    assert!(sink.family_health_snapshot().healthy_families.is_empty());
+    assert_eq!(sink.family_health_snapshot().healthy_families, Vec::new());
     assert!(!sink.runtime_sweep_pending_for_tests());
 }
 

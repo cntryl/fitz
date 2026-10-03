@@ -77,7 +77,7 @@ fn should_fail_closed_after_stream_actor_panic() {
     let health = sink.family_health_snapshot();
 
     // Assert
-    assert!(health.healthy_families.is_empty());
+    assert_eq!(health.healthy_families, Vec::new());
     assert_eq!(health.panic_count, 1);
     assert_eq!(health.failed_families, vec![RouteFamily::new(1)]);
     assert!(matches!(result, Err(DeliveryError::ActorStopped)));

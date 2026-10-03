@@ -698,7 +698,7 @@ pub(super) fn should_not_hydrate_metadata_cache_during_recovery() {
     assert!(QueueActor::index_meta_is_valid(
         &read_index_meta(&store, &queue_key).expect("index meta should exist")
     ));
-    assert!(!read_ready_index_ranges(&store, &queue_key).is_empty());
+    assert_ne!(read_ready_index_ranges(&store, &queue_key), Vec::new());
 }
 
 #[test]
@@ -746,7 +746,7 @@ pub(super) fn should_rewrite_missing_queue_index_via_fallback() {
     assert!(QueueActor::index_meta_is_valid(
         &read_index_meta(&store, &queue_key).expect("rewritten index meta should exist")
     ));
-    assert!(!read_ready_index_ranges(&store, &queue_key).is_empty());
+    assert_ne!(read_ready_index_ranges(&store, &queue_key), Vec::new());
 }
 
 #[test]
@@ -902,5 +902,5 @@ pub(super) fn should_remove_delayed_index_entry_after_ack_even_when_visibility_p
         QueueResponse::Acked
     ));
     // Assert
-    assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+    assert_eq!(read_delayed_index_entries(&store, &queue_key), Vec::new());
 }

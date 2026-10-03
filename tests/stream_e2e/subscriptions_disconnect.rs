@@ -218,7 +218,7 @@ where
             let message = decoder
                 .get_string()
                 .expect("Stream subscription error envelope");
-            assert!(!message.is_empty());
+            assert_ne!(message, "");
             assert!(decoder.is_complete());
         }
     }

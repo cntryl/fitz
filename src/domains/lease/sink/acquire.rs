@@ -128,7 +128,7 @@ impl LeaseFamilyRuntime<'_> {
 
     pub(super) fn next_fencing_token(next_token: &AtomicU64) -> Option<u64> {
         next_token
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(1)
             })
             .ok()

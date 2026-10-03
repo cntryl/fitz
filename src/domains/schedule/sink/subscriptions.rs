@@ -57,57 +57,58 @@ impl ScheduleDomainRuntime<'_> {
         debug_assert_eq!(family_id, self.core.route_family);
         let state = &mut self.core.subscriptions;
 
-        let sub_id = if let Some(id) = state.find_existing_id(session_id, route.as_str()) {
-            tracing::debug!(
-                domain = "schedule",
-                session = session_id,
-                subscription_id = id,
-                route = route.as_str(),
-                "Schedule subscription already exists (idempotent)"
-            );
-            id
-        } else {
-            if state
-                .subscriptions
-                .wildcard_registration_limit_reached(session_id, &pattern)
-            {
-                return ScheduleResponse::Error(ScheduleFailure::new(
-                    ScheduleFailureCategory::SubscriptionLimit,
-                    format!(
+        let sub_id =
+            if let Some(id) = state.find_existing_id(session_id, route.as_str()) {
+                tracing::debug!(
+                    domain = "schedule",
+                    session = session_id,
+                    subscription_id = id,
+                    route = route.as_str(),
+                    "Schedule subscription already exists (idempotent)"
+                );
+                id
+            } else {
+                if state
+                    .subscriptions
+                    .wildcard_registration_limit_reached(session_id, &pattern)
+                {
+                    return ScheduleResponse::Error(ScheduleFailure::new(
+                        ScheduleFailureCategory::SubscriptionLimit,
+                        format!(
                         "wildcard subscription limit exceeded ({} per session)",
                         crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
                     ),
-                ));
-            }
-            let Ok(new_id) = self.core.next_sub_id.fetch_update(
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-                |current| current.checked_add(1),
-            ) else {
-                return ScheduleResponse::Error(ScheduleFailure::new(
-                    ScheduleFailureCategory::SubscriptionLimit,
-                    "subscription ID space exhausted",
-                ));
-            };
-            state.insert(
-                family_id,
-                ScheduleSubscription {
-                    pattern,
-                    session_id,
-                    subscription_id: new_id,
-                    subscriber,
-                },
-            );
+                    ));
+                }
+                let Ok(new_id) = self.core.next_sub_id.try_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |current| current.checked_add(1),
+                ) else {
+                    return ScheduleResponse::Error(ScheduleFailure::new(
+                        ScheduleFailureCategory::SubscriptionLimit,
+                        "subscription ID space exhausted",
+                    ));
+                };
+                state.insert(
+                    family_id,
+                    ScheduleSubscription {
+                        pattern,
+                        session_id,
+                        subscription_id: new_id,
+                        subscriber,
+                    },
+                );
 
-            tracing::debug!(
-                domain = "schedule",
-                session = session_id,
-                subscription_id = new_id,
-                route = route.as_str(),
-                "Schedule subscription added"
-            );
-            new_id
-        };
+                tracing::debug!(
+                    domain = "schedule",
+                    session = session_id,
+                    subscription_id = new_id,
+                    route = route.as_str(),
+                    "Schedule subscription added"
+                );
+                new_id
+            };
 
         ScheduleResponse::SubscribeOk {
             subscription_id: sub_id,

@@ -174,7 +174,7 @@ mod tests {
 
         // Assert
         assert!(!handled);
-        assert!(scope.released.is_empty());
+        assert_eq!(scope.released, Vec::new());
         assert!(!scope.is_cleaned_up_session(42));
     }
 

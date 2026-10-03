@@ -225,7 +225,7 @@ fn should_use_keyed_lookup_for_exact_lease_selector_instead_of_scanning() {
         panic!("expected a ListPage response, got {miss:?}");
     };
     assert_eq!(next_cursor, None);
-    assert!(items.is_empty());
+    assert_eq!(items, Vec::new());
 }
 
 #[test]
