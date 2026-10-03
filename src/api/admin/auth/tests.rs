@@ -159,12 +159,13 @@ fn should_reject_empty_admin_route_family_entries_at_login() {
     for setting in [",", ",,", "1,", ",1", "1,,2"] {
         // Arrange
         reset_admin_env();
-        std::env::set_var("FITZ_ROOT_PASSWORD", "pwd123");
+        let password = uuid::Uuid::new_v4().to_string();
+        std::env::set_var("FITZ_ROOT_PASSWORD", &password);
         std::env::set_var("FITZ_ADMIN_ROUTE_FAMILIES", setting);
         let auth = AdminAuth::from_env();
 
         // Act
-        let result = auth.authenticate_credentials("root", "pwd123");
+        let result = auth.authenticate_credentials("root", &password);
 
         // Assert
         assert!(
@@ -180,7 +181,8 @@ fn should_preserve_wildcard_admin_route_family_grants_at_login() {
     for setting in [None, Some(""), Some("*")] {
         // Arrange
         reset_admin_env();
-        std::env::set_var("FITZ_ROOT_PASSWORD", "pwd123");
+        let password = uuid::Uuid::new_v4().to_string();
+        std::env::set_var("FITZ_ROOT_PASSWORD", &password);
         if let Some(setting) = setting {
             std::env::set_var("FITZ_ADMIN_ROUTE_FAMILIES", setting);
         }
@@ -188,7 +190,7 @@ fn should_preserve_wildcard_admin_route_family_grants_at_login() {
 
         // Act
         let principal = auth
-            .authenticate_credentials("root", "pwd123")
+            .authenticate_credentials("root", &password)
             .expect("valid wildcard setting should authenticate");
 
         // Assert
