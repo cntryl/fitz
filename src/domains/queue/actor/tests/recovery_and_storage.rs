@@ -569,12 +569,12 @@ fn should_keep_successfully_acked_message_absent_after_restart() {
     // Assert
     match response {
         QueueResponse::NotFound => {}
-        QueueResponse::Received { messages } => assert!(messages.is_empty()),
+        QueueResponse::Received { messages } => assert_eq!(messages, Vec::new()),
         other => panic!("acknowledged message {message_id} reappeared: {other:?}"),
     }
     assert_eq!(recovered.admin_snapshot().messages_total, 0);
-    assert!(read_ready_index_ranges(&store, &queue_key).is_empty());
-    assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+    assert_eq!(read_ready_index_ranges(&store, &queue_key), Vec::new());
+    assert_eq!(read_delayed_index_entries(&store, &queue_key), Vec::new());
 }
 
 #[test]
