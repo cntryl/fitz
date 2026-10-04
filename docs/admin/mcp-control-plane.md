@@ -1,89 +1,186 @@
-# MCP Control-Plane Safety
+# MCP Control Plane
 
-MCP is an AI-facing control-plane interface over the same operational read models used by REST and the admin UI. It is not a Fitz domain, not a privileged backdoor, and not a separate authorization system.
+Fitz exposes an opt-in Model Context Protocol endpoint over the existing HTTP
+listener. MCP uses the same admin read models, route permissions, and shared
+admin command functions as REST. It is not a Fitz domain or a separate source
+of authorization.
 
-## Safety Model
+## Enable the endpoint
 
-Every tool call must execute as an authenticated principal and pass the same scoped domain authorization as the underlying control-plane operation. MCP adds an extra capability layer that can be stricter than REST, but it must never grant broader access.
+The endpoint is disabled unless `FITZ_MCP_HTTP_ENABLED=true`. When enabled,
+configure these values:
 
-Required checks:
+| Variable | Meaning |
+| --- | --- |
+| `FITZ_MCP_OAUTH_ISSUER` | HTTPS issuer expected in bearer tokens. |
+| `FITZ_MCP_OAUTH_AUDIENCE` | Exact audience expected in bearer tokens. |
+| `FITZ_MCP_PUBLIC_URL` | Public HTTPS MCP URL ending in `/mcp`. |
+| `FITZ_MCP_OAUTH_PUBLIC_KEY_FILE` | PEM RSA public key used to verify RS256 tokens. |
+| `FITZ_MCP_ALLOWED_ORIGINS` | Optional comma-separated HTTPS Origin allowlist. Defaults to the origin in `FITZ_MCP_PUBLIC_URL`. |
+| `FITZ_MCP_DOCUMENTATION_URL` | Optional HTTPS link advertised in protected-resource metadata. |
 
-1. Authenticate the principal.
-2. Resolve route scope and realm from the request.
-3. Authorize against Fitz route permissions and the principal's separate route-family authority. All-family tools require wildcard route READ permission and wildcard family authority. Resource detail/timeline requests accept an explicit `route_family` independently of `realm`. Legacy `queue_family` scopes Queue only; conflicting Queue selectors are rejected, and supplying it on another domain does not scope its read. Restricted principals receive `ScopeDenied` for unscoped reads, and denials are audited.
-4. Authorize against MCP capability policy.
-5. Enforce argument validation and response-size budget.
-6. Execute through shared control-plane read models or approved admin commands.
-7. Record an audit entry for the decision.
+Terminate TLS at Fitz or at a trusted reverse proxy. The proxy must preserve a
+single canonical `Host` authority. Fitz checks it against the configured public
+host and effective HTTPS port. Present `Origin` headers must match the
+configured allowlist; requests without `Origin` are accepted for non-browser MCP
+clients. The same checks cover `/mcp` and protected-resource metadata.
 
-## Capability Classes
+`GET /.well-known/oauth-protected-resource/mcp` returns the resource URL,
+authorization server issuer, supported scopes, bearer method, and optional
+documentation URL. The OAuth authorization server issues tokens; Fitz validates
+them and does not host an authorization or token endpoint.
 
-| Capability | Intended use | Mutation authority |
-| --- | --- | --- |
-| `mcp.summary` | bounded health and count summaries | none |
-| `mcp.inspect` | bounded resource detail and recent operational facts | none |
-| `mcp.explain` | explanation over bounded facts | none |
-| `mcp.mutate` | limited administrative actions | restricted and explicit |
-| `mcp.admin` | sensitive administrative operations | disabled unless explicitly allowed |
+## Bearer token contract
 
-## Implementation Rules
+Fitz accepts bounded RS256 bearer tokens only. Signature, issuer, audience,
+expiry, not-before, issue time, subject, role, route-family grants, permissions,
+capabilities, and OAuth scopes are validated before a request reaches MCP.
+Tokens must carry these claims:
 
-- Prefer existing admin read models.
-- Keep tools bounded by route scope, result size, and operation cost.
-- Do not add MCP-only bypasses around REST, UI, or admin authorization.
-- Do not expose unbounded scans or ad hoc analytics.
-- Keep mutation tools opt-in and more restrictive than equivalent REST operations.
-- Audit both allowed and denied calls.
+```json
+{
+  "iss": "https://identity.example.test",
+  "sub": "operator-17",
+  "aud": "https://fitz.example.test/mcp",
+  "iat": 1791100800,
+  "exp": 1791104400,
+  "fitz_role": "admin",
+  "fitz_route_families": ["41"],
+  "fitz_permissions": ["queue://**#read", "kv://**#read"],
+  "fitz_mcp_capabilities": ["summary", "inspect"],
+  "scope": "fitz.mcp.read"
+}
+```
 
-The parity tests in [../../tests/mcp_parity.rs](../../tests/mcp_parity.rs) verify that the current MCP read tools mirror their REST control-plane sources.
+`fitz_route_families` is either `"*"` or a non-empty array of canonical,
+provisioned family numbers. `fitz_permissions` contains Fitz route permissions
+in `<route>#<access>` form, where access is `read`, `write`, or `*`. Capability
+classes are `summary`, `inspect`, `explain`, `mutate`, and `admin`. The matching
+OAuth scopes are `fitz.mcp.read`, `fitz.mcp.mutate`, and `fitz.mcp.admin`.
+Read and explain capabilities require the read scope; mutation and admin
+capabilities require their corresponding scopes. A scope alone grants no Fitz
+route permission or route-family authority.
 
-## Current registry audit retention
+The application-defined `realm` and broker `route_family` are separate values.
+Neither is inferred from the other. Global reads require wildcard family
+authority and READ permission across every domain. A resource read is checked
+against its exact route and family. An explicit family must be provisioned and
+allowed by the principal. Omitting a family is available only to a wildcard
+principal and permission set.
 
-The Rust registry retains the most recent 1,024 audit records per execution
-context. Clones share that bounded buffer and its saturating eviction counter,
-exposed by `dropped_audit_records()`. Readback returns records in invocation
-order. Retention is process-local and ends when the last context clone is
-released; it is not durable operating evidence or a remote audit exporter.
+## Protocol surface
 
-Each stored string field is capped at 512 UTF-8 bytes. Control characters are
-replaced with spaces. Arguments are represented only as `provided`, `absent`,
-or `redacted`; the registry does not serialize argument values into audit
-records. Unknown tool names are stored as `unknown`. Validation failures and
-handler failures receive fixed outcome labels. Authorized/denied resource
-scope and provisioned principal names remain bounded operational identifiers.
+The primary revision is `2026-07-28`, which uses stateless discovery and
+per-request protocol metadata. `2025-11-25` remains supported with the
+initialize/initialized session lifecycle. Compatibility session IDs are bound
+to the bearer-token fingerprint, expire with the token, and are discarded after
+one hour idle; at most 4,096 bindings are retained per process.
 
-Read-only calls continue when the buffer is full, evicting its oldest record.
-This policy does not authorize administrative actions: the future action
-admission path must require an audit sink that can accept its mandatory record
-and fail closed when that acceptance is unavailable. No mutations or MCP HTTP
-transport are enabled by this retention change.
+Read-only clients can list nine tools: global stats, global troubleshooting,
+explanation, MCP discovery, sessions, topology, structured metrics, resource
+detail, and resource timeline. Resource templates cover all seven Fitz
+domains. Three static documentation resources describe [domain guarantees](mcp/domain-guarantees.md),
+[operational fields](mcp/operational-fields.md), and
+[troubleshooting](mcp/troubleshooting.md). Prompts provide global broker
+diagnosis, detail and timeline inspection, and a guided diagnosis for each of
+the seven domains. Operational resources and prompts require the inspect
+capability; static documentation is not broker-specific.
 
-## Protocol catalog foundation
+The reads mirror the admin REST contracts and current read models. They do not
+add data-plane permissions or infer history, ownership, replay, or recovery.
+See [domain guarantees](mcp/domain-guarantees.md) for Fitz's domain meanings.
 
-The protocol dependency is pinned to `rmcp = 3.5.0`. Fitz's contract selects
-`2026-07-28` as the primary revision and `2025-11-25` as explicit compatibility.
-The SDK defines different lifecycles: the primary revision does not initialize;
-compatibility initializes before operational requests. This dependency and
-catalog do not by themselves mount an HTTP endpoint or implement OAuth.
+## Resource and execution bounds
 
-`McpToolRegistry::protocol_tools()` preserves the five existing tool names and
-returns them in lexicographic order. Input schemas describe the current registry
-arguments; output schemas derive from shared REST DTOs, including all seven
-resource-detail variants and resource timelines. Read-only annotations are hints,
-not authorization. Every invocation still checks its authenticated principal,
-route permissions, route-family authority and capability before collecting data.
+| Limit | Enforced value |
+| --- | ---: |
+| HTTP request body | 64 KiB, checked before RMCP parses JSON |
+| Encoded tool arguments | 16 KiB |
+| Concurrent HTTP requests | 32 |
+| Concurrent tool executions | 32; a blocking worker holds its permit until it exits |
+| Serialized JSON-RPC response envelope | 600 KiB |
+| Summary result | 256 items, 64 KiB, 50 ms wait budget |
+| Resource detail | 512 items, 128 KiB, 100 ms wait budget |
+| Resource timeline | 50 items, 256 KiB, 200 ms wait budget |
+| Session collection | 256 items, 512 KiB, 200 ms wait budget |
+| Topology | 2,048 items, 512 KiB, 250 ms wait budget |
+| Structured metrics | 256 samples, 256 KiB, 200 ms wait budget |
 
-Catalog metadata records REST source, authority, snapshot freshness, pagination,
-and the current budget enforcement. Encoded registry result bytes and timeline
-result-event counts are bounded. Collection scans and hard runtime deadlines are
-not yet bounded by these descriptors, and the complete protocol envelope still
-needs a transport-level budget. Do not use the candidate 50/100/200ms values as
-latency promises. All seven resource domains accept `route_family`; omission requires wildcard
-family authority. Global tools also require READ permissions covering all routes in every
-registered domain, either one global grant or equivalent per-domain grants. The original Rust `McpResourceDetailRequest` remains available;
-`McpScopedResourceRequest` adds scope without changing its fields. Timeline
-snapshots filter realm and family before shared builders, and explicit scope is
-included in timeline/event family fields. Scoped Schedule timelines omit
-broker-global pressure notes because those counters have no resource/family
-attribution; omission does not imply zero pressure. Global timelines retain the
-existing REST notes. No historical events or payload contents are invented.
+The server rejects results that exceed their item or byte budget and rejects a
+protocol envelope that exceeds 600 KiB. Session and metric collections include
+`truncated` and `limit` markers when capped. Timeline requests accept a limit
+from 1 through 50. Runtime values are wait budgets, not hard preemption: Rust
+read-model calls are synchronous, so a timed-out or cancelled worker may finish
+in the background. Its permit remains held, and Fitz does not return its late
+result to the cancelled request. Admission failures return a retryable busy
+response; callers should use bounded backoff.
+
+MCP audit records retained in memory are bounded to the most recent 1,024
+entries and share a bounded buffer across the MCP HTTP listener's callers. Text fields are
+capped at 512 UTF-8 bytes and control characters are replaced. Argument values
+are not stored. This retention is diagnostic only, not durable evidence.
+Fixed-cardinality Prometheus metrics are appended to `/metrics`; they have no
+principal, route, family, or tool-name labels. They report requests, denials,
+errors, authentication failures, cancellations, overload rejections, in-flight
+calls, duration aggregates, and audit evictions.
+
+## Guarded operations
+
+Mutations are disabled unless `FITZ_MCP_MUTATIONS_ENABLED=true`. Enabling them
+also requires:
+
+| Variable | Meaning |
+| --- | --- |
+| `FITZ_MCP_ACTION_TARGET` | Bounded safe identifier for the runtime drain target. |
+| `FITZ_MCP_ACTION_AUDIT_FILE` | Absolute path to the mandatory JSONL audit file. |
+
+The audit file is opened without following a symlink, restricted to mode 0600
+on Unix, and capped at 16 MiB. Each preview, intent, and outcome record is
+synced to disk. If the mandatory audit append fails, Fitz does not start the
+command. A full file fails closed; rotate or archive it while MCP mutations are
+disabled. Denials also require a durable audit record.
+
+Queue dead-letter replay and purge require an explicit provisioned family,
+Queue route WRITE permission, and matching principal family authority. Replay
+requires `mutate`; purge also requires `admin`. Runtime drain requires `mutate`
+and `admin`, wildcard family authority, and WRITE permission across all seven
+domains.
+
+Each operation has a preview tool and a confirmation tool. A preview binds a
+one-use challenge to the principal, bearer-token fingerprint, exact action and
+target, and the observed state hash. It expires after 60 seconds. Queue targets
+include family, Queue route, and message ID. Runtime drain includes the
+configured target and observed lifecycle/session state. Confirmation requires
+the exact returned target and confirmation phrase; Fitz rechecks authority and
+observed state immediately before dispatch. Queue operations use the same
+shared admin command as REST. Runtime drain uses the same shared drain command
+as REST. A changed target/state requires a fresh preview.
+
+If cancellation or timeout occurs after an action may have started, the result
+is indeterminate. Fitz records the indeterminate outcome when possible and
+returns a do-not-retry instruction with the operation ID. Inspect the durable
+audit record and broker state before taking further action.
+
+## Stdio adapter
+
+`fitz-mcp-stdio` connects local MCP clients to this authenticated remote
+endpoint. Configure:
+
+```sh
+FITZ_MCP_HTTP_URL=https://fitz.example.test/mcp
+FITZ_MCP_BEARER_TOKEN_FILE=/absolute/path/to/token
+```
+
+The token file must be a regular non-symlink file with group and other access
+disabled on Unix. The adapter negotiates the primary revision and falls back to
+the `2025-11-25` initialize lifecycle. For local development only, it accepts
+plain HTTP when the endpoint host is loopback. It sends diagnostics to stderr
+and reserves stdout for MCP stdio frames.
+
+## Tests and changes
+
+The Rust MCP tests verify the shared read contracts, family authorization,
+catalog schemas, protocol lifecycle, prompt scope parsing, Host/Origin
+normalization, and audit bounds. Remote Streamable HTTP interoperability and
+the stdio process adapter are exercised against real RMCP clients. Changes to
+the REST sources remain covered by the existing admin route and parity tests.

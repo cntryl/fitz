@@ -1,8 +1,8 @@
 //! MCP tool registry and safety primitives
 //!
-//! This module defines the first read-only MCP surface for Fitz. It reuses the
-//! admin troubleshooting and stats read models so MCP tools mirror the same
-//! bounded control-plane facts exposed through REST.
+//! This module defines Fitz's MCP surface. It reuses admin read models and
+//! shared command paths so MCP mirrors the control-plane facts and guarded
+//! operations exposed through REST.
 
 use crate::api::admin::auth::AdminPrincipal;
 use crate::api::admin::troubleshooting::{
@@ -42,7 +42,7 @@ impl McpCostBudget {
     #[must_use]
     pub const fn summary() -> Self {
         Self {
-            max_result_items: 1,
+            max_result_items: 256,
             max_result_bytes: 64 * 1024,
             max_runtime_ms: 50,
         }
@@ -51,7 +51,7 @@ impl McpCostBudget {
     #[must_use]
     pub const fn inspect() -> Self {
         Self {
-            max_result_items: 8,
+            max_result_items: 512,
             max_result_bytes: 128 * 1024,
             max_runtime_ms: 100,
         }
@@ -61,6 +61,33 @@ impl McpCostBudget {
     pub const fn timeline() -> Self {
         Self {
             max_result_items: 50,
+            max_result_bytes: 256 * 1024,
+            max_runtime_ms: 200,
+        }
+    }
+
+    #[must_use]
+    pub const fn collection() -> Self {
+        Self {
+            max_result_items: 256,
+            max_result_bytes: 512 * 1024,
+            max_runtime_ms: 200,
+        }
+    }
+
+    #[must_use]
+    pub const fn topology() -> Self {
+        Self {
+            max_result_items: 2_048,
+            max_result_bytes: 512 * 1024,
+            max_runtime_ms: 250,
+        }
+    }
+
+    #[must_use]
+    pub const fn metrics() -> Self {
+        Self {
+            max_result_items: 256,
             max_result_bytes: 256 * 1024,
             max_runtime_ms: 200,
         }
@@ -136,15 +163,22 @@ impl McpResourceDetailRequest {
 
 pub mod catalog;
 mod scope;
-pub use scope::McpScopedResourceRequest;
+mod stdio_adapter;
+pub(crate) mod transport;
+
+pub use scope::{McpAdminScopeRequest, McpScopedResourceRequest};
+pub use stdio_adapter::run_stdio_adapter;
 
 mod audit;
+pub(crate) use audit::McpAuditBuffer;
 pub use audit::{McpAuditDecision, McpAuditRecord, McpExecutionContext};
+pub(crate) mod telemetry;
 
 #[derive(Debug, Clone)]
 enum McpInvocation {
     Global,
     Resource(McpScopedResourceRequest),
+    AdminScope(McpAdminScopeRequest),
 }
 
 impl McpInvocation {
@@ -152,6 +186,9 @@ impl McpInvocation {
         match self {
             McpInvocation::Global => None,
             McpInvocation::Resource(request) => Some(request.resource.scope_route()),
+            McpInvocation::AdminScope(request) => request
+                .route_family
+                .map(|family| format!("route_family:{family}")),
         }
     }
 
@@ -166,13 +203,14 @@ impl McpInvocation {
         match self {
             Self::Global => None,
             Self::Resource(request) => request.effective_family(),
+            Self::AdminScope(request) => request.route_family,
         }
     }
 
     fn resource_request(&self) -> Option<&McpResourceDetailRequest> {
         match self {
-            McpInvocation::Global => None,
             McpInvocation::Resource(request) => Some(&request.resource),
+            McpInvocation::Global | McpInvocation::AdminScope(_) => None,
         }
     }
 }
@@ -200,6 +238,11 @@ pub enum McpToolError {
     BudgetExceeded {
         tool_name: String,
         observed_bytes: usize,
+        budget: McpCostBudget,
+    },
+    ResultItemsExceeded {
+        tool_name: String,
+        observed_items: usize,
         budget: McpCostBudget,
     },
     Serialization {
@@ -245,6 +288,15 @@ impl fmt::Display for McpToolError {
                 f,
                 "MCP tool {tool_name} exceeded budget: {observed_bytes} bytes > {} bytes",
                 budget.max_result_bytes
+            ),
+            McpToolError::ResultItemsExceeded {
+                tool_name,
+                observed_items,
+                budget,
+            } => write!(
+                f,
+                "MCP tool {tool_name} exceeded item budget: {observed_items} items > {} items",
+                budget.max_result_items
             ),
             McpToolError::Serialization { tool_name, reason } => {
                 write!(f, "MCP tool {tool_name} failed to serialize: {reason}")
@@ -299,6 +351,10 @@ impl McpToolRegistry {
                 Self::resource_detail_tool(),
                 Self::resource_timeline_tool(),
                 Self::global_explanation_tool(),
+                Self::discovery_tool(),
+                Self::sessions_tool(),
+                Self::topology_tool(),
+                Self::metrics_tool(),
             ],
         }
     }
@@ -317,6 +373,7 @@ impl McpToolRegistry {
     ///
     /// Returns an error when the tool is unknown, the arguments are invalid,
     /// or execution is rejected by capability or runtime checks.
+    #[allow(clippy::too_many_lines)] // Tool selection and its common authorization/audit envelope stay together.
     pub fn execute(
         &self,
         tool_name: &str,
@@ -360,6 +417,7 @@ impl McpToolRegistry {
         }
 
         authorize_scope(
+            runtime,
             context,
             &tool.descriptor,
             &invocation,
@@ -402,6 +460,24 @@ impl McpToolRegistry {
             reason: error.to_string(),
         })?;
 
+        let observed_items = count_result_items(&value);
+        if observed_items > tool.descriptor.budget.max_result_items {
+            let error = McpToolError::ResultItemsExceeded {
+                tool_name: tool.descriptor.name.clone(),
+                observed_items,
+                budget: tool.descriptor.budget,
+            };
+            record_audit(
+                context,
+                &tool.descriptor,
+                scope_route,
+                argument_summary,
+                McpAuditDecision::Denied,
+                error.to_string(),
+            );
+            return Err(error);
+        }
+
         if encoded.len() > tool.descriptor.budget.max_result_bytes {
             let error = McpToolError::BudgetExceeded {
                 tool_name: tool.descriptor.name.clone(),
@@ -441,6 +517,7 @@ impl McpToolRegistry {
             .find(|tool| tool.descriptor.name == tool_name)
             .ok_or_else(|| {
                 context.record_audit(McpAuditRecord {
+                    correlation_id: None,
                     principal: context.principal_name(),
                     tool_name: "unknown".to_string(),
                     capability: McpCapabilityClass::Summary,
@@ -448,6 +525,7 @@ impl McpToolRegistry {
                     argument_summary: "redacted".to_string(),
                     decision: McpAuditDecision::Denied,
                     result_summary: "unknown_tool".to_string(),
+                    duration_ms: 0,
                 });
                 McpToolError::UnknownTool {
                     tool_name: tool_name.to_string(),
@@ -538,6 +616,98 @@ impl McpToolRegistry {
             },
         )
     }
+
+    fn discovery_tool() -> McpToolDefinition {
+        McpToolDefinition::new(
+            McpToolDescriptor {
+                name: "get_mcp_discovery".to_string(),
+                capability: McpCapabilityClass::Summary,
+                summary: "Return the supported Fitz MCP protocol revisions, domains, resources, and authorization model".to_string(),
+                rest_path: "/.well-known/oauth-protected-resource/mcp".to_string(),
+                budget: McpCostBudget::summary(),
+            },
+            |_runtime, _invocation| {
+                Ok(serde_json::json!({
+                    "endpoint": "/mcp",
+                    "protocol_revisions": [
+                        { "version": "2026-07-28", "lifecycle": "stateless per-request discovery" },
+                        { "version": "2025-11-25", "lifecycle": "initialize and session" }
+                    ],
+                    "domains": crate::runtime::DomainKind::ALL
+                        .map(crate::runtime::DomainKind::as_str),
+                    "resources": ["domain-guarantees", "operational-fields", "troubleshooting"],
+                    "authority": "OAuth grants map to AdminPrincipal route-family authority, SessionPermissions, and MCP capabilities; realm and route_family remain independent",
+                    "mutations_default_enabled": false,
+                    "diagnostics_are": "current broker read-model snapshots"
+                }))
+            },
+        )
+    }
+
+    fn sessions_tool() -> McpToolDefinition {
+        McpToolDefinition::new(
+            McpToolDescriptor {
+                name: "get_sessions".to_string(),
+                capability: McpCapabilityClass::Inspect,
+                summary: "List bounded active-session diagnostics for all authorized route families or one explicit family".to_string(),
+                rest_path: "/api/v1/:route_family/sessions".to_string(),
+                budget: McpCostBudget::collection(),
+            },
+            |runtime, invocation| {
+                let family = invocation.route_family();
+                let mut sessions = runtime.list_sessions();
+                sessions.retain(|session| family.is_none_or(|value| session.route_family == value));
+                sessions.sort_by(|left, right| left.session_id.cmp(&right.session_id));
+                let total = sessions.len();
+                let limit = McpCostBudget::collection().max_result_items;
+                let truncated = total > limit;
+                sessions.truncate(limit);
+                Ok(serde_json::json!({
+                    "route_family": family,
+                    "sessions": sessions,
+                    "truncated": truncated,
+                    "limit": limit
+                }))
+            },
+        )
+    }
+
+    fn topology_tool() -> McpToolDefinition {
+        McpToolDefinition::new(
+            McpToolDescriptor {
+                name: "get_topology".to_string(),
+                capability: McpCapabilityClass::Inspect,
+                summary: "Read the bounded admin topology snapshot, optionally for one explicit route family".to_string(),
+                rest_path: "/api/v1/:route_family/topology".to_string(),
+                budget: McpCostBudget::topology(),
+            },
+            |runtime, invocation| {
+                Ok(crate::api::admin::mcp_topology_value(
+                    runtime,
+                    invocation.route_family(),
+                ))
+            },
+        )
+    }
+
+    fn metrics_tool() -> McpToolDefinition {
+        McpToolDefinition::new(
+            McpToolDescriptor {
+                name: "get_structured_metrics".to_string(),
+                capability: McpCapabilityClass::Inspect,
+                summary: "Read bounded structured admin metrics for all authorized families or one explicit route family".to_string(),
+                rest_path: "/api/v1/:route_family/metrics".to_string(),
+                budget: McpCostBudget::metrics(),
+            },
+            |runtime, invocation| {
+                Ok(crate::api::admin::metrics::mcp_structured_metrics_value(
+                    runtime,
+                    invocation.route_family(),
+                    McpCostBudget::metrics().max_result_items,
+                ))
+            },
+        )
+    }
 }
 
 fn prepare_invocation(tool_name: &str, arguments: Option<&Value>) -> McpToolResult<McpInvocation> {
@@ -562,31 +732,58 @@ fn prepare_invocation(tool_name: &str, arguments: Option<&Value>) -> McpToolResu
                 })?;
             Ok(McpInvocation::Resource(request))
         }
+        "get_sessions" | "get_topology" | "get_structured_metrics" => {
+            let request: McpAdminScopeRequest = match arguments {
+                Some(arguments) => serde_json::from_value(arguments.clone()),
+                None => serde_json::from_value(serde_json::json!({})),
+            }
+            .map_err(|error| McpToolError::InvalidArguments {
+                tool_name: tool_name.to_string(),
+                reason: error.to_string(),
+            })?;
+            request
+                .validate()
+                .map_err(|reason| McpToolError::InvalidArguments {
+                    tool_name: tool_name.to_string(),
+                    reason,
+                })?;
+            Ok(McpInvocation::AdminScope(request))
+        }
         _ => Ok(McpInvocation::Global),
     }
 }
 
 fn authorize_scope(
+    runtime: &Runtime,
     context: &McpExecutionContext,
     descriptor: &McpToolDescriptor,
     invocation: &McpInvocation,
     scope_route: Option<&str>,
     argument_summary: &str,
 ) -> McpToolResult<()> {
-    if scope_route.as_ref().map_or_else(
-        || {
+    let family_is_provisioned = invocation.route_family().is_none_or(|family| {
+        u32::try_from(family)
+            .is_ok_and(|family| runtime.admin_auth().is_provisioned_route_family(family))
+    });
+    let has_read_permission = match invocation {
+        McpInvocation::Resource(_) => {
+            scope_route.is_some_and(|route| context.permissions.allows_route(route, Access::Read))
+        }
+        McpInvocation::Global | McpInvocation::AdminScope(_) => {
             crate::runtime::DomainKind::ALL.into_iter().all(|domain| {
                 context.permissions.allows_registration_pattern(
                     &crate::runtime::matcher::Pattern::new(domain.wildcard_route()),
                     Access::Read,
                 )
             })
-        },
-        |route| context.permissions.allows_route(route, Access::Read),
-    ) && context
-        .principal
-        .as_ref()
-        .is_some_and(|principal| invocation.allows_family_access(principal))
+        }
+    };
+    if family_is_provisioned
+        && has_read_permission
+        && context
+            .principal
+            .as_ref()
+            .is_some_and(|principal| invocation.allows_family_access(principal))
     {
         return Ok(());
     }
@@ -614,6 +811,7 @@ fn record_audit(
     result_summary: String,
 ) {
     context.record_audit(McpAuditRecord {
+        correlation_id: None,
         principal: context.principal_name(),
         tool_name: descriptor.name.clone(),
         capability: descriptor.capability,
@@ -621,7 +819,20 @@ fn record_audit(
         argument_summary,
         decision,
         result_summary,
+        duration_ms: 0,
     });
+}
+
+fn count_result_items(value: &Value) -> usize {
+    match value {
+        Value::Array(items) => items.iter().fold(items.len(), |count, item| {
+            count.saturating_add(count_result_items(item))
+        }),
+        Value::Object(fields) => fields.values().fold(0usize, |count, item| {
+            count.saturating_add(count_result_items(item))
+        }),
+        _ => 0,
+    }
 }
 
 fn serialize_tool_output<T: Serialize>(tool_name: &str, output: T) -> McpToolResult<Value> {

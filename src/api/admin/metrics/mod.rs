@@ -63,6 +63,35 @@ pub(crate) fn handle_structured_metrics(runtime: &Runtime, family: Option<u64>) 
     })
 }
 
+/// Build the MCP metrics response with an explicit sample cap and truncation marker.
+pub(crate) fn mcp_structured_metrics_value(
+    runtime: &Runtime,
+    family: Option<u64>,
+    max_samples: usize,
+) -> serde_json::Value {
+    runtime.refresh_stream_admin_snapshot();
+    let mut samples = structured_samples(&generate_prometheus_metrics(runtime), family);
+    if let Some(family) = family {
+        samples.extend(family_attributable_samples(runtime, family));
+        sort_samples(&mut samples);
+    }
+    let truncated = samples.len() > max_samples;
+    samples.truncate(max_samples);
+    serde_json::json!({
+        "scope": if family.is_some() { "family" } else { "all" },
+        "route_family": family,
+        "generated_at": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
+        "samples": samples,
+        "truncated": truncated,
+        "limit": max_samples,
+    })
+}
+
 /// Generate Prometheus-format metrics
 fn generate_prometheus_metrics(runtime: &Runtime) -> String {
     let mut output = String::new();
@@ -70,6 +99,7 @@ fn generate_prometheus_metrics(runtime: &Runtime) -> String {
     broker::append_broker_metrics(&mut output, runtime);
     collector::append_observability_metrics(&mut output);
     domains::append_domain_metrics(&mut output, runtime);
+    crate::api::mcp::telemetry::append_prometheus_metrics(&mut output);
 
     output
 }

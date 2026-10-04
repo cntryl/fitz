@@ -5,6 +5,7 @@
 
 mod assets;
 pub mod auth;
+pub(crate) mod commands;
 pub mod handlers;
 mod list;
 pub(crate) mod metrics;
@@ -15,6 +16,7 @@ mod topology;
 pub(crate) mod troubleshooting;
 
 pub(crate) use stats::{build_global_stats, build_global_troubleshooting, GlobalStats};
+pub(crate) use topology::{mcp_topology_value, MessagingTopology};
 
 pub use handlers::handle_request;
 pub use list::{

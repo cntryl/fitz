@@ -7,11 +7,12 @@ mod helpers;
 mod lanes;
 mod sessions;
 mod types;
+pub(crate) use types::MessagingTopology;
 
 use crate::api::http::Response;
 use crate::boot::Runtime;
 use chrono::Utc;
-use types::{MessagingTopology, TopologyConnectionBuilder};
+use types::TopologyConnectionBuilder;
 
 const CONNECTION_LIMIT: usize = 250;
 
@@ -56,6 +57,18 @@ pub fn handle_topology(runtime: &Runtime) -> Response {
 
 /// Return only topology records attributable to one authorized family.
 pub fn handle_family_topology(runtime: &Runtime, family: u64) -> Response {
+    super::json_response(build_family_topology(runtime, family))
+}
+
+pub(crate) fn mcp_topology_value(runtime: &Runtime, family: Option<u64>) -> serde_json::Value {
+    let topology = family.map_or_else(
+        || build_messaging_topology(runtime),
+        |family| build_family_topology(runtime, family),
+    );
+    serde_json::to_value(topology).unwrap_or(serde_json::Value::Null)
+}
+
+fn build_family_topology(runtime: &Runtime, family: u64) -> MessagingTopology {
     let mut topology = build_messaging_topology(runtime);
     topology
         .session_groups
@@ -87,5 +100,5 @@ pub fn handle_family_topology(runtime: &Runtime, family: u64) -> Response {
         .retain(|connection| connection.scope.route_family == Some(family));
     topology.connections.total = topology.connections.items.len();
     topology.connections.truncated = false;
-    super::json_response(topology)
+    topology
 }

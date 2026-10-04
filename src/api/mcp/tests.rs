@@ -73,16 +73,35 @@ fn should_register_inspect_tools_given_read_only_registry() {
     let descriptors = registry.tool_descriptors();
 
     // Assert
-    assert_eq!(descriptors.len(), 5);
-    assert_eq!(descriptors[2].name, "inspect_resource_detail");
-    assert_eq!(descriptors[2].capability, McpCapabilityClass::Inspect);
-    assert_eq!(descriptors[2].budget, McpCostBudget::inspect());
-    assert_eq!(descriptors[3].name, "inspect_resource_timeline");
-    assert_eq!(descriptors[3].capability, McpCapabilityClass::Inspect);
-    assert_eq!(descriptors[3].budget, McpCostBudget::timeline());
-    assert_eq!(descriptors[4].name, "explain_global_troubleshooting");
-    assert_eq!(descriptors[4].capability, McpCapabilityClass::Explain);
-    assert_eq!(descriptors[4].budget, McpCostBudget::summary());
+    assert_eq!(descriptors.len(), 9);
+    let by_name = descriptors
+        .into_iter()
+        .map(|descriptor| (descriptor.name.clone(), descriptor))
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        by_name["inspect_resource_detail"].capability,
+        McpCapabilityClass::Inspect
+    );
+    assert_eq!(
+        by_name["inspect_resource_detail"].budget,
+        McpCostBudget::inspect()
+    );
+    assert_eq!(
+        by_name["inspect_resource_timeline"].capability,
+        McpCapabilityClass::Inspect
+    );
+    assert_eq!(
+        by_name["inspect_resource_timeline"].budget,
+        McpCostBudget::timeline()
+    );
+    assert_eq!(
+        by_name["explain_global_troubleshooting"].capability,
+        McpCapabilityClass::Explain
+    );
+    assert_eq!(
+        by_name["explain_global_troubleshooting"].budget,
+        McpCostBudget::summary()
+    );
 }
 
 #[test]

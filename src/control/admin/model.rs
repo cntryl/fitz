@@ -516,7 +516,7 @@ pub struct SchedulePendingClaimInfo {
     pub claimed_at_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionInfo {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

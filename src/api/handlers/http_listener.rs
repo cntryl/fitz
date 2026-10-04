@@ -59,6 +59,13 @@ pub fn spawn_http_listener_with_bound_socket(
         ingress_config.max_connections,
     )));
     let runtime = Arc::new(runtime);
+    let mcp_cancellation_token = tokio_util::sync::CancellationToken::new();
+    let mcp_state = crate::api::mcp::transport::McpHttpState::from_env(
+        runtime.clone(),
+        mcp_cancellation_token.clone(),
+    )
+    .map_err(std::io::Error::other)?
+    .map(Arc::new);
     let ws_allowed_origins = Arc::new(ws_allowed_origins);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
@@ -74,6 +81,7 @@ pub fn spawn_http_listener_with_bound_socket(
             tokio::select! {
                 _ = &mut shutdown_rx => {
                     tracing::info!("HTTP listener shutdown requested");
+                    mcp_cancellation_token.cancel();
                     break;
                 }
                 accept_result = http_listener.accept() => {
@@ -101,9 +109,10 @@ pub fn spawn_http_listener_with_bound_socket(
                             let runtime = runtime.clone();
                             let websocket_tasks = websockets.clone();
                             let ws_allowed_origins = ws_allowed_origins.clone();
+                            let mcp_state = mcp_state.clone();
                             connections.lock().await.spawn(async move {
                                 let _http_permit = http_permit;
-                                if let Err(e) = handle_http_upgrade(stream, peer_addr, ingress, config, runtime, websocket_tasks, ws_allowed_origins, lifecycle, accepted_at).await {
+                                if let Err(e) = handle_http_upgrade(stream, peer_addr, ingress, config, runtime, websocket_tasks, ws_allowed_origins, mcp_state, lifecycle, accepted_at).await {
                                     tracing::error!("HTTP handler error: {}", e);
                                 }
                             });
@@ -139,6 +148,7 @@ async fn handle_http_upgrade(
     runtime: Arc<crate::boot::Runtime>,
     websocket_tasks: super::SessionTasks,
     ws_allowed_origins: Arc<Vec<crate::api::origin::ExactOrigin>>,
+    mcp_state: Option<Arc<crate::api::mcp::transport::McpHttpState>>,
     lifecycle: ConnectionLifecycle,
     accepted_at: tokio::time::Instant,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -154,6 +164,7 @@ async fn handle_http_upgrade(
         let runtime = runtime_clone.clone();
         let websocket_tasks = websocket_tasks.clone();
         let ws_allowed_origins = ws_allowed_origins.clone();
+        let mcp_state = mcp_state.clone();
         let connection_lifecycle = connection_lifecycle.clone();
         let accepted_at = accepted_at;
 
@@ -170,8 +181,19 @@ async fn handle_http_upgrade(
                     accepted_at,
                 )
                 .await
+                .map(|response| response.map(http_body_util::BodyExt::boxed))
+            } else if matches!(
+                req.uri().path(),
+                "/mcp" | "/.well-known/oauth-protected-resource/mcp"
+            ) {
+                match mcp_state {
+                    Some(mcp_state) => Ok(mcp_state.handle(req).await),
+                    None => Ok(crate::api::admin::not_found().map(http_body_util::BodyExt::boxed)),
+                }
             } else {
-                crate::api::admin::handlers::handle_request(req, runtime).await
+                crate::api::admin::handlers::handle_request(req, runtime)
+                    .await
+                    .map(|response| response.map(http_body_util::BodyExt::boxed))
             }
         }
     });

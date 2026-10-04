@@ -16,6 +16,7 @@ fn context() -> McpExecutionContext {
 
 fn record(name: String) -> McpAuditRecord {
     McpAuditRecord {
+        correlation_id: None,
         principal: Some("operator".to_string()),
         tool_name: name,
         capability: McpCapabilityClass::Summary,
@@ -23,6 +24,7 @@ fn record(name: String) -> McpAuditRecord {
         argument_summary: "absent".to_string(),
         decision: McpAuditDecision::Denied,
         result_summary: "denied".to_string(),
+        duration_ms: 0,
     }
 }
 

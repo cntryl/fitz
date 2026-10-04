@@ -38,16 +38,6 @@ pub(super) struct AdminFeaturesResponse {
     pub(crate) route_families_wildcard: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct RuntimeDrainResponse {
-    pub(crate) lifecycle_state: &'static str,
-    pub(crate) active_sessions: usize,
-    pub(crate) drain_grace_seconds: u64,
-    pub(crate) drain_started_epoch_ms: Option<u64>,
-    pub(crate) drain_deadline_epoch_ms: Option<u64>,
-    pub(crate) close_reason: String,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AdminFamilyScope {
     All,

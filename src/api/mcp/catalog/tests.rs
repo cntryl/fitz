@@ -35,7 +35,7 @@ fn should_pin_distinct_sdk_lifecycles_for_supported_revisions() {
 }
 
 #[test]
-fn should_preserve_five_tool_names_in_stable_protocol_catalog_order() {
+fn should_preserve_nine_read_tool_names_in_stable_protocol_catalog_order() {
     // Arrange
     let registry = McpToolRegistry::read_only();
 
@@ -50,6 +50,10 @@ fn should_preserve_five_tool_names_in_stable_protocol_catalog_order() {
             "explain_global_troubleshooting",
             "get_global_stats",
             "get_global_troubleshooting",
+            "get_mcp_discovery",
+            "get_sessions",
+            "get_structured_metrics",
+            "get_topology",
             "inspect_resource_detail",
             "inspect_resource_timeline",
         ]
@@ -86,11 +90,15 @@ fn should_validate_registry_outputs_against_catalog_schemas_for_all_seven_domain
             vec!["global"]
         };
         for scheme in schemes {
-            let arguments = (scheme != "global").then(|| {
-                json!({
-                    "scheme":scheme, "realm":"app-namespace", "area":"jobs", "resource":"run",
-                })
-            });
+            let arguments = match scheme {
+                "global" => None,
+                _ => Some(json!({
+                    "scheme":scheme,
+                    "realm":"app-namespace",
+                    "area":"jobs",
+                    "resource":"run",
+                })),
+            };
             let result = registry
                 .execute(&tool.name, &runtime, &context, &policy, arguments.as_ref())
                 .unwrap();
