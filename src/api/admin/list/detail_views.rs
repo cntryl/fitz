@@ -92,6 +92,14 @@ pub fn queue_detail(
         })
         .collect();
 
+    queue_detail_from_rows(path, family, queues)
+}
+
+pub(crate) fn queue_detail_from_rows(
+    path: &ResourcePath<'_>,
+    family: Option<u64>,
+    queues: Vec<super::QueueInfo>,
+) -> QueueResourceDetail {
     if queues.is_empty() {
         return QueueResourceDetail::empty(path);
     }

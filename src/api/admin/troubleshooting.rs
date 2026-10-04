@@ -32,7 +32,7 @@ pub use comparison::{
     ResourceComparison, ResourceComparisonMetrics, ResourceComparisonScope, ResourceComparisonSide,
     TroubleshootingSnapshot,
 };
-pub(crate) use family_snapshot::build_family_troubleshooting;
+pub(crate) use family_snapshot::{build_family_troubleshooting, build_projection_troubleshooting};
 pub(crate) use model::RECENT_WINDOW_SECS;
 pub use model::{
     DiagnosisLabel, DiagnosticHotspot, DiagnosticSeverity, DiagnosticSnapshot, DiagnosticTrend,
@@ -53,6 +53,7 @@ pub(crate) use resource_timelines_domains::{
     lease_resource_timeline, notice_resource_timeline, queue_resource_timeline,
     rpc_resource_timeline, schedule_resource_timeline, stream_resource_timeline,
 };
+pub(crate) use runtime_snapshot::build_bounded_runtime_diagnostics;
 pub use runtime_snapshot::build_troubleshooting_snapshot;
 
 #[cfg(test)]

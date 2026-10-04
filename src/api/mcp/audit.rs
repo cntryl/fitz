@@ -81,10 +81,17 @@ impl McpExecutionContext {
 
     #[must_use]
     pub fn anonymous(permissions: SessionPermissions) -> Self {
+        Self::anonymous_with_audit(permissions, McpAuditBuffer::new())
+    }
+
+    pub(crate) fn anonymous_with_audit(
+        permissions: SessionPermissions,
+        audit_log: McpAuditBuffer,
+    ) -> Self {
         Self {
             principal: None,
             permissions,
-            audit_log: McpAuditBuffer::new(),
+            audit_log,
             correlation_id: None,
             started_at: None,
         }
@@ -118,9 +125,13 @@ impl McpExecutionContext {
                 started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
             });
         }
-        for value in [&mut record.principal, &mut record.scope_route]
-            .into_iter()
-            .flatten()
+        for value in [
+            &mut record.principal,
+            &mut record.scope_route,
+            &mut record.correlation_id,
+        ]
+        .into_iter()
+        .flatten()
         {
             bound_field(value);
         }

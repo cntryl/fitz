@@ -92,7 +92,6 @@ pub(crate) fn record_authentication_failure() {
     metrics
         .authentication_failures
         .fetch_add(1, Ordering::Relaxed);
-    metrics.denials.fetch_add(1, Ordering::Relaxed);
 }
 
 pub(crate) fn record_audit_eviction() {

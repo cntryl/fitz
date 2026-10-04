@@ -35,7 +35,7 @@ fn should_pin_distinct_sdk_lifecycles_for_supported_revisions() {
 }
 
 #[test]
-fn should_preserve_nine_read_tool_names_in_stable_protocol_catalog_order() {
+fn should_preserve_read_tool_names_and_paginated_inventory_in_stable_protocol_catalog_order() {
     // Arrange
     let registry = McpToolRegistry::read_only();
 
@@ -56,6 +56,7 @@ fn should_preserve_nine_read_tool_names_in_stable_protocol_catalog_order() {
             "get_topology",
             "inspect_resource_detail",
             "inspect_resource_timeline",
+            "list_resource_inventory",
         ]
     );
     assert!(tools

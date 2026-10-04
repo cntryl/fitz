@@ -1,6 +1,7 @@
 use super::actions::{
     McpActionState, CONFIRM_DRAIN_TOOL, CONFIRM_QUEUE_TOOL, PREVIEW_DRAIN_TOOL, PREVIEW_QUEUE_TOOL,
 };
+use super::catalog_resources;
 use super::oauth::AuthenticatedRequest;
 use crate::api::mcp::{
     McpCapabilityClass, McpCapabilityPolicy, McpExecutionContext, McpResourceDetailRequest,
@@ -19,12 +20,10 @@ use rmcp::{ErrorData, RoleServer, ServerHandler};
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 const MAX_ARGUMENT_BYTES: usize = 16 * 1024;
-const MAX_MCP_RESPONSE_BYTES: usize = 600 * 1024;
 pub(super) const MAX_EXECUTIONS: usize = 32;
 const READ_PROMPT: &str = "inspect_resource";
 const TIMELINE_PROMPT: &str = "review_resource_timeline";
@@ -95,16 +94,16 @@ impl McpServer {
             .into_iter()
             .find(|descriptor| descriptor.name == tool_name)
             .map(|descriptor| descriptor.budget)
-            .ok_or_else(|| "unknown tool".to_string())?;
-        let permit = self
-            .execution_slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| {
-                crate::api::mcp::telemetry::record_overload();
-                context.record_transport_denial(&tool_name, "execution_capacity_full");
-                "MCP execution capacity is full; retry later".to_string()
+            .ok_or_else(|| {
+                context.record_transport_denial("tools/call", "unknown_tool");
+                "unknown tool".to_string()
             })?;
+        let permit = super::execution::admit(
+            &self.execution_slots,
+            &context,
+            &tool_name,
+            &cancellation_token,
+        )?;
         let runtime = self.runtime.clone();
         let registry = self.registry.clone();
         let context_for_worker = context.clone();
@@ -112,17 +111,24 @@ impl McpServer {
         let arguments = arguments.as_ref();
         let arguments = arguments.cloned();
         let name = tool_name.clone();
-        let execution = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            let arguments = arguments.as_ref();
-            registry.execute(
-                &name,
-                runtime.as_ref(),
-                &context_for_worker,
-                &policy,
-                arguments,
-            )
-        });
+        let execution = super::execution::spawn(
+            permit,
+            cancellation_token.clone(),
+            context.clone(),
+            tool_name.clone(),
+            move || {
+                let arguments = arguments.as_ref();
+                registry
+                    .execute(
+                        &name,
+                        runtime.as_ref(),
+                        &context_for_worker,
+                        &policy,
+                        arguments,
+                    )
+                    .map_err(|error| error.to_string())
+            },
+        );
         let result = match tokio::select! {
             () = cancellation_token.cancelled() => {
                 crate::api::mcp::telemetry::record_cancellation();
@@ -135,7 +141,7 @@ impl McpServer {
             ) => result,
         } {
             Ok(Ok(Ok(value))) => value,
-            Ok(Ok(Err(error))) => return Err(error.to_string()),
+            Ok(Ok(Err(error))) => return Err(error),
             Ok(Err(_)) => {
                 context.record_transport_denial(&tool_name, "execution_failed");
                 return Err("MCP tool execution failed".into());
@@ -159,6 +165,12 @@ impl McpServer {
         let Some(actions) = &self.actions else {
             return Err("MCP mutations are disabled".into());
         };
+        let request_target = arguments
+            .as_ref()
+            .and_then(|value| value.get("challenge_id"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            .map_or_else(|| "unknown".into(), |id| id.to_string());
         let argument_bytes = arguments
             .as_ref()
             .map(serde_json::to_vec)
@@ -166,7 +178,13 @@ impl McpServer {
             .map_err(|_| "could not encode action arguments".to_string())?
             .unwrap_or_default();
         if argument_bytes.len() > MAX_ARGUMENT_BYTES {
-            context.record_transport_denial(tool_name, "arguments_over_limit");
+            actions.record_request_interruption(
+                tool_name,
+                Some(&request_target),
+                &context,
+                self.token_fingerprint,
+                "arguments_over_limit",
+            )?;
             return Err("arguments exceed the MCP request limit".into());
         }
         if !matches!(
@@ -175,30 +193,45 @@ impl McpServer {
         ) {
             return Err("unknown MCP action".into());
         }
-        let permit: OwnedSemaphorePermit = self
-            .execution_slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| {
-                crate::api::mcp::telemetry::record_overload();
-                context.record_transport_denial(tool_name, "execution_capacity_full");
-                "MCP execution capacity is full; retry later".to_string()
-            })?;
+        let permit = match super::execution::admit(
+            &self.execution_slots,
+            &context,
+            tool_name,
+            &cancellation_token,
+        ) {
+            Ok(permit) => permit,
+            Err(message) => {
+                actions.record_request_interruption(
+                    tool_name,
+                    Some(&request_target),
+                    &context,
+                    self.token_fingerprint,
+                    "request_not_admitted",
+                )?;
+                return Err(message);
+            }
+        };
+        let actions_for_observer = actions.clone();
         let actions = actions.clone();
         let runtime = self.runtime.clone();
         let context_for_worker = context.clone();
         let policy = self.policy.clone();
         let fingerprint = self.token_fingerprint;
-        let request_target = arguments
-            .as_ref()
-            .and_then(|value| value.get("challenge_id"))
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| value.len() <= 64)
-            .unwrap_or("unknown")
-            .to_string();
         let operation_tool = tool_name.to_string();
+        let worker_cancellation = cancellation_token.clone();
+        let worker_target = request_target.clone();
         let execution = tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            if worker_cancellation.is_cancelled() {
+                actions.record_request_interruption(
+                    &operation_tool,
+                    Some(&worker_target),
+                    &context_for_worker,
+                    fingerprint,
+                    "request_cancelled_before_worker_start",
+                )?;
+                return Err("MCP action was cancelled before execution".into());
+            }
             if operation_tool == PREVIEW_DRAIN_TOOL {
                 return actions.preview_runtime_drain(
                     &context_for_worker,
@@ -236,11 +269,11 @@ impl McpServer {
             () = cancellation_token.cancelled() => {
                 crate::api::mcp::telemetry::record_cancellation();
                 let preview = matches!(tool_name, PREVIEW_DRAIN_TOOL | PREVIEW_QUEUE_TOOL);
-                context.record_action_audit(
-                    tool_name,
-                    if preview { "request_cancelled" } else { "indeterminate_do_not_retry" },
-                    crate::api::mcp::McpAuditDecision::Denied,
-                );
+                if let Err(error) = actions_for_observer.record_request_interruption(tool_name,
+                    Some(&request_target), &context, fingerprint,
+                    if preview { "request_cancelled" } else { "indeterminate_do_not_retry" }) {
+                    return Err(format!("{error}; any admitted action outcome may be indeterminate; do not retry"));
+                }
                 return Err(if preview {
                     "MCP action preview request was cancelled".into()
                 } else {
@@ -256,57 +289,23 @@ impl McpServer {
                 return Err(message);
             }
             Ok(Err(_)) | Err(_) => {
+                if let Err(error) = actions_for_observer.record_request_interruption(
+                    tool_name,
+                    Some(&request_target),
+                    &context,
+                    fingerprint,
+                    "indeterminate_do_not_retry",
+                ) {
+                    return Err(format!(
+                        "{error}; action outcome is indeterminate; do not retry"
+                    ));
+                }
                 return Err(format!(
                     "action outcome is indeterminate; do not retry; inspect challenge {request_target}"
                 ));
             }
         };
         Ok(result)
-    }
-
-    fn parse_resource_uri(uri: &str) -> Result<McpScopedResourceRequest, String> {
-        let parsed = url::Url::parse(uri).map_err(|_| "resource URI is invalid".to_string())?;
-        if parsed.scheme() != "fitz"
-            || parsed.host_str() != Some("resource")
-            || parsed.username() != ""
-            || parsed.password().is_some()
-            || parsed.port().is_some()
-            || parsed.query().is_some()
-            || parsed.fragment().is_some()
-        {
-            return Err("resource URI is outside the Fitz resource namespace".into());
-        }
-        let parts: Vec<String> = parsed
-            .path_segments()
-            .ok_or_else(|| "resource URI has no path".to_string())?
-            .map(|part| {
-                percent_encoding::percent_decode_str(part)
-                    .decode_utf8()
-                    .map(Cow::into_owned)
-                    .map_err(|_| "resource URI contains invalid UTF-8".to_string())
-            })
-            .collect::<Result<_, _>>()?;
-        if parts.len() != 5 || parts.iter().any(String::is_empty) {
-            return Err(
-                "resource URI must contain domain, route family, realm, area and resource".into(),
-            );
-        }
-        let family = parts[1]
-            .parse::<u64>()
-            .map_err(|_| "resource route family must be a concrete number".to_string())?;
-        let request = McpScopedResourceRequest {
-            resource: McpResourceDetailRequest {
-                scheme: parts[0].clone(),
-                realm: parts[2].clone(),
-                area: parts[3].clone(),
-                resource: parts[4].clone(),
-                queue_family: None,
-                limit: None,
-            },
-            route_family: Some(family),
-        };
-        request.validate()?;
-        Ok(request)
     }
 }
 
@@ -411,7 +410,7 @@ impl ServerHandler for McpServer {
             return Err(ErrorData::invalid_params("unknown resources cursor", None));
         }
         Ok(
-            ListResourcesResult::with_all_items(content::documentation_resources())
+            ListResourcesResult::with_all_items(catalog_resources::documents())
                 .with_cache_scope(rmcp::model::CacheScope::Private),
         )
     }
@@ -428,13 +427,19 @@ impl ServerHandler for McpServer {
                 None,
             ));
         }
-        if !self.policy.allows(McpCapabilityClass::Inspect) {
-            return Ok(ListResourceTemplatesResult::default());
-        }
-        Ok(
-            ListResourceTemplatesResult::with_all_items(content::resource_templates())
-                .with_cache_scope(rmcp::model::CacheScope::Private),
+        Ok(ListResourceTemplatesResult::with_all_items(
+            catalog_resources::templates()
+                .into_iter()
+                .filter(|template| {
+                    self.policy.allows(if template.name == "broker_summary_v1" {
+                        McpCapabilityClass::Summary
+                    } else {
+                        McpCapabilityClass::Inspect
+                    })
+                })
+                .collect(),
         )
+        .with_cache_scope(rmcp::model::CacheScope::Private))
     }
 
     async fn read_resource(
@@ -442,7 +447,7 @@ impl ServerHandler for McpServer {
         request: ReadResourceRequestParams,
         request_context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        if let Some(document) = content::documentation(&request.uri) {
+        if let Some(document) = catalog_resources::document(&request.uri) {
             let result = ReadResourceResult::new(vec![ResourceContents::text(
                 document,
                 request.uri.clone(),
@@ -457,13 +462,7 @@ impl ServerHandler for McpServer {
             }
             return Ok(result.into());
         }
-        if !self.policy.allows(McpCapabilityClass::Inspect) {
-            return Err(ErrorData::invalid_params(
-                "MCP inspect capability is required for operational resources",
-                None,
-            ));
-        }
-        let scoped_request = match Self::parse_resource_uri(&request.uri) {
+        let target = match catalog_resources::parse(&request.uri) {
             Ok(parsed) => parsed,
             Err(message) => {
                 self.context
@@ -471,8 +470,9 @@ impl ServerHandler for McpServer {
                 return Err(ErrorData::invalid_params(message, None));
             }
         };
-        let arguments = serde_json::to_value(scoped_request)
-            .map_err(|_| ErrorData::internal_error("could not encode resource scope", None))?;
+        let (tool, arguments) = target
+            .tool_arguments()
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
         let execution_context = self
             .context
             .with_correlation_id(format!("{:?}", request_context.id));
@@ -480,8 +480,8 @@ impl ServerHandler for McpServer {
             .execute_read_tool(
                 execution_context,
                 request_context.ct,
-                "inspect_resource_detail".to_string(),
-                Some(arguments),
+                tool.to_string(),
+                arguments,
             )
             .await
             .map_err(|message| ErrorData::invalid_params(message, None))?;
@@ -649,6 +649,11 @@ impl ServerHandler for McpServer {
                 }
             }
         };
+        let mut messages = messages;
+        messages.insert(
+            0,
+            PromptMessage::new_text(Role::User, catalog_resources::DIAGNOSTIC_INSTRUCTIONS),
+        );
         let result = GetPromptResult::new(messages);
         if !response_fits(&result) {
             return Err(ErrorData::invalid_params(
@@ -732,12 +737,7 @@ fn parse_resource_prompt_arguments(
 }
 
 fn response_fits<T: serde::Serialize>(response: &T) -> bool {
-    serde_json::to_vec(&serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": "mcp-budget-probe",
-        "result": response,
-    }))
-    .is_ok_and(|bytes| bytes.len() <= MAX_MCP_RESPONSE_BYTES)
+    super::limits::result_fits(response)
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {

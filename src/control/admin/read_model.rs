@@ -8,8 +8,15 @@ use crate::runtime::routing::route_triplet;
 use crate::session::session::SessionInfo as RuntimeSessionInfo;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+mod bounded;
+mod family_rows;
+mod inventory;
+pub(crate) use bounded::AdminSnapshot;
+use family_rows::{FamilyRow, FamilyRows, SessionRows};
+pub(crate) use inventory::{InventoryEntry, InventoryScope};
 
 type ScheduleIdentity = (u64, String, String, String, String);
 type LeaseIdentity = (u64, String, String, String);
@@ -106,40 +113,32 @@ fn matches_rpc_route_realm(realm: Option<&str>, route: &str) -> bool {
     })
 }
 
-fn collect_slice_matches<T: Clone>(items: &[T], include: impl Fn(&T) -> bool) -> Vec<T> {
-    items.iter().filter(|item| include(item)).cloned().collect()
-}
-
-fn collect_map_value_matches<K, T: Clone>(
-    items: &HashMap<K, T>,
+fn collect_slice_matches<T: Clone + FamilyRow>(
+    items: &FamilyRows<T>,
     include: impl Fn(&T) -> bool,
 ) -> Vec<T> {
-    items
-        .values()
-        .filter(|item| include(item))
-        .cloned()
-        .collect()
+    items.iter().filter(|item| include(item)).cloned().collect()
 }
 
 #[derive(Default)]
 pub struct AdminReadModel {
-    kv_transactions: RwLock<Vec<KvTransaction>>,
-    streams: RwLock<Vec<StreamInfo>>,
+    kv_transactions: RwLock<FamilyRows<KvTransaction>>,
+    streams: RwLock<FamilyRows<StreamInfo>>,
     stream_realm_watermarks: RwLock<BTreeMap<StreamRealmIdentity, StreamRealmWatermarkDetail>>,
     stream_area_watermarks: RwLock<BTreeMap<StreamAreaIdentity, StreamAreaWatermarkDetail>>,
     stream_events_total: RwLock<usize>,
-    notice_subscriptions: RwLock<Vec<NoticeSubscription>>,
-    notice_routes: RwLock<Vec<NoticeRouteInfo>>,
-    queues: RwLock<Vec<QueueInfo>>,
-    queue_inflight: RwLock<Vec<QueueInflight>>,
-    queue_dead_letters: RwLock<Vec<QueueDeadLetter>>,
-    rpc_workers: RwLock<Vec<RpcWorker>>,
-    rpc_pending: RwLock<Vec<RpcPendingRequest>>,
+    notice_subscriptions: RwLock<FamilyRows<NoticeSubscription>>,
+    notice_routes: RwLock<FamilyRows<NoticeRouteInfo>>,
+    queues: RwLock<FamilyRows<QueueInfo>>,
+    queue_inflight: RwLock<FamilyRows<QueueInflight>>,
+    queue_dead_letters: RwLock<FamilyRows<QueueDeadLetter>>,
+    rpc_workers: RwLock<FamilyRows<RpcWorker>>,
+    rpc_pending: RwLock<FamilyRows<RpcPendingRequest>>,
     leases: RwLock<BTreeMap<LeaseIdentity, LeaseInfo>>,
     lease_waiter_counts: RwLock<BTreeMap<u64, usize>>,
     schedules: RwLock<BTreeMap<ScheduleIdentity, ScheduleInfo>>,
     schedule_pending_fire_counts: RwLock<BTreeMap<u64, usize>>,
-    sessions: RwLock<HashMap<u64, SessionInfo>>,
+    sessions: RwLock<SessionRows>,
 }
 
 impl AdminReadModel {
@@ -148,18 +147,17 @@ impl AdminReadModel {
     }
 
     pub fn replace_kv_transactions(&self, transactions: Vec<KvTransaction>) {
-        *self.kv_transactions.write() = transactions;
+        *self.kv_transactions.write() = transactions.into();
     }
 
     pub(crate) fn upsert_kv_transaction(&self, transaction: KvTransaction) {
-        let mut transactions = self.kv_transactions.write();
-        if let Some(existing) = transactions.iter_mut().find(|existing| {
-            existing.tx_id == transaction.tx_id && existing.mode == transaction.mode
-        }) {
-            *existing = transaction;
-        } else {
-            transactions.push(transaction);
-        }
+        let tx_id = transaction.tx_id;
+        let mode = transaction.mode.clone();
+        self.kv_transactions
+            .write()
+            .replace_matching(transaction, |existing| {
+                existing.tx_id == tx_id && existing.mode == mode
+            });
     }
 
     pub(crate) fn remove_kv_transaction(&self, session_id: u64, tx_id: u64) {
@@ -207,7 +205,7 @@ impl AdminReadModel {
     }
 
     pub fn replace_streams(&self, streams: Vec<StreamInfo>) {
-        *self.streams.write() = streams;
+        *self.streams.write() = streams.into();
     }
 
     pub fn streams(&self, realm: Option<&str>) -> Vec<StreamInfo> {
@@ -269,7 +267,7 @@ impl AdminReadModel {
     }
 
     pub fn replace_notice_subscriptions(&self, subscriptions: Vec<NoticeSubscription>) {
-        *self.notice_subscriptions.write() = subscriptions;
+        *self.notice_subscriptions.write() = subscriptions.into();
     }
 
     pub(crate) fn replace_notice_family_subscriptions(
@@ -294,7 +292,7 @@ impl AdminReadModel {
     }
 
     pub fn replace_notice_routes(&self, routes: Vec<NoticeRouteInfo>) {
-        *self.notice_routes.write() = routes;
+        *self.notice_routes.write() = routes.into();
     }
 
     pub(crate) fn replace_notice_family_routes(
@@ -315,7 +313,7 @@ impl AdminReadModel {
     }
 
     pub fn replace_queues(&self, queues: Vec<QueueInfo>) {
-        *self.queues.write() = queues;
+        *self.queues.write() = queues.into();
     }
 
     pub fn queues(&self, realm: Option<&str>) -> Vec<QueueInfo> {
@@ -324,7 +322,7 @@ impl AdminReadModel {
     }
 
     pub fn replace_queue_inflight(&self, inflight: Vec<QueueInflight>) {
-        *self.queue_inflight.write() = inflight;
+        *self.queue_inflight.write() = inflight.into();
     }
 
     pub fn queue_inflight(&self, realm: Option<&str>) -> Vec<QueueInflight> {
@@ -333,7 +331,7 @@ impl AdminReadModel {
     }
 
     pub fn replace_queue_dead_letters(&self, messages: Vec<QueueDeadLetter>) {
-        *self.queue_dead_letters.write() = messages;
+        *self.queue_dead_letters.write() = messages.into();
     }
 
     pub fn queue_dead_letters(&self, realm: Option<&str>) -> Vec<QueueDeadLetter> {
@@ -341,8 +339,28 @@ impl AdminReadModel {
         collect_slice_matches(&messages, |item| matches_realm(realm, &item.realm))
     }
 
+    pub(crate) fn queue_dead_letter(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: u64,
+    ) -> Option<QueueDeadLetter> {
+        self.queue_dead_letters
+            .read()
+            .scoped(Some(family))
+            .find(|item| {
+                item.realm == realm
+                    && item.area == area
+                    && item.resource == resource
+                    && item.message_id == message_id
+            })
+            .cloned()
+    }
+
     pub fn replace_rpc_workers(&self, workers: Vec<RpcWorker>) {
-        *self.rpc_workers.write() = workers;
+        *self.rpc_workers.write() = workers.into();
     }
 
     pub(crate) fn replace_rpc_family_workers(&self, route_family: u64, workers: Vec<RpcWorker>) {
@@ -357,7 +375,7 @@ impl AdminReadModel {
     }
 
     pub fn replace_rpc_pending(&self, requests: Vec<RpcPendingRequest>) {
-        *self.rpc_pending.write() = requests;
+        *self.rpc_pending.write() = requests.into();
     }
 
     pub(crate) fn replace_rpc_family_pending(
@@ -539,7 +557,7 @@ impl AdminReadModel {
     }
 
     pub fn record_session_update(&self, session: &RuntimeSessionInfo) {
-        let connected_at = self.sessions.read().get(&session.session_id).map_or_else(
+        let connected_at = self.sessions.read().get(session.session_id).map_or_else(
             || DateTime::<Utc>::from(session.connected_at()).to_rfc3339(),
             |info| info.connected_at.clone(),
         );
@@ -551,12 +569,12 @@ impl AdminReadModel {
     }
 
     pub fn record_session_close(&self, session_id: u64) {
-        self.sessions.write().remove(&session_id);
+        self.sessions.write().remove(session_id);
     }
 
     pub fn sessions(&self) -> Vec<SessionInfo> {
         let sessions = self.sessions.read();
-        collect_map_value_matches(&sessions, |_| true)
+        sessions.values().cloned().collect()
     }
 }
 

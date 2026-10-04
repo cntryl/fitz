@@ -17,3 +17,22 @@ current broker process unless a field explicitly names durable domain state.
 
 Metric samples may be truncated at the advertised result limit. The response
 includes `truncated` and `limit` fields when that happens.
+
+Tool and operational resource values share `_meta` observation metadata.
+`observed_at` names the collection time, `evidence_id` identifies the observation,
+and `source` identifies the broker read model. Cached indexed projections set
+`cached_projection: true`. Their `source_updated_at` is `null` when the source
+does not provide an update timestamp; collection time does not establish the
+age of the underlying facts. Read the `freshness` and availability markers
+before describing an observation as current. `partial` and `unavailable` report
+limits or unavailable sources. An empty bounded collection or omitted field
+does not prove that a resource has no history or that an unavailable source is
+healthy. Cite evidence identifiers and timestamps when drawing conclusions.
+
+Documentation URIs are versioned as `fitz://docs/v1/<name>`. Operational URI
+templates are `fitz://broker/v1/summary`,
+`fitz://family/v1/{route_family}/topology` and
+`fitz://resource/v1/{scheme}/{route_family}/{realm}/{area}/{resource}`.
+URI versions identify the resource contract, independently of MCP protocol
+revisions. Percent-encode path segments; encoded separators and wildcards are
+rejected. Initial unversioned document/resource URIs remain readable aliases.

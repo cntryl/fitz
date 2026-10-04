@@ -97,6 +97,16 @@ struct McpMetricsOutput {
     limit: usize,
 }
 
+#[derive(schemars::JsonSchema)]
+#[allow(dead_code)]
+struct McpInventoryOutput {
+    route_family: Option<u64>,
+    items: Vec<crate::control::admin::read_model::InventoryEntry>,
+    next_cursor: Option<String>,
+    has_more: bool,
+    limit: usize,
+}
+
 impl McpToolRegistry {
     /// Returns a stable MCP catalog with schemas derived from REST read models.
     ///
@@ -114,7 +124,7 @@ fn protocol_tool(descriptor: McpToolDescriptor) -> Tool {
     let resource = descriptor.name.starts_with("inspect_resource_");
     let family_scoped = matches!(
         descriptor.name.as_str(),
-        "get_sessions" | "get_topology" | "get_structured_metrics"
+        "get_sessions" | "get_topology" | "get_structured_metrics" | "list_resource_inventory"
     );
     let scope = if resource {
         "resource READ; explicit route_family authority; omitted family requires wildcard authority; queue_family is a legacy Queue-only argument"
@@ -128,14 +138,14 @@ fn protocol_tool(descriptor: McpToolDescriptor) -> Tool {
         "fitz.capability": descriptor.capability,
         "fitz.source": descriptor.rest_path,
         "fitz.authority": scope,
-        "fitz.freshness": "current broker read-model snapshot; no durable history implied",
-        "fitz.pagination": "single bounded response; no cursor",
+        "fitz.freshness": "collection time is observed_at; cached projection publication age is unknown; no durable history implied",
+        "fitz.pagination": if descriptor.name == "list_resource_inventory" { "opaque cursor bound to principal, current authority and exact query; 300 second lifetime" } else { "single bounded response; truncation or explicit collection-budget error" },
         "fitz.budget": descriptor.budget,
         "fitz.enforcement": {
             "resultBytes": true,
             "resultItems": true,
             "hardRuntimeDeadline": false,
-            "collectionItemLimit": matches!(descriptor.name.as_str(), "inspect_resource_timeline" | "get_sessions" | "get_structured_metrics"),
+            "collectionItemLimit": true,
             "requestCancellationStopsWait": true,
             "blockingWorkPermitHeldUntilExit": true,
             "requestBodyBytes": 65536,
@@ -154,7 +164,9 @@ fn protocol_tool(descriptor: McpToolDescriptor) -> Tool {
     )
     .with_annotations(ToolAnnotations::new().read_only(true).open_world(false))
     .with_meta(rmcp::model::MetaObject(metadata));
-    let tool = if resource {
+    let tool = if descriptor.name == "list_resource_inventory" {
+        tool.with_input_schema::<super::inventory::InventoryRequest>()
+    } else if resource {
         tool.with_input_schema::<McpScopedResourceRequest>()
     } else if family_scoped {
         tool.with_input_schema::<McpAdminScopeRequest>()
@@ -169,6 +181,7 @@ fn protocol_tool(descriptor: McpToolDescriptor) -> Tool {
         "get_sessions" => tool.with_output_schema::<McpSessionsOutput>(),
         "get_topology" => tool.with_output_schema::<crate::api::admin::MessagingTopology>(),
         "get_structured_metrics" => tool.with_output_schema::<McpMetricsOutput>(),
+        "list_resource_inventory" => tool.with_output_schema::<McpInventoryOutput>(),
         _ => tool.with_output_schema::<GlobalTroubleshootingDiagnostics>(),
     }
 }

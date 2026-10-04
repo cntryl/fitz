@@ -12,7 +12,6 @@
 use super::troubleshooting;
 use crate::api::http::Response;
 use crate::boot::Runtime;
-use crate::runtime::routing::RouteFamily;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -189,6 +188,62 @@ pub(crate) fn build_global_stats(runtime: &Runtime) -> GlobalStats {
 
     GlobalStats {
         broker: build_broker_stats(runtime),
+        domains: DomainStats {
+            kv: build_kv_stats(runtime, kv),
+            stream: build_stream_stats(runtime, stream),
+            notice: build_notice_stats(runtime, notice),
+            queue: build_queue_stats(runtime, queue),
+            rpc: build_rpc_stats(runtime, rpc),
+            lease: build_lease_stats(runtime, lease),
+            schedule: build_schedule_stats(runtime, schedule),
+        },
+        diagnostics: global,
+    }
+}
+
+pub(crate) fn build_bounded_global_stats(
+    runtime: &Runtime,
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+) -> GlobalStats {
+    let troubleshooting::TroubleshootingSnapshot {
+        global,
+        kv,
+        stream,
+        notice,
+        queue,
+        rpc,
+        lease,
+        schedule,
+    } = troubleshooting::build_bounded_runtime_diagnostics(runtime, snapshot);
+    let mut broker = BrokerStats {
+        uptime_seconds: runtime.uptime().as_secs(),
+        connections: runtime.connection_count(),
+        sessions: runtime.session_count(),
+        realms: Vec::new(),
+        messages_per_second: runtime.messages_per_second(),
+        router_backpressure_total: runtime.router_backpressure_total(),
+        router_high_lane_backpressure_total: runtime.router_high_lane_backpressure_total(),
+    };
+    broker.realms = snapshot
+        .kv_transactions
+        .iter()
+        .map(|item| item.realm.clone())
+        .chain(snapshot.streams.iter().map(|item| item.realm.clone()))
+        .chain(snapshot.queues.iter().map(|item| item.realm.clone()))
+        .chain(snapshot.leases.iter().map(|item| item.realm.clone()))
+        .chain(snapshot.schedules.iter().map(|item| item.realm.clone()))
+        .chain(
+            snapshot
+                .notice_subscriptions
+                .iter()
+                .map(|item| item.realm.clone()),
+        )
+        .chain(snapshot.rpc_workers.iter().map(|item| item.realm.clone()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    GlobalStats {
+        broker,
         domains: DomainStats {
             kv: build_kv_stats(runtime, kv),
             stream: build_stream_stats(runtime, stream),
@@ -383,64 +438,30 @@ pub fn handle_global_stats(runtime: &Runtime) -> Response {
 /// Build a stats snapshot containing only state attributable to one route
 /// family. Broker-wide counters and diagnostics are intentionally omitted
 /// rather than copied into a narrower authorization scope.
-#[allow(clippy::too_many_lines)]
 pub(crate) fn build_family_stats(runtime: &Runtime, family: u64) -> GlobalStats {
-    let sessions = runtime
-        .list_sessions()
-        .into_iter()
-        .filter(|session| session.route_family == family)
-        .collect::<Vec<_>>();
-    let kv_transactions = runtime
-        .kv_list_transactions(None)
-        .into_iter()
-        .filter(|transaction| transaction.route_family == family)
-        .collect::<Vec<_>>();
-    let streams = runtime
-        .stream_list_streams(None)
-        .into_iter()
-        .filter(|stream| stream.route_family == family)
-        .collect::<Vec<_>>();
-    let notice_subscriptions = runtime
-        .notice_list_subscriptions(None, None)
-        .into_iter()
-        .filter(|subscription| subscription.route_family == family)
-        .collect::<Vec<_>>();
-    let notice_routes = runtime
-        .notice_list_routes(None)
-        .into_iter()
-        .filter(|route| route.route_family == family)
-        .collect::<Vec<_>>();
-    let queues = runtime
-        .queue_list_queues(None)
-        .into_iter()
-        .filter(|queue| queue.family == family)
-        .collect::<Vec<_>>();
-    let rpc_workers = runtime
-        .rpc_list_workers(None)
-        .into_iter()
-        .filter(|worker| worker.route_family == family)
-        .collect::<Vec<_>>();
-    let rpc_pending = runtime
-        .rpc_list_pending(None)
-        .into_iter()
-        .filter(|request| request.route_family == family)
-        .collect::<Vec<_>>();
-    let leases = runtime
-        .lease_list_leases(None)
-        .into_iter()
-        .filter(|lease| lease.route_family == family)
-        .collect::<Vec<_>>();
-    let schedules = runtime
-        .schedule_list_schedules(None)
-        .into_iter()
-        .filter(|schedule| schedule.route_family == family)
-        .collect::<Vec<_>>();
-    let pending_fire_claims = u32::try_from(family).map_or(0, |family| {
-        runtime
-            .schedule_list_pending_claims(RouteFamily::new(family))
-            .len()
-    });
+    let snapshot = runtime
+        .admin_read_model()
+        .bounded_snapshot(Some(family), usize::MAX);
+    build_snapshot_stats(&snapshot)
+}
 
+// This maps the existing seven-domain REST DTO; keeping its zero/unavailable fields
+// together makes the family-scoped contract reviewable.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn build_snapshot_stats(
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+) -> GlobalStats {
+    let sessions = &snapshot.sessions;
+    let kv_transactions = &snapshot.kv_transactions;
+    let streams = &snapshot.streams;
+    let notice_subscriptions = &snapshot.notice_subscriptions;
+    let notice_routes = &snapshot.notice_routes;
+    let queues = &snapshot.queues;
+    let rpc_workers = &snapshot.rpc_workers;
+    let rpc_pending = &snapshot.rpc_pending;
+    let leases = &snapshot.leases;
+    let schedules = &snapshot.schedules;
+    let pending_fire_claims = snapshot.pending_fire_claims;
     let mut realms = BTreeSet::new();
     realms.extend(kv_transactions.iter().map(|item| item.realm.clone()));
     realms.extend(streams.iter().map(|item| item.realm.clone()));
@@ -611,7 +632,7 @@ pub(crate) fn build_family_stats(runtime: &Runtime, family: u64) -> GlobalStats 
                 diagnostics: healthy,
             },
         },
-        diagnostics: troubleshooting::build_family_troubleshooting(runtime, family),
+        diagnostics: troubleshooting::build_projection_troubleshooting(snapshot),
     }
 }
 

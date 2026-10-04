@@ -15,6 +15,8 @@ mod configuration;
 mod correctness;
 mod fault_injection;
 mod lifecycle;
+mod metadata_inventory;
+mod metadata_inventory_pages;
 mod snapshot;
 mod subscriptions;
 

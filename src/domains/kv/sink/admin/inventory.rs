@@ -11,6 +11,106 @@ use crate::domains::kv::KvActor;
 const ADMIN_INVENTORY_REFRESH_LIMIT: usize = 10_000;
 
 impl KvFamilyRuntime<'_> {
+    /// Read only the persisted metadata estimate for one resource; never refresh user values.
+    pub(super) fn admin_inventory_metadata_resource(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
+        let tx = self
+            .core
+            .store
+            .begin(
+                KvActor::resolve_column_family(family)?,
+                crate::domains::kv::TxMode::ReadOnly,
+            )
+            .map_err(|error| error.to_string())?;
+        let Some(value) = tx
+            .get(&KvActor::inventory_metadata_key(realm, area, resource))
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
+        let estimate = decode_estimate(&value)?;
+        Ok(Some(self.inventory_entry_from_estimate(
+            family.as_u64(),
+            realm,
+            area,
+            resource,
+            estimate,
+        )))
+    }
+
+    /// Page persisted inventory estimates in one known realm without scanning user values.
+    pub(super) fn admin_inventory_page(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: Option<&str>,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<(Vec<crate::control::admin::KvResourceInventoryEntry>, bool), String> {
+        let family = route_family.as_u64();
+        let prefix = area.map_or_else(
+            || KvActor::inventory_realm_prefix(realm),
+            |area| KvActor::inventory_area_prefix(realm, area),
+        );
+        let start = after.map_or_else(
+            || prefix.clone(),
+            |(area, resource)| {
+                let mut key = KvActor::inventory_metadata_key(realm, area, resource);
+                key.push(0);
+                key
+            },
+        );
+        let tx = self
+            .core
+            .store
+            .begin(
+                KvActor::resolve_column_family(route_family)?,
+                crate::domains::kv::TxMode::ReadOnly,
+            )
+            .map_err(|error| error.to_string())?;
+        let mut rows = tx
+            .scan(
+                &prefix,
+                start,
+                KvActor::prefix_range_end(&prefix),
+                limit.saturating_add(1),
+                false,
+            )
+            .map_err(|error| error.to_string())?;
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        let entries = rows
+            .into_iter()
+            .filter_map(|(key, value)| {
+                KvActor::parse_inventory_metadata_key(&key)
+                    .map(|(realm, area, resource)| (realm, area, resource, value))
+            })
+            .map(|(realm, area, resource, value)| {
+                let estimate = decode_estimate(&value)?;
+                // Estimates can be incomplete. Read-only diagnostics never refresh or write them.
+                Ok(crate::control::admin::KvResourceInventoryEntry {
+                    route_family: family,
+                    realm,
+                    area,
+                    resource,
+                    estimated_record_count: estimate.estimated_record_count,
+                    estimated_storage_bytes: estimate.estimated_storage_bytes,
+                    estimate_complete: estimate.estimate_complete,
+                    read_latency_avg_ms: 0.0,
+                    read_latency_p95_ms: 0.0,
+                    write_latency_avg_ms: 0.0,
+                    write_latency_p95_ms: 0.0,
+                    transactions_active: 0,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok((entries, has_more))
+    }
     /// Build an admin inventory snapshot for the requested route family scope.
     ///
     /// # Errors

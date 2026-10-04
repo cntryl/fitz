@@ -1,4 +1,7 @@
 mod actions;
+mod catalog_resources;
+mod execution;
+mod limits;
 mod oauth;
 mod server;
 
@@ -23,7 +26,9 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
 const MAX_HTTP_CONCURRENCY: usize = 32;
+const REQUEST_BODY_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SESSION_BINDINGS: usize = 4_096;
+const MAX_SESSION_REAPS_PER_REQUEST: usize = 32;
 const SESSION_IDLE_TTL: Duration = Duration::from_hours(1);
 
 type InnerService = StreamableHttpService<McpServer, LocalSessionManager>;
@@ -154,11 +159,11 @@ impl McpHttpState {
             return json_error(StatusCode::NOT_FOUND, "not_found", None);
         }
         if !self.authority_is_allowed(&request) {
-            crate::api::mcp::telemetry::record_denial();
+            self.record_http_denial("invalid_host");
             return json_error(StatusCode::FORBIDDEN, "invalid_host", None);
         }
         if !self.origin_is_allowed(&request) {
-            crate::api::mcp::telemetry::record_denial();
+            self.record_http_denial("invalid_origin");
             return json_error(StatusCode::FORBIDDEN, "invalid_origin", None);
         }
         if is_metadata {
@@ -167,20 +172,25 @@ impl McpHttpState {
 
         let Ok(_request_permit) = self.request_slots.clone().try_acquire_owned() else {
             crate::api::mcp::telemetry::record_overload();
+            self.record_http_denial("http_capacity_full");
             return json_error(StatusCode::TOO_MANY_REQUESTS, "server_busy", Some("1"));
         };
-        let declared_length = match request.headers().get(CONTENT_LENGTH) {
-            Some(value) => match value
+        let declared_length = if let Some(value) = request.headers().get(CONTENT_LENGTH) {
+            if let Some(length) = value
                 .to_str()
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())
             {
-                Some(length) => Some(length),
-                None => return json_error(StatusCode::BAD_REQUEST, "invalid_content_length", None),
-            },
-            None => None,
+                Some(length)
+            } else {
+                self.record_http_denial("invalid_content_length");
+                return json_error(StatusCode::BAD_REQUEST, "invalid_content_length", None);
+            }
+        } else {
+            None
         };
         if declared_length.is_some_and(|length| length > MAX_REQUEST_BODY_BYTES) {
+            self.record_http_denial("request_too_large");
             return json_error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large", None);
         }
 
@@ -197,19 +207,45 @@ impl McpHttpState {
             .get("mcp-session-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
+        self.reap_expired_sessions().await;
         if let Some(session_id) = session_id.as_deref() {
             if let Err(status) = self.authorize_session(session_id, &authenticated) {
-                crate::api::mcp::telemetry::record_denial();
+                authenticated
+                    .context
+                    .record_transport_denial("http_mcp", "session_authority_mismatch");
                 return json_error(status, "session_authority_mismatch", None);
             }
         }
 
         let (parts, body) = request.into_parts();
-        let Ok(collected) = Limited::new(body, MAX_REQUEST_BODY_BYTES).collect().await else {
-            return json_error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large", None);
+        let collected = match tokio::time::timeout(
+            REQUEST_BODY_TIMEOUT,
+            Limited::new(body, MAX_REQUEST_BODY_BYTES).collect(),
+        )
+        .await
+        {
+            Ok(Ok(collected)) => collected,
+            Ok(Err(_)) => {
+                authenticated
+                    .context
+                    .record_transport_denial("http_mcp", "request_too_large");
+                return json_error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large", None);
+            }
+            Err(_) => {
+                authenticated
+                    .context
+                    .record_transport_denial("http_mcp", "request_body_timeout");
+                return json_error(StatusCode::REQUEST_TIMEOUT, "request_body_timeout", None);
+            }
         };
         let body_bytes = collected.to_bytes();
+        let request_id = serde_json::from_slice::<serde_json::Value>(&body_bytes)
+            .ok()
+            .and_then(|value| value.get("id").cloned());
         if declared_length.is_some_and(|length| length != body_bytes.len()) {
+            authenticated
+                .context
+                .record_transport_denial("http_mcp", "content_length_mismatch");
             return json_error(StatusCode::BAD_REQUEST, "content_length_mismatch", None);
         }
         let request = Request::from_parts(parts, Full::new(body_bytes));
@@ -219,7 +255,12 @@ impl McpHttpState {
         let response = CURRENT_AUTHENTICATED_REQUEST
             .scope(authenticated.clone(), self.inner.clone().handle(request))
             .await;
-        if is_delete {
+        if response.status().is_client_error() || response.status().is_server_error() {
+            authenticated
+                .context
+                .record_transport_denial("http_mcp", "protocol_rejected");
+        }
+        if is_delete && response.status().is_success() {
             if let Some(session_id) = session_id {
                 self.sessions.lock().remove(&session_id);
             }
@@ -231,13 +272,7 @@ impl McpHttpState {
             .map(str::to_owned)
         {
             if !self.bind_session(session_id.clone(), fingerprint, authenticated.expires_at) {
-                let cleanup = Request::builder()
-                    .method(Method::DELETE)
-                    .uri("/mcp")
-                    .header("mcp-session-id", session_id)
-                    .body(Full::new(bytes::Bytes::new()))
-                    .expect("static cleanup request is valid");
-                let _ = self.inner.clone().handle(cleanup).await;
+                self.close_transport_session(&session_id).await;
                 return json_error(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "session_capacity_full",
@@ -245,7 +280,7 @@ impl McpHttpState {
                 );
             }
         }
-        response
+        limits::bound_response(response, &authenticated.context, request_id).await
     }
 
     fn authorize_session(
@@ -255,11 +290,12 @@ impl McpHttpState {
     ) -> Result<(), StatusCode> {
         let now = Instant::now();
         let mut sessions = self.sessions.lock();
-        sessions.retain(|_, binding| {
-            binding.expires_at > SystemTime::now()
-                && now.duration_since(binding.last_seen) < SESSION_IDLE_TTL
-        });
         let binding = sessions.get_mut(session_id).ok_or(StatusCode::NOT_FOUND)?;
+        if binding.expires_at <= SystemTime::now()
+            || now.duration_since(binding.last_seen) >= SESSION_IDLE_TTL
+        {
+            return Err(StatusCode::NOT_FOUND);
+        }
         if binding.token_fingerprint != authenticated.token_fingerprint {
             return Err(StatusCode::UNAUTHORIZED);
         }
@@ -275,10 +311,6 @@ impl McpHttpState {
     ) -> bool {
         let now = Instant::now();
         let mut sessions = self.sessions.lock();
-        sessions.retain(|_, binding| {
-            binding.expires_at > SystemTime::now()
-                && now.duration_since(binding.last_seen) < SESSION_IDLE_TTL
-        });
         if !sessions.contains_key(&session_id) && sessions.len() >= MAX_SESSION_BINDINGS {
             return false;
         }
@@ -293,8 +325,53 @@ impl McpHttpState {
         true
     }
 
+    async fn reap_expired_sessions(&self) {
+        let now = Instant::now();
+        let expired: Vec<_> = self
+            .sessions
+            .lock()
+            .iter()
+            .filter(|(_, binding)| {
+                binding.expires_at <= SystemTime::now()
+                    || now.duration_since(binding.last_seen) >= SESSION_IDLE_TTL
+            })
+            .take(MAX_SESSION_REAPS_PER_REQUEST)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            if self.close_transport_session(&id).await {
+                self.sessions.lock().remove(&id);
+            }
+        }
+    }
+
+    async fn close_transport_session(&self, id: &str) -> bool {
+        let cleanup = Request::builder()
+            .method(Method::DELETE)
+            .uri("/mcp")
+            .header(
+                HOST,
+                format!(
+                    "{}:{}",
+                    format_url_host(&self.allowed_host),
+                    self.allowed_port
+                ),
+            )
+            .header("mcp-session-id", id)
+            .header("mcp-protocol-version", "2025-11-25")
+            .body(Full::new(bytes::Bytes::new()))
+            .expect("static cleanup request is valid");
+        self.inner
+            .clone()
+            .handle(cleanup)
+            .await
+            .status()
+            .is_success()
+    }
+
     fn auth_error_response(&self, error: &AuthError) -> McpResponse {
         crate::api::mcp::telemetry::record_authentication_failure();
+        self.record_http_denial(error.code());
         let challenge = format!(
             "Bearer resource_metadata=\"{}\", error=\"{}\"",
             self.verifier.metadata_url(),
@@ -305,6 +382,15 @@ impl McpHttpState {
             response.headers_mut().insert(WWW_AUTHENTICATE, value);
         }
         response
+    }
+
+    fn record_http_denial(&self, reason: &'static str) {
+        crate::api::mcp::McpExecutionContext::anonymous_with_audit(
+            crate::session::permissions::SessionPermissions::empty(),
+            self.audit_buffer.clone(),
+        )
+        .with_correlation_id(uuid::Uuid::new_v4().to_string())
+        .record_transport_denial("http_mcp", reason);
     }
 
     fn authority_is_allowed<B>(&self, request: &Request<B>) -> bool {
@@ -441,5 +527,9 @@ fn json_error(status: StatusCode, code: &str, retry_after: Option<&str>) -> McpR
         .expect("valid MCP error response")
 }
 
+#[cfg(test)]
+mod boundary_tests;
+#[cfg(test)]
+mod provider_tests;
 #[cfg(test)]
 mod tests;

@@ -73,7 +73,7 @@ fn should_register_inspect_tools_given_read_only_registry() {
     let descriptors = registry.tool_descriptors();
 
     // Assert
-    assert_eq!(descriptors.len(), 9);
+    assert_eq!(descriptors.len(), 10);
     let by_name = descriptors
         .into_iter()
         .map(|descriptor| (descriptor.name.clone(), descriptor))
@@ -187,7 +187,10 @@ fn should_execute_resource_detail_given_kv_scope() {
         .expect("resource detail output");
 
     // Assert
-    assert_eq!(output, expected);
+    assert!(output["_meta"]["evidence_id"].is_string());
+    let mut facts = output.clone();
+    facts.as_object_mut().unwrap().remove("_meta");
+    assert_eq!(facts, expected);
 }
 
 #[test]
@@ -228,15 +231,16 @@ fn should_execute_resource_timeline_given_kv_scope() {
         .expect("resource timeline output");
 
     // Assert
-    assert_eq!(output, expected);
+    assert!(output["_meta"]["evidence_id"].is_string());
+    let mut facts = output.clone();
+    facts.as_object_mut().unwrap().remove("_meta");
+    assert_eq!(facts, expected);
     let audit_records = context.audit_records();
     assert_eq!(audit_records.len(), 1);
     assert_eq!(audit_records[0].decision, McpAuditDecision::Allowed);
     assert_eq!(audit_records[0].tool_name, "inspect_resource_timeline");
-    assert_eq!(
-        audit_records[0].scope_route.as_deref(),
-        Some("kv://acme/app/users")
-    );
+    assert!(audit_records[0].scope_route.is_none());
+    assert_eq!(audit_records[0].result_summary, "scope_denied");
 }
 
 #[test]

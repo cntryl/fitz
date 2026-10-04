@@ -4,6 +4,7 @@
 //! All endpoints coexist with data plane on same port (path-based routing).
 
 mod assets;
+pub(crate) use list::snapshot_detail;
 pub mod auth;
 pub(crate) mod commands;
 pub mod handlers;
@@ -15,7 +16,8 @@ mod stats;
 mod topology;
 pub(crate) mod troubleshooting;
 
-pub(crate) use stats::{build_global_stats, build_global_troubleshooting, GlobalStats};
+pub(crate) use stats::build_bounded_global_stats;
+pub(crate) use stats::GlobalStats;
 pub(crate) use topology::{mcp_topology_value, MessagingTopology};
 
 pub use handlers::handle_request;

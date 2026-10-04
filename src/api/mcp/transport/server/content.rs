@@ -1,25 +1,4 @@
-use rmcp::model::{Prompt, PromptArgument, Resource, ResourceTemplate};
-
-const STATIC_DOCUMENTS: [(&str, &str, &str, &str); 3] = [
-    (
-        "fitz://docs/domain-guarantees",
-        "domain-guarantees",
-        "Fitz domain guarantees",
-        include_str!("../../../../../docs/admin/mcp/domain-guarantees.md"),
-    ),
-    (
-        "fitz://docs/operational-fields",
-        "operational-fields",
-        "MCP operational fields",
-        include_str!("../../../../../docs/admin/mcp/operational-fields.md"),
-    ),
-    (
-        "fitz://docs/troubleshooting",
-        "troubleshooting",
-        "Guided troubleshooting",
-        include_str!("../../../../../docs/admin/mcp/troubleshooting.md"),
-    ),
-];
+use rmcp::model::{Prompt, PromptArgument};
 
 pub(super) fn prompts() -> Vec<Prompt> {
     let mut prompts = vec![
@@ -106,46 +85,4 @@ fn domain_prompts() -> Vec<Prompt> {
         )
     })
     .collect()
-}
-
-pub(super) fn documentation_resources() -> Vec<Resource> {
-    STATIC_DOCUMENTS
-        .into_iter()
-        .map(|(uri, name, title, contents)| {
-            Resource::new(uri, name)
-                .with_title(title)
-                .with_description(
-                    "Versioned Fitz MCP documentation; contains no broker-specific state",
-                )
-                .with_mime_type("text/markdown")
-                .with_size(contents.len() as u64)
-        })
-        .collect()
-}
-
-pub(super) fn documentation(uri: &str) -> Option<&'static str> {
-    STATIC_DOCUMENTS
-        .iter()
-        .find(|(resource_uri, _, _, _)| *resource_uri == uri)
-        .map(|(_, _, _, contents)| *contents)
-}
-
-pub(super) fn resource_templates() -> Vec<ResourceTemplate> {
-    crate::runtime::DomainKind::ALL
-        .into_iter()
-        .map(|domain| {
-            ResourceTemplate::new(
-                format!(
-                    "fitz://resource/{}/{{route_family}}/{{realm}}/{{area}}/{{resource}}",
-                    domain.as_str()
-                ),
-                format!("{}_resource_detail", domain.as_str()),
-            )
-            .with_description(format!(
-                "Current bounded {} resource detail. route_family is independent of realm.",
-                domain.as_str()
-            ))
-            .with_mime_type("application/json")
-        })
-        .collect()
 }

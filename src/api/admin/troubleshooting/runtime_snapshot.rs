@@ -16,8 +16,18 @@ pub fn build_troubleshooting_snapshot(runtime: &Runtime) -> TroubleshootingSnaps
 }
 
 pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
+    let snapshot = runtime
+        .admin_read_model()
+        .bounded_snapshot(None, usize::MAX);
+    build_bounded_runtime_diagnostics(runtime, &snapshot)
+}
+
+pub(crate) fn build_bounded_runtime_diagnostics(
+    runtime: &Runtime,
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+) -> RuntimeDiagnostics {
     let now = Utc::now();
-    let analyses = collect_runtime_domain_analyses(runtime, now);
+    let analyses = collect_runtime_domain_analyses(runtime, snapshot, now);
     let mut all_hotspots = collect_runtime_hotspots(runtime, &analyses);
     all_hotspots.sort_by(compare_scored_hotspots);
     all_hotspots.truncate(5);
@@ -138,31 +148,30 @@ struct RuntimeDomainSnapshot {
     schedule: DomainAnalysis,
 }
 
-fn collect_runtime_domain_analyses(runtime: &Runtime, now: DateTime<Utc>) -> RuntimeDomainSnapshot {
-    let read_model = runtime.admin_read_model();
+fn collect_runtime_domain_analyses(
+    runtime: &Runtime,
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+    now: DateTime<Utc>,
+) -> RuntimeDomainSnapshot {
     RuntimeDomainSnapshot {
-        kv: analyze_kv(&read_model.kv_transactions(None), now),
+        kv: analyze_kv(&snapshot.kv_transactions, now),
         stream: analyze_stream(
-            &read_model.streams(None),
+            &snapshot.streams,
             runtime.stream_request_latency_buckets(),
             now,
         ),
-        notice: analyze_notice(
-            &read_model.notice_subscriptions(None, None),
-            &read_model.notice_routes(None),
-            now,
-        ),
+        notice: analyze_notice(&snapshot.notice_subscriptions, &snapshot.notice_routes, now),
         queue: analyze_queue(
-            &read_model.queues(None),
-            &read_model.queue_inflight(None),
-            &read_model.queue_dead_letters(None),
+            &snapshot.queues,
+            &snapshot.queue_inflight,
+            &snapshot.queue_dead_letters,
             runtime.queue_dead_letter_transitions_total(),
             runtime.queue_complete_rejected_total(),
             now,
         ),
         rpc: analyze_rpc(
-            &read_model.rpc_workers(None),
-            &read_model.rpc_pending(None),
+            &snapshot.rpc_workers,
+            &snapshot.rpc_pending,
             runtime.rpc_request_timeouts_total(),
             runtime.rpc_backpressure_rejects_total(),
             runtime.rpc_duplicate_correlation_rejects_total(),
@@ -171,9 +180,9 @@ fn collect_runtime_domain_analyses(runtime: &Runtime, now: DateTime<Utc>) -> Run
             runtime.rpc_responses_missing_pending_total(),
             now,
         ),
-        lease: analyze_lease(&read_model.leases(None), now),
+        lease: analyze_lease(&snapshot.leases, now),
         schedule: analyze_schedule(
-            &read_model.schedules(None),
+            &snapshot.schedules,
             runtime.schedule_pending_fire_claims(),
             runtime.schedule_pending_ack_retries(),
             runtime.schedule_oldest_pending_claim_age_seconds(),

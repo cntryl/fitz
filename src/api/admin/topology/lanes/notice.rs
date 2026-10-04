@@ -2,8 +2,8 @@ use crate::api::admin::list::NoticeSubscription;
 use crate::api::admin::stats;
 use crate::api::admin::topology::helpers::{
     add_broker_domain_flow, count_u64, count_usize, domain_node_id, scope_for_pattern,
-    scoped_resource, session_node_id, top_resources, topology_connection, topology_lane,
-    topology_state,
+    scope_with_family, scoped_resource, session_node_id, top_resources, topology_connection,
+    topology_lane, topology_state,
 };
 use crate::api::admin::topology::types::{
     TopologyConnectionBuilder, TopologyConnectionKind, TopologyLane, TopologyScopedResource,
@@ -59,10 +59,13 @@ pub(in crate::api::admin::topology) fn notice_lane(
             TopologyConnectionKind::NoticeSubscription,
             subscription.pattern.clone(),
             TopologyState::Flowing,
-            scope_for_pattern(
-                &subscription.pattern,
-                &subscription.realm,
-                Some(subscription.session_id.clone()),
+            scope_with_family(
+                scope_for_pattern(
+                    &subscription.pattern,
+                    &subscription.realm,
+                    Some(subscription.session_id.clone()),
+                ),
+                subscription.route_family,
             ),
             vec![count_u64(
                 "notifications_received",
@@ -86,15 +89,19 @@ pub(in crate::api::admin::topology) fn notice_lane(
 fn top_notice_resources(subscriptions: &[NoticeSubscription]) -> Vec<TopologyScopedResource> {
     #[derive(Default)]
     struct Rollup {
+        family: u64,
         realm: String,
         pattern: String,
         subscriptions: usize,
         notifications: u64,
     }
 
-    let mut rollups: BTreeMap<String, Rollup> = BTreeMap::new();
+    let mut rollups: BTreeMap<(u64, String), Rollup> = BTreeMap::new();
     for subscription in subscriptions {
-        let rollup = rollups.entry(subscription.pattern.clone()).or_default();
+        let rollup = rollups
+            .entry((subscription.route_family, subscription.pattern.clone()))
+            .or_default();
+        rollup.family = subscription.route_family;
         rollup.realm.clone_from(&subscription.realm);
         rollup.pattern.clone_from(&subscription.pattern);
         rollup.subscriptions += 1;
@@ -112,7 +119,10 @@ fn top_notice_resources(subscriptions: &[NoticeSubscription]) -> Vec<TopologySco
                 "notice",
                 rollup.pattern.clone(),
                 TopologyState::Flowing,
-                scope_for_pattern(&rollup.pattern, &rollup.realm, None),
+                scope_with_family(
+                    scope_for_pattern(&rollup.pattern, &rollup.realm, None),
+                    rollup.family,
+                ),
                 counters,
             )
         })

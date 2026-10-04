@@ -115,6 +115,48 @@ impl Runtime {
         )
     }
 
+    pub(crate) fn kv_inventory_metadata_resource(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
+        let domains = self
+            .domain_admins
+            .read()
+            .clone()
+            .ok_or_else(|| "KV domain is not initialized".to_string())?;
+        domains.kv_admin_inventory_metadata_resource(
+            RouteFamily::try_from(family).map_err(|_| "invalid route family".to_string())?,
+            realm,
+            area,
+            resource,
+        )
+    }
+
+    pub(crate) fn kv_inventory_metadata_page(
+        &self,
+        family: u64,
+        realm: &str,
+        area: Option<&str>,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<(Vec<crate::control::admin::KvResourceInventoryEntry>, bool), String> {
+        let domains = self
+            .domain_admins
+            .read()
+            .clone()
+            .ok_or_else(|| "KV domain is not initialized".to_string())?;
+        domains.kv_admin_inventory_page(
+            RouteFamily::try_from(family).map_err(|_| "invalid route family".to_string())?,
+            realm,
+            area,
+            after,
+            limit.min(256),
+        )
+    }
+
     /// Read the committed value for a KV key.
     ///
     /// # Errors
@@ -361,6 +403,61 @@ impl Runtime {
     ) -> Vec<crate::control::admin::QueueDeadLetter> {
         self.refresh_queue_admin_snapshot();
         self.admin_read_model.queue_dead_letters(realm)
+    }
+
+    pub(crate) fn queue_dead_letter(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: u64,
+    ) -> Option<crate::control::admin::QueueDeadLetter> {
+        self.admin_read_model
+            .queue_dead_letter(family, realm, area, resource, message_id)
+    }
+
+    pub(crate) fn queue_inspect_dead_letter(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: u64,
+    ) -> Result<Option<crate::control::admin::QueueDeadLetter>, String> {
+        use chrono::TimeZone as _;
+        let domains = self
+            .domain_admins
+            .read()
+            .clone()
+            .ok_or_else(|| "Queue domain is not initialized".to_string())?;
+        let key = QueueKey {
+            family: RouteFamily::try_from(family)
+                .map_err(|_| "invalid route family".to_string())?,
+            realm: realm.into(),
+            area: area.into(),
+            resource: resource.into(),
+        };
+        let result = domains.queue_inspect_dead_letter(&key, MessageId::new(message_id))?;
+        Ok(result.map(|snapshot| {
+            let timestamp = chrono::Utc
+                .timestamp_millis_opt(snapshot.dead_lettered_at_epoch_ms.cast_signed())
+                .single()
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_default();
+            crate::control::admin::QueueDeadLetter::snapshot(
+                &crate::control::admin::QueueDeadLetterSnapshot {
+                    message_id: snapshot.message_id,
+                    family,
+                    realm,
+                    area,
+                    resource,
+                    dead_lettered_at: &timestamp,
+                    attempts: snapshot.attempts,
+                    reason: snapshot.reason,
+                },
+            )
+        }))
     }
 
     /// Replay a dead-lettered queue message back into live delivery.

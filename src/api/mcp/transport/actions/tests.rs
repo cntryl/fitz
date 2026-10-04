@@ -7,6 +7,11 @@ use crate::runtime::Router;
 use crate::session::permissions::SessionPermissions;
 use std::path::Path;
 
+mod confirmation;
+mod durable_audit;
+mod queue;
+mod queue_workflow;
+
 fn runtime() -> Runtime {
     Runtime::with_admin_read_model(Arc::new(Router::new()), AdminReadModel::new())
 }
@@ -220,4 +225,31 @@ fn should_require_admin_capability_for_queue_dead_letter_purge() {
     assert!(context
         .permissions
         .allows_route("queue://operations/jobs/dispatch", Access::Write));
+}
+
+#[test]
+fn should_reject_confirmation_for_a_different_action_tool() {
+    // Arrange
+    let directory = tempfile::tempdir().expect("temporary audit directory");
+    let actions = action_state(directory.path());
+    let runtime = runtime();
+    let context = context("operator-a", AdminRouteFamilyAccess::wildcard());
+    let policy = privileged_policy();
+    let preview = actions
+        .preview_runtime_drain(&context, &policy, [9; 32], &runtime)
+        .expect("drain preview");
+
+    // Act
+    let result = actions.consume_confirmation(
+        CONFIRM_QUEUE_TOOL,
+        Some(confirmation_arguments(&preview)),
+        &context,
+        &policy,
+        [9; 32],
+        &runtime,
+    );
+
+    // Assert
+    assert!(result.is_err());
+    assert_eq!(runtime.lifecycle_state().as_str(), "running");
 }

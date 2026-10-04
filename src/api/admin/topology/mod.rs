@@ -61,44 +61,75 @@ pub fn handle_family_topology(runtime: &Runtime, family: u64) -> Response {
 }
 
 pub(crate) fn mcp_topology_value(runtime: &Runtime, family: Option<u64>) -> serde_json::Value {
-    let topology = family.map_or_else(
-        || build_messaging_topology(runtime),
-        |family| build_family_topology(runtime, family),
-    );
-    serde_json::to_value(topology).unwrap_or(serde_json::Value::Null)
+    let snapshot = runtime.admin_read_model().bounded_snapshot(family, 128);
+    let topology = build_snapshot_topology(&snapshot, family);
+    let mut value = serde_json::to_value(topology).expect("topology DTO serializes");
+    value["_meta"] = serde_json::json!({
+        "observed_at": Utc::now().to_rfc3339(),
+        "partial": snapshot.truncated,
+        "collection_limit": snapshot.limit_per_collection,
+        "unavailable": ["unattributed broker counters and domain latency histories"],
+    });
+    value
 }
 
 fn build_family_topology(runtime: &Runtime, family: u64) -> MessagingTopology {
-    let mut topology = build_messaging_topology(runtime);
-    topology
-        .session_groups
-        .retain(|group| group.route_family == family);
-    topology.broker.sessions = topology
-        .session_groups
-        .iter()
-        .map(|group| group.sessions)
-        .sum();
-    topology.broker.connections = topology.broker.sessions;
-    topology.broker.uptime_seconds = 0;
-    topology.broker.realms.clear();
-    topology.broker.messages_per_second = 0.0;
-    topology.broker.router_backpressure_total = 0;
-    topology.broker.router_high_lane_backpressure_total = 0;
-    topology.diagnostics = super::troubleshooting::build_family_troubleshooting(runtime, family);
-    topology.lanes.iter_mut().for_each(|lane| {
-        lane.top_scoped_resources
-            .retain(|resource| resource.scope.route_family == Some(family));
-        lane.diagnostics = super::troubleshooting::healthy_domain_diagnostics().snapshot;
-        lane.consumers = 0;
-        lane.observers = 0;
-        lane.activity_per_second = 0.0;
-        lane.counters.clear();
-    });
-    topology
-        .connections
-        .items
-        .retain(|connection| connection.scope.route_family == Some(family));
-    topology.connections.total = topology.connections.items.len();
-    topology.connections.truncated = false;
-    topology
+    let snapshot = runtime
+        .admin_read_model()
+        .bounded_snapshot(Some(family), usize::MAX);
+    build_snapshot_topology(&snapshot, Some(family))
 }
+
+fn build_snapshot_topology(
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+    family: Option<u64>,
+) -> MessagingTopology {
+    let stats = super::stats::build_snapshot_stats(snapshot);
+    let domains = &stats.domains;
+    let mut connections = TopologyConnectionBuilder::new(CONNECTION_LIMIT);
+    let lanes = vec![
+        lanes::queue_lane(
+            &domains.queue,
+            &snapshot.queues,
+            &snapshot.queue_inflight,
+            &mut connections,
+        ),
+        lanes::rpc_lane(
+            &domains.rpc,
+            &snapshot.rpc_workers,
+            &snapshot.rpc_pending,
+            &mut connections,
+        ),
+        lanes::notice_lane(
+            &domains.notice,
+            &snapshot.notice_subscriptions,
+            &mut connections,
+        ),
+        lanes::schedule_lane(&domains.schedule, &snapshot.schedules, &mut connections),
+        lanes::stream_lane(&domains.stream, &snapshot.streams, &mut connections),
+        lanes::lease_lane(&domains.lease, &snapshot.leases, &mut connections),
+        lanes::kv_lane(&domains.kv, &snapshot.kv_transactions, &mut connections),
+    ];
+    let mut connections = connections.finish();
+    if let Some(family) = family {
+        // Synthetic broker/domain edges have no family; retained facts were selected before collection.
+        connections
+            .items
+            .retain(|item| item.scope.route_family == Some(family));
+        if !connections.truncated {
+            connections.total = connections.items.len();
+        }
+    }
+    connections.truncated |= snapshot.truncated;
+    MessagingTopology {
+        generated_at: Utc::now().to_rfc3339(),
+        broker: stats.broker,
+        diagnostics: stats.diagnostics,
+        session_groups: sessions::session_groups(snapshot.sessions.clone()),
+        lanes,
+        connections,
+    }
+}
+
+#[cfg(test)]
+mod tests;

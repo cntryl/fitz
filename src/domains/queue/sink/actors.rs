@@ -292,6 +292,15 @@ impl QueueFamilyState {
         }
     }
 
+    pub(super) fn inspect_dead_letter(
+        &mut self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<Option<crate::domains::queue::projection::QueueDeadLetterSnapshot>, String> {
+        let (result, _) = self.with_actor(key, |actor| actor.admin_dead_letter(id))?;
+        result
+    }
+
     /// Replays a dead-lettered message back into its queue.
     ///
     /// # Errors

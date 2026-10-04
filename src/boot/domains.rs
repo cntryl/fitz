@@ -293,6 +293,29 @@ impl DomainAdminPorts {
             .admin_inventory_resource(family, realm, area, resource)
     }
 
+    pub(crate) fn kv_admin_inventory_metadata_resource(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
+        self.kv
+            .admin_inventory_metadata_resource(family, realm, area, resource)
+    }
+
+    pub(crate) fn kv_admin_inventory_page(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: Option<&str>,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<(Vec<crate::control::admin::KvResourceInventoryEntry>, bool), String> {
+        self.kv
+            .admin_inventory_page(family, realm, area, after, limit)
+    }
+
     pub(crate) fn kv_admin_get_committed_value(
         &self,
         family: crate::runtime::routing::RouteFamily,
@@ -371,6 +394,14 @@ impl DomainAdminPorts {
 
     pub(crate) fn queue_active_inflight_count(&self) -> usize {
         self.queue.counts().inflight
+    }
+
+    pub(crate) fn queue_inspect_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<Option<crate::domains::queue::projection::QueueDeadLetterSnapshot>, String> {
+        self.queue.inspect_dead_letter(key, id)
     }
 
     pub(crate) fn queue_replay_dead_letter(

@@ -531,6 +531,14 @@ pub fn rpc_operations(
         .into_iter()
         .filter(|request| matches_family(family, request.route_family))
         .collect::<Vec<_>>();
+    rpc_operations_from_rows(path, &workers, &pending)
+}
+
+pub(crate) fn rpc_operations_from_rows(
+    path: &ResourcePath<'_>,
+    workers: &[super::RpcWorker],
+    pending: &[super::RpcPendingRequest],
+) -> OperationCollection {
     let operation_names = workers
         .iter()
         .map(|worker| worker.route.as_str())

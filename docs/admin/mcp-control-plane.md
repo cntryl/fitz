@@ -30,6 +30,11 @@ authorization server issuer, supported scopes, bearer method, and optional
 documentation URL. The OAuth authorization server issues tokens; Fitz validates
 them and does not host an authorization or token endpoint.
 
+The [pinned Keycloak setup](mcp/oauth-provider.md) supplies an import for an
+S256 PKCE human client and a separate machine client with a narrow Queue read
+grant. It describes signing-key provisioning and the explicit restart required
+for key rotation.
+
 ## Bearer token contract
 
 Fitz accepts bounded RS256 bearer tokens only. Signature, issuer, audience,
@@ -75,16 +80,35 @@ per-request protocol metadata. `2025-11-25` remains supported with the
 initialize/initialized session lifecycle. Compatibility session IDs are bound
 to the bearer-token fingerprint, expire with the token, and are discarded after
 one hour idle; at most 4,096 bindings are retained per process.
+Each authenticated request reaps at most 32 expired inner sessions. A binding
+is released after the inner service accepts its DELETE request.
 
-Read-only clients can list nine tools: global stats, global troubleshooting,
+Read-only clients can list ten tools: global stats, global troubleshooting,
 explanation, MCP discovery, sessions, topology, structured metrics, resource
-detail, and resource timeline. Resource templates cover all seven Fitz
+inventory, resource detail, and resource timeline. The authorized catalog exposes
+broker and family templates plus resource templates for all seven Fitz
 domains. Three static documentation resources describe [domain guarantees](mcp/domain-guarantees.md),
 [operational fields](mcp/operational-fields.md), and
 [troubleshooting](mcp/troubleshooting.md). Prompts provide global broker
 diagnosis, detail and timeline inspection, and a guided diagnosis for each of
 the seven domains. Operational resources and prompts require the inspect
 capability; static documentation is not broker-specific.
+
+Versioned URIs are `fitz://broker/v1/summary`,
+`fitz://family/v1/{route_family}/topology`,
+`fitz://resource/v1/{domain}/{route_family}/{realm}/{area}/{resource}`, and
+`fitz://docs/v1/{document}`. Encode each application namespace segment separately.
+Legacy documentation and resource aliases remain readable without being
+advertised. Every operational URI runs the same permission and capability
+checks as its corresponding tool; knowing a URI grants no access.
+
+Operational JSON includes `_meta` observation time, evidence ID, source,
+freshness, partial and unavailable markers. Prompts require the reader to cite
+that evidence, keep observations separate from hypotheses and treat broker
+strings as untrusted data. Empty or partial bounded snapshots do not prove
+absence or complete history.
+Cached indexed projections identify themselves and report unknown source age
+when `source_updated_at` is `null`; `observed_at` is the collection time.
 
 The reads mirror the admin REST contracts and current read models. They do not
 add data-plane permissions or infer history, ownership, replay, or recovery.
@@ -95,6 +119,7 @@ See [domain guarantees](mcp/domain-guarantees.md) for Fitz's domain meanings.
 | Limit | Enforced value |
 | --- | ---: |
 | HTTP request body | 64 KiB, checked before RMCP parses JSON |
+| HTTP body read deadline | 5 seconds from admission |
 | Encoded tool arguments | 16 KiB |
 | Concurrent HTTP requests | 32 |
 | Concurrent tool executions | 32; a blocking worker holds its permit until it exits |
@@ -114,6 +139,36 @@ read-model calls are synchronous, so a timed-out or cancelled worker may finish
 in the background. Its permit remains held, and Fitz does not return its late
 result to the cancelled request. Admission failures return a retryable busy
 response; callers should use bounded backoff.
+
+### Local budget measurement
+
+On 2026-10-04 the explicit debug-build acceptance measurement executed all ten
+read tools 20 times each against a local runtime whose cached admin read model
+contained 500 RPC worker snapshots. It measured tool execution and encoded tool-result bytes
+under concurrent local test load, using cached indexed projections. It did not
+include OAuth provider latency or HTTP/network time and does not establish a
+hard execution deadline. Reproduce with:
+
+```sh
+cargo test --lib should_measure_bounded_operational_reads_without_promising_hard_preemption -- --ignored --nocapture
+```
+
+| Tool | p95 (ms) | Largest result (bytes) |
+| --- | ---: | ---: |
+| `get_global_stats` | 2.434 | 8,384 |
+| `get_global_troubleshooting` | 0.576 | 1,033 |
+| `inspect_resource_detail` | 0.945 | 829 |
+| `inspect_resource_timeline` | 0.551 | 2,363 |
+| `explain_global_troubleshooting` | 0.531 | 1,033 |
+| `get_mcp_discovery` | 0.076 | 1,397 |
+| `get_sessions` | 0.043 | 641 |
+| `get_topology` | 5.491 | 69,307 |
+| `get_structured_metrics` | 0.297 | 2,947 |
+| `list_resource_inventory` | 1.158 | 9,285 |
+
+No read exceeded its item/byte/wait budget in these 200 calls. The largest
+elapsed time was 10.022 ms (`get_global_stats`). These are focused acceptance
+observations, not production latency targets or measurements of source age.
 
 MCP audit records retained in memory are bounded to the most recent 1,024
 entries and share a bounded buffer across the MCP HTTP listener's callers. Text fields are

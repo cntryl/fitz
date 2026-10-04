@@ -58,6 +58,13 @@ enum Action {
 }
 
 impl Action {
+    fn confirmation_tool(&self) -> &'static str {
+        match self {
+            Self::RuntimeDrain => CONFIRM_DRAIN_TOOL,
+            Self::QueueDeadLetter { .. } => CONFIRM_QUEUE_TOOL,
+        }
+    }
+
     fn audit_name(&self) -> &'static str {
         match self {
             Self::RuntimeDrain => "runtime.drain",
@@ -361,7 +368,8 @@ impl McpActionState {
                 previews.remove(&arguments.challenge_id);
                 return self.denied(context, tool_name, "challenge_expired");
             }
-            if preview.username != username
+            if preview.action.confirmation_tool() != tool_name
+                || preview.username != username
                 || preview.token_fingerprint != token_fingerprint
                 || preview.target != arguments.target
                 || preview.confirmation != arguments.confirmation
@@ -398,10 +406,7 @@ impl McpActionState {
         token_fingerprint: [u8; 32],
         runtime: &Runtime,
     ) -> Result<serde_json::Value, String> {
-        let confirmation_tool = match &ticket.action {
-            Action::RuntimeDrain => CONFIRM_DRAIN_TOOL,
-            Action::QueueDeadLetter { .. } => CONFIRM_QUEUE_TOOL,
-        };
+        let confirmation_tool = ticket.action.confirmation_tool();
         if !self.audit.append(
             &ticket.operation_id,
             &ticket.username,
@@ -458,7 +463,7 @@ impl McpActionState {
                 ("completed", Some(begin_runtime_drain(runtime)))
             }
             Action::QueueDeadLetter { target, operation } => {
-                let Ok(current) = queue_dead_letter_observation(runtime, target) else {
+                let Ok(current) = queue_dead_letter_current_observation(runtime, target) else {
                     return self.finish_known_failure(
                         &ticket,
                         context,
@@ -538,6 +543,39 @@ impl McpActionState {
             runtime: runtime_result,
         })
         .map_err(|_| "action completed but its response could not be encoded".to_string())
+    }
+
+    /// Persist the request's interruption separately from any later synchronous command outcome.
+    pub(super) fn record_request_interruption(
+        &self,
+        tool_name: &str,
+        challenge_id: Option<&str>,
+        context: &McpExecutionContext,
+        fingerprint: [u8; 32],
+        outcome: &'static str,
+    ) -> Result<(), String> {
+        let username = context.principal_name().unwrap_or_else(|| "unknown".into());
+        let requested_id = challenge_id
+            .and_then(|value| Uuid::parse_str(value).ok())
+            .map(|value| value.to_string());
+        let operation_id = requested_id
+            .filter(|id| {
+                self.previews.lock().get(id).is_none_or(|preview| {
+                    preview.username == username && preview.token_fingerprint == fingerprint
+                })
+            })
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        context.record_action_audit(tool_name, outcome, McpAuditDecision::Denied);
+        if !self.audit.append(
+            &operation_id,
+            &username,
+            action_name(tool_name),
+            "redacted",
+            outcome,
+        ) {
+            return Err("action request interruption could not be durably audited".into());
+        }
+        Ok(())
     }
 
     fn issue_preview(
@@ -769,16 +807,32 @@ fn queue_dead_letter_observation(
     runtime: &Runtime,
     target: &QueueTarget,
 ) -> Result<Option<serde_json::Value>, String> {
-    let current = runtime
-        .queue_list_dead_letters(Some(&target.realm))
-        .into_iter()
-        .find(|message| {
-            message.family == target.route_family
-                && message.realm == target.realm
-                && message.area == target.area
-                && message.resource == target.resource
-                && message.message_id == target.message_id
-        });
+    let current = runtime.queue_dead_letter(
+        target.route_family,
+        &target.realm,
+        &target.area,
+        &target.resource,
+        target.message_id,
+    );
+    encode_queue_dead_letter_observation(current)
+}
+
+fn queue_dead_letter_current_observation(
+    runtime: &Runtime,
+    target: &QueueTarget,
+) -> Result<Option<serde_json::Value>, String> {
+    encode_queue_dead_letter_observation(runtime.queue_inspect_dead_letter(
+        target.route_family,
+        &target.realm,
+        &target.area,
+        &target.resource,
+        target.message_id,
+    )?)
+}
+
+fn encode_queue_dead_letter_observation(
+    current: Option<crate::control::admin::QueueDeadLetter>,
+) -> Result<Option<serde_json::Value>, String> {
     current
         .map(|message| {
             let reason_hash: [u8; 32] = Sha256::digest(message.reason.as_bytes()).into();

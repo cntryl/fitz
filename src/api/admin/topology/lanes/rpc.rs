@@ -2,8 +2,8 @@ use crate::api::admin::list::{RpcPendingRequest, RpcWorker};
 use crate::api::admin::stats;
 use crate::api::admin::topology::helpers::{
     add_broker_domain_flow, count_u64, count_usize, counter, domain_node_id, saturating_usize,
-    scope_for_route, scoped_resource, scoped_state, session_node_id, top_resources,
-    topology_connection, topology_lane, topology_state,
+    scope_for_route, scope_with_family, scoped_resource, scoped_state, session_node_id,
+    top_resources, topology_connection, topology_lane, topology_state,
 };
 use crate::api::admin::topology::types::{
     TopologyConnectionBuilder, TopologyConnectionKind, TopologyLane, TopologyScopedResource,
@@ -58,7 +58,10 @@ pub(in crate::api::admin::topology) fn rpc_lane(
             TopologyConnectionKind::RpcWorker,
             worker.route.clone(),
             TopologyState::Flowing,
-            scope_for_route(&worker.route, Some(worker.session_id.clone())),
+            scope_with_family(
+                scope_for_route(&worker.route, Some(worker.session_id.clone())),
+                worker.route_family,
+            ),
             vec![
                 count_u64("requests_handled", "Handled", worker.requests_handled),
                 counter(
@@ -90,7 +93,10 @@ pub(in crate::api::admin::topology) fn rpc_lane(
             TopologyConnectionKind::RpcPendingAssignment,
             request.route.clone(),
             request_state,
-            scope_for_route(&request.route, request.worker_session_id.clone()),
+            scope_with_family(
+                scope_for_route(&request.route, request.worker_session_id.clone()),
+                request.route_family,
+            ),
             vec![count_u64("age_seconds", "Age", request.age_seconds)],
         ));
     }
@@ -112,6 +118,7 @@ fn top_rpc_resources(
 ) -> Vec<TopologyScopedResource> {
     #[derive(Default)]
     struct Rollup {
+        family: u64,
         route: String,
         workers: usize,
         pending: usize,
@@ -120,9 +127,12 @@ fn top_rpc_resources(
         oldest_pending_age_seconds: u64,
     }
 
-    let mut rollups: BTreeMap<String, Rollup> = BTreeMap::new();
+    let mut rollups: BTreeMap<(u64, String), Rollup> = BTreeMap::new();
     for worker in workers {
-        let rollup = rollups.entry(worker.route.clone()).or_default();
+        let rollup = rollups
+            .entry((worker.route_family, worker.route.clone()))
+            .or_default();
+        rollup.family = worker.route_family;
         rollup.route.clone_from(&worker.route);
         rollup.workers += 1;
         rollup.handled += worker.requests_handled;
@@ -130,7 +140,10 @@ fn top_rpc_resources(
     }
 
     for request in pending {
-        let rollup = rollups.entry(request.route.clone()).or_default();
+        let rollup = rollups
+            .entry((request.route_family, request.route.clone()))
+            .or_default();
+        rollup.family = request.route_family;
         rollup.route.clone_from(&request.route);
         rollup.pending += 1;
         rollup.oldest_pending_age_seconds =
@@ -165,7 +178,7 @@ fn top_rpc_resources(
                 "rpc",
                 rollup.route.clone(),
                 state,
-                scope_for_route(&rollup.route, None),
+                scope_with_family(scope_for_route(&rollup.route, None), rollup.family),
                 counters,
             )
         })
