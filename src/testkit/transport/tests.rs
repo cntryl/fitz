@@ -82,7 +82,7 @@ fn should_build_connect_frame() {
     let frame = build_connect_frame(realm, jwt);
 
     // Assert
-    assert!(!frame.is_empty());
+    assert_ne!(frame, Vec::<u8>::new());
     assert_eq!(frame[0], 1); // msg_type 1 (CONNECT)
 }
 

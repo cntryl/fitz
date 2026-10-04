@@ -41,15 +41,23 @@ impl RegistrationTable {
         if self.contains_registration(key) {
             return Some(RpcWorkerRegistration::Existing);
         }
-        let session_wildcard_count = self
+        let (session_total_count, session_wildcard_count) = self
             .session_counts
             .get(&registration.session_id)
-            .map_or(0, |counts| counts.wildcard);
-        crate::domains::subscription_state::wildcard_registration_limit_reached(
+            .map_or((0, 0), |counts| (counts.total, counts.wildcard));
+        match crate::domains::subscription_state::registration_limit_for_counts(
+            session_total_count,
             registration.pattern(),
             session_wildcard_count,
-        )
-        .then_some(RpcWorkerRegistration::WildcardLimit)
+        ) {
+            Some(crate::domains::subscription_state::RegistrationLimit::Total) => {
+                Some(RpcWorkerRegistration::TotalLimit)
+            }
+            Some(crate::domains::subscription_state::RegistrationLimit::Wildcard) => {
+                Some(RpcWorkerRegistration::WildcardLimit)
+            }
+            None => None,
+        }
     }
 
     pub(in crate::domains::rpc::sink) fn matching_ids(

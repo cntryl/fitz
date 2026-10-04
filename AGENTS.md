@@ -56,6 +56,15 @@ Right:
 - When editing UI tooling, prefer ESM and `.js` over `.mjs` for repo-owned files.
 - When `public/openapi.yml` or the UI client changes, regenerate adapters with `npm run gen:adapters` from `ui/`.
 
+## Jev (TypeSafe Judgments)
+- Jev is TypeSafe's judgment model, called with `POST https://api.typesafe.ai/v1/systemone` and `model: "jev-latest"`.
+- Read the bearer key from `~/.config/typesafe/jev.key`; never print, commit, or pass the key as a command-line argument.
+- The JSON request has `state` plus a `questions` map. Use `noul` for yes/no, `choice` with explicit alternatives, and `score` with an ordered rubric. Include the contract, relevant code facts, and names of existing behavior tests when asking for edge-case gaps.
+- Keep questions bounded and evidence-specific. If confidence is low or the answer is diffuse, rephrase with narrower facts and alternatives.
+- Jev provides typed judgments for prioritization and hypothesis generation, not proof. Verify findings in source and with focused tests; do not create a bug from a Jev answer alone.
+- The TypeSafe endpoint is stateless and does not persist bughunt findings or coverage. Use `gh` CLI issues as the durable backlog and coverage ledger, and link reproductions and investigation status there.
+- Do not send credentials or private/customer data in `state`.
+
 ## Validation
 - Rust: `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic`.
 - UI: run from `ui/` with `npm run test`, `npm run lint`, `npm run type-check`, and `npm run build`.

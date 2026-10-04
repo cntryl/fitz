@@ -179,7 +179,7 @@ impl StreamFamilyState {
 
         match Self::actor_key_for_route(family_id, route) {
             Ok(key) => {
-                let Ok(stream_session_id) = self.next_session_id.fetch_update(
+                let Ok(stream_session_id) = self.next_session_id.try_update(
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                     |current| current.checked_add(1),

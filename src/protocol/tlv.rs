@@ -649,7 +649,7 @@ mod tests {
         // Assert
         let (msg_type, value, consumed) = res.expect("should decode zero-length value");
         assert_eq!(msg_type.as_u16(), 1);
-        assert!(value.is_empty());
+        assert_eq!(value, &[] as &[u8]);
         assert_eq!(consumed, 3);
     }
 
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(msg_type1.as_u16(), 1);
         assert_eq!(val1, b"hello");
         assert_eq!(msg_type2.as_u16(), 2);
-        assert!(val2.is_empty());
+        assert_eq!(val2, &[] as &[u8]);
         assert_eq!(consumed2, 3); // type(1) + len(2) + zero value(0)
     }
 

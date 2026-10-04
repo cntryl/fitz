@@ -324,6 +324,22 @@ mod tests {
     }
 
     #[test]
+    fn should_not_combine_partial_grants_to_authorize_registration() {
+        // Arrange
+        let permissions = SessionPermissions::from_permissions(vec![
+            Permission::parse("rpc://acme/orders#read").unwrap(),
+            Permission::parse("rpc://acme/orders/*/**#read").unwrap(),
+        ]);
+        let registration = crate::runtime::matcher::Pattern::new("rpc://acme/orders/**");
+
+        // Act
+        let allowed = permissions.allows_registration_pattern(&registration, Access::Read);
+
+        // Assert
+        assert!(!allowed);
+    }
+
+    #[test]
     fn should_allow_registration_within_permission_match_set() {
         // Arrange
         let permission = Permission::parse("rpc://acme/orders/**#*").unwrap();

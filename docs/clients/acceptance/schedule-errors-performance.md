@@ -268,7 +268,7 @@ Error codes follow the format `XXYY` where:
 | 1010 | ERR_TRANSACTION_ABORTED | Transaction aborted by system | No |
 | 1011 | ERR_UNAUTHORIZED | Permission denied for KV operation | No |
 | 1012 | ERR_INVALID_SUBSCRIPTION_PATTERN | KV subscription pattern syntax or depth invalid | No |
-| 1013 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 128 wildcard KV registrations | No |
+| 1013 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 1,024 total or 128 wildcard KV registrations | No |
 
 ### Stream Domain (2000-2999)
 
@@ -283,7 +283,7 @@ Error codes follow the format `XXYY` where:
 | 2007 | ERR_STREAM_FILTER_INVALID_PAYLOAD | Filter payload malformed or undecodable | No |
 | 2009 | ERR_UNAUTHORIZED | Permission denied for stream operation | No |
 | 2010 | ERR_INVALID_SUBSCRIPTION_PATTERN | Subscription pattern syntax invalid | No |
-| 2011 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 128 wildcard Stream registrations | No |
+| 2011 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 1,024 total or 128 wildcard Stream registrations | No |
 | 2012 | ERR_BACKEND_ERROR | Stream storage backend error | Yes (with backoff) |
 | 2013 | ERR_READ_RESPONSE_TOO_LARGE | A single record's wire-encoded size alone exceeds the maximum response frame size and can never be returned by any READ | No |
 
@@ -293,7 +293,7 @@ Error codes follow the format `XXYY` where:
 |------|------|-------------|-----------|
 | 3001 | ERR_INVALID_ROUTE | Notice route format invalid | No |
 | 3002 | ERR_INVALID_PATTERN | Subscription pattern syntax invalid | No |
-| 3003 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 128 wildcard Notice registrations | No |
+| 3003 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 1,024 total or 128 wildcard Notice registrations | No |
 | 3004 | ERR_TRANSPORT_CLOSED | Transport connection closed | No |
 | 3005 | ERR_BACKEND_ERROR | Notice broker-side processing error | Yes (with backoff) |
 | 3009 | ERR_UNAUTHORIZED | Permission denied for notice operation | No |
@@ -311,7 +311,7 @@ Error codes follow the format `XXYY` where:
 | 4007 | ERR_BACKEND_ERROR | Queue storage backend error | Yes (with backoff) |
 | 4009 | ERR_UNAUTHORIZED | Permission denied for queue operation | No |
 | 4010 | ERR_INVALID_SUBSCRIPTION_PATTERN | Queue subscription pattern syntax or depth invalid | No |
-| 4011 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 128 wildcard Queue registrations | No |
+| 4011 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 1,024 total or 128 wildcard Queue registrations | No |
 
 ### Lease Domain (5000-5999)
 
@@ -346,7 +346,7 @@ Error codes follow the format `XXYY` where:
 | 6010 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Only when the error text indicates a transient backend or infrastructure failure |
 | 6011 | ERR_INVALID_ROUTE | RPC call route is malformed or contains a wildcard | No |
 | 6012 | ERR_INVALID_SUBSCRIPTION_PATTERN | RPC worker registration pattern syntax invalid | No |
-| 6013 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 128 wildcard RPC registrations | No |
+| 6013 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 1,024 total or 128 wildcard RPC registrations | No |
 
 ### Schedule Domain (7000-7999)
 
@@ -358,7 +358,7 @@ Error codes follow the format `XXYY` where:
 | 7004 | ERR_PARSE_ERROR | Schedule payload parse error | No |
 | 7005 | ERR_INVALID_TARGET | Target route invalid or unsupported | No |
 | 7006 | ERR_INVALID_SUBSCRIPTION_PATTERN | Subscription pattern syntax invalid | No |
-| 7007 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 128 wildcard Schedule registrations | No |
+| 7007 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 1,024 total or 128 wildcard Schedule registrations | No |
 | 7008 | ERR_INVALID_DELIVERY_MODE | Delivery mode is not broadcast (0) or single (1) | No |
 | 7009 | ERR_UNAUTHORIZED | Permission denied for schedule operation | No |
 | 7010 | ERR_BACKEND_ERROR | Schedule backend unavailable or saturated; not a cron or payload parse failure | Yes, when the operation is safe to replay |

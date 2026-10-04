@@ -45,6 +45,43 @@ fn new_list_test_sink() -> LeaseDomain {
     )
 }
 
+fn subscribe_lease_pattern(
+    sink: &LeaseDomain,
+    family: RouteFamily,
+    session_id: u64,
+    source: &RouteAddress,
+    destination: &RouteAddress,
+    mailbox: &Mailbox,
+    pattern: &str,
+) -> u8 {
+    let request = crate::domains::lease::LeaseClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(
+            session_id,
+            ClientChannel::Sub,
+            crate::dispatch::protocol::lease_codec::msg_type::SUBSCRIBE,
+            family,
+        ),
+        Ok(crate::domains::lease::LeaseClientFrame::Sub(
+            crate::domains::lease::LeaseSubscriptionMessage::Subscribe {
+                family_id: family,
+                route: Route::new(pattern),
+                session_id,
+                subscriber: source.clone(),
+            },
+        )),
+    );
+    sink.deliver(Envelope::from_route(
+        source.clone(),
+        destination.clone(),
+        request,
+    ))
+    .expect("deliver lease subscription");
+    let response = receive_envelope(mailbox, "lease subscription response")
+        .into_payload::<FrameContext>()
+        .expect("lease subscription response frame");
+    parse_status_only(&response.payload).1
+}
+
 fn acquire_immediate(
     sink: &LeaseDomain,
     family: RouteFamily,
@@ -145,6 +182,93 @@ fn should_enforce_wildcard_lease_subscription_cap_per_session() {
     assert_eq!(sink.subscription_count(), 128);
 }
 
+#[test]
+fn should_enforce_exact_and_wildcard_lease_registration_limits_per_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("lease://inbound"));
+    let mailbox = Arc::new(Mailbox::new(16));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    let exact_sink = LeaseDomain::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    for index in 0..crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION {
+        let pattern = format!("lease://acme/area{index}/resource");
+        assert_eq!(
+            subscribe_lease_pattern(
+                &exact_sink,
+                family,
+                7,
+                &source,
+                &destination,
+                &mailbox,
+                &pattern,
+            ),
+            0,
+            "exact registration {index} should succeed"
+        );
+    }
+
+    let wildcard_mailbox = Arc::new(Mailbox::new(16));
+    let wildcard_router = Arc::new(Router::new());
+    wildcard_router.register(source.clone(), wildcard_mailbox.clone());
+    let wildcard_sink = LeaseDomain::new(
+        wildcard_router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    for index in 0..crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION {
+        let pattern = format!("lease://acme/area{index}/*");
+        assert_eq!(
+            subscribe_lease_pattern(
+                &wildcard_sink,
+                family,
+                7,
+                &source,
+                &destination,
+                &wildcard_mailbox,
+                &pattern,
+            ),
+            0,
+            "wildcard registration {index} should succeed"
+        );
+    }
+
+    // Act
+    let exact_overflow = subscribe_lease_pattern(
+        &exact_sink,
+        family,
+        7,
+        &source,
+        &destination,
+        &mailbox,
+        "lease://acme/overflow/resource",
+    );
+    let wildcard_overflow = subscribe_lease_pattern(
+        &wildcard_sink,
+        family,
+        7,
+        &source,
+        &destination,
+        &wildcard_mailbox,
+        "lease://acme/overflow/*",
+    );
+
+    // Assert
+    assert_eq!(exact_overflow, 1);
+    assert_eq!(wildcard_overflow, 1);
+    assert_eq!(
+        exact_sink.subscription_count(),
+        crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION
+    );
+    assert_eq!(
+        wildcard_sink.subscription_count(),
+        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+    );
+}
+
 fn parse_status_only(payload: &bytes::Bytes) -> (u8, u8, ()) {
     (0, payload.first().copied().unwrap_or(1), ())
 }
@@ -225,7 +349,7 @@ fn should_use_keyed_lookup_for_exact_lease_selector_instead_of_scanning() {
         panic!("expected a ListPage response, got {miss:?}");
     };
     assert_eq!(next_cursor, None);
-    assert!(items.is_empty());
+    assert_eq!(items, Vec::new());
 }
 
 #[test]

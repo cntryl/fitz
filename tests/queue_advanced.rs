@@ -575,7 +575,7 @@ fn should_dlq_message_after_max_attempts() {
     // Assert
     match reserve_response {
         QueueResponse::NotFound => {}
-        QueueResponse::Received { messages } => assert!(messages.is_empty()),
+        QueueResponse::Received { messages } => assert_eq!(messages, Vec::new()),
         _ => panic!("Expected empty queue after retained DLQ transition"),
     }
 

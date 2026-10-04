@@ -144,12 +144,15 @@ impl StreamFamilyState {
                     data: vec![],
                 };
             }
-            if state.wildcard_registration_limit_reached(session_id, &compiled) {
+            if state
+                .registration_limit_for_session(session_id, &compiled)
+                .is_some()
+            {
                 return StreamClientResponseBody::SubscriptionError(
                     crate::domains::stream::StreamSubscriptionFailure::Limit,
                 );
             }
-            if let Ok(subscription_id) = self.subscriptions.next_id.fetch_update(
+            if let Ok(subscription_id) = self.subscriptions.next_id.try_update(
                 Ordering::Relaxed,
                 Ordering::Relaxed,
                 |current| current.checked_add(1),

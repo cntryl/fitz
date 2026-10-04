@@ -247,6 +247,11 @@ impl QueueWatchHarness {
     }
 
     fn watch(&self, pattern: &str) -> u64 {
+        let frame = self.watch_frame(pattern);
+        watch_response_subscription_id(&frame)
+    }
+
+    fn watch_frame(&self, pattern: &str) -> FrameContext {
         self.sink
             .deliver(Envelope::from_route(
                 self.watcher_address.clone(),
@@ -260,8 +265,7 @@ impl QueueWatchHarness {
                 ),
             ))
             .expect("watch queue readiness");
-        let frame = receive_queue_frame(&self.watcher_mailbox, "watch response");
-        watch_response_subscription_id(&frame)
+        receive_queue_frame(&self.watcher_mailbox, "watch response")
     }
 
     fn send(&self, route: &str, body: &[u8]) {

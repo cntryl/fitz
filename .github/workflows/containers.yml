@@ -31,6 +31,8 @@ env:
 jobs:
   version:
     uses: ./.github/workflows/version.yml
+    permissions:
+      contents: read
 
   validate:
     name: Validate publish request

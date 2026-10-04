@@ -32,13 +32,12 @@ impl RpcFamilyRuntime<'_> {
                         max_concurrent,
                     )
                 ),
-                RpcWorkerRegistration::WildcardLimit
+                RpcWorkerRegistration::WildcardLimit | RpcWorkerRegistration::TotalLimit
             ) {
                 return (
                     Some(RpcClientResponseBody::CodeError {
                         code: crate::dispatch::protocol::error_codes::rpc::ERR_SUBSCRIPTION_LIMIT,
-                        message: "wildcard subscription limit exceeded (128 per session)"
-                            .to_string(),
+                        message: "RPC registration limit exceeded".to_string(),
                     }),
                     Some(false),
                     false,

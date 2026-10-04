@@ -363,11 +363,7 @@ impl std::fmt::Display for StreamSubscriptionFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidPattern(message) => write!(f, "{message}"),
-            Self::Limit => write!(
-                f,
-                "wildcard subscription limit exceeded ({} per session)",
-                crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
-            ),
+            Self::Limit => write!(f, "subscription limit exceeded"),
         }
     }
 }

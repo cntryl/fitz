@@ -286,7 +286,7 @@ where
                 .expect("invalid queue subscription response");
             let (_message_type, status, data) = parse_queue_response(&response);
             assert_eq!(status, 1, "invalid pattern must fail: {pattern}");
-            assert!(!decode_plain_queue_error(&data).is_empty());
+            assert_ne!(decode_plain_queue_error(&data), "");
         }
     }
 }
@@ -336,7 +336,7 @@ where
     assert_eq!(overflow_status, 1);
     assert_eq!(
         decode_plain_queue_error(&overflow_data),
-        "wildcard subscription limit exceeded"
+        "subscription registration limit exceeded"
     );
 }
 

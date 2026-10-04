@@ -823,9 +823,10 @@ A request is valid **only if**:
 - `*` matches exactly one path segment
 - `**` matches zero or more path segments (greedy)
 - Concrete routes (no wildcards) match exactly
-- KV, Queue, Notice, Stream, RPC, and Schedule each permit at most 128 wildcard
-  registrations per session. Exact registrations do not count, and duplicate
-  `(session, original registration string)` requests are checked before the limit
+- Each registration domain permits at most 1,024 retained registrations per
+  session, counting exact and wildcard registrations together, plus at most
+  128 wildcard registrations per session. Duplicate `(session, original
+  registration string)` requests are checked before either limit
 - Wildcards never cross `RouteFamily` or permission boundaries, and overlapping registrations have no exact-pattern precedence
 - Notifications carry the matching `subscription_id` and the exact concrete
   route, never the registration pattern
@@ -988,8 +989,9 @@ mutation operations change ownership.
   routes it matches. Exact and wildcard overlaps are equal candidates.
 - Ready concrete routes rotate fairly within one `RouteFamily`; matching never
   crosses a family boundary.
-- A session may retain at most 128 wildcard RPC registrations. Duplicate
-  `(session, pattern)` registration is idempotent and retains its original credit.
+- A session may retain at most 1,024 RPC registrations total and 128 wildcard
+  registrations. Duplicate `(session, pattern)` registration is idempotent and
+  retains its original credit.
 - The common operation-style form is `rpc://{realm}/{area}/{resource}/{operation}`.
   **Method Acceptance:**
   | Method | Accepted Route Shapes |

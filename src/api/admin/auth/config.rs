@@ -31,11 +31,12 @@ pub(super) fn parse_admin_route_family_access(raw: Option<&str>) -> AdminRouteFa
     }
 
     let mut route_families = Vec::new();
-    for route_family in raw
-        .split(',')
-        .map(str::trim)
-        .filter(|route_family| !route_family.is_empty())
-    {
+    for route_family in raw.split(',').map(str::trim) {
+        if route_family.is_empty() {
+            // An invalid explicit set fails grant validation; it must not widen
+            // malformed non-empty configuration to wildcard access.
+            return AdminRouteFamilyAccess::Explicit(Vec::new());
+        }
         if !route_families
             .iter()
             .any(|existing| existing == route_family)
@@ -44,9 +45,5 @@ pub(super) fn parse_admin_route_family_access(raw: Option<&str>) -> AdminRouteFa
         }
     }
 
-    if route_families.is_empty() {
-        AdminRouteFamilyAccess::wildcard()
-    } else {
-        AdminRouteFamilyAccess::Explicit(route_families)
-    }
+    AdminRouteFamilyAccess::Explicit(route_families)
 }

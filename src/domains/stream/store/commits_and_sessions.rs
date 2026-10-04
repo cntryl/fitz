@@ -410,7 +410,7 @@ impl StreamStore {
     ) -> Result<SessionId, String> {
         let session_id = self
             .next_session_id
-            .fetch_update(
+            .try_update(
                 std::sync::atomic::Ordering::Relaxed,
                 std::sync::atomic::Ordering::Relaxed,
                 |current| current.checked_add(1),

@@ -138,18 +138,22 @@ impl QueueFamilyState {
             if let Some(id) = state.find_existing_id(session_id, pattern_str) {
                 (id, false)
             } else {
-                if state.wildcard_registration_limit_reached(session_id, &parsed_pattern) {
+                if state
+                    .registration_limit_for_session(session_id, &parsed_pattern)
+                    .is_some()
+                {
                     return (
                         crate::domains::queue::QueueResponse::SubscriptionLimit,
                         None,
                         false,
                     );
                 }
-                let Ok(id) = self.next_sub_id.fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |current| current.checked_add(1),
-                ) else {
+                let Ok(id) =
+                    self.next_sub_id
+                        .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                            current.checked_add(1)
+                        })
+                else {
                     let state_empty = state.is_empty();
                     if state_empty {
                         families.remove(&family_id.as_u64());

@@ -324,7 +324,7 @@ impl LeaseFamilyRuntime<'_> {
         let served_count = usize_to_u32_saturating(page.len());
         let retained_bytes = remainder.iter().map(encoded_item_bytes).sum::<usize>();
 
-        let Ok(snapshot_id) = self.core.next_list_snapshot_id.fetch_update(
+        let Ok(snapshot_id) = self.core.next_list_snapshot_id.try_update(
             Ordering::Relaxed,
             Ordering::Relaxed,
             |current| current.checked_add(1),

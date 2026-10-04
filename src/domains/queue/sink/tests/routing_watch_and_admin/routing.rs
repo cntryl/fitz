@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn should_enforce_exact_and_wildcard_watch_limits_per_session() {
+    // Arrange
+    let exact_harness = QueueWatchHarness::new();
+    let mut first_exact_id = None;
+    for index in 0..crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION {
+        let pattern = format!("queue://acme/orders/resource-{index}");
+        let response = exact_harness.watch_frame(&pattern);
+        assert_eq!(response.payload[0], 0, "exact watch {index} should succeed");
+        if index == 0 {
+            first_exact_id = Some(watch_response_subscription_id(&response));
+        }
+    }
+
+    // Act
+    let duplicate = exact_harness.watch_frame("queue://acme/orders/resource-0");
+    let exact_overflow = exact_harness.watch_frame("queue://acme/orders/overflow");
+    let wildcard_harness = QueueWatchHarness::new();
+    for index in 0..crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION {
+        let pattern = format!("queue://acme/area{index}/*");
+        let response = wildcard_harness.watch_frame(&pattern);
+        assert_eq!(
+            response.payload[0], 0,
+            "wildcard watch {index} should succeed"
+        );
+    }
+    let wildcard_overflow = wildcard_harness.watch_frame("queue://acme/overflow/*");
+
+    // Assert
+    assert_eq!(
+        watch_response_subscription_id(&duplicate),
+        first_exact_id.expect("first exact watch ID")
+    );
+    assert_ne!(
+        exact_overflow.payload[0], 0,
+        "over-limit exact watch must fail"
+    );
+    assert_ne!(
+        wildcard_overflow.payload[0], 0,
+        "over-limit wildcard watch must fail"
+    );
+}
+
+#[test]
 pub(super) fn should_create_queue_domain_sink() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);

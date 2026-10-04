@@ -19,6 +19,7 @@ pub(in crate::domains::rpc::sink) enum RpcWorkerRegistration {
     Registered,
     Existing,
     WildcardLimit,
+    TotalLimit,
 }
 
 enum DispatchAction {

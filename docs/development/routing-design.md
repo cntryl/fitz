@@ -158,10 +158,11 @@ Notice route and an RPC request route are still concrete.
 
 ### 3.3 Registration limits
 
-KV, Queue, Notice, Stream, RPC, and Schedule cap retained wildcard
-registrations at 128 per session. Exact registrations do not count against that
-wildcard cap, but production safety also requires explicit limits for total
-registrations, matching fanout, queued deliveries, and active route caches.
+KV, Queue, Notice, Stream, RPC, Schedule, and Lease cap retained registrations
+at 1,024 per session, counting exact and wildcard registrations together. The
+wildcard subset is separately capped at 128 per session. Production safety also
+requires explicit limits for matching fanout, queued deliveries, and active
+route caches.
 
 Duplicate registrations are idempotent only when the operation's public
 identity says they are the same registration. Distinct overlapping patterns

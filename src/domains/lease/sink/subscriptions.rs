@@ -117,26 +117,39 @@ impl LeaseFamilyRuntime<'_> {
             if let Some(subscription_id) = state.find_existing_id(session_id, route.as_str()) {
                 return LeaseResponse::SubscribeOk { subscription_id };
             }
-            if state.wildcard_registration_limit_reached(session_id, &compiled) {
+            if let Some(limit) = state.registration_limit_for_session(session_id, &compiled) {
+                let (metric, limit, message) = match limit {
+                    crate::domains::subscription_state::RegistrationLimit::Total => (
+                        "fitz_lease_registration_limit_rejects_total",
+                        crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION,
+                        "Rejected lease subscription because the total session registration limit was exceeded",
+                    ),
+                    crate::domains::subscription_state::RegistrationLimit::Wildcard => (
+                        "fitz_lease_wildcard_limit_rejects_total",
+                        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+                        "Rejected wildcard lease subscription because the session limit was exceeded",
+                    ),
+                };
                 tracing::warn!(
                     domain = "lease",
                     session = session_id,
                     pattern = route.as_str(),
-                    limit =
-                        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
-                    "Rejected wildcard lease subscription because session limit was exceeded"
+                    limit,
+                    reason = %message,
+                    "Rejected lease subscription because the session registration limit was exceeded"
                 );
-                crate::observability::counter_inc("fitz_lease_wildcard_limit_rejects_total");
-                return LeaseResponse::Error(format!(
-                    "wildcard subscription limit exceeded ({} per session)",
-                    crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
-                ));
+                crate::observability::counter_inc(metric);
+                return LeaseResponse::Error(
+                    "subscription registration limit exceeded".to_string(),
+                );
             }
-            if let Ok(subscription_id) = self.core.next_sub_id.fetch_update(
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-                |current| current.checked_add(1),
-            ) {
+            if let Ok(subscription_id) =
+                self.core
+                    .next_sub_id
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                        current.checked_add(1)
+                    })
+            {
                 state.insert(
                     family_id,
                     LeaseSubscription {

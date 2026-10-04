@@ -152,9 +152,9 @@ Response (status=1):
   requires authentication, ingress validates the route first and may close the
   connection or answer 3009 before the Notice domain sees the request. Clients
   already depend on these codes, so they are not changed in place
-- A session may retain at most 128 wildcard registrations. Exact registrations
-  do not count, and duplicate `(session, original registration string)` requests
-  are idempotent and checked before the limit; overflow returns 3003
+- A session may retain at most 1,024 registrations total and 128 wildcard
+  registrations. Duplicate `(session, original registration string)` requests
+  are idempotent and checked before either limit; overflow returns 3003
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 
@@ -863,8 +863,9 @@ The success response uses the "optional u64" encoding pattern: a 1-byte flag fol
 - The scheme must be `stream://`, segments must be non-empty, wildcards must be
   whole segments, and the pattern must be capable of matching a concrete
   three-segment Stream route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 2010
-- A session may retain at most 128 wildcard registrations. Exact registrations
-  do not count, and a duplicate is checked before the limit; overflow returns 2011
+- A session may retain at most 1,024 registrations total and 128 wildcard
+  registrations. A duplicate is checked before either limit; overflow returns
+  2011
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 

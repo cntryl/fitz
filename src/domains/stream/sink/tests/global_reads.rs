@@ -229,7 +229,7 @@ fn should_resume_global_read_after_zero_limit_page() {
     );
 
     // Assert
-    assert!(empty_page.routes.is_empty());
+    assert_eq!(empty_page.routes, Vec::<String>::new());
     assert_eq!(empty_page.last_global_offset, None);
     assert!(empty_page.has_more);
     assert_eq!(resumed.routes.len(), 2);
@@ -257,7 +257,7 @@ fn should_not_advance_global_cursor_past_an_empty_snapshot_tail() {
     let next_page = global_read(&context, next_offset, 10);
 
     // Assert
-    assert!(tail_page.routes.is_empty());
+    assert_eq!(tail_page.routes, Vec::<String>::new());
     assert_eq!(tail_page.last_global_offset, Some(1));
     assert_eq!(next_page.routes.len(), 1);
     assert_eq!(next_page.records[0].global_offset, Some(2));
