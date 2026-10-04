@@ -179,6 +179,26 @@ impl RpcDomain {
     }
 
     #[cfg(test)]
+    pub(super) fn worker_correlation_for_tests(
+        &self,
+        family: RouteFamily,
+        caller_id: uuid::Uuid,
+    ) -> uuid::Uuid {
+        self.inspect_family_for_tests(family, move |state| {
+            state
+                .state
+                .pending
+                .pending_for_key(&super::state_model::RpcCorrelationKey {
+                    family,
+                    correlation_id: caller_id,
+                })
+                .map_or(caller_id, |pending| {
+                    pending.dispatch_info.worker_correlation_id
+                })
+        })
+    }
+
+    #[cfg(test)]
     pub(super) fn queued_request_count_for_tests(&self) -> usize {
         self.inspect_primary_state_for_tests(|state| state.pending.queued_len())
     }

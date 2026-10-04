@@ -79,6 +79,18 @@ impl MailboxSink for SessionOutboundSink {
             return self.deliver_rpc_client_response(response);
         }
 
+        if let Some(delivery) =
+            envelope.payload::<crate::domains::rpc::protocol::RpcLifecycleControlDelivery>()
+        {
+            return self.send_encoded_frame(delivery.session_id, &delivery.frame, None);
+        }
+
+        if let Some(delivery) =
+            envelope.payload::<crate::domains::rpc::protocol::RpcWorkerRequestWithBudgetDelivery>()
+        {
+            return self.deliver_rpc_worker_request_with_budget(delivery);
+        }
+
         if let Some(delivery) = envelope.payload::<crate::domains::rpc::RpcWorkerRequestDelivery>()
         {
             return self.deliver_rpc_worker_request(delivery);

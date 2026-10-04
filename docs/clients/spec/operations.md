@@ -155,6 +155,8 @@ changes its ownership.
 | `Unsubscribe` | 301 | C→S | Deregister worker |
 | `Request` | 302 | C→S and S→Worker | Send RPC request and deliver it to a worker |
 | `Response` | 303 | Worker→S and S→Caller | Send RPC response |
+| `RPC_CANCEL` | 304 | C→S and Worker→S | Cancel a caller request or acknowledge worker cleanup |
+| `RPC_LIFECYCLE` | 305 | S→C and S→Worker | Deliver cancellation result or signal |
 
 **Constraints:**
 - Each request uses 16-byte UUID `correlation_id` for matching the live in-flight response
@@ -164,7 +166,19 @@ changes its ownership.
   REQUEST frames as async pushes
 - The broker derives caller response routing from the source session; callers do not send a reply route
 - Successful REQUEST submission is silent; callers wait for RESPONSE or an error frame
-- Message type 304 is unsupported and MUST NOT be sent
+- `SERVER_HELLO` capability `CAP_RPC_CANCELLATION` gates lifecycle support;
+  absent capability, clients retain legacy payloads and behavior
+- Supporting worker registrations set bit 0 in the optional version-1
+  registration extension; supporting callers append a version-1 remaining
+  budget extension to REQUEST
+- A cleanup acknowledgment means the worker handler has stopped and released
+  request-owned resources; a broker-forwarded cancellation signal alone does
+  not confirm cleanup
+- Dispatched worker credit remains reserved until worker acknowledgment,
+  or worker session cleanup after cancellation wins actor ordering; a late
+  terminal response cannot prove handler cleanup
+- Cancellation cannot undo application side effects and MUST NOT trigger an
+  automatic retry
 - Worker registrations and pending requests are process-local and are not recovered or replayed after broker restart
 - A worker reconnecting after disconnect or restart MUST send `Subscribe` again before it can receive new requests
 

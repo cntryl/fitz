@@ -1,7 +1,8 @@
 use super::{
     BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, HashSet, Route, RouteFamily,
-    RpcCorrelationKey, RpcFastMap, RpcPendingCleanupResult, RpcPendingDispatchInfo,
-    RpcPendingErrorDelivery, RpcPendingRequest, RpcQueuedRequest, RpcRegistrationId,
+    RpcCancellationAckDisposition, RpcCancellationDisposition, RpcCorrelationKey, RpcFastMap,
+    RpcPendingCleanupResult, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
+    RpcQueuedRequest, RpcRegistrationId, RpcWorkerCancellation,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -12,6 +13,7 @@ const EXPIRATION_HEAP_LIVE_ENTRY_MULTIPLIER: usize = 2;
 /// Owns live queued and dispatched requests and their expiration indexes.
 pub(in crate::domains::rpc::sink) struct RpcPendingTable {
     pending: RpcFastMap<RpcCorrelationKey, RpcPendingRequest>,
+    worker_invocations: RpcFastMap<RpcCorrelationKey, RpcCorrelationKey>,
     expirations: BinaryHeap<ExpiringPendingRequest>,
     route_counts: RpcFastMap<(RouteFamily, Route), usize>,
     queued: RpcFastMap<RpcCorrelationKey, RpcQueuedRequest>,
@@ -28,6 +30,9 @@ pub(in crate::domains::rpc::sink) enum RpcPendingResponseDisposition {
         pending: RpcPendingDispatchInfo,
         stream_end: bool,
     },
+    CancelledResponse {
+        stream_end: bool,
+    },
     InvalidSequence {
         pending: RpcPendingDispatchInfo,
         expected_seq: u64,
@@ -38,6 +43,7 @@ impl RpcPendingTable {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
             pending: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
+            worker_invocations: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
             expirations: BinaryHeap::with_capacity(256),
             route_counts: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
             queued: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
@@ -76,6 +82,148 @@ impl RpcPendingTable {
         Some(queued)
     }
 
+    pub(in crate::domains::rpc::sink) fn queued_caller_session_id(
+        &self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+    ) -> Option<u64> {
+        self.queued
+            .get(&RpcCorrelationKey {
+                family,
+                correlation_id: *correlation_id,
+            })
+            .map(|queued| queued.caller_session_id)
+    }
+
+    pub(in crate::domains::rpc::sink) fn cancel_pending_for_caller(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+        caller_session_id: u64,
+        expires_at: Instant,
+    ) -> RpcCancellationDisposition {
+        let key = RpcCorrelationKey {
+            family,
+            correlation_id: *correlation_id,
+        };
+        let Some(pending) = self.pending.get_mut(&key) else {
+            return RpcCancellationDisposition::UnauthorizedOrUnknown;
+        };
+        if pending.dispatch_info.caller_session_id != caller_session_id {
+            return RpcCancellationDisposition::UnauthorizedOrUnknown;
+        }
+        if pending.cancelled {
+            return RpcCancellationDisposition::AlreadyCancelled;
+        }
+        let worker_session_id = pending.worker_session_id;
+        let supports_cancellation = pending.supports_cancellation;
+        if !supports_cancellation {
+            return RpcCancellationDisposition::Dispatched {
+                worker_session_id,
+                supports_cancellation,
+            };
+        }
+        pending.cancelled = true;
+        pending.close_requested = false;
+        pending.dispatch_info.caller_inbox_addr = None;
+        pending.expires_at = expires_at;
+        self.expirations
+            .push(ExpiringPendingRequest { expires_at, key });
+        self.compact_pending_expirations_if_needed();
+        RpcCancellationDisposition::Dispatched {
+            worker_session_id,
+            supports_cancellation,
+        }
+    }
+
+    pub(in crate::domains::rpc::sink) fn acknowledge_cancellation(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+        worker_session_id: u64,
+    ) -> RpcCancellationAckDisposition {
+        let Some(key) = self
+            .worker_invocations
+            .get(&RpcCorrelationKey {
+                family,
+                correlation_id: *correlation_id,
+            })
+            .copied()
+        else {
+            return RpcCancellationAckDisposition::Rejected;
+        };
+        let Some(pending) = self.pending.get(&key) else {
+            return RpcCancellationAckDisposition::Rejected;
+        };
+        if pending.worker_session_id != worker_session_id
+            || !pending.supports_cancellation
+            || !pending.cancelled
+        {
+            return RpcCancellationAckDisposition::Rejected;
+        }
+        RpcCancellationAckDisposition::Acknowledged(
+            self.remove(&key).expect("acknowledged pending request"),
+        )
+    }
+
+    pub(in crate::domains::rpc::sink) fn mark_close_requested(
+        &mut self,
+        key: RpcCorrelationKey,
+    ) -> Option<u64> {
+        let pending = self.pending.get_mut(&key)?;
+        if !pending.cancelled || pending.close_requested {
+            return None;
+        }
+        pending.close_requested = true;
+        let worker_session_id = pending.worker_session_id;
+        Some(worker_session_id)
+    }
+
+    pub(in crate::domains::rpc::sink) fn mark_worker_close_requested(
+        &mut self,
+        family: RouteFamily,
+        worker_session_id: u64,
+    ) {
+        for (key, pending) in &mut self.pending {
+            if key.family == family
+                && pending.worker_session_id == worker_session_id
+                && pending.cancelled
+                && !pending.close_requested
+            {
+                pending.close_requested = true;
+            }
+        }
+    }
+
+    pub(in crate::domains::rpc::sink) fn retry_close_for_worker(
+        &mut self,
+        family: RouteFamily,
+        worker_session_id: u64,
+        expires_at: Instant,
+    ) {
+        let keys: Vec<_> = self
+            .pending
+            .iter_mut()
+            .filter_map(|(key, pending)| {
+                if key.family == family
+                    && pending.worker_session_id == worker_session_id
+                    && pending.cancelled
+                {
+                    pending.close_requested = false;
+                    pending.expires_at = expires_at;
+                    Some(*key)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        self.expirations.extend(
+            keys.into_iter()
+                .map(|key| ExpiringPendingRequest { expires_at, key }),
+        );
+        self.compact_pending_expirations_if_needed();
+    }
+
     pub(in crate::domains::rpc::sink) fn queued_keys_for_session(
         &self,
         session_id: u64,
@@ -95,7 +243,9 @@ impl RpcPendingTable {
             family,
             correlation_id: *correlation_id,
         };
-        self.pending.contains_key(&key) || self.queued.contains_key(&key)
+        self.pending.contains_key(&key)
+            || self.queued.contains_key(&key)
+            || self.worker_invocations.contains_key(&key)
     }
 
     pub(in crate::domains::rpc::sink) fn live_len(&self) -> usize {
@@ -153,6 +303,13 @@ impl RpcPendingTable {
         self.pending.get(key)
     }
 
+    pub(in crate::domains::rpc::sink) fn pending_for_key(
+        &self,
+        key: &RpcCorrelationKey,
+    ) -> Option<&RpcPendingRequest> {
+        self.pending.get(key)
+    }
+
     pub(in crate::domains::rpc::sink) fn next_expired_pending_key(
         &mut self,
         now: Instant,
@@ -163,11 +320,9 @@ impl RpcPendingTable {
             .is_some_and(|entry| entry.expires_at <= now)
         {
             let expiring = self.expirations.pop().expect("pending expiration entry");
-            if self
-                .pending
-                .get(&expiring.key)
-                .is_some_and(|pending| pending.expires_at == expiring.expires_at)
-            {
+            if self.pending.get(&expiring.key).is_some_and(|pending| {
+                !pending.close_requested && pending.expires_at == expiring.expires_at
+            }) {
                 return Some(expiring.key);
             }
         }
@@ -211,7 +366,7 @@ impl RpcPendingTable {
         &mut self,
         family: RouteFamily,
         correlation_id: uuid::Uuid,
-        pending: RpcPendingRequest,
+        mut pending: RpcPendingRequest,
     ) -> usize {
         let key = RpcCorrelationKey {
             family,
@@ -219,9 +374,28 @@ impl RpcPendingTable {
         };
         let expires_at = pending.expires_at;
         let route = pending.dispatch_info.route.clone();
+        pending.dispatch_info.worker_correlation_id = if pending.supports_cancellation {
+            loop {
+                let id = uuid::Uuid::new_v4();
+                if !self.contains_correlation_in_family(family, &id) && id != correlation_id {
+                    break id;
+                }
+            }
+        } else {
+            correlation_id
+        };
+        let invocation = RpcCorrelationKey {
+            family,
+            correlation_id: pending.dispatch_info.worker_correlation_id,
+        };
         if let Some(replaced) = self.pending.insert(key, pending) {
+            self.worker_invocations.remove(&RpcCorrelationKey {
+                family,
+                correlation_id: replaced.dispatch_info.worker_correlation_id,
+            });
             self.decrement_route_count(family, &replaced.dispatch_info.route);
         }
+        self.worker_invocations.insert(invocation, key);
         *self.route_counts.entry((family, route)).or_default() += 1;
         self.expirations
             .push(ExpiringPendingRequest { expires_at, key });
@@ -265,6 +439,13 @@ impl RpcPendingTable {
             return RpcPendingResponseDisposition::WrongWorker {
                 owner_worker_session_id: pending.worker_session_id,
             };
+        }
+
+        if pending.cancelled {
+            // A terminal frame does not prove that the handler's cleanup has
+            // finished. Retain execution credit until its cleanup acknowledgment
+            // or worker session cleanup, including cancel/completion races.
+            return RpcPendingResponseDisposition::CancelledResponse { stream_end };
         }
 
         let expected_seq = pending.next_expected_seq;
@@ -366,9 +547,43 @@ impl RpcPendingTable {
         key: &RpcCorrelationKey,
     ) -> Option<RpcPendingRequest> {
         let pending = self.pending.remove(key)?;
+        self.worker_invocations.remove(&RpcCorrelationKey {
+            family: key.family,
+            correlation_id: pending.dispatch_info.worker_correlation_id,
+        });
         self.decrement_route_count(key.family, &pending.dispatch_info.route);
         self.compact_pending_expirations_if_needed();
         Some(pending)
+    }
+
+    pub(in crate::domains::rpc::sink) fn resolve_worker_response_correlation(
+        &self,
+        family: RouteFamily,
+        worker_session_id: u64,
+        worker_id: uuid::Uuid,
+    ) -> Option<uuid::Uuid> {
+        self.worker_invocations
+            .get(&RpcCorrelationKey {
+                family,
+                correlation_id: worker_id,
+            })
+            .filter(|key| {
+                self.pending
+                    .get(key)
+                    .is_some_and(|pending| pending.worker_session_id == worker_session_id)
+            })
+            .map(|key| key.correlation_id)
+            .or_else(|| {
+                // Preserve legacy wrong-worker diagnostics without accepting a
+                // caller correlation as a negotiated invocation identity.
+                self.pending
+                    .get(&RpcCorrelationKey {
+                        family,
+                        correlation_id: worker_id,
+                    })
+                    .filter(|pending| !pending.supports_cancellation)
+                    .map(|_| worker_id)
+            })
     }
 
     fn compact_pending_expirations_if_needed(&mut self) {
@@ -412,12 +627,25 @@ impl RpcPendingTable {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn cleanup_session(
         &mut self,
         session_id: u64,
     ) -> RpcPendingCleanupResult {
+        self.cleanup_session_with_expiration(
+            session_id,
+            Instant::now() + std::time::Duration::from_secs(5),
+        )
+    }
+
+    pub(in crate::domains::rpc::sink) fn cleanup_session_with_expiration(
+        &mut self,
+        session_id: u64,
+        expires_at: Instant,
+    ) -> RpcPendingCleanupResult {
         let mut detached_callers = 0;
         let mut disconnect_deliveries = Vec::new();
+        let mut cancellations = Vec::new();
         let worker_owned: Vec<_> = self
             .pending
             .iter()
@@ -427,7 +655,9 @@ impl RpcPendingTable {
             let pending = self
                 .remove(key)
                 .expect("collected worker-owned pending request");
-            if pending.dispatch_info.caller_session_id != session_id {
+            if pending.dispatch_info.caller_session_id != session_id
+                && pending.dispatch_info.caller_inbox_addr.is_some()
+            {
                 if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {
                     disconnect_deliveries.push(RpcPendingErrorDelivery {
                         correlation_id: key.correlation_id,
@@ -437,20 +667,41 @@ impl RpcPendingTable {
                 }
             }
         }
-        for pending in self.pending.values_mut() {
+        let mut rescheduled = Vec::new();
+        for (key, pending) in &mut self.pending {
             if pending.dispatch_info.caller_session_id == session_id
                 && pending.dispatch_info.caller_inbox_addr.is_some()
             {
                 pending.dispatch_info.caller_inbox_addr = None;
                 detached_callers += 1;
+                if pending.supports_cancellation && !pending.cancelled {
+                    pending.cancelled = true;
+                    pending.expires_at = expires_at;
+                    pending.close_requested = false;
+                    cancellations.push(RpcWorkerCancellation {
+                        family: key.family,
+                        correlation_id: key.correlation_id,
+                        worker_session_id: pending.worker_session_id,
+                        reason:
+                            crate::protocol::rpc_codec::RpcCancellationReason::CallerDisconnected,
+                    });
+                    rescheduled.push(*key);
+                }
             }
         }
+        self.expirations.extend(
+            rescheduled
+                .into_iter()
+                .map(|key| ExpiringPendingRequest { expires_at, key }),
+        );
+        self.compact_pending_expirations_if_needed();
 
         let removed_pending = worker_owned.len();
         RpcPendingCleanupResult {
             detached_callers,
             removed_pending,
             disconnect_deliveries,
+            cancellations,
         }
     }
 
@@ -463,9 +714,11 @@ impl RpcPendingTable {
             .pending
             .iter()
             .filter_map(|(key, pending)| {
-                registration_ids
-                    .contains(&pending.dispatch_info.registration_id)
-                    .then_some(*key)
+                // Unregistering stops future dispatch; it is not a cleanup
+                // acknowledgment for execution already canceled by the broker.
+                (!pending.cancelled
+                    && registration_ids.contains(&pending.dispatch_info.registration_id))
+                .then_some(*key)
             })
             .collect();
         for key in &registration_owned {
@@ -485,6 +738,7 @@ impl RpcPendingTable {
             detached_callers: 0,
             removed_pending: registration_owned.len(),
             disconnect_deliveries,
+            cancellations: Vec::new(),
         }
     }
 
@@ -501,193 +755,4 @@ fn expiration_heap_limit(live_entries: usize) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::requests::RpcPendingRequestInit;
-    use super::*;
-    use crate::runtime::routing::RouteAddress;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn should_reserve_correlation_while_request_is_queued() {
-        // Arrange
-        let family = RouteFamily::new(1);
-        let correlation_id = uuid::Uuid::new_v4();
-        let route = Route::new("rpc://bench/system/resource/operation");
-        let request = crate::domains::rpc::protocol::RpcRequest::new(
-            family,
-            correlation_id,
-            route,
-            bytes::Bytes::from_static(b"queued"),
-        );
-        let queued = RpcQueuedRequest::from_request(
-            request,
-            7,
-            RouteAddress::new(
-                family,
-                Route::new("inbox://bench/system/resource/operation"),
-            ),
-            Instant::now() + Duration::from_secs(30),
-        );
-        let mut table = RpcPendingTable::new();
-
-        // Act
-        table.track_queued_for_family(family, correlation_id, queued);
-
-        // Assert
-        assert!(table.contains_correlation_in_family(family, &correlation_id));
-        assert_eq!(table.live_len(), 1);
-        assert!(table
-            .remove_queued_for_family(family, &correlation_id)
-            .is_some());
-        assert_eq!(table.live_len(), 0);
-    }
-
-    #[test]
-    fn should_ignore_stale_queued_expiration_after_replacement() {
-        // Arrange
-        let family = RouteFamily::new(1);
-        let correlation_id = uuid::Uuid::new_v4();
-        let route = Route::new("rpc://bench/system/resource/operation");
-        let now = Instant::now();
-        let make_queued = |expires_at| {
-            RpcQueuedRequest::from_request(
-                crate::domains::rpc::protocol::RpcRequest::new(
-                    family,
-                    correlation_id,
-                    route.clone(),
-                    bytes::Bytes::from_static(b"queued"),
-                ),
-                7,
-                RouteAddress::new(
-                    family,
-                    Route::new("inbox://bench/system/resource/operation"),
-                ),
-                expires_at,
-            )
-        };
-        let mut table = RpcPendingTable::new();
-        table.track_queued_for_family(
-            family,
-            correlation_id,
-            make_queued(now + Duration::from_secs(1)),
-        );
-        table.track_queued_for_family(
-            family,
-            correlation_id,
-            make_queued(now + Duration::from_secs(60)),
-        );
-
-        // Act
-        let early = table.next_expired_queued_key(now + Duration::from_secs(2));
-        let due = table.next_expired_queued_key(now + Duration::from_secs(61));
-
-        // Assert
-        assert_eq!(early, None);
-        assert_eq!(due.map(|key| key.correlation_id), Some(correlation_id));
-    }
-
-    #[test]
-    fn should_bound_stale_expiration_entries_after_fast_completions() {
-        // Arrange
-        let family = RouteFamily::new(1);
-        let route = Route::new("rpc://bench/system/resource/operation");
-        let now = Instant::now();
-        let expires_at = now + Duration::from_secs(30);
-        let mut table = RpcPendingTable::new();
-
-        // Act
-        for _ in 0..1024 {
-            let correlation_id = uuid::Uuid::new_v4();
-            let pending = make_pending_request(family, &route, now, expires_at);
-            table.track_pending_for_family(family, correlation_id, pending);
-            let _ = table.remove(&RpcCorrelationKey {
-                family,
-                correlation_id,
-            });
-
-            let queued_id = uuid::Uuid::new_v4();
-            let queued = make_queued_request(family, &route, queued_id, expires_at);
-            table.track_queued_for_family(family, queued_id, queued);
-            let _ = table.remove_queued_for_family(family, &queued_id);
-        }
-
-        let live_pending_id = uuid::Uuid::new_v4();
-        table.track_pending_for_family(
-            family,
-            live_pending_id,
-            make_pending_request(family, &route, now, expires_at),
-        );
-        let live_queued_id = uuid::Uuid::new_v4();
-        table.track_queued_for_family(
-            family,
-            live_queued_id,
-            make_queued_request(family, &route, live_queued_id, expires_at),
-        );
-
-        // Assert
-        assert!(table.expirations.len() <= expiration_heap_limit(1));
-        assert!(table.queued_expirations.len() <= expiration_heap_limit(1));
-        assert_eq!(
-            table
-                .next_expired_pending_key(expires_at)
-                .map(|key| key.correlation_id),
-            Some(live_pending_id)
-        );
-        assert_eq!(
-            table
-                .next_expired_queued_key(expires_at)
-                .map(|key| key.correlation_id),
-            Some(live_queued_id)
-        );
-    }
-
-    fn make_pending_request(
-        family: RouteFamily,
-        route: &Route,
-        now: Instant,
-        expires_at: Instant,
-    ) -> RpcPendingRequest {
-        use crate::runtime::routing::RouteAddress;
-
-        let worker_addr = RouteAddress::new(family, route.clone());
-        let caller_inbox_addr = RouteAddress::new(
-            family,
-            Route::new("inbox://bench/system/resource/operation"),
-        );
-        RpcPendingRequest::new(RpcPendingRequestInit {
-            route: route.clone(),
-            caller_session_id: 7,
-            caller_inbox_addr,
-            registration_addr: worker_addr,
-            registration_session_id: 8,
-            registration_id: 9,
-            submitted_at: chrono::Utc::now(),
-            submitted_at_instant: now,
-            expires_at,
-        })
-    }
-
-    fn make_queued_request(
-        family: RouteFamily,
-        route: &Route,
-        correlation_id: uuid::Uuid,
-        expires_at: Instant,
-    ) -> RpcQueuedRequest {
-        use crate::runtime::routing::RouteAddress;
-
-        RpcQueuedRequest::from_request(
-            crate::domains::rpc::protocol::RpcRequest::new(
-                family,
-                correlation_id,
-                route.clone(),
-                bytes::Bytes::from_static(b"queued"),
-            ),
-            7,
-            RouteAddress::new(
-                family,
-                Route::new("inbox://bench/system/resource/operation"),
-            ),
-            expires_at,
-        )
-    }
-}
+mod tests;

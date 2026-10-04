@@ -508,7 +508,11 @@ Every operation includes full context:
 - **Correlation**: UUID links a live in-flight request to its responses (client-generated)
 - **Streaming**: Multi-frame responses have incrementing `sequence` and `stream_end` flag
 - **Acceptance**: Successful REQUEST submission is silent; immediate failures return errors
-- **Credit**: Worker capacity is bounded by `max_concurrent` and is released by a terminal response
+- **Credit**: Worker capacity is bounded by `max_concurrent`. A normal terminal
+  response releases legacy execution credit. When negotiated cancellation wins
+  actor ordering, credit stays reserved until a worker cleanup acknowledgment
+  after handler cleanup or worker-session cleanup; a late terminal response or
+  unregister operation does not release it.
 - **Backpressure**: ERR_RPC_BACKPRESSURE if outbound queue full
 - **Ordering**: Responses delivered in sequence order
 - **Single-Worker Assignment**: Each accepted request is assigned to at most one live worker while tracked in memory
@@ -533,11 +537,43 @@ Every operation includes full context:
 - Caller receives timeout after configured interval (default 30s)
 - Broker restart or reconnect does not recover worker registrations or replay pending requests
 
+##### Cooperative cancellation and remaining budgets
+
+`SERVER_HELLO` capability `CAP_RPC_CANCELLATION` (`1 << 3`) advertises the
+optional lifecycle extension. Supporting worker registrations append
+`[version:u8=1, flags:u8=1]` after the existing route and concurrency fields.
+Supporting caller requests may append
+`[version:u8=1, flags:u8=1, remaining_budget_ms:u32]` after the existing
+correlation, route, and body. Budgets range from 0 to 86,400,000 milliseconds;
+queueing and local elapsed time deduct from them without relying on wall clocks.
+Workers without support receive the original request fields without extensions.
+For supporting workers, the broker assigns a fresh opaque dispatch UUID in the
+existing worker request correlation field. Worker responses, cancellation
+signals and cleanup ACKs use that invocation UUID; the broker restores the
+caller UUID in caller-facing responses. This separates reused caller IDs from
+delayed controls or response frames belonging to earlier executions.
+
+`RPC_CANCEL` 304 carries caller cancellation or worker cleanup acknowledgment;
+`RPC_LIFECYCLE` 305 carries worker cancellation signals or caller results. Only
+the originating caller session in its route family can cancel a correlation.
+Unknown and unauthorized cancellation return the same status. Live correlation
+IDs remain unique within a family under the existing request contract; the
+same UUID can be used independently in another family. Duplicate cancellation
+does not renew the grace period or forward multiple worker signals.
+
+See [RPC deadlines and cancellation](../../development/rpc-cancellation-lifecycle.md)
+for exact framing, validation, actor-order races, legacy fallback, cleanup
+acknowledgment, five-second configurable grace, and explicit A → B → C SDK
+links. Cancellation, timeout, and transport closure after dispatch may leave
+side effects completed or continuing. They never roll back work or authorize
+automatic retry. A forwarded cancellation result confirms broker signal
+routing, without confirming that a remote handler stopped.
+
 #### Error Codes (6xxx range)
 
 | Code | Name | Meaning | Client Guidance |
 | ---: | --- | --- | --- |
-| 6001 | ERR_RPC_TIMEOUT | Worker accepted the request but did not finish before the timeout | Retry with backoff only if the operation is safe to retry |
+| 6001 | ERR_RPC_TIMEOUT | The request budget or broker timeout expired before completion, including while queued | Retry with backoff only if the operation is safe to retry; timeout alone does not prove that work was never dispatched |
 | 6002 | ERR_WORKER_NOT_FOUND | The assigned worker disconnected or unregistered before completion | Retry with backoff only if the operation is safe to retry |
 | 6003 | ERR_RPC_BACKPRESSURE | The broker's RPC pending queue is full | Retry with exponential backoff and jitter |
 | 6004 | ERR_ROUTE_NOT_REGISTERED | No live worker is registered for the route | Retry with backoff after allowing workers to register |
@@ -546,7 +582,7 @@ Every operation includes full context:
 | 6007 | ERR_RPC_DUPLICATE_CORRELATION | Caller reused a correlation ID that is still live | Fatal for the current correlation; retry only with a fresh correlation ID if the operation is safe to retry |
 | 6008 | ERR_RPC_WRONG_WORKER | Response or ACK came from a worker that does not own the request | Fatal for the current correlation; do not retry the same correlation |
 | 6009 | ERR_UNAUTHORIZED | Permissions do not allow this RPC operation | Fatal until credentials or permissions change |
-| 6010 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Inspect the error text; do not blindly retry malformed-request parse failures, and retry only when the message indicates a transient backend or infrastructure failure |
+| 6010 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Inspect the error text; correct malformed requests and retry transient failures only if the operation is safe to retry |
 | 6011 | ERR_INVALID_ROUTE | An RPC call route is malformed or contains a wildcard | Correct the call to use a concrete `rpc://` route |
 | 6012 | ERR_INVALID_SUBSCRIPTION_PATTERN | A worker registration has the wrong scheme, an empty segment, or a partial wildcard token | Correct the registration to use whole-segment `*` or `**` wildcards |
 | 6013 | ERR_SUBSCRIPTION_LIMIT | A session attempted to exceed 1,024 total or 128 wildcard worker registrations | Unregister an existing registration before registering another |

@@ -5,8 +5,8 @@
 
 use super::response_forwarder::RpcResponseForwarder;
 use super::state_model::{
-    RpcFamilyRuntime, RpcPendingErrorDelivery, RpcSessionCleanupResult, RpcWorkerCleanupResult,
-    RPC_WORKER_NOT_FOUND_ERROR,
+    RpcFamilyRuntime, RpcPendingErrorDelivery, RpcSessionCleanupResult, RpcWorkerCancellation,
+    RpcWorkerCleanupResult, RPC_WORKER_NOT_FOUND_ERROR,
 };
 use crate::runtime::routing::RouteAddress;
 use crate::runtime::{CleanedUpSessions, SessionScoped};
@@ -24,10 +24,25 @@ impl SessionScoped for RpcFamilyRuntime<'_> {
 
 impl RpcFamilyRuntime<'_> {
     pub(super) fn apply_session_cleanup(&mut self, session_id: u64) -> RpcSessionCleanupResult {
+        let cancellation_grace_period = self.core.cancellation_grace_period;
         let cleanup_result = {
             let state = &mut self.core.state;
-            state.cleanup_session(session_id)
+            state.cleanup_session_with_grace(
+                session_id,
+                std::time::Instant::now(),
+                cancellation_grace_period,
+            )
         };
+
+        for cancellation in &cleanup_result.cancellations {
+            let cancellation = RpcWorkerCancellation {
+                family: cancellation.family,
+                correlation_id: cancellation.correlation_id,
+                worker_session_id: cancellation.worker_session_id,
+                reason: cancellation.reason,
+            };
+            self.forward_worker_cancellation(&cancellation);
+        }
 
         self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
         self.release_global_pending(cleanup_result.removed_pending);

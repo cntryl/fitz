@@ -1,10 +1,12 @@
 use super::{
     FxBuildHasher, HashMap, HashSet, Instant, RegistrationTable, Route, RouteAddress, RouteFamily,
-    RouteReadyQueue, RpcCorrelationKey, RpcFastMap, RpcPendingDispatchInfo,
-    RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingTable, RpcPendingTimeoutResult,
-    RpcQueuedRequest, RpcRegistrationId, RpcRequestDispatch, RpcRequestRejection, RpcRouteState,
-    RpcSessionCleanupResult, RpcWorker, RpcWorkerCleanupResult, RpcWorkerDispatch, RpcWorkerKey,
+    RouteReadyQueue, RpcCancellationAckDisposition, RpcCancellationDisposition, RpcCorrelationKey,
+    RpcFastMap, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
+    RpcPendingTable, RpcPendingTimeoutResult, RpcQueuedRequest, RpcRegistrationId,
+    RpcRequestDispatch, RpcRequestRejection, RpcRouteState, RpcSessionCleanupResult, RpcWorker,
+    RpcWorkerCancellation, RpcWorkerCleanupResult, RpcWorkerDispatch, RpcWorkerKey,
 };
+use crate::protocol::rpc_codec::RpcCancellationReason;
 
 /// Coordinates registration, route fairness, and pending-request collaborators.
 pub(in crate::domains::rpc::sink) struct RpcState {
@@ -37,18 +39,6 @@ pub(in crate::domains::rpc::sink) trait RpcDispatchState {
 
 pub(in crate::domains::rpc::sink) trait RpcRequestState {
     fn register(&mut self, registration: RpcWorker) -> RpcWorkerRegistration;
-
-    #[allow(clippy::too_many_arguments)]
-    fn dispatch_or_queue(
-        &mut self,
-        request: crate::domains::rpc::protocol::RpcRequest,
-        caller_session_id: u64,
-        caller_inbox_addr: RouteAddress,
-        request_timeout: std::time::Duration,
-        route_pending_capacity: usize,
-        global_pending_capacity: usize,
-        global_pending_count: Option<&std::sync::atomic::AtomicUsize>,
-    ) -> RpcRequestDispatch;
 }
 
 pub(in crate::domains::rpc::sink) trait RpcResponseState {
@@ -102,27 +92,6 @@ impl RpcDispatchState for RpcState {
 impl RpcRequestState for RpcState {
     fn register(&mut self, registration: RpcWorker) -> RpcWorkerRegistration {
         self.register_registration(registration)
-    }
-
-    fn dispatch_or_queue(
-        &mut self,
-        request: crate::domains::rpc::protocol::RpcRequest,
-        caller_session_id: u64,
-        caller_inbox_addr: RouteAddress,
-        request_timeout: std::time::Duration,
-        route_pending_capacity: usize,
-        global_pending_capacity: usize,
-        global_pending_count: Option<&std::sync::atomic::AtomicUsize>,
-    ) -> RpcRequestDispatch {
-        self.dispatch_or_queue_request_with_global_count(
-            request,
-            caller_session_id,
-            caller_inbox_addr,
-            request_timeout,
-            route_pending_capacity,
-            global_pending_capacity,
-            global_pending_count,
-        )
     }
 }
 
@@ -423,13 +392,29 @@ impl RpcState {
         registration_ids
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn cleanup_session(
         &mut self,
         session_id: u64,
     ) -> RpcSessionCleanupResult {
+        self.cleanup_session_with_grace(
+            session_id,
+            Instant::now(),
+            std::time::Duration::from_secs(5),
+        )
+    }
+
+    pub(in crate::domains::rpc::sink) fn cleanup_session_with_grace(
+        &mut self,
+        session_id: u64,
+        now: Instant,
+        cancellation_grace: std::time::Duration,
+    ) -> RpcSessionCleanupResult {
         let affected_families = self.registrations.families_for_session(session_id);
         let removed_registration_ids = self.remove_registrations_for_session(session_id);
-        let pending_cleanup = self.pending.cleanup_session(session_id);
+        let pending_cleanup = self
+            .pending
+            .cleanup_session_with_expiration(session_id, now + cancellation_grace);
         let queued_removed = self.cleanup_queued_session(session_id);
 
         for family in affected_families {
@@ -443,6 +428,7 @@ impl RpcState {
             removed_pending: pending_cleanup.removed_pending + queued_removed,
             pending_len: self.live_request_count(),
             disconnect_deliveries: pending_cleanup.disconnect_deliveries,
+            cancellations: pending_cleanup.cancellations,
         }
     }
 
@@ -525,8 +511,25 @@ impl RpcState {
         }
     }
 
+    fn pre_admission_rejection(
+        &self,
+        family: RouteFamily,
+        request: &crate::domains::rpc::RpcRequest,
+        deadline: Option<Instant>,
+        now: Instant,
+    ) -> Option<RpcRequestRejection> {
+        if self.check_duplicate(family, &request.correlation_id) {
+            Some(RpcRequestRejection::Duplicate)
+        } else if deadline.is_some_and(|deadline| deadline <= now) {
+            Some(RpcRequestRejection::Expired)
+        } else {
+            None
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Coordinates duplicate, capacity, fairness, and tracking policy for one request.
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn dispatch_or_queue_request_with_global_count(
         &mut self,
         request: crate::domains::rpc::protocol::RpcRequest,
@@ -537,12 +540,35 @@ impl RpcState {
         global_pending_capacity: usize,
         global_pending_count: Option<&std::sync::atomic::AtomicUsize>,
     ) -> RpcRequestDispatch {
+        self.dispatch_or_queue_request_with_deadline(
+            request,
+            None,
+            caller_session_id,
+            caller_inbox_addr,
+            request_timeout,
+            route_pending_capacity,
+            global_pending_capacity,
+            global_pending_count,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::domains::rpc::sink) fn dispatch_or_queue_request_with_deadline(
+        &mut self,
+        request: crate::domains::rpc::protocol::RpcRequest,
+        deadline: Option<Instant>,
+        caller_session_id: u64,
+        caller_inbox_addr: RouteAddress,
+        request_timeout: std::time::Duration,
+        route_pending_capacity: usize,
+        global_pending_capacity: usize,
+        global_pending_count: Option<&std::sync::atomic::AtomicUsize>,
+    ) -> RpcRequestDispatch {
         let family = *caller_inbox_addr.family();
-        if self.check_duplicate(family, &request.correlation_id) {
-            return RpcRequestDispatch::Rejected {
-                request,
-                reason: RpcRequestRejection::Duplicate,
-            };
+        let admitted_at = Instant::now();
+        if let Some(reason) = self.pre_admission_rejection(family, &request, deadline, admitted_at)
+        {
+            return RpcRequestDispatch::Rejected { request, reason };
         }
         let route = request.route.clone();
         self.ensure_route_state_for_family(family, &route);
@@ -587,7 +613,10 @@ impl RpcState {
             };
         };
 
-        let expires_at = Instant::now() + request_timeout;
+        let expires_at = deadline.map_or_else(
+            || Instant::now() + request_timeout,
+            |deadline| deadline.min(admitted_at + request_timeout),
+        );
         match action {
             DispatchAction::Queue => {
                 let queued = RpcQueuedRequest::from_request(
@@ -627,6 +656,7 @@ impl RpcState {
                         .map_or(local_live_request_count.saturating_add(1), |count| {
                             count.load(std::sync::atomic::Ordering::Acquire)
                         }),
+                    expires_at,
                 }
             }
         }
@@ -708,50 +738,9 @@ impl RpcState {
         }
         queued_to_remove.len()
     }
-
-    pub(in crate::domains::rpc::sink) fn expire_timed_out(
-        &mut self,
-        now: Instant,
-    ) -> RpcPendingTimeoutResult {
-        let mut timeout_deliveries = Vec::new();
-        let mut removed_pending = 0usize;
-        let mut closed_caller_drops = 0usize;
-
-        while let Some(key) = self.pending.next_expired_pending_key(now) {
-            let pending = self.pending.remove(&key).expect("tracked pending request");
-            self.release_registration_for_pending(&pending, None);
-            removed_pending = removed_pending.saturating_add(1);
-            if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {
-                timeout_deliveries.push(RpcPendingErrorDelivery {
-                    correlation_id: key.correlation_id,
-                    caller_session_id: pending.dispatch_info.caller_session_id,
-                    caller_inbox_addr,
-                });
-            } else {
-                closed_caller_drops = closed_caller_drops.saturating_add(1);
-            }
-        }
-
-        while let Some(key) = self.pending.next_expired_queued_key(now) {
-            let queued = self
-                .remove_queued_request_for_family(key.family, &key.correlation_id)
-                .expect("tracked queued request");
-            removed_pending = removed_pending.saturating_add(1);
-            timeout_deliveries.push(RpcPendingErrorDelivery {
-                correlation_id: key.correlation_id,
-                caller_session_id: queued.caller_session_id,
-                caller_inbox_addr: queued.caller_inbox_addr,
-            });
-        }
-
-        RpcPendingTimeoutResult {
-            removed_pending,
-            pending_len: self.live_request_count(),
-            closed_caller_drops,
-            timeout_deliveries,
-        }
-    }
 }
 
 #[cfg(test)]
 mod test_api;
+
+mod cancellation;
