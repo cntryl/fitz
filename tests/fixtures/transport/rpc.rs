@@ -146,6 +146,7 @@ pub struct RpcRequestDelivery {
     pub correlation_id: uuid::Uuid,
     pub route: String,
     pub body: Vec<u8>,
+    pub remaining_budget_ms: Option<u32>,
 }
 
 pub struct RpcResponseDelivery {
@@ -176,6 +177,17 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
 
     let route = dec.get_string()?;
     let body = dec.get_bytes()?.to_vec();
+    let remaining_budget_ms = if dec.is_complete() {
+        None
+    } else {
+        let version = dec.get_u8()?;
+        let flags = dec.get_u8()?;
+        let budget_ms = dec.get_u32()?;
+        if version != 1 || flags != 1 || budget_ms > 86_400_000 {
+            return Err("Invalid RPC request budget extension".to_string());
+        }
+        Some(budget_ms)
+    };
     if !dec.is_complete() {
         return Err("Trailing data in RPC request delivery".to_string());
     }
@@ -185,6 +197,7 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
         correlation_id,
         route,
         body,
+        remaining_budget_ms,
     })
 }
 

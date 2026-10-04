@@ -459,8 +459,8 @@ mod tests {
     fn should_preserve_invalid_message_rejections() {
         // Arrange
         let cases = [
-            111, 112, 199, 209, 201, 205, 299, 304, 305, 306, 399, 409, 404, 504, 505, 609, 610,
-            699, 705, 799,
+            111, 112, 199, 209, 201, 205, 299, 305, 306, 399, 409, 404, 504, 505, 609, 610, 699,
+            705, 799,
         ];
 
         // Act
@@ -482,8 +482,6 @@ mod tests {
                 .is_some()
                 {
                     "message type is server-to-client only"
-                } else if *msg_type == 304 {
-                    "invalid message type: unsupported rpc operation"
                 } else {
                     "unsupported message type"
                 }

@@ -12,6 +12,7 @@ use super::Duration;
 pub(in crate::domains::rpc::sink) const RPC_MSG_TYPE_REQUEST: u16 = 302;
 #[cfg(test)]
 pub(in crate::domains::rpc::sink) const RPC_MSG_TYPE_RESPONSE: u16 = 303;
+pub(in crate::domains::rpc::sink) const RPC_MSG_TYPE_CANCELLATION: u16 = 304;
 
 pub(in crate::domains::rpc::sink) const RPC_BACKPRESSURE_ERROR: &str =
     "RPC backpressure: too many pending requests";
@@ -42,7 +43,14 @@ pub(in crate::domains::rpc::sink) const RPC_DEFAULT_ROUTE_PENDING_CAPACITY: usiz
 pub(in crate::domains::rpc::sink) const RPC_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
 pub(in crate::domains::rpc::sink) const RPC_DEFAULT_REQUEST_TIMEOUT: Duration =
     Duration::from_secs(30);
+pub(in crate::domains::rpc::sink) const RPC_DEFAULT_CANCELLATION_GRACE: Duration =
+    Duration::from_secs(5);
+pub(in crate::domains::rpc::sink) const RPC_CANCELLATION_CLOSE_RETRY_INTERVAL: Duration =
+    Duration::from_millis(250);
 pub(in crate::domains::rpc::sink) const RPC_MIN_TIMEOUT_SWEEP_INTERVAL: Duration =
     Duration::from_millis(10);
 pub(in crate::domains::rpc::sink) const RPC_MAX_TIMEOUT_SWEEP_INTERVAL: Duration =
     Duration::from_millis(250);
+
+pub(in crate::domains::rpc::sink) const RPC_BUDGET_EXPIRED_ERROR: &str =
+    "RPC request budget expired before worker dispatch";

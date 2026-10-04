@@ -396,6 +396,10 @@ RPC guarantees:
 - queued concrete routes rotate fairly when they share wildcard registration credit
 - per-concrete-route dispatch state is removed when no call is queued or pending
 - successful request submission does not produce an immediate success frame
+- negotiated workers receive cooperative cancellation and remaining-budget controls
+- after cancellation wins actor ordering, dispatched worker credit stays
+  reserved until handler cleanup acknowledgment or worker-session cleanup;
+  a terminal response or unregistration does not prove handler cleanup
 
 RPC does NOT guarantee:
 
@@ -404,7 +408,8 @@ RPC does NOT guarantee:
 - retries after timeout or worker loss
 - replayable response history
 - queue-like backlog across restart
-- a worker ACK frame or support for message type 304
+- remote cancellation without worker capability negotiation
+- side-effect rollback or automatic retry safety after cancellation
 
 ### Lease
 

@@ -27,6 +27,7 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
 use std::fmt;
+use std::time::Instant;
 use uuid::Uuid;
 
 /// Typed RPC decode and validation failure used to select the documented wire error.
@@ -216,6 +217,13 @@ pub struct RpcClientRequest {
     pub raw_payload: Bytes,
 }
 
+/// RPC request stamped at API ingress so family-actor queueing consumes budget.
+#[derive(Debug, Clone)]
+pub(crate) struct RpcClientRequestIngress {
+    pub(crate) request: RpcClientRequest,
+    pub(crate) received_at: Instant,
+}
+
 impl RpcClientRequest {
     pub fn new(meta: ClientFrameMeta, message: Result<RpcMessage, RpcDecodeError>) -> Self {
         Self {
@@ -266,6 +274,21 @@ pub struct RpcWorkerRequestDelivery {
     pub session_id: u64,
     pub route_family: RouteFamily,
     pub request: RpcRequest,
+}
+
+/// Worker request delivery carrying a negotiated remaining-budget extension.
+#[derive(Debug, Clone)]
+pub(crate) struct RpcWorkerRequestWithBudgetDelivery {
+    pub(crate) session_id: u64,
+    pub(crate) request: RpcRequest,
+    pub(crate) remaining_budget_ms: u32,
+}
+
+/// Pre-encoded RPC lifecycle control frame delivered to one session.
+#[derive(Debug, Clone)]
+pub(crate) struct RpcLifecycleControlDelivery {
+    pub(crate) session_id: u64,
+    pub(crate) frame: Bytes,
 }
 
 impl RpcWorkerRequestDelivery {

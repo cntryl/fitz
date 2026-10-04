@@ -252,7 +252,10 @@ fn build_rpc_envelope(
     Envelope::from_route(
         source,
         destination,
-        crate::domains::rpc::RpcClientRequest::new_with_payload(meta, parsed, payload),
+        crate::domains::rpc::protocol::RpcClientRequestIngress {
+            request: crate::domains::rpc::RpcClientRequest::new_with_payload(meta, parsed, payload),
+            received_at: std::time::Instant::now(),
+        },
     )
 }
 

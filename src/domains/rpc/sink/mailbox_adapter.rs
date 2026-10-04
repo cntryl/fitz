@@ -11,9 +11,19 @@ use crate::domains::rpc::{RpcClientRequest, RpcClientResponseBody};
 use crate::runtime::Envelope;
 
 impl RpcFamilyRuntime<'_> {
-    pub(super) fn request_from_envelope(envelope: &Envelope) -> Option<RpcClientRequest> {
-        if let Some(request) = envelope.payload::<RpcClientRequest>() {
+    pub(super) fn request_from_envelope(
+        envelope: &Envelope,
+    ) -> Option<crate::domains::rpc::protocol::RpcClientRequestIngress> {
+        if let Some(request) =
+            envelope.payload::<crate::domains::rpc::protocol::RpcClientRequestIngress>()
+        {
             return Some(request.clone());
+        }
+        if let Some(request) = envelope.payload::<RpcClientRequest>() {
+            return Some(crate::domains::rpc::protocol::RpcClientRequestIngress {
+                request: request.clone(),
+                received_at: std::time::Instant::now(),
+            });
         }
 
         #[cfg(test)]
@@ -31,11 +41,10 @@ impl RpcFamilyRuntime<'_> {
                 &frame_ctx.payload,
                 *envelope.destination().family(),
             );
-            Some(RpcClientRequest::new_with_payload(
-                meta,
-                parsed,
-                frame_ctx.payload,
-            ))
+            Some(crate::domains::rpc::protocol::RpcClientRequestIngress {
+                request: RpcClientRequest::new_with_payload(meta, parsed, frame_ctx.payload),
+                received_at: std::time::Instant::now(),
+            })
         }
 
         #[cfg(not(test))]
