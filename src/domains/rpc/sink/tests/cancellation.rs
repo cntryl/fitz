@@ -97,7 +97,8 @@ fn deliver_worker_ack(
     worker_source: RouteAddress,
     correlation_id: uuid::Uuid,
 ) {
-    let frame = encode_cancel_ack_tlv_frame(&correlation_id);
+    let worker_id = sink.worker_correlation_for_tests(family, correlation_id);
+    let frame = encode_cancel_ack_tlv_frame(&worker_id);
     let (message_type, payload) = crate::benchkit::extract_single_tlv_field(&frame);
     sink.deliver(Envelope::from_route(
         worker_source,
@@ -114,6 +115,7 @@ fn deliver_worker_completion(
     worker_source: RouteAddress,
     correlation_id: uuid::Uuid,
 ) {
+    let correlation_id = sink.worker_correlation_for_tests(family, correlation_id);
     let response = crate::domains::rpc::protocol::RpcResponse::single(
         correlation_id,
         Bytes::from_static(b"late completion"),
@@ -134,6 +136,7 @@ fn deliver_worker_progress(
     worker_source: RouteAddress,
     correlation_id: uuid::Uuid,
 ) {
+    let correlation_id = sink.worker_correlation_for_tests(family, correlation_id);
     let response = crate::domains::rpc::protocol::RpcResponse::chunk(
         correlation_id,
         0,
@@ -218,7 +221,9 @@ fn should_hold_worker_credit_until_cleanup_ack_and_ignore_late_duplicate_release
         crate::protocol::rpc_codec::RpcCancellationResult::Forwarded as u8
     );
     assert_eq!(worker_cancellation.len(), 1);
-    let worker_cancel = lifecycle_payload_for(&worker_cancellation[0], 2, cancelled_id);
+    let first_worker_id =
+        uuid::Uuid::from_slice(&worker_capture.frames.lock()[0].payload[..16]).unwrap();
+    let worker_cancel = lifecycle_payload_for(&worker_cancellation[0], 2, first_worker_id);
     assert_eq!(
         worker_cancel[17],
         crate::protocol::rpc_codec::RpcCancellationReason::Explicit as u8
@@ -324,7 +329,8 @@ fn should_close_worker_only_after_deadline_cancellation_grace_expires() {
     assert_eq!(live_during_grace, 1);
     assert_eq!(live_after_close_request, 1);
     assert_eq!(timeout_frames.len(), 1);
-    let timeout_cancel = lifecycle_payload_for(&timeout_frames[0], 2, correlation_id);
+    let worker_id = uuid::Uuid::from_slice(&worker_capture.frames.lock()[0].payload[..16]).unwrap();
+    let timeout_cancel = lifecycle_payload_for(&timeout_frames[0], 2, worker_id);
     assert_eq!(
         timeout_cancel[17],
         crate::protocol::rpc_codec::RpcCancellationReason::BrokerDeadline as u8

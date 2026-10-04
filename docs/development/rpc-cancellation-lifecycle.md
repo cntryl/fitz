@@ -39,6 +39,20 @@ is session-owned and tied to the caller's route family and session. A cleanup
 acknowledgment is accepted only from the worker session that owns that live
 call and only when that worker negotiated support.
 
+Caller and worker correlation IDs have distinct roles. For each dispatch to a
+supporting worker, the broker replaces the request's correlation UUID with a
+fresh opaque invocation UUID. The worker echoes that delivered UUID in every
+response and cleanup acknowledgment; worker cancellation signals carry it too.
+The broker validates the owning worker session and route family, then restores
+the caller's UUID in caller-facing responses. The caller keeps using its original
+UUID for cancellation. Legacy workers receive the original UUID unchanged.
+
+The invocation index contains only live dispatched calls, including canceled
+calls awaiting cleanup, and is removed with the pending call. Reusing a caller
+UUID therefore cannot let a delayed or duplicate acknowledgment, progress chunk,
+or terminal response from an earlier invocation release or complete a newer
+call. A reconnect creates a new worker session and cannot inherit this identity.
+
 ## Deadlines
 
 API ingress stamps each request with a local monotonic receive time before it

@@ -132,8 +132,19 @@ impl RpcFamilyRuntime<'_> {
         &mut self,
         cancellation: &RpcWorkerCancellation,
     ) -> bool {
+        let worker_id = self
+            .core
+            .state
+            .pending
+            .pending_for_key(&super::state_model::RpcCorrelationKey {
+                family: cancellation.family,
+                correlation_id: cancellation.correlation_id,
+            })
+            .expect("canceled invocation remains tracked")
+            .dispatch_info
+            .worker_correlation_id;
         let bytes = crate::protocol::rpc_codec::encode_worker_cancel_tlv_frame(
-            &cancellation.correlation_id,
+            &worker_id,
             cancellation.reason,
         );
         let destination =

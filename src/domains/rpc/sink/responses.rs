@@ -53,17 +53,31 @@ impl RpcFamilyRuntime<'_> {
         let metrics_enabled = self.core.metrics.is_some();
         let state_wait_start = metrics_enabled.then(Instant::now);
         let state = &mut self.core.state;
+        let caller_correlation_id = state.pending.resolve_worker_response_correlation(
+            meta.route_family,
+            meta.session_id,
+            resp.correlation_id,
+        );
+        let mut caller_response = resp.clone();
+        if let Some(id) = caller_correlation_id {
+            caller_response.correlation_id = id;
+        }
+        let resp = &caller_response;
         let state_wait_us = elapsed_micros_optional(state_wait_start);
         let state_hold_start = metrics_enabled.then(Instant::now);
         let pending_route_lookup_start = metrics_enabled.then(Instant::now);
-        let caller_info = RpcResponseState::pending_for_response(
-            &mut *state,
-            meta.route_family,
-            &resp.correlation_id,
-            meta.session_id,
-            resp.seq,
-            resp.stream_end,
-        );
+        let caller_info = if caller_correlation_id.is_some() {
+            RpcResponseState::pending_for_response(
+                &mut *state,
+                meta.route_family,
+                &resp.correlation_id,
+                meta.session_id,
+                resp.seq,
+                resp.stream_end,
+            )
+        } else {
+            RpcPendingResponseDisposition::Missing
+        };
         let pending_route_lookup_us = elapsed_micros_optional(pending_route_lookup_start);
         let pending_len = RpcResponseState::live_count(state);
         let _ = state;
@@ -368,7 +382,7 @@ impl RpcFamilyRuntime<'_> {
 
         self.forward_pending_error_deliveries(
             vec![RpcPendingErrorDelivery {
-                correlation_id: resp.correlation_id,
+                correlation_id: caller_info.worker_correlation_id,
                 caller_session_id: meta.session_id,
                 caller_inbox_addr: worker_inbox_addr,
             }],
@@ -446,7 +460,7 @@ impl RpcFamilyRuntime<'_> {
         });
         self.forward_pending_error_deliveries(
             vec![RpcPendingErrorDelivery {
-                correlation_id: resp.correlation_id,
+                correlation_id: caller_info.worker_correlation_id,
                 caller_session_id: meta.session_id,
                 caller_inbox_addr: worker_inbox_addr,
             }],

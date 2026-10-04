@@ -377,6 +377,21 @@ impl RpcFamilyRuntime<'_> {
         worker: &RpcWorkerDispatch,
         expires_at: Instant,
     ) -> Result<(), crate::runtime::RouteError> {
+        let mut worker_request = req.clone();
+        if worker.supports_cancellation {
+            worker_request.correlation_id = self
+                .core
+                .state
+                .pending
+                .pending_for_key(&super::state_model::RpcCorrelationKey {
+                    family: *worker.addr.family(),
+                    correlation_id: req.correlation_id,
+                })
+                .expect("dispatched request remains tracked")
+                .dispatch_info
+                .worker_correlation_id;
+        }
+        let req = &worker_request;
         #[cfg(test)]
         let request_envelope = {
             let mut payload_encoder =

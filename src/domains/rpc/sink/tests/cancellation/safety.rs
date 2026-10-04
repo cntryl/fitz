@@ -1,6 +1,75 @@
 use super::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[test]
+fn should_reject_stale_cleanup_ack_after_caller_correlation_is_reused() {
+    // Arrange
+    let h = Harness::new();
+    let id = uuid::Uuid::new_v4();
+    h.request(id);
+    let first_worker_id = uuid::Uuid::from_slice(&h.worker.frames.lock()[0].payload[..16]).unwrap();
+    deliver_worker_completion(
+        &h.sink,
+        h.family,
+        &h.route,
+        session_inbox_address(h.family, 42),
+        first_worker_id,
+    );
+    h.request(id);
+    let second_worker_id =
+        uuid::Uuid::from_slice(&h.worker.frames.lock()[1].payload[..16]).unwrap();
+    h.cancel(id);
+
+    // Act
+    h.ack(first_worker_id);
+
+    // Assert
+    assert_eq!(h.capacity(), 1);
+    assert_eq!(h.sink.pending_request_count(), 1);
+    assert_ne!(first_worker_id, second_worker_id);
+    assert_ne!(id, second_worker_id);
+    h.ack(second_worker_id);
+    assert_eq!(h.capacity(), 0);
+}
+
+#[test]
+fn should_ignore_stale_worker_responses_after_caller_correlation_is_reused() {
+    // Arrange
+    let h = Harness::new();
+    let id = uuid::Uuid::new_v4();
+    h.request(id);
+    let first_worker_id = uuid::Uuid::from_slice(&h.worker.frames.lock()[0].payload[..16]).unwrap();
+    deliver_worker_completion(
+        &h.sink,
+        h.family,
+        &h.route,
+        session_inbox_address(h.family, 42),
+        first_worker_id,
+    );
+    h.request(id);
+
+    // Act
+    deliver_worker_progress(
+        &h.sink,
+        h.family,
+        &h.route,
+        session_inbox_address(h.family, 42),
+        first_worker_id,
+    );
+    deliver_worker_completion(
+        &h.sink,
+        h.family,
+        &h.route,
+        session_inbox_address(h.family, 42),
+        first_worker_id,
+    );
+
+    // Assert
+    assert_eq!(h.capacity(), 1);
+    assert_eq!(h.caller.frames.lock().len(), 1);
+    assert_eq!(&h.caller.frames.lock()[0].payload[..16], id.as_bytes());
+}
+
 struct Harness {
     sink: RpcDomain,
     router: Arc<Router>,

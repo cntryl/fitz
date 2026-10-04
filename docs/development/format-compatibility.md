@@ -59,6 +59,11 @@ not change CONNECT or any existing payload, and the optional active-session
 
 ## RPC cancellation and remaining budgets
 
+Negotiated worker correlation UUIDs are opaque per-dispatch invocation IDs.
+The broker translates them back to the caller's correlation UUID for responses.
+Workers must echo the delivered UUID in responses and cleanup ACKs; cancellation
+signals use that same worker UUID. Legacy workers retain the caller UUID.
+
 `CAP_RPC_CANCELLATION` (`1 << 3`) negotiates optional RPC registration and
 remaining-budget extensions plus lifecycle messages 304 and 305. Deploy the
 broker first, then supporting SDKs in any order. New SDKs against an old broker

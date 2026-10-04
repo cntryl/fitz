@@ -90,7 +90,7 @@ where
         .expect("send request");
     let delivery = worker.recv_frame(2000).await.expect("request delivery");
     let request = parse_rpc_request_delivery(&delivery).expect("parse request delivery");
-    assert_eq!(request.correlation_id, correlation_id);
+    assert_ne!(request.correlation_id, correlation_id);
     assert!(request
         .remaining_budget_ms
         .is_some_and(|budget| budget <= 5000));
@@ -104,12 +104,12 @@ where
         .await
         .expect("caller cancellation result");
     worker
-        .send_frame(&worker_cleanup_ack(correlation_id))
+        .send_frame(&worker_cleanup_ack(request.correlation_id))
         .await
         .expect("acknowledge worker cleanup");
 
     // Assert
-    assert_lifecycle(&worker_cancellation, 2, correlation_id, 1);
+    assert_lifecycle(&worker_cancellation, 2, request.correlation_id, 1);
     assert_lifecycle(&caller_result, 4, correlation_id, 2);
 }
 
@@ -135,7 +135,7 @@ pub(crate) async fn should_propagate_rpc_cancellation_through_downstream_call<C>
     let parent_delivery = worker_b.recv_frame(2000).await.expect("parent delivery");
     let parent_request =
         parse_rpc_request_delivery(&parent_delivery).expect("parse parent delivery");
-    assert_eq!(parent_request.correlation_id, parent_id);
+    assert_ne!(parent_request.correlation_id, parent_id);
     let parent_budget = parent_request.remaining_budget_ms.expect("parent budget");
     let child_budget = parent_budget.saturating_sub(1);
     worker_b
@@ -144,7 +144,7 @@ pub(crate) async fn should_propagate_rpc_cancellation_through_downstream_call<C>
         .expect("send explicitly linked child request");
     let child_delivery = worker_c.recv_frame(2000).await.expect("child delivery");
     let child_request = parse_rpc_request_delivery(&child_delivery).expect("parse child delivery");
-    assert_eq!(child_request.correlation_id, child_id);
+    assert_ne!(child_request.correlation_id, child_id);
     assert!(child_request
         .remaining_budget_ms
         .is_some_and(|budget| budget <= child_budget && budget <= parent_budget));
@@ -174,18 +174,18 @@ pub(crate) async fn should_propagate_rpc_cancellation_through_downstream_call<C>
         .await
         .expect("parent cancellation result");
     worker_b
-        .send_frame(&worker_cleanup_ack(parent_id))
+        .send_frame(&worker_cleanup_ack(parent_request.correlation_id))
         .await
         .expect("acknowledge parent cleanup");
     worker_c
-        .send_frame(&worker_cleanup_ack(child_id))
+        .send_frame(&worker_cleanup_ack(child_request.correlation_id))
         .await
         .expect("acknowledge child cleanup");
 
     // Assert
-    assert_lifecycle(&parent_worker_signal, 2, parent_id, 1);
+    assert_lifecycle(&parent_worker_signal, 2, parent_request.correlation_id, 1);
     assert_lifecycle(&child_caller_result, 4, child_id, 2);
-    assert_lifecycle(&child_worker_signal, 2, child_id, 1);
+    assert_lifecycle(&child_worker_signal, 2, child_request.correlation_id, 1);
     assert_lifecycle(&parent_caller_result, 4, parent_id, 2);
 }
 
@@ -204,23 +204,21 @@ pub(crate) async fn should_cancel_worker_when_caller_disconnects_over_transport<
         .await
         .expect("send request");
     let delivery = worker.recv_frame(2000).await.expect("request delivery");
-    assert_eq!(
-        parse_rpc_request_delivery(&delivery)
-            .expect("parse request delivery")
-            .correlation_id,
-        correlation_id
-    );
+    let worker_id = parse_rpc_request_delivery(&delivery)
+        .expect("parse request delivery")
+        .correlation_id;
+    assert_ne!(worker_id, correlation_id);
 
     // Act
     drop(caller);
     let worker_cancellation = worker.recv_frame(2000).await.expect("worker cancellation");
     worker
-        .send_frame(&worker_cleanup_ack(correlation_id))
+        .send_frame(&worker_cleanup_ack(worker_id))
         .await
         .expect("acknowledge worker cleanup");
 
     // Assert
-    assert_lifecycle(&worker_cancellation, 2, correlation_id, 3);
+    assert_lifecycle(&worker_cancellation, 2, worker_id, 3);
 }
 
 pub(crate) async fn should_cancel_worker_when_rpc_budget_expires_over_transport<C>(
@@ -238,12 +236,10 @@ pub(crate) async fn should_cancel_worker_when_rpc_budget_expires_over_transport<
         .await
         .expect("send request");
     let delivery = worker.recv_frame(2000).await.expect("request delivery");
-    assert_eq!(
-        parse_rpc_request_delivery(&delivery)
-            .expect("parse request delivery")
-            .correlation_id,
-        correlation_id
-    );
+    let worker_id = parse_rpc_request_delivery(&delivery)
+        .expect("parse request delivery")
+        .correlation_id;
+    assert_ne!(worker_id, correlation_id);
 
     // Act
     let caller_timeout = caller
@@ -252,13 +248,13 @@ pub(crate) async fn should_cancel_worker_when_rpc_budget_expires_over_transport<
         .expect("caller timeout response");
     let worker_cancellation = worker.recv_frame(2000).await.expect("worker cancellation");
     worker
-        .send_frame(&worker_cleanup_ack(correlation_id))
+        .send_frame(&worker_cleanup_ack(worker_id))
         .await
         .expect("acknowledge worker cleanup");
 
     // Assert
     assert_rpc_timeout_error_frame(&caller_timeout, correlation_id);
-    assert_lifecycle(&worker_cancellation, 2, correlation_id, 4);
+    assert_lifecycle(&worker_cancellation, 2, worker_id, 4);
 }
 
 #[tokio::test]
@@ -355,12 +351,10 @@ where
         .await
         .expect("send request");
     let delivery = worker.recv_frame(2000).await.expect("worker delivery");
-    assert_eq!(
-        parse_rpc_request_delivery(&delivery)
-            .expect("parse delivery")
-            .correlation_id,
-        id
-    );
+    let worker_id = parse_rpc_request_delivery(&delivery)
+        .expect("parse delivery")
+        .correlation_id;
+    assert_ne!(worker_id, id);
 
     // Act
     caller
@@ -382,7 +376,7 @@ where
         .expect("worker transport finalizes session");
 
     // Assert
-    assert_lifecycle(&signal, 2, id, 1);
+    assert_lifecycle(&signal, 2, worker_id, 1);
     assert_lifecycle(&result, 4, id, 2);
     assert!(
         !close_error.contains("timeout"),

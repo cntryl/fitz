@@ -13,6 +13,7 @@ const EXPIRATION_HEAP_LIVE_ENTRY_MULTIPLIER: usize = 2;
 /// Owns live queued and dispatched requests and their expiration indexes.
 pub(in crate::domains::rpc::sink) struct RpcPendingTable {
     pending: RpcFastMap<RpcCorrelationKey, RpcPendingRequest>,
+    worker_invocations: RpcFastMap<(RouteFamily, u64, uuid::Uuid), RpcCorrelationKey>,
     expirations: BinaryHeap<ExpiringPendingRequest>,
     route_counts: RpcFastMap<(RouteFamily, Route), usize>,
     queued: RpcFastMap<RpcCorrelationKey, RpcQueuedRequest>,
@@ -42,6 +43,7 @@ impl RpcPendingTable {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
             pending: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
+            worker_invocations: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
             expirations: BinaryHeap::with_capacity(256),
             route_counts: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
             queued: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
@@ -140,9 +142,12 @@ impl RpcPendingTable {
         correlation_id: &uuid::Uuid,
         worker_session_id: u64,
     ) -> RpcCancellationAckDisposition {
-        let key = RpcCorrelationKey {
-            family,
-            correlation_id: *correlation_id,
+        let Some(key) = self
+            .worker_invocations
+            .get(&(family, worker_session_id, *correlation_id))
+            .copied()
+        else {
+            return RpcCancellationAckDisposition::Rejected;
         };
         let Some(pending) = self.pending.get(&key) else {
             return RpcCancellationAckDisposition::Rejected;
@@ -356,7 +361,7 @@ impl RpcPendingTable {
         &mut self,
         family: RouteFamily,
         correlation_id: uuid::Uuid,
-        pending: RpcPendingRequest,
+        mut pending: RpcPendingRequest,
     ) -> usize {
         let key = RpcCorrelationKey {
             family,
@@ -364,9 +369,33 @@ impl RpcPendingTable {
         };
         let expires_at = pending.expires_at;
         let route = pending.dispatch_info.route.clone();
+        pending.dispatch_info.worker_correlation_id = if pending.supports_cancellation {
+            loop {
+                let id = uuid::Uuid::new_v4();
+                if !self
+                    .worker_invocations
+                    .contains_key(&(family, pending.worker_session_id, id))
+                {
+                    break id;
+                }
+            }
+        } else {
+            correlation_id
+        };
+        let invocation = (
+            family,
+            pending.worker_session_id,
+            pending.dispatch_info.worker_correlation_id,
+        );
         if let Some(replaced) = self.pending.insert(key, pending) {
+            self.worker_invocations.remove(&(
+                family,
+                replaced.worker_session_id,
+                replaced.dispatch_info.worker_correlation_id,
+            ));
             self.decrement_route_count(family, &replaced.dispatch_info.route);
         }
+        self.worker_invocations.insert(invocation, key);
         *self.route_counts.entry((family, route)).or_default() += 1;
         self.expirations
             .push(ExpiringPendingRequest { expires_at, key });
@@ -518,9 +547,36 @@ impl RpcPendingTable {
         key: &RpcCorrelationKey,
     ) -> Option<RpcPendingRequest> {
         let pending = self.pending.remove(key)?;
+        self.worker_invocations.remove(&(
+            key.family,
+            pending.worker_session_id,
+            pending.dispatch_info.worker_correlation_id,
+        ));
         self.decrement_route_count(key.family, &pending.dispatch_info.route);
         self.compact_pending_expirations_if_needed();
         Some(pending)
+    }
+
+    pub(in crate::domains::rpc::sink) fn resolve_worker_response_correlation(
+        &self,
+        family: RouteFamily,
+        worker_session_id: u64,
+        worker_id: uuid::Uuid,
+    ) -> Option<uuid::Uuid> {
+        self.worker_invocations
+            .get(&(family, worker_session_id, worker_id))
+            .map(|key| key.correlation_id)
+            .or_else(|| {
+                // Preserve legacy wrong-worker diagnostics without accepting a
+                // caller correlation as a negotiated invocation identity.
+                self.pending
+                    .get(&RpcCorrelationKey {
+                        family,
+                        correlation_id: worker_id,
+                    })
+                    .filter(|pending| !pending.supports_cancellation)
+                    .map(|_| worker_id)
+            })
     }
 
     fn compact_pending_expirations_if_needed(&mut self) {

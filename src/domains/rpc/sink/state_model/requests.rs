@@ -19,6 +19,8 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
 
 #[derive(Clone, Debug)]
 pub(in crate::domains::rpc::sink) struct RpcPendingDispatchInfo {
+    /// Opaque per-dispatch identity echoed by negotiated workers.
+    pub(in crate::domains::rpc::sink) worker_correlation_id: uuid::Uuid,
     pub(in crate::domains::rpc::sink) family: crate::runtime::routing::RouteFamily,
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::domains::rpc::sink) route: Route,
@@ -56,6 +58,7 @@ impl RpcPendingRequest {
 
         Self {
             dispatch_info: RpcPendingDispatchInfo {
+                worker_correlation_id: uuid::Uuid::nil(),
                 family: *registration_addr.family(),
                 route,
                 caller_session_id,

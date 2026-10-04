@@ -547,6 +547,11 @@ Supporting caller requests may append
 correlation, route, and body. Budgets range from 0 to 86,400,000 milliseconds;
 queueing and local elapsed time deduct from them without relying on wall clocks.
 Workers without support receive the original request fields without extensions.
+For supporting workers, the broker assigns a fresh opaque dispatch UUID in the
+existing worker request correlation field. Worker responses, cancellation
+signals and cleanup ACKs use that invocation UUID; the broker restores the
+caller UUID in caller-facing responses. This separates reused caller IDs from
+delayed controls or response frames belonging to earlier executions.
 
 `RPC_CANCEL` 304 carries caller cancellation or worker cleanup acknowledgment;
 `RPC_LIFECYCLE` 305 carries worker cancellation signals or caller results. Only
