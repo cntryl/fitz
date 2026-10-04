@@ -8,7 +8,7 @@
 use super::state_model::RPC_MSG_TYPE_REQUEST;
 use super::state_model::{
     RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RpcPendingErrorDelivery,
-    RpcPendingRequest, RpcQueuedDispatch, RpcRequestRejection, RpcRequestState, RpcWorkerDispatch,
+    RpcPendingRequest, RpcQueuedDispatch, RpcRequestRejection, RpcWorkerDispatch,
     RPC_BACKPRESSURE_ERROR, RPC_DUPLICATE_CORRELATION_ERROR, RPC_MAX_PENDING_REQUESTS,
     RPC_NO_WORKERS_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
 };
@@ -28,7 +28,7 @@ struct RejectionSpec {
     reason: &'static str,
 }
 
-const REJECTION_SPECS: [RejectionSpec; 4] = [
+const REJECTION_SPECS: [RejectionSpec; 5] = [
     RejectionSpec {
         metric: "rpc_requests_rejected_duplicate_correlation_total",
         error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
@@ -53,6 +53,12 @@ const REJECTION_SPECS: [RejectionSpec; 4] = [
         message: RPC_BACKPRESSURE_ERROR,
         reason: "route pending capacity",
     },
+    RejectionSpec {
+        metric: "rpc_requests_rejected_expired_budget_total",
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        message: super::state_model::RPC_BUDGET_EXPIRED_ERROR,
+        reason: "request budget expired before dispatch",
+    },
 ];
 
 /// Aggregate name the admin `backpressure_rejects_total` field reads.
@@ -65,6 +71,8 @@ impl RpcFamilyRuntime<'_> {
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         req: RpcRequest,
+        remaining_budget_ms: Option<u32>,
+        received_at: Instant,
     ) -> DeliveryOutcome {
         self.expire_timed_out_requests_inline_if_due();
         self.counter_inc("rpc_requests_total");
@@ -81,9 +89,16 @@ impl RpcFamilyRuntime<'_> {
         let state = &mut self.core.state;
         let state_wait_us = state_wait_start.map_or(0, Self::elapsed_micros_u64);
         let state_hold_start = metrics_enabled.then(Instant::now);
-        let dispatch = RpcRequestState::dispatch_or_queue(
-            &mut *state,
+        let broker_budget_ms = u32::try_from(request_timeout.as_millis().min(u128::from(
+            crate::protocol::rpc_codec::MAX_RPC_BUDGET_MILLIS,
+        )))
+        .unwrap_or(u32::MAX);
+        let budget_ms =
+            remaining_budget_ms.map_or(broker_budget_ms, |budget| budget.min(broker_budget_ms));
+        let deadline = received_at + std::time::Duration::from_millis(u64::from(budget_ms));
+        let dispatch = state.dispatch_or_queue_request_with_deadline(
             req,
+            Some(deadline),
             meta.session_id,
             caller_inbox_addr,
             request_timeout,
@@ -114,12 +129,14 @@ impl RpcFamilyRuntime<'_> {
                 request,
                 registration,
                 live_request_count,
+                expires_at,
             } => self.forward_immediate_request(
                 envelope,
                 meta,
                 request,
                 &registration,
                 live_request_count,
+                expires_at,
             ),
         }
     }
@@ -194,7 +211,12 @@ impl RpcFamilyRuntime<'_> {
         req: RpcRequest,
         worker: &RpcWorkerDispatch,
         live_request_count: usize,
+        expires_at: Instant,
     ) -> DeliveryOutcome {
+        if self.finish_expired_undispatched_request(&req, expires_at) {
+            self.dispatch_queued_requests_for_family(req.family_id);
+            return (None, Some(false), true);
+        }
         self.histogram_observe_us("rpc_pending_track_us", 0);
         self.histogram_observe_us("rpc_pending_route_index_us", 0);
         self.gauge_set("rpc_pending_requests", live_request_count as u64);
@@ -202,7 +224,7 @@ impl RpcFamilyRuntime<'_> {
 
         let metrics_enabled = self.core.metrics.is_some();
         let request_forward_start = metrics_enabled.then(Instant::now);
-        let forward_result = self.forward_request_to_worker(&req, worker);
+        let forward_result = self.forward_request_to_worker(&req, worker, expires_at);
         if let Some(request_forward_start) = request_forward_start {
             self.histogram_observe_elapsed_us("rpc_request_forward_us", request_forward_start);
         }
@@ -353,15 +375,22 @@ impl RpcFamilyRuntime<'_> {
         &mut self,
         req: &crate::domains::rpc::protocol::RpcRequest,
         worker: &RpcWorkerDispatch,
+        expires_at: Instant,
     ) -> Result<(), crate::runtime::RouteError> {
         #[cfg(test)]
         let request_envelope = {
             let mut payload_encoder =
                 crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let request_bytes = crate::dispatch::protocol::rpc_codec::encode_request_into(
+            let mut request_bytes = crate::dispatch::protocol::rpc_codec::encode_request_into(
                 req,
                 &mut payload_encoder,
             );
+            if worker.supports_cancellation {
+                let remaining_budget_ms = Self::remaining_budget_millis(expires_at);
+                request_bytes.push(1);
+                request_bytes.push(1);
+                request_bytes.extend_from_slice(&remaining_budget_ms.to_be_bytes());
+            }
             let request_ctx = FrameContext::new(
                 worker.session_id,
                 crate::dispatch::protocol::frame::ChannelId::Rpc,
@@ -373,12 +402,35 @@ impl RpcFamilyRuntime<'_> {
         };
 
         #[cfg(not(test))]
-        let request_envelope = Envelope::new(
-            worker.inbox_addr.clone(),
-            RpcWorkerRequestDelivery::new(worker.session_id, *worker.addr.family(), req.clone()),
-        );
+        let request_envelope = if worker.supports_cancellation {
+            Envelope::new(
+                worker.inbox_addr.clone(),
+                crate::domains::rpc::protocol::RpcWorkerRequestWithBudgetDelivery {
+                    session_id: worker.session_id,
+                    request: req.clone(),
+                    remaining_budget_ms: Self::remaining_budget_millis(expires_at),
+                },
+            )
+        } else {
+            Envelope::new(
+                worker.inbox_addr.clone(),
+                RpcWorkerRequestDelivery::new(
+                    worker.session_id,
+                    *worker.addr.family(),
+                    req.clone(),
+                ),
+            )
+        };
 
         self.core.router.route(request_envelope)
+    }
+
+    fn remaining_budget_millis(expires_at: Instant) -> u32 {
+        let remaining = expires_at.saturating_duration_since(Instant::now());
+        u32::try_from(remaining.as_millis().min(u128::from(
+            crate::protocol::rpc_codec::MAX_RPC_BUDGET_MILLIS,
+        )))
+        .unwrap_or(crate::protocol::rpc_codec::MAX_RPC_BUDGET_MILLIS)
     }
 
     pub(super) fn dispatch_queued_requests_for_family(
@@ -400,9 +452,16 @@ impl RpcFamilyRuntime<'_> {
     }
 
     pub(super) fn forward_queued_dispatch(&mut self, dispatch: &RpcQueuedDispatch) {
+        if self.finish_expired_undispatched_request(&dispatch.request, dispatch.expires_at) {
+            return;
+        }
         self.gauge_set("rpc_pending_requests", dispatch.live_request_count as u64);
 
-        match self.forward_request_to_worker(&dispatch.request, &dispatch.registration) {
+        match self.forward_request_to_worker(
+            &dispatch.request,
+            &dispatch.registration,
+            dispatch.expires_at,
+        ) {
             Ok(()) => {
                 self.counter_inc("rpc_requests_dispatched_total");
             }

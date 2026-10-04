@@ -128,6 +128,7 @@ impl RpcState {
             request,
             registration,
             live_request_count: self.live_request_count(),
+            expires_at,
         })
     }
 }

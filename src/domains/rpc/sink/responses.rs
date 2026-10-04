@@ -84,6 +84,14 @@ impl RpcFamilyRuntime<'_> {
                 pending: caller_info,
                 stream_end,
             } => self.handle_forwarded_response(context, resp, &caller_info, stream_end),
+            RpcPendingResponseDisposition::CancelledResponse { stream_end } => {
+                self.counter_inc(if stream_end {
+                    "rpc_cancellation_late_completion_responses_total"
+                } else {
+                    "rpc_cancellation_late_response_chunks_total"
+                });
+                (None, None, false)
+            }
             RpcPendingResponseDisposition::InvalidSequence {
                 pending: caller_info,
                 expected_seq,

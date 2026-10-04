@@ -16,6 +16,7 @@ impl RpcFamilyRuntime<'_> {
         meta: &crate::runtime::ClientFrameMeta,
         worker_addr: crate::runtime::routing::RouteAddress,
         max_concurrent: usize,
+        supports_cancellation: bool,
     ) -> DeliveryOutcome {
         let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
             session_inbox_address(*envelope.destination().family(), meta.session_id)
@@ -31,6 +32,7 @@ impl RpcFamilyRuntime<'_> {
                         meta.session_id,
                         max_concurrent,
                     )
+                    .with_cancellation_support(supports_cancellation),
                 ),
                 RpcWorkerRegistration::WildcardLimit | RpcWorkerRegistration::TotalLimit
             ) {

@@ -57,6 +57,22 @@ not change CONNECT or any existing payload, and the optional active-session
 2. Storage format changes require documented upgrade or rewrite path.
 3. Message-type range assignments remain stable once released.
 
+## RPC cancellation and remaining budgets
+
+`CAP_RPC_CANCELLATION` (`1 << 3`) negotiates optional RPC registration and
+remaining-budget extensions plus lifecycle messages 304 and 305. Deploy the
+broker first, then supporting SDKs in any order. New SDKs against an old broker
+retain original registration/request payloads and report remote cancellation
+as unsupported. The new broker sends original request payloads to workers
+that did not opt into the registration extension. Existing response framing
+and persisted formats are unchanged.
+
+Rollback the broker and reconnect clients to renegotiate capabilities; sessions
+and live RPC calls are ephemeral. Rollback cannot undo dispatched side effects
+or recover those calls. See [RPC deadlines and cancellation](rpc-cancellation-lifecycle.md)
+for byte layouts, authorization, actor-order races, cleanup acknowledgments,
+and limits. Golden protocol tests pin unchanged legacy request/response bytes.
+
 ## Routed Queue reserve and Stream read payloads
 
 Queue RESERVE preserves the established route-less item encoding for concrete

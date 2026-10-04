@@ -23,6 +23,38 @@ const U64_LEN: usize = 8;
 const MAX_WORKER_CONCURRENCY: u32 = 1024;
 const RPC_RESPONSE_FLAG_STREAM_END: u8 = 0x01;
 const RPC_RESPONSE_FLAGS_SUPPORTED: u8 = RPC_RESPONSE_FLAG_STREAM_END;
+const RPC_LIFECYCLE_EXTENSION_VERSION: u8 = 1;
+const RPC_WORKER_CANCELLATION_SUPPORTED: u8 = 0x01;
+pub(crate) const MAX_RPC_BUDGET_MILLIS: u32 = 86_400_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RpcCancellationReason {
+    Explicit = 1,
+    CallerDeadline = 2,
+    CallerDisconnected = 3,
+    BrokerDeadline = 4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RpcCancellationMessage {
+    CallerCancel {
+        correlation_id: Uuid,
+        reason: RpcCancellationReason,
+    },
+    WorkerCleanupAck {
+        correlation_id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RpcCancellationResult {
+    QueuedRemoved = 1,
+    Forwarded = 2,
+    WorkerUnsupported = 3,
+    AlreadyTerminal = 4,
+    UnauthorizedOrUnknown = 5,
+    ForwardingFailed = 6,
+}
 
 fn encoded_bytes_len(len: usize) -> usize {
     U32_LEN + len
@@ -212,9 +244,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             let route = dec.get_string_ref()?;
             let max_concurrent = dec.get_u32()?;
             validate_max_concurrent(max_concurrent)?;
-            if !dec.is_complete() {
-                return Err("Trailing data in message".to_string());
-            }
+            parse_registration_extension(&mut dec)?;
             Ok(Some(route))
         }
         301 => {
@@ -228,13 +258,10 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             skip_uuid(&mut dec)?;
             let route = dec.get_string_ref()?;
             dec.skip_bytes()?;
-            if !dec.is_complete() {
-                return Err("Trailing data in message".to_string());
-            }
+            parse_request_extension(&mut dec)?;
             Ok(Some(route))
         }
-        303 => Ok(None),
-        304 => Err("Unsupported RPC operation: 304".to_string()),
+        303 | 304 => Ok(None),
         _ => Err(format!("Unknown operation: {msg_type}")),
     }
 }
@@ -338,9 +365,7 @@ fn parse_subscribe(
     let worker_addr = RouteAddress::new(route_family, Route::new(pattern));
     let max_concurrent = validate_max_concurrent(dec.get_u32()?)?;
 
-    if !dec.is_complete() {
-        return Err("Trailing data in message".to_string().into());
-    }
+    parse_registration_extension(dec)?;
 
     Ok(RpcMessage::RegisterWorker {
         worker_addr,
@@ -386,9 +411,7 @@ fn parse_rpc_request(
     let route = Route::new(route_value);
     let body = dec.get_bytes()?;
 
-    if !dec.is_complete() {
-        return Err("Trailing data in message".to_string().into());
-    }
+    parse_request_extension(dec)?;
 
     Ok(RpcMessage::Request(RpcRequest::new(
         route_family,
@@ -396,6 +419,137 @@ fn parse_rpc_request(
         route,
         body,
     )))
+}
+
+fn parse_registration_extension(dec: &mut PayloadDecoder<'_>) -> Result<bool, String> {
+    if dec.is_complete() {
+        return Ok(false);
+    }
+    let version = dec.get_u8()?;
+    if version != RPC_LIFECYCLE_EXTENSION_VERSION {
+        return Err(format!(
+            "Unsupported RPC registration extension version: {version}"
+        ));
+    }
+    let flags = dec.get_u8()?;
+    if flags & !RPC_WORKER_CANCELLATION_SUPPORTED != 0 {
+        return Err(format!("Unsupported RPC registration flags: {flags:#04x}"));
+    }
+    if !dec.is_complete() {
+        return Err("Trailing data in RPC registration extension".to_string());
+    }
+    Ok(flags & RPC_WORKER_CANCELLATION_SUPPORTED != 0)
+}
+
+fn parse_request_extension(dec: &mut PayloadDecoder<'_>) -> Result<Option<u32>, String> {
+    if dec.is_complete() {
+        return Ok(None);
+    }
+    let version = dec.get_u8()?;
+    if version != RPC_LIFECYCLE_EXTENSION_VERSION {
+        return Err(format!(
+            "Unsupported RPC request extension version: {version}"
+        ));
+    }
+    let flags = dec.get_u8()?;
+    if flags != 0x01 {
+        return Err(format!(
+            "Unsupported RPC request extension flags: {flags:#04x}"
+        ));
+    }
+    let remaining_budget_ms = dec.get_u32()?;
+    if remaining_budget_ms > MAX_RPC_BUDGET_MILLIS {
+        return Err(format!(
+            "RPC remaining budget exceeds {MAX_RPC_BUDGET_MILLIS} milliseconds"
+        ));
+    }
+    if !dec.is_complete() {
+        return Err("Trailing data in RPC request extension".to_string());
+    }
+    Ok(Some(remaining_budget_ms))
+}
+
+pub(crate) fn extract_registration_cancellation_support(
+    payload: &[u8],
+) -> Result<bool, RpcDecodeError> {
+    let mut dec = PayloadDecoder::new(payload);
+    dec.get_string_ref()?;
+    dec.get_u32()?;
+    parse_registration_extension(&mut dec).map_err(RpcDecodeError::from)
+}
+
+pub(crate) fn extract_request_remaining_budget_ms(
+    payload: &[u8],
+) -> Result<Option<u32>, RpcDecodeError> {
+    let mut dec = PayloadDecoder::new(payload);
+    skip_uuid(&mut dec)?;
+    dec.get_string_ref()?;
+    dec.skip_bytes()?;
+    parse_request_extension(&mut dec).map_err(RpcDecodeError::from)
+}
+
+pub(crate) fn parse_cancellation_message(
+    payload: &[u8],
+) -> Result<RpcCancellationMessage, RpcDecodeError> {
+    let mut dec = PayloadDecoder::new(payload);
+    let kind = dec.get_u8()?;
+    let correlation_id = get_uuid(&mut dec)?;
+    let message = match kind {
+        1 => {
+            let reason = match dec.get_u8()? {
+                1 => RpcCancellationReason::Explicit,
+                2 => RpcCancellationReason::CallerDeadline,
+                value => return Err(format!("Unknown RPC cancellation reason: {value}").into()),
+            };
+            RpcCancellationMessage::CallerCancel {
+                correlation_id,
+                reason,
+            }
+        }
+        3 => RpcCancellationMessage::WorkerCleanupAck { correlation_id },
+        value => return Err(format!("Unknown RPC cancellation message kind: {value}").into()),
+    };
+    if !dec.is_complete() {
+        return Err("Trailing data in RPC cancellation message"
+            .to_string()
+            .into());
+    }
+    Ok(message)
+}
+
+fn cancellation_control_tlv_frame(
+    message_type: u16,
+    kind: u8,
+    correlation_id: &Uuid,
+    trailing: Option<u8>,
+) -> Bytes {
+    let payload_len = UUID_BYTES_LEN + 1 + usize::from(trailing.is_some());
+    let mut buf = tlv_frame_buffer(MessageType::new(message_type), payload_len);
+    buf.put_u8(kind);
+    put_uuid(&mut buf, correlation_id);
+    if let Some(value) = trailing {
+        buf.put_u8(value);
+    }
+    buf.freeze()
+}
+
+pub(crate) fn encode_worker_cancel_tlv_frame(
+    correlation_id: &Uuid,
+    reason: RpcCancellationReason,
+) -> Bytes {
+    cancellation_control_tlv_frame(305, 2, correlation_id, Some(reason as u8))
+}
+
+#[cfg(test)]
+pub(crate) fn encode_cancel_ack_tlv_frame(correlation_id: &Uuid) -> Bytes {
+    cancellation_control_tlv_frame(304, 3, correlation_id, None)
+}
+
+pub(crate) fn encode_cancel_result_tlv_frame(
+    correlation_id: &Uuid,
+    result: RpcCancellationResult,
+) -> Bytes {
+    cancellation_control_tlv_frame(305, 4, correlation_id, Some(result as u8))
 }
 
 fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, RpcDecodeError> {
@@ -532,6 +686,25 @@ pub fn encode_worker_request_tlv_frame(request: &RpcRequest) -> Bytes {
     buf.freeze()
 }
 
+/// Encode a worker request with the negotiated remaining-budget extension.
+#[must_use]
+pub(crate) fn encode_worker_request_with_budget_tlv_frame(
+    request: &RpcRequest,
+    remaining_budget_ms: u32,
+) -> Bytes {
+    assert!(remaining_budget_ms <= MAX_RPC_BUDGET_MILLIS);
+    let msg_type = MessageType::new(302);
+    let payload_len = request_payload_capacity(request) + 6;
+    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    put_uuid(&mut buf, &request.correlation_id);
+    put_payload_string(&mut buf, request.route.as_str());
+    put_payload_bytes(&mut buf, &request.body);
+    buf.put_u8(RPC_LIFECYCLE_EXTENSION_VERSION);
+    buf.put_u8(0x01);
+    buf.put_u32(remaining_budget_ms);
+    buf.freeze()
+}
+
 /// Encode a complete RPC response message (`303`) TLV frame directly into the
 /// final wire buffer.
 ///
@@ -584,154 +757,7 @@ pub fn encode_terminal_error_response_message_tlv_frame(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::tlv::TlvDecoder;
+mod tests;
 
-    fn decode_single_frame(frame: &[u8]) -> (MessageType, Bytes) {
-        let decoder = TlvDecoder::new();
-        let (record, consumed) = decoder.decode_one(frame).expect("decode frame");
-        assert_eq!(consumed, frame.len());
-        (record.msg_type, record.value)
-    }
-
-    #[test]
-    fn should_encode_client_response_tlv_frame() {
-        // Arrange
-        let response = RpcClientResponseBody::Ok {
-            data: b"accepted".to_vec(),
-        };
-        let expected_payload = encode_response(&response);
-
-        // Act
-        let frame = encode_client_response_tlv_frame(MessageType::new(302), &response);
-        let (msg_type, payload) = decode_single_frame(&frame);
-
-        // Assert
-        assert_eq!(msg_type.as_u16(), 302);
-        assert_eq!(payload.as_ref(), expected_payload.as_slice());
-    }
-
-    #[test]
-    fn should_encode_worker_request_tlv_frame() {
-        // Arrange
-        let request = RpcRequest::new(
-            RouteFamily::new(1),
-            Uuid::new_v4(),
-            Route::new("rpc://bench/service"),
-            Bytes::from_static(b"ping"),
-        );
-        let mut encoder = PayloadEncoder::with_capacity(request_payload_capacity(&request));
-        let expected_payload = encode_request_into(&request, &mut encoder);
-
-        // Act
-        let frame = encode_worker_request_tlv_frame(&request);
-        let (msg_type, payload) = decode_single_frame(&frame);
-
-        // Assert
-        assert_eq!(msg_type.as_u16(), 302);
-        assert_eq!(payload.as_ref(), expected_payload.as_slice());
-    }
-
-    #[test]
-    fn should_encode_response_message_tlv_frame() {
-        // Arrange
-        let response = RpcResponse::single(Uuid::new_v4(), Bytes::from_static(b"pong"));
-        let expected_payload = encode_response_message(&response);
-
-        // Act
-        let frame = encode_response_message_tlv_frame(&response);
-        let (msg_type, payload) = decode_single_frame(&frame);
-
-        // Assert
-        assert_eq!(msg_type.as_u16(), 303);
-        assert_eq!(payload.as_ref(), expected_payload.as_slice());
-    }
-
-    #[test]
-    fn should_encode_terminal_error_response_tlv_frame() {
-        // Arrange
-        let correlation_id = Uuid::new_v4();
-        let message = "worker unavailable";
-        let mut response_encoder =
-            PayloadEncoder::with_capacity(terminal_error_response_message_capacity(message));
-        let mut error_encoder = PayloadEncoder::with_capacity(error_body_capacity(message));
-        let expected_payload = encode_terminal_error_response_message_into(
-            &correlation_id,
-            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
-            message,
-            &mut response_encoder,
-            &mut error_encoder,
-        );
-
-        // Act
-        let frame = encode_terminal_error_response_message_tlv_frame(
-            &correlation_id,
-            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
-            message,
-        );
-        let (msg_type, payload) = decode_single_frame(&frame);
-
-        // Assert
-        assert_eq!(msg_type.as_u16(), 303);
-        assert_eq!(payload.as_ref(), expected_payload.as_slice());
-    }
-
-    #[test]
-    fn should_preserve_rpc_request_response_delivery_and_error_golden_bytes() {
-        // Arrange
-        let correlation_id =
-            Uuid::from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-        let request = RpcRequest::new(
-            RouteFamily::new(1),
-            correlation_id,
-            Route::new("rpc://r/a/x"),
-            Bytes::from_static(b"hi"),
-        );
-
-        // Act
-        let mut encoder = PayloadEncoder::new();
-        let delivery = encode_request_into(&request, &mut encoder);
-        let parsed_route = extract_auth_route(302, &delivery).expect("parse golden RPC request");
-        let response = encode_response(&RpcClientResponseBody::Ok {
-            data: b"ok".to_vec(),
-        });
-        let error = encode_error_body(
-            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
-            "gone",
-        );
-
-        // Assert
-        assert_eq!(parsed_route, Some("rpc://r/a/x"));
-        assert_eq!(
-            delivery,
-            [
-                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 11, b'r', b'p',
-                b'c', b':', b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i',
-            ]
-        );
-        assert_eq!(response, [0, 0, 0, 0, 2, b'o', b'k']);
-        assert_eq!(
-            error,
-            [1, 0, 0, 23, 114, 0, 0, 0, 4, b'g', b'o', b'n', b'e']
-        );
-    }
-
-    #[test]
-    fn should_reject_removed_ack_message_type() {
-        // Arrange
-        let frame = FrameContext::new(
-            1,
-            crate::protocol::frame::ChannelId::Rpc,
-            MessageType::new(304),
-            Bytes::new(),
-            RouteFamily::new(1),
-        );
-
-        // Act
-        let result = parse_request(&frame, &frame.payload, RouteFamily::new(1));
-
-        // Assert
-        assert!(result.is_err());
-    }
-}
+#[cfg(test)]
+mod cancellation_validation;
