@@ -31,30 +31,33 @@ impl ServerHandler for EchoServer {
         ])
     }
 
-    async fn list_tools(
+    fn list_tools(
         &self,
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult::with_all_items(vec![Tool::new(
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>> {
+        std::future::ready(Ok(ListToolsResult::with_all_items(vec![Tool::new(
             "echo",
             "Return the supplied text.",
             serde_json::Map::new(),
-        )]))
+        )])))
     }
 
-    async fn call_tool(
+    fn call_tool(
         &self,
         request: CallToolRequestParams,
         _context: rmcp::service::RequestContext<RoleServer>,
-    ) -> Result<CallToolResponse, ErrorData> {
+    ) -> impl std::future::Future<Output = Result<CallToolResponse, ErrorData>> {
         let text = request
             .arguments
             .as_ref()
             .and_then(|arguments| arguments.get("text"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        Ok(CallToolResult::structured(serde_json::json!({ "echo": text })).into())
+        std::future::ready(Ok(CallToolResult::structured(
+            serde_json::json!({ "echo": text }),
+        )
+        .into()))
     }
 }
 
@@ -125,7 +128,7 @@ async fn spawn_upstream() -> (String, CancellationToken, tokio::task::JoinHandle
     let server = tokio::spawn(async move {
         loop {
             let accepted = tokio::select! {
-                _ = server_stop.cancelled() => break,
+                () = server_stop.cancelled() => break,
                 accepted = listener.accept() => accepted,
             };
             let Ok((stream, _)) = accepted else {
