@@ -2,6 +2,56 @@ use super::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[test]
+fn should_reserve_invocation_identity_against_mixed_legacy_registration() {
+    // Arrange
+    let h = Harness::new();
+    let legacy_route = Route::new("rpc://realm/area/resource/legacy");
+    h.sink
+        .register_registration_for_tests(test_rpc_worker(h.family, &legacy_route, 42));
+    let id = uuid::Uuid::new_v4();
+    h.request(id);
+    let worker_id = uuid::Uuid::from_slice(&h.worker.frames.lock()[0].payload[..16]).unwrap();
+
+    // Act
+    deliver_request(
+        &h.sink,
+        h.family,
+        &legacy_route,
+        session_inbox_address(h.family, 1),
+        1,
+        worker_id,
+    );
+
+    // Assert
+    assert_eq!(h.capacity(), 1);
+    assert_eq!(h.worker_request_count(), 1);
+}
+
+#[test]
+fn should_preserve_negotiated_invocation_identity_after_queued_dispatch() {
+    // Arrange
+    let h = Harness::new();
+    let first = uuid::Uuid::new_v4();
+    let queued = uuid::Uuid::new_v4();
+    h.request(first);
+    h.request(queued);
+    h.cancel(first);
+    h.ack(first);
+
+    // Act
+    h.cancel(queued);
+    let worker_id = uuid::Uuid::from_slice(&h.worker.frames.lock()[1].payload[..16]).unwrap();
+    let retained = h.capacity();
+    h.ack(queued);
+
+    // Assert
+    assert_eq!(retained, 1);
+    assert_ne!(worker_id, queued);
+    assert_eq!(h.worker.lifecycle_frames.lock().len(), 2);
+    assert_eq!(h.capacity(), 0);
+}
+
+#[test]
 fn should_reject_stale_cleanup_ack_after_caller_correlation_is_reused() {
     // Arrange
     let h = Harness::new();

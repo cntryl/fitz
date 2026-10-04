@@ -13,7 +13,7 @@ const EXPIRATION_HEAP_LIVE_ENTRY_MULTIPLIER: usize = 2;
 /// Owns live queued and dispatched requests and their expiration indexes.
 pub(in crate::domains::rpc::sink) struct RpcPendingTable {
     pending: RpcFastMap<RpcCorrelationKey, RpcPendingRequest>,
-    worker_invocations: RpcFastMap<(RouteFamily, u64, uuid::Uuid), RpcCorrelationKey>,
+    worker_invocations: RpcFastMap<RpcCorrelationKey, RpcCorrelationKey>,
     expirations: BinaryHeap<ExpiringPendingRequest>,
     route_counts: RpcFastMap<(RouteFamily, Route), usize>,
     queued: RpcFastMap<RpcCorrelationKey, RpcQueuedRequest>,
@@ -144,7 +144,10 @@ impl RpcPendingTable {
     ) -> RpcCancellationAckDisposition {
         let Some(key) = self
             .worker_invocations
-            .get(&(family, worker_session_id, *correlation_id))
+            .get(&RpcCorrelationKey {
+                family,
+                correlation_id: *correlation_id,
+            })
             .copied()
         else {
             return RpcCancellationAckDisposition::Rejected;
@@ -240,7 +243,9 @@ impl RpcPendingTable {
             family,
             correlation_id: *correlation_id,
         };
-        self.pending.contains_key(&key) || self.queued.contains_key(&key)
+        self.pending.contains_key(&key)
+            || self.queued.contains_key(&key)
+            || self.worker_invocations.contains_key(&key)
     }
 
     pub(in crate::domains::rpc::sink) fn live_len(&self) -> usize {
@@ -372,27 +377,22 @@ impl RpcPendingTable {
         pending.dispatch_info.worker_correlation_id = if pending.supports_cancellation {
             loop {
                 let id = uuid::Uuid::new_v4();
-                if !self
-                    .worker_invocations
-                    .contains_key(&(family, pending.worker_session_id, id))
-                {
+                if !self.contains_correlation_in_family(family, &id) && id != correlation_id {
                     break id;
                 }
             }
         } else {
             correlation_id
         };
-        let invocation = (
+        let invocation = RpcCorrelationKey {
             family,
-            pending.worker_session_id,
-            pending.dispatch_info.worker_correlation_id,
-        );
+            correlation_id: pending.dispatch_info.worker_correlation_id,
+        };
         if let Some(replaced) = self.pending.insert(key, pending) {
-            self.worker_invocations.remove(&(
+            self.worker_invocations.remove(&RpcCorrelationKey {
                 family,
-                replaced.worker_session_id,
-                replaced.dispatch_info.worker_correlation_id,
-            ));
+                correlation_id: replaced.dispatch_info.worker_correlation_id,
+            });
             self.decrement_route_count(family, &replaced.dispatch_info.route);
         }
         self.worker_invocations.insert(invocation, key);
@@ -547,11 +547,10 @@ impl RpcPendingTable {
         key: &RpcCorrelationKey,
     ) -> Option<RpcPendingRequest> {
         let pending = self.pending.remove(key)?;
-        self.worker_invocations.remove(&(
-            key.family,
-            pending.worker_session_id,
-            pending.dispatch_info.worker_correlation_id,
-        ));
+        self.worker_invocations.remove(&RpcCorrelationKey {
+            family: key.family,
+            correlation_id: pending.dispatch_info.worker_correlation_id,
+        });
         self.decrement_route_count(key.family, &pending.dispatch_info.route);
         self.compact_pending_expirations_if_needed();
         Some(pending)
@@ -564,7 +563,15 @@ impl RpcPendingTable {
         worker_id: uuid::Uuid,
     ) -> Option<uuid::Uuid> {
         self.worker_invocations
-            .get(&(family, worker_session_id, worker_id))
+            .get(&RpcCorrelationKey {
+                family,
+                correlation_id: worker_id,
+            })
+            .filter(|key| {
+                self.pending
+                    .get(key)
+                    .is_some_and(|pending| pending.worker_session_id == worker_session_id)
+            })
             .map(|key| key.correlation_id)
             .or_else(|| {
                 // Preserve legacy wrong-worker diagnostics without accepting a
