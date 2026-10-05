@@ -4,7 +4,7 @@
 **Last Updated:** July 7, 2026
 **Project:** Fitz Message Broker
 
-Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier 4 write
+Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier 6 write
 `cntryl-stress.v2` artifacts under `target/stress/`, and
 `cntryl-tools summarize-benchmarks` turns those artifacts into
 `target/bench_results.json` and `target/bench_summary.md`.
@@ -50,11 +50,19 @@ same-host runs are stable and baseline-backed.
 
 ## Suite Split
 
-Fitz uses the stress default profile for every documented and CI benchmark
-command. The default profile is the acceptance surface for Fitz even when the
+Fitz uses the stress default profile for documented and CI Tier 1 through Tier 4
+commands. The default profile is their acceptance surface even when the
 summary reports `authoritative: false`; do not switch docs or CI to a release
 or lab profile just to force an authoritative flag. Do not pass `--profile` in
-Fitz workflow or documentation commands.
+Tier 1 through Tier 4 workflow or documentation commands.
+
+Tier 5 and Tier 6 own long active windows and deliberately execute one measured
+invocation with `--profile smoke --samples 1 --warmup-samples 0 --cooldown-samples 0`.
+The smoke profile permits correctness and liveness diagnostics with one sample;
+the default quality gate rejects that sample count. This explicit exception
+prevents framework repetitions from multiplying the owned duration and makes no
+statistical performance claim. See [Tier 5 and Tier 6 benchmarks](tier5-tier6-benchmarks.md)
+for duration controls, domain scope, verification, and partial artifacts.
 
 - **Release suite:** 30-50 baseline-backed rows that cover customer-visible
   invariants: RPC request/response, queue enqueue/dequeue/ack, stream
@@ -64,6 +72,9 @@ Fitz workflow or documentation commands.
   wildcard and route-depth variants, high-cardinality registration, and rows
   under active signal review. It uses the same default stress profile; it is
   deeper coverage, not a different profile.
+- **Saturation and endurance diagnostics:** Tier 5/6 owned windows use the
+  explicit smoke exception, real semantic checks, and useful-progress watchdogs.
+  A full-duration pass does not establish statistical performance quality.
 - **Historical experiments:** One-off profiling benches that no longer answer
   an active regression, throughput, scaling, or risky-subsystem question.
 
@@ -95,6 +106,8 @@ another broker.
 | **Tier 2** | Subsystem | Stress | `benches/tier2_subsystem_*.rs` | Component and domain subsystem rows using stress fixed-operation samples and explicit correctness counters. |
 | **Tier 3** | System | Stress | `benches/tier3_system_*.rs` | In-process domain actor + test engine, no network. |
 | **Tier 4** | Integration | Stress | `benches/tier4_{domain}_{group}.rs` | Full-stack direct/TCP/WebSocket/multiclient scenarios, split by domain and workload group. |
+| **Tier 5** | Saturation and scaling | Stress | `benches/tier5_saturation.rs` | Seven domains; concurrent 1/2/4/8/16/32/64-lane stages share one total active budget. |
+| **Tier 6** | Endurance | Stress | `benches/tier6_endurance.rs` | Seven domains; eight lanes accumulate the full active batch-time budget after setup, excluding verification. |
 
 Shared helper files:
 
@@ -102,6 +115,8 @@ Shared helper files:
   context calls.
 - `benches/stress_config.rs`: shared correctness counter recording and a
   benchmark-only `measure_workload` adapter for existing Tier 3/4 rows.
+- `benches/stress_support/`: shared runner, domain drivers, bounded measurements,
+  and partial artifact helpers for Tier 5/6 owned windows.
 
 Tier 4 executable targets use the stable `tier4_{domain}_{group}` naming
 convention (for example, `tier4_kv_gate` and `tier4_rpc_pipeline`). Support
@@ -148,6 +163,8 @@ Use the narrowest direct stress API that describes the row:
   each framework iteration performs a known operation count.
 - `ctx.record_external("name", duration, completed)`: externally timed systems
   where the benchmark body owns timing and completed-operation counting.
+- `ctx.record_external_outcome("name", duration, logical_unit, outcome)`: owned
+  Tier 5/6 windows with observed outcomes, including zero completed operations.
 - `ctx.measure_io("name", ...)`, `ctx.measure_pipeline("name", ...)`, and
   `ctx.measure_async("name", ...)`: named measurements with a specific intent.
 
@@ -181,8 +198,9 @@ bench code.
 
 ## Stress Configuration
 
-Fitz commands rely on the stress default profile. Do not pass `--profile` in
-repo docs, CI, or release/deep command lists. Stress derives mode from tier:
+Tier 1 through Tier 4 commands rely on the stress default profile and omit
+`--profile`. Tier 5 and Tier 6 use the documented single-invocation smoke
+exception. Stress derives mode from tier:
 Tier 1 is `micro`, Tier 2 is `fixed_operations`, and Tiers 3+ are
 `fixed_duration`. Omit `mode` on new rows unless compatibility with older
 examples requires spelling it out, and never set a mode that conflicts with the
@@ -194,17 +212,25 @@ Common arguments:
 | --- | --- |
 | `--workload <PATTERN>` | Run one workload name/module pattern. |
 | `--tier <N>` | Run one stress tier. |
-| `--samples <N>` | Local diagnostic override for measured sample count. |
-| `--warmup-samples <N>` | Local diagnostic override for warmup sample count. |
+| `--samples <N>` | Local diagnostic override; committed Tier 5/6 owned windows use `1`. |
+| `--warmup-samples <N>` | Local diagnostic override; committed Tier 5/6 owned windows use `0`. |
+| `--cooldown-samples <N>` | Local diagnostic override; committed Tier 5/6 owned windows use `0`. |
 | `--operations-per-sample <N>` | Local diagnostic override for Tier 2 fixed-operation sample size. |
 | `--console <MODE>` | Local diagnostic output mode. |
 
-Local `smoke` or `lab` profile experiments are framework diagnostics, not Fitz
-workflow defaults. Keep such commands out of committed Fitz docs and CI.
+Tier 1 through Tier 4 local `smoke` or `lab` profile experiments remain framework
+diagnostics and are not committed workflow defaults. The Tier 5/6 smoke exception
+accepts correctness and liveness evidence without claiming statistical quality.
 
 ## CI and Local Workflows
 
 Benchmark workflows are scheduled or manually dispatched and are not a pull-request performance gate.
+
+The [Tier 5 workflow](../../.github/workflows/bench-tier5.yml) runs weekly and the
+[Tier 6 workflow](../../.github/workflows/bench-tier6.yml) runs monthly, each with
+seven independent domain jobs. Both require `benchkit,stress-soak`, preserve
+failure logs and partial JSON alongside framework artifacts, and use the
+[owned-window invocation contract](tier5-tier6-benchmarks.md).
 
 Run a targeted benchmark:
 
@@ -241,6 +267,8 @@ Tier 3 and Tier 4 stress tests must follow the
 [stress benchmark contract](stress-bench-contract.md): setup outside timed
 sections, real actor/domain logic inside timed sections, explicit correctness
 counters, and valid direct/TCP/WebSocket/multiclient semantics.
+Tier 5 and Tier 6 follow its owned-window rules and the
+[domain-specific saturation and endurance scope](tier5-tier6-benchmarks.md).
 
 ## Performance Targets
 
@@ -310,7 +338,8 @@ Never refresh the baseline from a targeted benchmark run or a partial
 - Tier 1 rows use one named measurement.
 - Tier 2 rows omit `mode = "fixed_duration"` and use fixed-operation timing.
 - Tier 2+ rows use direct stress context APIs.
-- Commands omit `--profile`.
+- Tier 1 through Tier 4 commands omit `--profile`; Tier 5/6 owned windows use the
+  explicit smoke exception with one sample and no warmup or cooldown.
 - Artifacts are current `cntryl-stress.v2`.
 - Release rows are baseline-backed and stable.
 
