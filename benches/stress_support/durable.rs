@@ -153,7 +153,7 @@ fn coded_error(body: &[u8], status: u8) -> Result<(u32, &str), BenchFailure> {
     Ok((code, message))
 }
 
-/// ACK and Schedule CREATE/CANCEL/LIST_V2 retain the legacy plain envelope.
+/// ACK and Schedule `CREATE/CANCEL/LIST_V2` retain the legacy plain envelope.
 pub(super) fn require_plain_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
     if body.first().copied() == Some(0) {
         return Ok(());
