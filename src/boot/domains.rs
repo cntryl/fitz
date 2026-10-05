@@ -26,6 +26,7 @@ pub(crate) struct BrokerDomains {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct DomainHealthSnapshot {
     pub(crate) domain: &'static str,
     pub(crate) panic_count: u64,
@@ -34,6 +35,7 @@ pub(crate) struct DomainHealthSnapshot {
     pub(crate) failed_families: Vec<RouteFamily>,
 }
 
+#[cfg(test)]
 impl DomainHealthSnapshot {
     fn new(
         domain: DomainKind,
@@ -138,6 +140,7 @@ impl BrokerDomains {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn health_snapshots(&self) -> Vec<DomainHealthSnapshot> {
         vec![
             DomainHealthSnapshot::new(DomainKind::Kv, self.kv.family_health_snapshot()),
@@ -152,9 +155,13 @@ impl BrokerDomains {
 
     #[must_use]
     pub(crate) fn has_permanently_failed_domain(&self) -> bool {
-        self.health_snapshots()
-            .iter()
-            .any(|snapshot| !snapshot.has_usable_family())
+        !self.kv.has_usable_family()
+            || !self.queue.has_usable_family()
+            || !self.notice.has_usable_family()
+            || !self.stream.has_usable_family()
+            || !self.rpc.has_usable_family()
+            || !self.lease.has_usable_family()
+            || !self.schedule.has_usable_family()
     }
 
     #[cfg(test)]
@@ -293,6 +300,29 @@ impl DomainAdminPorts {
             .admin_inventory_resource(family, realm, area, resource)
     }
 
+    pub(crate) fn kv_admin_inventory_metadata_resource(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
+        self.kv
+            .admin_inventory_metadata_resource(family, realm, area, resource)
+    }
+
+    pub(crate) fn kv_admin_inventory_page(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: Option<&str>,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<(Vec<crate::control::admin::KvResourceInventoryEntry>, bool), String> {
+        self.kv
+            .admin_inventory_page(family, realm, area, after, limit)
+    }
+
     pub(crate) fn kv_admin_get_committed_value(
         &self,
         family: crate::runtime::routing::RouteFamily,
@@ -371,6 +401,14 @@ impl DomainAdminPorts {
 
     pub(crate) fn queue_active_inflight_count(&self) -> usize {
         self.queue.counts().inflight
+    }
+
+    pub(crate) fn queue_inspect_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<Option<crate::domains::queue::projection::QueueDeadLetterSnapshot>, String> {
+        self.queue.inspect_dead_letter(key, id)
     }
 
     pub(crate) fn queue_replay_dead_letter(
@@ -673,310 +711,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::FrameContext;
-    use crate::runtime::routing::{Route, RouteAddress};
-    use crate::runtime::Envelope;
-    use bytes::{BufMut, Bytes};
-
-    fn usize_to_u32_saturating(value: usize) -> u32 {
-        u32::try_from(value).unwrap_or(u32::MAX)
-    }
-
-    fn domain_setup_options() -> DomainSetupOptions {
-        DomainSetupOptions {
-            route_families: vec![1, 2, 3, 4, 5, 6, 7],
-            schedule_write_policy: crate::domains::WritePolicy::BestEffort,
-            queue_write_policy: crate::domains::WritePolicy::BestEffort,
-            queue_recovery_write_policy: crate::domains::WritePolicy::Sync,
-            queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
-            request_sync_write_policy: crate::domains::WritePolicy::Sync,
-            request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
-            rpc_request_timeout: None,
-            stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
-            kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
-            schedule_preload_timeout: crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
-        }
-    }
-
-    fn cloud_domain_setup_options(
-        durable_write_policy: crate::domains::WritePolicy,
-    ) -> DomainSetupOptions {
-        DomainSetupOptions {
-            route_families: vec![1],
-            schedule_write_policy: durable_write_policy,
-            queue_write_policy: durable_write_policy,
-            queue_recovery_write_policy: durable_write_policy,
-            queue_fast_flush_interval: None,
-            request_sync_write_policy: durable_write_policy,
-            request_buffered_write_policy: crate::domains::WritePolicy::CloudAsync,
-            rpc_request_timeout: None,
-            stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
-            kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
-            schedule_preload_timeout: crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
-        }
-    }
-
-    fn assert_cloud_domain_bootstrap(
-        prefix: &str,
-        durable_write_policy: crate::domains::WritePolicy,
-    ) {
-        let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
-        let store = Arc::new(
-            cntryl_midge::Engine::open(
-                cntryl_midge::OpenOptions::cloud_simulated(
-                    tempdir.path(),
-                    "fitz-domain-bootstrap",
-                    prefix,
-                )
-                .build()
-                .expect("build cloud-simulated options"),
-            )
-            .expect("open cloud-simulated engine"),
-        );
-        crate::api::storage_runtime::ensure_route_family(&store, RouteFamily::new(1))
-            .expect("provision route family");
-        let router = Arc::new(Router::new());
-        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-
-        let domains = setup(
-            &router,
-            &store,
-            &admin_read_model,
-            &cloud_domain_setup_options(durable_write_policy),
-        )
-        .unwrap_or_else(|error| panic!("cloud domain bootstrap failed: {error}"));
-
-        domains.stop();
-        router.clear();
-        drop(domains);
-        drop(router);
-        crate::testkit::midge::shutdown_test_engine(store);
-    }
-
-    fn encode_kv_begin(route: &str) -> Bytes {
-        let mut payload = Vec::new();
-        payload.put_u32(usize_to_u32_saturating(route.len()));
-        payload.put_slice(route.as_bytes());
-        payload.put_u8(1);
-        payload.put_u8(0);
-        Bytes::from(payload)
-    }
-
-    fn receive_kv_response(mailbox: &crate::runtime::Mailbox, label: &str) -> FrameContext {
-        mailbox
-            .receiver()
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap_or_else(|_| panic!("{label}"))
-            .into_payload::<FrameContext>()
-            .unwrap_or_else(|| panic!("{label} frame"))
-    }
-
-    fn wait_for_domain_failures(domains: &BrokerDomains) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        while std::time::Instant::now() < deadline {
-            if domains
-                .health_snapshots()
-                .iter()
-                .all(|snapshot| !snapshot.has_usable_family())
-            {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-
-        let snapshots = domains.health_snapshots();
-        panic!("domain actors did not fail closed: {snapshots:?}");
-    }
-
-    fn wait_for_named_domain_failure(domains: &BrokerDomains, domain: &str) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        while std::time::Instant::now() < deadline {
-            if domains
-                .health_snapshots()
-                .iter()
-                .any(|snapshot| snapshot.domain == domain && !snapshot.has_usable_family())
-            {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-
-        let snapshots = domains.health_snapshots();
-        panic!("{domain} actor did not fail closed: {snapshots:?}");
-    }
-
-    #[test]
-    fn should_setup_all_seven_domains() {
-        // Arrange
-        let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
-        let router = Arc::new(Router::new());
-        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-
-        // Act
-        let domains = setup(&router, &store, &admin_read_model, &domain_setup_options())
-            .expect("setup domains");
-
-        // Assert
-        assert_eq!(domains.health_snapshots().len(), DomainKind::ALL.len());
-    }
-
-    #[test]
-    fn should_bootstrap_domains_with_background_cloud_write_policy() {
-        // Arrange
-
-        // Act
-        assert_cloud_domain_bootstrap("background", crate::domains::WritePolicy::CloudAsync);
-
-        // Assert
-    }
-
-    #[test]
-    fn should_bootstrap_domains_with_strict_cloud_write_policy() {
-        // Arrange
-
-        // Act
-        assert_cloud_domain_bootstrap("strict", crate::domains::WritePolicy::CloudStrict);
-
-        // Assert
-    }
-
-    #[test]
-    fn should_register_all_manifest_domains_for_session_cleanup() {
-        // Arrange
-        let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
-        let router = Arc::new(Router::new());
-        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-
-        // Act
-        let _domains = setup(&router, &store, &admin_read_model, &domain_setup_options())
-            .expect("setup domains");
-
-        // Assert
-        for domain in DomainKind::ALL {
-            let result = router.route(Envelope::new(
-                RouteAddress::new(RouteFamily::new(1), domain.cleanup_route()),
-                crate::runtime::SessionCleanup { session_id: 42 },
-            ));
-            assert!(
-                result.is_ok(),
-                "expected {} cleanup route to be registered",
-                domain.as_str()
-            );
-        }
-    }
-
-    #[test]
-    fn should_fail_closed_all_domain_actors_after_test_panic_commands() {
-        // Arrange
-        let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
-        let router = Arc::new(Router::new());
-        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-        let domains = setup(&router, &store, &admin_read_model, &domain_setup_options())
-            .expect("setup domains");
-
-        // Act
-        domains.panic_all_domain_actors_for_failpoint();
-        wait_for_domain_failures(&domains);
-        let snapshots = domains.health_snapshots();
-
-        // Assert
-        assert_eq!(snapshots.len(), DomainKind::ALL.len());
-        assert!(snapshots
-            .iter()
-            .all(|snapshot| snapshot.healthy_families.is_empty()));
-        // Family-sharded domains are provisioned with 7 route families here
-        // (`domain_setup_options`) and must be
-        // panicked on *every* family to reach full exhaustion -- see
-        // the panic failpoints on `RpcDomain`/`StreamDomain` --
-        // so their panic_count legitimately lands at 7, not 1.
-        for snapshot in &snapshots {
-            let expected_panic_count = match snapshot.domain {
-                "kv" | "queue" | "notice" | "rpc" | "lease" | "schedule" | "stream" => 7,
-                _ => unreachable!("unknown domain in health inventory"),
-            };
-            assert_eq!(
-                snapshot.panic_count, expected_panic_count,
-                "unexpected panic_count for domain {}",
-                snapshot.domain
-            );
-        }
-        assert!(snapshots
-            .iter()
-            .all(|snapshot| snapshot.failed_families.len() == 7));
-        let admins = domains.admin_ports();
-        assert_eq!(admins.kv_active_transaction_count(), 0);
-        assert_eq!(admins.queue_ready_message_count(), 0);
-        assert_eq!(admins.stream_count(), 0);
-        assert_eq!(admins.rpc_worker_count(), 0);
-        assert_eq!(admins.lease_count(), 0);
-        assert_eq!(admins.schedule_count(), 0);
-    }
-
-    #[test]
-    fn should_reject_new_work_after_domain_actor_panic() {
-        // Arrange
-        let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
-        let router = Arc::new(Router::new());
-        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-        let domains = setup(&router, &store, &admin_read_model, &domain_setup_options())
-            .expect("setup domains");
-        let family = RouteFamily::new(1);
-        let warmup_route = "kv://acme/app/restart-regression-a";
-        let recovery_route = "kv://acme/app/restart-regression-b";
-        let warmup_kv_address = RouteAddress::new(family, Route::new(warmup_route));
-        let recovery_kv_address = RouteAddress::new(family, Route::new(recovery_route));
-        let warmup_session = 101;
-        let recovery_session = 202;
-        let warmup_inbox = RouteAddress::new(family, Route::new("inbox://session/a"));
-        let recovery_inbox = RouteAddress::new(family, Route::new("inbox://session/b"));
-        let warmup_mailbox = Arc::new(crate::runtime::Mailbox::new(16));
-        let recovery_mailbox = Arc::new(crate::runtime::Mailbox::new(16));
-        router.register(warmup_inbox.clone(), warmup_mailbox.clone());
-        router.register(recovery_inbox.clone(), recovery_mailbox.clone());
-        router
-            .route(Envelope::from_route(
-                warmup_inbox,
-                warmup_kv_address,
-                FrameContext::new(
-                    warmup_session,
-                    crate::protocol::frame::ChannelId::Pub,
-                    crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
-                    encode_kv_begin(warmup_route),
-                    family,
-                ),
-            ))
-            .expect("route session A begin");
-        let warmup_response = receive_kv_response(&warmup_mailbox, "session A begin response");
-        assert_eq!(warmup_response.payload.first(), Some(&0));
-
-        // Act
-        domains.kv.panic_actor_for_failpoint();
-        wait_for_named_domain_failure(&domains, "kv");
-        let result = router.route(Envelope::from_route(
-            recovery_inbox,
-            recovery_kv_address,
-            FrameContext::new(
-                recovery_session,
-                crate::protocol::frame::ChannelId::Pub,
-                crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
-                encode_kv_begin(recovery_route),
-                family,
-            ),
-        ));
-
-        // Assert
-        assert!(domains
-            .health_snapshots()
-            .iter()
-            .any(|snapshot| snapshot.domain == "kv" && !snapshot.has_usable_family()));
-        assert!(matches!(
-            result,
-            Err(crate::runtime::router::RouteError::DeliveryFailed(
-                _,
-                crate::runtime::router::DeliveryError::ActorStopped
-            ))
-        ));
-    }
-}
+mod tests;

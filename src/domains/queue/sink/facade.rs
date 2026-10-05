@@ -294,6 +294,12 @@ impl QueueDomain {
         self.active.load(Ordering::Relaxed)
     }
 
+    /// Pool availability uses the existing aggregate flags without copying family health rows.
+    pub(crate) fn has_usable_family(&self) -> bool {
+        self.family_runtime.is_running()
+    }
+
+    #[cfg(test)]
     pub(crate) fn family_health_snapshot(
         &self,
     ) -> crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {
@@ -678,6 +684,24 @@ impl QueueDomain {
             }
         }
         enqueued
+    }
+
+    pub(crate) fn inspect_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<Option<crate::domains::queue::projection::QueueDeadLetterSnapshot>, String> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.family_runtime
+            .try_enqueue(
+                key.family,
+                crate::runtime::FamilyActorLane::Control,
+                QueueDomainCommand::InspectDeadLetter(key.clone(), id, reply_tx),
+            )
+            .map_err(|error| format!("Queue point inspection could not be admitted: {error}"))?;
+        reply_rx
+            .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
+            .map_err(|error| format!("Queue point inspection did not complete: {error}"))?
     }
 
     /// Replays a dead-lettered message back into its queue.

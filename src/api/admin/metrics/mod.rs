@@ -63,6 +63,34 @@ pub(crate) fn handle_structured_metrics(runtime: &Runtime, family: Option<u64>) 
     })
 }
 
+/// Build the MCP metrics response with an explicit sample cap and truncation marker.
+pub(crate) fn mcp_structured_metrics_value(
+    runtime: &Runtime,
+    family: Option<u64>,
+    max_samples: usize,
+) -> serde_json::Value {
+    let snapshot = runtime.admin_read_model().bounded_snapshot(family, 128);
+    let mut samples = projection_samples(&snapshot, family);
+    sort_samples(&mut samples);
+    let truncated = snapshot.truncated || samples.len() > max_samples;
+    samples.truncate(max_samples);
+    serde_json::json!({
+        "scope": if family.is_some() { "family" } else { "all" },
+        "route_family": family,
+        "generated_at": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().try_into().unwrap_or(u64::MAX),
+        "samples": samples,
+        "truncated": truncated,
+        "limit": max_samples,
+        "_meta": {
+            "partial": truncated,
+            "source": "shared admin projections",
+            "collection_limit": snapshot.limit_per_collection,
+            "unavailable": ["unattributed latency histories and domain counters"],
+            "aggregation": if snapshot.truncated { "lower bounds from bounded observations" } else { "complete projection snapshot" },
+        },
+    })
+}
+
 /// Generate Prometheus-format metrics
 fn generate_prometheus_metrics(runtime: &Runtime) -> String {
     let mut output = String::new();
@@ -70,6 +98,7 @@ fn generate_prometheus_metrics(runtime: &Runtime) -> String {
     broker::append_broker_metrics(&mut output, runtime);
     collector::append_observability_metrics(&mut output);
     domains::append_domain_metrics(&mut output, runtime);
+    crate::api::mcp::telemetry::append_prometheus_metrics(&mut output);
 
     output
 }
@@ -134,59 +163,37 @@ fn structured_samples(metrics: &str, family: Option<u64>) -> Vec<StructuredMetri
 
 #[allow(clippy::too_many_lines)]
 fn family_attributable_samples(runtime: &Runtime, family: u64) -> Vec<StructuredMetricSample> {
-    let read_model = runtime.admin_read_model();
-    let family_label = || BTreeMap::from([(String::from("family"), family.to_string())]);
+    let snapshot = runtime
+        .admin_read_model()
+        .bounded_snapshot(Some(family), usize::MAX);
+    projection_samples(&snapshot, Some(family))
+}
+
+#[allow(clippy::too_many_lines)]
+fn projection_samples(
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+    family: Option<u64>,
+) -> Vec<StructuredMetricSample> {
     let sample = |name: &str, kind: &str, help: &str, value: f64| StructuredMetricSample {
         name: name.to_string(),
         kind: kind.to_string(),
         help: help.to_string(),
-        labels: family_label(),
+        labels: family.map_or_else(BTreeMap::new, |family| {
+            BTreeMap::from([(String::from("family"), family.to_string())])
+        }),
         value,
     };
     let count = |value: usize| value.to_f64().unwrap_or(f64::MAX);
-
-    let kv_transactions = read_model
-        .kv_transactions(None)
-        .into_iter()
-        .filter(|item| item.route_family == family)
-        .count();
-    let streams = read_model
-        .streams(None)
-        .into_iter()
-        .filter(|item| item.route_family == family)
-        .collect::<Vec<_>>();
-    let notice_subscriptions = read_model
-        .notice_subscriptions(None, None)
-        .into_iter()
-        .filter(|item| item.route_family == family)
-        .count();
-    let notice_routes = read_model
-        .notice_routes(None)
-        .into_iter()
-        .filter(|item| item.route_family == family)
-        .collect::<Vec<_>>();
-    let queues = read_model
-        .queues(None)
-        .into_iter()
-        .filter(|item| item.family == family)
-        .collect::<Vec<_>>();
-    let rpc_workers = read_model
-        .rpc_workers(None)
-        .into_iter()
-        .filter(|item| item.route_family == family)
-        .count();
-    let rpc_pending = read_model
-        .rpc_pending(None)
-        .into_iter()
-        .filter(|item| item.route_family == family)
-        .count();
-    let leases = read_model.leases_for_route_family(family).len();
-    let schedules = read_model.schedules_for_route_family(family).len();
-    let sessions = read_model
-        .sessions()
-        .into_iter()
-        .filter(|item| item.route_family == family)
-        .count();
+    let kv_transactions = snapshot.kv_transactions.len();
+    let streams = &snapshot.streams;
+    let notice_subscriptions = snapshot.notice_subscriptions.len();
+    let notice_routes = &snapshot.notice_routes;
+    let queues = &snapshot.queues;
+    let rpc_workers = snapshot.rpc_workers.len();
+    let rpc_pending = snapshot.rpc_pending.len();
+    let leases = snapshot.leases.len();
+    let schedules = snapshot.schedules.len();
+    let sessions = snapshot.sessions.len();
 
     vec![
         sample(

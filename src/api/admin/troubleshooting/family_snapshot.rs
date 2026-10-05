@@ -17,7 +17,6 @@ use super::{
 };
 use crate::api::admin::list::{ScheduleLatencyBuckets, StreamLatencyBuckets};
 use crate::boot::Runtime;
-use crate::runtime::routing::RouteFamily;
 
 /// Confidence reported when no family-attributable hotspot is found.
 ///
@@ -30,7 +29,16 @@ pub(crate) fn build_family_troubleshooting(
     runtime: &Runtime,
     family: u64,
 ) -> GlobalTroubleshootingDiagnostics {
-    let analyses = collect_family_domain_analyses(runtime, family);
+    let snapshot = runtime
+        .admin_read_model()
+        .bounded_snapshot(Some(family), usize::MAX);
+    build_projection_troubleshooting(&snapshot)
+}
+
+pub(crate) fn build_projection_troubleshooting(
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+) -> GlobalTroubleshootingDiagnostics {
+    let analyses = collect_projection_domain_analyses(snapshot);
     let mut hotspots = analyses
         .iter()
         .flat_map(|analysis| analysis.hotspots.iter().cloned())
@@ -78,47 +86,31 @@ fn family_healthy_summary() -> IncidentSummary {
     }
 }
 
-fn collect_family_domain_analyses(runtime: &Runtime, family: u64) -> [DomainAnalysis; 7] {
+fn collect_projection_domain_analyses(
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+) -> [DomainAnalysis; 7] {
     let now = Utc::now();
-    let read_model = runtime.admin_read_model();
-    let pending_fire_claims = u32::try_from(family).map_or(0, |family| {
-        runtime
-            .schedule_list_pending_claims(RouteFamily::new(family))
-            .len()
-    });
-
-    let mut kv_transactions = read_model.kv_transactions(None);
-    kv_transactions.retain(|item| item.route_family == family);
-    let mut streams = read_model.streams(None);
-    streams.retain(|item| item.route_family == family);
-    let mut notice_subscriptions = read_model.notice_subscriptions(None, None);
-    notice_subscriptions.retain(|item| item.route_family == family);
-    let mut notice_routes = read_model.notice_routes(None);
-    notice_routes.retain(|item| item.route_family == family);
-    let mut queues = read_model.queues(None);
-    queues.retain(|item| item.family == family);
-    let mut queue_inflight = read_model.queue_inflight(None);
-    queue_inflight.retain(|item| item.family == family);
-    let mut queue_dead_letters = read_model.queue_dead_letters(None);
-    queue_dead_letters.retain(|item| item.family == family);
-    let mut rpc_workers = read_model.rpc_workers(None);
-    rpc_workers.retain(|item| item.route_family == family);
-    let mut rpc_pending = read_model.rpc_pending(None);
-    rpc_pending.retain(|item| item.route_family == family);
-    let mut leases = read_model.leases(None);
-    leases.retain(|item| item.route_family == family);
-    let mut schedules = read_model.schedules(None);
-    schedules.retain(|item| item.route_family == family);
-
+    let kv_transactions = &snapshot.kv_transactions;
+    let streams = &snapshot.streams;
+    let notice_subscriptions = &snapshot.notice_subscriptions;
+    let notice_routes = &snapshot.notice_routes;
+    let queues = &snapshot.queues;
+    let queue_inflight = &snapshot.queue_inflight;
+    let queue_dead_letters = &snapshot.queue_dead_letters;
+    let rpc_workers = &snapshot.rpc_workers;
+    let rpc_pending = &snapshot.rpc_pending;
+    let leases = &snapshot.leases;
+    let schedules = &snapshot.schedules;
+    let pending_fire_claims = snapshot.pending_fire_claims;
     [
-        analyze_kv(&kv_transactions, now),
-        analyze_stream(&streams, StreamLatencyBuckets::default(), now),
-        analyze_notice(&notice_subscriptions, &notice_routes, now),
-        analyze_queue(&queues, &queue_inflight, &queue_dead_letters, 0, 0, now),
-        analyze_rpc(&rpc_workers, &rpc_pending, 0, 0, 0, 0, 0, 0, now),
-        analyze_lease(&leases, now),
+        analyze_kv(kv_transactions, now),
+        analyze_stream(streams, StreamLatencyBuckets::default(), now),
+        analyze_notice(notice_subscriptions, notice_routes, now),
+        analyze_queue(queues, queue_inflight, queue_dead_letters, 0, 0, now),
+        analyze_rpc(rpc_workers, rpc_pending, 0, 0, 0, 0, 0, 0, now),
+        analyze_lease(leases, now),
         analyze_schedule(
-            &schedules,
+            schedules,
             pending_fire_claims,
             0,
             0,

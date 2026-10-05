@@ -6,6 +6,8 @@ mod dto_resources;
 mod query_params;
 mod resource_inventory;
 mod resource_paths;
+mod snapshot_detail;
+pub(crate) use snapshot_detail::snapshot_detail;
 
 use crate::api::admin::troubleshooting::{
     self, ResourceComparison, ResourceComparisonMetrics, ResourceComparisonScope,

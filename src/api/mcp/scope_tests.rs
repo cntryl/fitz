@@ -43,7 +43,7 @@ fn should_authorize_family_before_invoking_resource_collector() {
     let runtime = Runtime::new(Arc::new(crate::runtime::Router::new()));
     let mut registry = McpToolRegistry::read_only();
     for tool in &mut registry.tools {
-        tool.handler = |_, _| panic!("unauthorized collection executed");
+        tool.handler = |_, _, _| panic!("unauthorized collection executed");
     }
     let context = context();
     let policy = McpCapabilityPolicy::read_only();
@@ -81,7 +81,7 @@ fn should_reject_conflicting_queue_scope_before_collection() {
     let runtime = Runtime::new(Arc::new(crate::runtime::Router::new()));
     let mut registry = McpToolRegistry::read_only();
     for tool in &mut registry.tools {
-        tool.handler = |_, _| panic!("ambiguous collection executed");
+        tool.handler = |_, _, _| panic!("ambiguous collection executed");
     }
     let context = context();
     let arguments = json!({"scheme":"queue", "realm":"acme", "area":"jobs",
@@ -149,6 +149,7 @@ fn normalize_observation_time(value: &mut Value) {
     match value {
         Value::Object(fields) => {
             fields.remove("observed_at");
+            fields.remove("evidence_id");
             for field in fields.values_mut() {
                 normalize_observation_time(field);
             }
@@ -206,7 +207,7 @@ fn should_require_global_read_authority_before_summary_collection() {
     let runtime = Runtime::new(Arc::new(crate::runtime::Router::new()));
     let mut registry = McpToolRegistry::read_only();
     for tool in &mut registry.tools {
-        tool.handler = |_, _| panic!("unauthorized global collection executed");
+        tool.handler = |_, _, _| panic!("unauthorized global collection executed");
     }
     let principal = crate::api::admin::auth::AdminPrincipal {
         username: "scoped-route-reader".into(),

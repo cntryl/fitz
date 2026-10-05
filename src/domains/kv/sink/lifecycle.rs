@@ -161,6 +161,12 @@ impl KvDomain {
         self.family_runtime.stop();
     }
 
+    /// Pool availability uses the existing aggregate flags without copying family health rows.
+    pub(crate) fn has_usable_family(&self) -> bool {
+        self.family_runtime.is_running()
+    }
+
+    #[cfg(test)]
     pub(crate) fn family_health_snapshot(
         &self,
     ) -> crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {

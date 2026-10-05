@@ -1,270 +1,151 @@
 use super::{
-    kv_detail, kv_resource_timeline, lease_detail, lease_resource_timeline, notice_detail,
-    notice_resource_timeline, queue_detail, queue_resource_timeline, rpc_operations,
-    rpc_resource_timeline, schedule_detail, schedule_resource_timeline, serialize_tool_output,
-    stream_detail, stream_resource_timeline, McpCostBudget, McpInvocation, McpToolError,
-    McpToolResult, ResourcePath, Runtime, Value,
+    serialize_tool_output, McpCostBudget, McpInvocation, McpToolError, McpToolResult, Runtime,
+    Value,
 };
-use crate::api::admin::troubleshooting::ResourceTimeline;
+use crate::api::admin::troubleshooting::{
+    kv_resource_timeline, lease_resource_timeline, notice_resource_timeline,
+    queue_resource_timeline, rpc_resource_timeline, schedule_resource_timeline,
+    stream_resource_timeline,
+};
+use crate::api::admin::ResourcePath;
+use crate::runtime::DomainKind;
+
+const RPC_DEADLINES_UNAVAILABLE: &str = "per-call deadlines are unavailable from the admin projection; request age does not identify the remaining deadline";
+const RPC_OUTCOMES_UNAVAILABLE: &str = "per-call execution, completion and failure outcomes are unavailable from the admin projection; caller completion does not establish worker cleanup";
 
 pub(super) fn build_resource_detail_value(
     runtime: &Runtime,
     invocation: &McpInvocation,
 ) -> McpToolResult<Value> {
-    let tool_name = "inspect_resource_detail";
+    let name = "inspect_resource_detail";
     let request = invocation
         .resource_request()
-        .ok_or_else(|| McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: "missing request payload".to_string(),
-        })?;
-
+        .expect("validated resource invocation");
     let family = invocation.route_family();
+    let snapshot = collect_resource(runtime, invocation, name)?;
+    if snapshot.truncated {
+        return Err(McpToolError::InvalidArguments { tool_name: name.into(), reason: "resource detail exceeds its bounded rows or wildcard-registration scan; evidence is incomplete".into() });
+    }
     let path = ResourcePath {
         realm: &request.realm,
         area: &request.area,
         resource: &request.resource,
     };
-
-    match crate::runtime::DomainKind::from_scheme(&request.scheme) {
-        Some(crate::runtime::DomainKind::Kv) => {
-            serialize_tool_output(tool_name, kv_detail(runtime, &path, family))
-        }
-        Some(crate::runtime::DomainKind::Queue) => {
-            serialize_tool_output(tool_name, queue_detail(runtime, &path, family))
-        }
-        Some(crate::runtime::DomainKind::Stream) => {
-            serialize_tool_output(tool_name, stream_detail(runtime, &path, family))
-        }
-        Some(crate::runtime::DomainKind::Lease) => {
-            serialize_tool_output(tool_name, lease_detail(runtime, &path, family))
-        }
-        Some(crate::runtime::DomainKind::Schedule) => {
-            serialize_tool_output(tool_name, schedule_detail(runtime, &path, family))
-        }
-        Some(crate::runtime::DomainKind::Notice) => {
-            serialize_tool_output(tool_name, notice_detail(runtime, &path, family))
-        }
-        Some(crate::runtime::DomainKind::Rpc) => {
-            serialize_tool_output(tool_name, rpc_operations(runtime, &path, family))
-        }
-        None => Err(McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: format!("unsupported resource scheme: {}", request.scheme),
-        }),
+    let domain = DomainKind::from_scheme(&request.scheme).expect("validated domain");
+    let mut value = crate::api::admin::snapshot_detail(runtime, &snapshot, &path, family, domain)
+        .map_err(|reason| McpToolError::InvalidArguments {
+        tool_name: name.into(),
+        reason,
+    })?;
+    if domain == DomainKind::Rpc {
+        value["_meta"] = serde_json::json!({"unavailable": ["wildcard operation names cannot be enumerated; worker counters and latency from wildcard registrations cannot be attributed to this resource", RPC_DEADLINES_UNAVAILABLE, RPC_OUTCOMES_UNAVAILABLE]});
     }
+    Ok(value)
 }
 
 pub(super) fn build_resource_timeline_value(
     runtime: &Runtime,
     invocation: &McpInvocation,
 ) -> McpToolResult<Value> {
-    let tool_name = "inspect_resource_timeline";
+    let name = "inspect_resource_timeline";
     let request = invocation
         .resource_request()
-        .ok_or_else(|| McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: "missing request payload".to_string(),
-        })?;
-
+        .expect("validated resource invocation");
+    let family = invocation.route_family();
+    let snapshot = collect_resource(runtime, invocation, name)?;
     let limit = request
         .limit
-        .unwrap_or_else(|| McpCostBudget::timeline().max_result_items)
+        .unwrap_or(McpCostBudget::timeline().max_result_items)
         .clamp(1, McpCostBudget::timeline().max_result_items);
-    let family = invocation.route_family();
     let path = ResourcePath {
         realm: &request.realm,
         area: &request.area,
         resource: &request.resource,
     };
-    let read_model = runtime.admin_read_model();
-
-    match crate::runtime::DomainKind::from_scheme(&request.scheme) {
-        Some(crate::runtime::DomainKind::Kv) => serialize_timeline(
-            tool_name,
+    let domain = DomainKind::from_scheme(&request.scheme).expect("validated domain");
+    let mut timeline = match domain {
+        DomainKind::Kv => kv_resource_timeline(&snapshot.kv_transactions, &path, limit),
+        DomainKind::Queue => queue_resource_timeline(
+            &snapshot.queues,
+            &snapshot.queue_inflight,
+            &snapshot.queue_dead_letters,
+            &path,
             family,
-            kv_resource_timeline(
-                &in_family(
-                    read_model.kv_transactions(Some(&request.realm)),
-                    family,
-                    |item| item.route_family,
-                ),
-                &path,
-                limit,
-            ),
+            limit,
         ),
-        Some(crate::runtime::DomainKind::Queue) => serialize_timeline(
-            tool_name,
-            family,
-            scoped_queue_timeline(&read_model, &path, family, limit),
+        DomainKind::Stream => stream_resource_timeline(&snapshot.streams, &path, limit),
+        DomainKind::Lease => lease_resource_timeline(&snapshot.leases, &path, limit),
+        DomainKind::Notice => notice_resource_timeline(
+            &snapshot.notice_subscriptions,
+            &snapshot.notice_routes,
+            &path,
+            limit,
         ),
-        Some(crate::runtime::DomainKind::Stream) => serialize_timeline(
-            tool_name,
-            family,
-            stream_resource_timeline(
-                &in_family(read_model.streams(Some(&request.realm)), family, |item| {
-                    item.route_family
-                }),
-                &path,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Lease) => serialize_timeline(
-            tool_name,
-            family,
-            lease_resource_timeline(
-                &in_family(read_model.leases(Some(&request.realm)), family, |item| {
-                    item.route_family
-                }),
-                &path,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Notice) => serialize_timeline(
-            tool_name,
-            family,
-            scoped_notice_timeline(&read_model, &path, family, limit),
-        ),
-        Some(crate::runtime::DomainKind::Rpc) => serialize_timeline(
-            tool_name,
-            family,
-            rpc_resource_timeline(
-                &in_family(
-                    read_model.rpc_workers(Some(&request.realm)),
-                    family,
-                    |item| item.route_family,
-                ),
-                &in_family(
-                    read_model.rpc_pending(Some(&request.realm)),
-                    family,
-                    |item| item.route_family,
-                ),
-                &path,
-                limit,
-            ),
-        ),
-        Some(crate::runtime::DomainKind::Schedule) => serialize_timeline(
-            tool_name,
-            family,
-            scoped_schedule_timeline(runtime, &path, family, limit),
-        ),
-        None => Err(McpToolError::InvalidArguments {
-            tool_name: tool_name.to_string(),
-            reason: format!("unsupported resource scheme: {}", request.scheme),
-        }),
-    }
-}
-
-fn serialize_timeline(
-    tool_name: &str,
-    family: Option<u64>,
-    mut timeline: crate::api::admin::troubleshooting::ResourceTimeline,
-) -> McpToolResult<Value> {
+        DomainKind::Rpc => {
+            rpc_resource_timeline(&snapshot.rpc_workers, &snapshot.rpc_pending, &path, limit)
+        }
+        DomainKind::Schedule => {
+            schedule_resource_timeline(&snapshot.schedules, 0, 0, 0, 0, 0, 0, &path, limit)
+        }
+    };
     if let Some(family) = family {
         timeline.family = Some(family);
         for event in &mut timeline.events {
             event.family = Some(family);
         }
     }
-    serialize_tool_output(tool_name, timeline)
+    let mut value = serialize_tool_output(name, timeline)?;
+    let mut unavailable = vec![
+        "durable event history; timeline contains current projection observations",
+        "unattributed Schedule pressure counters",
+        "wildcard Notice/RPC aggregate delivery, publication, handled counts and latency cannot be attributed to this resource",
+    ];
+    if domain == DomainKind::Rpc {
+        unavailable.extend([RPC_DEADLINES_UNAVAILABLE, RPC_OUTCOMES_UNAVAILABLE]);
+    }
+    value["_meta"] = serde_json::json!({ "partial": snapshot.truncated, "collection_limit": snapshot.limit_per_collection, "unavailable": unavailable });
+    Ok(value)
 }
 
-fn in_family<T>(items: Vec<T>, family: Option<u64>, family_of: impl Fn(&T) -> u64) -> Vec<T> {
-    items
-        .into_iter()
-        .filter(|item| family.is_none_or(|family| family_of(item) == family))
-        .collect()
-}
-
-fn scoped_schedule_timeline(
+fn collect_resource(
     runtime: &Runtime,
-    path: &ResourcePath<'_>,
-    family: Option<u64>,
-    limit: usize,
-) -> ResourceTimeline {
-    let read_model = runtime.admin_read_model();
-    // Global pressure counters have no family attribution. Zero suppresses their
-    // optional notes; scoped results do not report zero-valued global counters.
-    schedule_resource_timeline(
-        &in_family(read_model.schedules(Some(path.realm)), family, |item| {
-            item.route_family
-        }),
-        if family.is_none() {
-            runtime.schedule_pending_fire_claims()
-        } else {
-            0
+    invocation: &McpInvocation,
+    tool_name: &str,
+) -> McpToolResult<crate::control::admin::read_model::AdminSnapshot> {
+    let request = invocation
+        .resource_request()
+        .expect("validated resource invocation");
+    let (families, truncated) = invocation.route_family().map_or_else(
+        || {
+            runtime
+                .admin_auth()
+                .bounded_provisioned_route_families(64, None)
         },
-        if family.is_none() {
-            runtime.schedule_pending_ack_retries()
-        } else {
-            0
+        |family| (vec![family], false),
+    );
+    if truncated {
+        return Err(McpToolError::InvalidArguments { tool_name: tool_name.into(), reason: "all-family resource reads exceed the family budget; select an explicit route_family".into() });
+    }
+    let snapshot = runtime.admin_read_model().bounded_resource_snapshot(
+        &families,
+        crate::control::admin::read_model::InventoryScope {
+            realm: Some(&request.realm),
+            area: Some(&request.area),
+            resource: Some(&request.resource),
+            ..Default::default()
         },
-        if family.is_none() {
-            runtime.schedule_oldest_pending_claim_age_seconds()
-        } else {
-            0
-        },
-        if family.is_none() {
-            runtime.schedule_notify_failures()
-        } else {
-            0
-        },
-        if family.is_none() {
-            runtime.schedule_ack_failures()
-        } else {
-            0
-        },
-        if family.is_none() {
-            runtime.schedule_overdue_normalizations()
-        } else {
-            0
-        },
-        path,
-        limit,
-    )
-}
-fn scoped_queue_timeline(
-    read_model: &crate::control::admin::read_model::AdminReadModel,
-    path: &ResourcePath<'_>,
-    family: Option<u64>,
-    limit: usize,
-) -> ResourceTimeline {
-    queue_resource_timeline(
-        &in_family(read_model.queues(Some(path.realm)), family, |item| {
-            item.family
-        }),
-        &in_family(
-            read_model.queue_inflight(Some(path.realm)),
-            family,
-            |item| item.family,
-        ),
-        &in_family(
-            read_model.queue_dead_letters(Some(path.realm)),
-            family,
-            |item| item.family,
-        ),
-        path,
-        family,
-        limit,
-    )
-}
-
-fn scoped_notice_timeline(
-    read_model: &crate::control::admin::read_model::AdminReadModel,
-    path: &ResourcePath<'_>,
-    family: Option<u64>,
-    limit: usize,
-) -> ResourceTimeline {
-    notice_resource_timeline(
-        &in_family(
-            read_model.notice_subscriptions(Some(path.realm), None),
-            family,
-            |item| item.route_family,
-        ),
-        &in_family(read_model.notice_routes(Some(path.realm)), family, |item| {
-            item.route_family
-        }),
-        path,
-        limit,
-    )
+        DomainKind::from_scheme(&request.scheme).expect("validated domain"),
+        512,
+    );
+    if request.scheme == "stream"
+        && invocation.route_family().is_none()
+        && snapshot.streams.len() > 1
+    {
+        return Err(McpToolError::InvalidArguments {
+            tool_name: tool_name.into(),
+            reason: "multiple route families contain this Stream; select an explicit route_family"
+                .into(),
+        });
+    }
+    Ok(snapshot)
 }

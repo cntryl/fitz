@@ -55,7 +55,7 @@ pub(in crate::api::admin::topology) fn kv_lane(
                     &transaction.realm,
                     &transaction.area,
                     &transaction.resource,
-                    None,
+                    Some(transaction.route_family),
                 ),
                 session_id,
             )
@@ -64,7 +64,7 @@ pub(in crate::api::admin::topology) fn kv_lane(
                 &transaction.realm,
                 &transaction.area,
                 &transaction.resource,
-                None,
+                Some(transaction.route_family),
             )
         };
 
@@ -110,6 +110,7 @@ fn session_id_from_transaction_mode(mode: &str) -> Option<String> {
 fn top_kv_resources(transactions: &[KvTransaction]) -> Vec<TopologyScopedResource> {
     #[derive(Default)]
     struct Rollup {
+        family: u64,
         realm: String,
         area: String,
         resource: String,
@@ -118,14 +119,16 @@ fn top_kv_resources(transactions: &[KvTransaction]) -> Vec<TopologyScopedResourc
         max_idle_seconds: u64,
     }
 
-    let mut rollups: BTreeMap<(String, String, String), Rollup> = BTreeMap::new();
+    let mut rollups: BTreeMap<(u64, String, String, String), Rollup> = BTreeMap::new();
     for transaction in transactions {
         let key = (
+            transaction.route_family,
             transaction.realm.clone(),
             transaction.area.clone(),
             transaction.resource.clone(),
         );
         let rollup = rollups.entry(key).or_default();
+        rollup.family = transaction.route_family;
         rollup.realm.clone_from(&transaction.realm);
         rollup.area.clone_from(&transaction.area);
         rollup.resource.clone_from(&transaction.resource);
@@ -146,7 +149,12 @@ fn top_kv_resources(transactions: &[KvTransaction]) -> Vec<TopologyScopedResourc
                 "kv",
                 format!("{} / {} / {}", rollup.realm, rollup.area, rollup.resource),
                 TopologyState::Flowing,
-                scope_for_resource(&rollup.realm, &rollup.area, &rollup.resource, None),
+                scope_for_resource(
+                    &rollup.realm,
+                    &rollup.area,
+                    &rollup.resource,
+                    Some(rollup.family),
+                ),
                 counters,
             )
         })

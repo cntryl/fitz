@@ -61,7 +61,12 @@ pub(in crate::api::admin::topology) fn stream_lane(
             TopologyConnectionKind::StreamAppendActivity,
             format!("{} / {} append activity", stream.area, stream.resource),
             TopologyState::Flowing,
-            scope_for_resource(&stream.realm, &stream.area, &stream.resource, None),
+            scope_for_resource(
+                &stream.realm,
+                &stream.area,
+                &stream.resource,
+                Some(stream.route_family),
+            ),
             vec![
                 count_usize("sessions", "Sessions", stream.sessions_active),
                 count_u64("offset", "Offset", stream.offset),
@@ -104,7 +109,12 @@ fn top_stream_resources(streams: &[StreamInfo]) -> Vec<TopologyScopedResource> {
                 } else {
                     TopologyState::Quiet
                 },
-                scope_for_resource(&stream.realm, &stream.area, &stream.resource, None),
+                scope_for_resource(
+                    &stream.realm,
+                    &stream.area,
+                    &stream.resource,
+                    Some(stream.route_family),
+                ),
                 counters,
             )
         })

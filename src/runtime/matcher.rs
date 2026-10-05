@@ -36,6 +36,11 @@ use std::collections::{HashSet, VecDeque};
 type RouteSegments<'a> = SmallVec<[&'a str; 16]>;
 const MAX_PATTERN_COVERAGE_STATES: usize = 16_384;
 
+mod resource_registration;
+pub(crate) use resource_registration::{
+    matches_registration_prefix, matches_resource_registration,
+};
+
 /// Wildcard pattern for route subscriptions
 ///
 /// A pattern is a route that may contain `*` and `**` wildcards.

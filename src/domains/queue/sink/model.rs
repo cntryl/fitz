@@ -121,6 +121,13 @@ pub(super) enum QueueDomainCommand {
         MessageId,
         crossbeam_channel::Sender<Result<bool, String>>,
     ),
+    InspectDeadLetter(
+        QueueKey,
+        MessageId,
+        crossbeam_channel::Sender<
+            Result<Option<crate::domains::queue::projection::QueueDeadLetterSnapshot>, String>,
+        >,
+    ),
     PurgeDeadLetter(
         QueueKey,
         MessageId,

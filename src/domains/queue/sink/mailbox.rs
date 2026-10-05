@@ -63,6 +63,9 @@ impl QueueFamilyRuntime {
             QueueDomainCommand::ReplayDeadLetter(key, id, reply) => {
                 let _ = reply.send(self.core.replay_dead_letter(&key, id));
             }
+            QueueDomainCommand::InspectDeadLetter(key, id, reply) => {
+                let _ = reply.send(self.core.inspect_dead_letter(&key, id));
+            }
             QueueDomainCommand::PurgeDeadLetter(key, id, reply) => {
                 let _ = reply.send(self.core.purge_dead_letter(&key, id));
             }
