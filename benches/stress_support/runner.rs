@@ -224,7 +224,7 @@ async fn batch(
                 let started = Instant::now();
                 let result = bounded_step(driver, *sequence, remaining[lane], lane).await;
                 let completed_at = batch_started.elapsed();
-                if result.as_ref().is_ok_and(|outcome| outcome.is_completed()) {
+                if result.as_ref().is_ok_and(StepOutcome::is_completed) {
                     progress.advance();
                 }
                 *sequence = sequence.saturating_add(1);
@@ -374,7 +374,7 @@ fn apply_batch(report: &mut Phase, batch: Batch) -> Result<(), BenchFailure> {
         if observed
             .result
             .as_ref()
-            .is_ok_and(|outcome| outcome.is_completed())
+            .is_ok_and(StepOutcome::is_completed)
         {
             report.lane_last_completion_ns[lane] =
                 began_at.saturating_add(observed.completed_at.as_nanos());
