@@ -1,4 +1,4 @@
-use super::{complete, empty_plain_success, error_code, payload, request, require_ok};
+use super::{complete, empty_legacy_success, error_code, payload, request, require_ok};
 use crate::stress_support::types::{BenchFailure, StepOutcome};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
 use fitz::protocol::error_codes::queue::ERR_QUEUE_FULL;
@@ -73,7 +73,7 @@ impl QueueDriver {
             204,
         )
         .await?;
-        empty_plain_success(&acknowledged, "Queue ACK")?;
+        empty_legacy_success(&acknowledged, "Queue ACK")?;
         Ok(StepOutcome::Completed)
     }
 

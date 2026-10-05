@@ -195,8 +195,10 @@ A missing Notice baseline or recovery delivery fails verification.
 
 Valid domain error responses preserve their operation, available error code and
 message and are classified as `DomainError`. Queue ACK and Schedule
-CREATE/CANCEL/LIST_V2 use their documented plain error envelopes; coded responses
-retain their code and message. Invalid error envelopes remain `InvalidResponse`.
+CREATE/CANCEL/LIST_V2 use plain actor error envelopes and can also receive coded
+ingress errors. Both forms must decode completely; an ambiguous or invalid error
+envelope remains `InvalidResponse` with a bounded payload prefix for diagnosis.
+Coded responses retain their code and message.
 Neither classification permits a correctness pass.
 
 The progress watchdog requires useful validated progress. Rejections, retries,

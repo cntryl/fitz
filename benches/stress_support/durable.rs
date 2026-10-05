@@ -164,15 +164,30 @@ fn coded_error(body: &[u8], status: u8) -> Result<(u32, &str), BenchFailure> {
     Ok((code, message))
 }
 
-/// ACK and Schedule `CREATE/CANCEL/LIST_V2` retain the legacy plain envelope.
-pub(super) fn require_plain_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
+/// Legacy domain errors are plain; ingress can synthesize coded errors instead.
+pub(super) fn require_legacy_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
     if body.first().copied() == Some(0) {
         return Ok(());
     }
-    let message = plain_error(body).map_err(|error| malformed_error(body, operation, &error))?;
-    Err(BenchFailure::domain_error(format!(
-        "{operation} failed: {message}"
-    )))
+    let detail = match (plain_error(body), coded_error(body, 1)) {
+        (Ok(message), Err(_)) => format!("{operation} failed: {message}"),
+        (Err(_), Ok((code, message))) => format!("{operation} failed: code {code}: {message}"),
+        (Ok(_), Ok(_)) => {
+            return Err(malformed_error(
+                body,
+                operation,
+                &BenchFailure::validation("ambiguous plain/coded error envelope"),
+            ));
+        }
+        (Err(plain), Err(coded)) => {
+            return Err(malformed_error(
+                body,
+                operation,
+                &BenchFailure::validation(format!("plain: {plain}; coded: {coded}")),
+            ));
+        }
+    };
+    Err(BenchFailure::domain_error(detail))
 }
 
 fn plain_error(body: &[u8]) -> Result<&str, BenchFailure> {
@@ -198,8 +213,8 @@ pub(super) fn empty_success(body: &[u8], operation: &str) -> Result<(), BenchFai
     require_empty(body)
 }
 
-pub(super) fn empty_plain_success(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
-    require_plain_ok(body, operation)?;
+pub(super) fn empty_legacy_success(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
+    require_legacy_ok(body, operation)?;
     require_empty(body)
 }
 
