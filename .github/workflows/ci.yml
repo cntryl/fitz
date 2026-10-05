@@ -84,3 +84,72 @@ jobs:
 
       - name: Test
         run: npm run test -- --run
+
+  container:
+    name: Container ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            cache_scope: linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            cache_scope: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      FITZ_TEST_IMAGE: fitz-ci:${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build container without publishing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: false
+          load: true
+          tags: ${{ env.FITZ_TEST_IMAGE }}
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=min,scope=${{ matrix.cache_scope }}
+
+      - name: Verify default-disabled MCP in the runtime image
+        timeout-minutes: 2
+        run: |
+          docker run --detach --name fitz-ci \
+            --publish 127.0.0.1::4090 \
+            --env FITZ_AUTH_REQUIRED=false \
+            --env FITZ_ADMIN_AUTH_MODE=open \
+            --env FITZ_STORAGE_MODE=memory \
+            "${FITZ_TEST_IMAGE}"
+          fitz_test_endpoint="http://$(docker port fitz-ci 4090/tcp)"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --max-time 2 "${fitz_test_endpoint}/healthz" > /tmp/fitz-container-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent --show-error --max-time 2 "${fitz_test_endpoint}/healthz" \
+            | jq -e '.status == "ready"'
+          curl --fail --silent --show-error --max-time 2 "${fitz_test_endpoint}/api/v1/stats" \
+            | jq -e '.broker and .domains'
+          for path in /mcp /.well-known/oauth-protected-resource/mcp; do
+            test "$(curl --silent --show-error --max-time 2 --output /dev/null --write-out '%{http_code}' "${fitz_test_endpoint}${path}")" = 404
+          done
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs --tail 100 fitz-ci || true
+
+      - name: Remove test container
+        if: always()
+        run: docker rm --force --volumes fitz-ci || true

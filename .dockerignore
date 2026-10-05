@@ -26,6 +26,10 @@ target
 tests
 benches
 docs
+# MCP resources are compiled into the broker with include_str!.
+!docs/admin/mcp/domain-guarantees.md
+!docs/admin/mcp/operational-fields.md
+!docs/admin/mcp/troubleshooting.md
 scripts
 
 # UI build artifacts
