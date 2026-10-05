@@ -25,6 +25,8 @@ pedantic = "deny"
 bench-no-snapshot = []
 # Compile benchmark-only library adapters that intentionally bypass transport.
 benchkit = []
+# Opt in to long-running saturation and endurance benchmark targets.
+stress-soak = []
 
 [profile.release]
 lto = true
@@ -83,7 +85,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 rmcp = { version = "=3.5.0", default-features = false, features = ["client", "server", "transport-child-process", "transport-io", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
 
 [dev-dependencies]
-cntryl-stress = "0.5.0"
+cntryl-stress = "0.5.1"
 jsonschema = { version = "0.58.4", default-features = false }
 proptest = "1"
 serial_test = "4.0.1"
@@ -356,3 +358,17 @@ path = "benches/tier4_stream_mixed.rs"
 name = "tier4_stream_shapes"
 harness = false
 path = "benches/tier4_stream_shapes.rs"
+
+# Tier 5: Full TCP concurrency/saturation sweeps.
+[[bench]]
+name = "tier5_saturation"
+harness = false
+path = "benches/tier5_saturation.rs"
+required-features = ["benchkit", "stress-soak"]
+
+# Tier 6: Full TCP endurance with bounded workload state.
+[[bench]]
+name = "tier6_endurance"
+harness = false
+path = "benches/tier6_endurance.rs"
+required-features = ["benchkit", "stress-soak"]

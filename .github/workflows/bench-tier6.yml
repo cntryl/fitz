@@ -1,0 +1,59 @@
+name: Bench Tier 6 Endurance
+
+on:
+  schedule:
+    - cron: "0 7 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: [queue, kv, stream, schedule, rpc, notice, lease]
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      RUST_LOG: "off"
+      FITZ_LOG_LEVEL: "off"
+      OTEL_ENABLED: "false"
+      FITZ_TIER6_DURATION_SECS: "3600"
+      STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
+      STRESS_TIMEOUT_SECS: "4500"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install verified Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "stress-benches"
+
+      - name: Run domain endurance workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/fitz-stress/runner-logs
+          cargo bench --locked --quiet --bench tier6_endurance --features benchkit,stress-soak -- \
+            --workload should_soak_${{ matrix.domain }} \
+            --profile smoke --samples 1 --warmup-samples 0 --cooldown-samples 0 \
+            2>&1 | tee target/fitz-stress/runner-logs/tier6-${{ matrix.domain }}.log
+
+      - name: Upload stress and partial workload artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-tier6-${{ matrix.domain }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            target/stress/**
+            target/fitz-stress/**
+          if-no-files-found: warn
+          retention-days: 90
