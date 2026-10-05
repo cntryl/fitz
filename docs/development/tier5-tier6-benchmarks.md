@@ -208,6 +208,11 @@ stalled workload healthy.
 Each client operation also has a bounded wait: aggregate progress from other
 lanes cannot excuse one lane remaining stuck. The runner stops peer work after
 a terminal failure and preserves available partial evidence.
+The runner's absolute deadline covers sending, receiving, and validating the
+complete cycle, including all of its durable-domain requests. Those requests
+do not install a second receive timer that could disguise expiration as a
+transport error. Expiration is classified as `Timeout`; socket errors remain
+`Transport`, and unexpected broker error responses remain `DomainError`.
 
 `cntryl-stress` 0.5.1 supplies a shared progress handle and
 `STRESS_NO_PROGRESS_TIMEOUT_SECS`. Its hard timeout can report failure but cannot
@@ -224,6 +229,14 @@ observations explicitly rather than presenting them as measured zeroes. Workload
 keys, history, retained counters, and latency samples must remain bounded during
 the active window. Periodically persisted partial JSON preserves evidence when
 the framework cannot recover the active context from a timed-out worker.
+The first workload failure is saved at the top level before cleanup starts.
+`cleanup_status` separately records `not_started`, `running`, `completed`, or
+`failed`. Driver, server, and directory cleanup errors are retained in
+`cleanup_failures` with their stage, optional prepared-driver index, and original
+failure kind; they are also appended to the returned error without replacing an earlier
+workload failure's kind. Cleanup can complete successfully after a workload
+failure. If a watchdog ends a process during a blocked shutdown, the saved
+workload failure and `cleanup_status: running` do not claim cleanup completed.
 
 Process RSS includes the server, clients, shared runtime, and every prepared
 lane, including idle lanes. It does not isolate broker-only memory or measure

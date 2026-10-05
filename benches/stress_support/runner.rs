@@ -1,4 +1,4 @@
-use crate::stress_support::artifacts::{memory_sample, Artifacts, Phase};
+use crate::stress_support::artifacts::{memory_sample, Artifacts, CleanupFailure, Phase};
 use crate::stress_support::durable::DurableDriver;
 use crate::stress_support::ephemeral::EphemeralDriver;
 use crate::stress_support::fixture::{BrokerFixture, StorageDirectory, StorageProfile};
@@ -618,28 +618,74 @@ fn run_phases(
     )
 }
 
-fn close_fixture(
-    drivers: Vec<Driver>,
-    fixture: BrokerFixture,
-    result: Result<(), BenchFailure>,
-) -> Result<(), BenchFailure> {
-    let runtime = shared_bench_runtime();
-    let mut final_result = result;
-    for result in runtime.block_on(join_all(
-        drivers.into_iter().map(|driver| bounded(driver.close())),
-    )) {
-        if final_result.is_ok() {
-            final_result = result;
+fn remember_failure(artifacts: &mut Artifacts, result: &Result<(), BenchFailure>) {
+    if let Err(error) = result {
+        artifacts.status = "failed";
+        artifacts.failure = Some(error.to_string());
+        artifacts.failure_kind = Some(format!("{:?}", error.kind));
+    }
+}
+
+fn append_failure(result: &mut Result<(), BenchFailure>, error: BenchFailure, context: &str) {
+    match result {
+        Ok(()) => {
+            *result = Err(BenchFailure {
+                kind: error.kind,
+                detail: format!("{context}: {}", error.detail),
+            });
+        }
+        Err(original) => {
+            original.detail = format!("{}; {context}: {error}", original.detail);
         }
     }
+}
+
+fn save_cleanup_progress(artifacts: &mut Artifacts, result: &mut Result<(), BenchFailure>) {
+    remember_failure(artifacts, result);
+    if let Err(error) = artifacts.save() {
+        append_failure(result, error, "saving cleanup evidence failed");
+        remember_failure(artifacts, result);
+    }
+}
+
+fn record_cleanup_failure(
+    artifacts: &mut Artifacts,
+    result: &mut Result<(), BenchFailure>,
+    stage: &'static str,
+    driver_index: Option<usize>,
+    error: BenchFailure,
+) {
+    artifacts.cleanup_failures.push(CleanupFailure {
+        stage,
+        driver_index,
+        failure_kind: format!("{:?}", error.kind),
+        failure: error.to_string(),
+    });
+    let context = driver_index.map_or_else(
+        || format!("{stage} cleanup failed"),
+        |index| format!("{stage} cleanup at prepared index {index} failed"),
+    );
+    append_failure(result, error, &context);
+    save_cleanup_progress(artifacts, result);
+}
+
+fn close_server_and_directory(
+    fixture: BrokerFixture,
+    artifacts: &mut Artifacts,
+    result: &mut Result<(), BenchFailure>,
+) {
     let (server, storage_directory) = fixture.into_parts();
     // Keep the directory outside the timed future: a canceled shutdown must not
     // remove files still owned by a live storage engine.
-    let shutdown = runtime.block_on(bounded(async {
+    let shutdown = shared_bench_runtime().block_on(bounded(async {
         server.shutdown().await.map_err(BenchFailure::transport)
     }));
-    let cleanup = match shutdown {
-        Ok(()) => storage_directory.release(),
+    match shutdown {
+        Ok(()) => {
+            if let Err(error) = storage_directory.release() {
+                record_cleanup_failure(artifacts, result, "directory", None, error);
+            }
+        }
         Err(mut error) => {
             if let Some(path) = storage_directory.path() {
                 error.detail = format!(
@@ -649,19 +695,38 @@ fn close_fixture(
                 );
             }
             drop(storage_directory);
-            Err(error)
+            record_cleanup_failure(artifacts, result, "server", None, error);
         }
-    };
-    if let Err(cleanup_error) = cleanup {
-        return match final_result {
-            Ok(()) => Err(cleanup_error),
-            Err(mut error) => {
-                error.detail = format!("{}; fixture cleanup failed: {cleanup_error}", error.detail);
-                Err(error)
-            }
-        };
     }
-    final_result
+}
+
+fn close_fixture(
+    drivers: Vec<Driver>,
+    fixture: BrokerFixture,
+    mut result: Result<(), BenchFailure>,
+    artifacts: &mut Artifacts,
+) -> Result<(), BenchFailure> {
+    // Persist the workload failure while cleanup is still not_started, then
+    // persist running before any close or synchronous actor join can block.
+    save_cleanup_progress(artifacts, &mut result);
+    artifacts.cleanup_status = "running";
+    save_cleanup_progress(artifacts, &mut result);
+    let closed = shared_bench_runtime().block_on(join_all(
+        drivers.into_iter().map(|driver| bounded(driver.close())),
+    ));
+    for (index, outcome) in closed.into_iter().enumerate() {
+        if let Err(error) = outcome {
+            record_cleanup_failure(artifacts, &mut result, "driver", Some(index), error);
+        }
+    }
+    close_server_and_directory(fixture, artifacts, &mut result);
+    artifacts.cleanup_status = if artifacts.cleanup_failures.is_empty() {
+        "completed"
+    } else {
+        "failed"
+    };
+    save_cleanup_progress(artifacts, &mut result);
+    result
 }
 
 fn finalize(artifacts: &mut Artifacts, result: Result<(), BenchFailure>) -> StressResult {
@@ -670,11 +735,7 @@ fn finalize(artifacts: &mut Artifacts, result: Result<(), BenchFailure>) -> Stre
     } else {
         "failed"
     };
-    artifacts.failure = result.as_ref().err().map(ToString::to_string);
-    artifacts.failure_kind = result
-        .as_ref()
-        .err()
-        .map(|error| format!("{:?}", error.kind));
+    remember_failure(artifacts, &result);
     if let Err(save_error) = artifacts.save() {
         let detail = result.as_ref().err().map_or_else(
             || format!("saving final workload evidence failed: {save_error}"),
@@ -723,5 +784,6 @@ pub(crate) fn run(ctx: &mut StressContext, domain: Domain, tier: u8) -> StressRe
                 tier,
             )
         });
-    finalize(&mut artifacts, close_fixture(drivers, fixture, result))
+    let result = close_fixture(drivers, fixture, result, &mut artifacts);
+    finalize(&mut artifacts, result)
 }

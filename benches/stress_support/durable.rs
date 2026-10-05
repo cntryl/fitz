@@ -14,7 +14,6 @@ use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::testkit::TestClient;
 use std::net::SocketAddr;
 
-const RESPONSE_TIMEOUT_MS: u64 = 10_000;
 pub(super) const PAYLOAD_SIZE: usize = 1_024;
 
 pub(crate) enum DurableDriver {
@@ -93,8 +92,12 @@ pub(super) async fn request(
     frame: &[u8],
     expected_type: u16,
 ) -> Result<Vec<u8>, BenchFailure> {
+    client
+        .send_frame(frame)
+        .await
+        .map_err(BenchFailure::transport)?;
     let response = client
-        .request(frame, RESPONSE_TIMEOUT_MS)
+        .recv_frame_bytes_without_timeout()
         .await
         .map_err(BenchFailure::transport)?;
     let (message_type, header_len, length_offset) = match response.first().copied() {
