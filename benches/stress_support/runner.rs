@@ -626,7 +626,7 @@ fn remember_failure(artifacts: &mut Artifacts, result: &Result<(), BenchFailure>
     }
 }
 
-fn append_failure(result: &mut Result<(), BenchFailure>, error: BenchFailure, context: &str) {
+fn append_failure(result: &mut Result<(), BenchFailure>, error: &BenchFailure, context: &str) {
     match result {
         Ok(()) => {
             *result = Err(BenchFailure {
@@ -643,7 +643,7 @@ fn append_failure(result: &mut Result<(), BenchFailure>, error: BenchFailure, co
 fn save_cleanup_progress(artifacts: &mut Artifacts, result: &mut Result<(), BenchFailure>) {
     remember_failure(artifacts, result);
     if let Err(error) = artifacts.save() {
-        append_failure(result, error, "saving cleanup evidence failed");
+        append_failure(result, &error, "saving cleanup evidence failed");
         remember_failure(artifacts, result);
     }
 }
@@ -653,7 +653,7 @@ fn record_cleanup_failure(
     result: &mut Result<(), BenchFailure>,
     stage: &'static str,
     driver_index: Option<usize>,
-    error: BenchFailure,
+    error: &BenchFailure,
 ) {
     artifacts.cleanup_failures.push(CleanupFailure {
         stage,
@@ -683,7 +683,7 @@ fn close_server_and_directory(
     match shutdown {
         Ok(()) => {
             if let Err(error) = storage_directory.release() {
-                record_cleanup_failure(artifacts, result, "directory", None, error);
+                record_cleanup_failure(artifacts, result, "directory", None, &error);
             }
         }
         Err(mut error) => {
@@ -695,7 +695,7 @@ fn close_server_and_directory(
                 );
             }
             drop(storage_directory);
-            record_cleanup_failure(artifacts, result, "server", None, error);
+            record_cleanup_failure(artifacts, result, "server", None, &error);
         }
     }
 }
@@ -716,7 +716,7 @@ fn close_fixture(
     ));
     for (index, outcome) in closed.into_iter().enumerate() {
         if let Err(error) = outcome {
-            record_cleanup_failure(artifacts, &mut result, "driver", Some(index), error);
+            record_cleanup_failure(artifacts, &mut result, "driver", Some(index), &error);
         }
     }
     close_server_and_directory(fixture, artifacts, &mut result);
