@@ -129,14 +129,25 @@ fn require_coded_ok(body: &[u8], operation: &str, status: u8) -> Result<(), Benc
     if body.first().copied() == Some(0) {
         return Ok(());
     }
-    let (code, message) = coded_error(body, status)?;
+    let (code, message) =
+        coded_error(body, status).map_err(|error| malformed_error(body, operation, &error))?;
     Err(BenchFailure::domain_error(format!(
         "{operation} failed: code {code}: {message}"
     )))
 }
 
-pub(super) fn error_code(body: &[u8]) -> Result<u32, BenchFailure> {
-    coded_error(body, 1).map(|(code, _)| code)
+pub(super) fn error_code(body: &[u8], operation: &str) -> Result<u32, BenchFailure> {
+    coded_error(body, 1)
+        .map(|(code, _)| code)
+        .map_err(|error| malformed_error(body, operation, &error))
+}
+
+fn malformed_error(body: &[u8], operation: &str, error: &BenchFailure) -> BenchFailure {
+    BenchFailure::validation(format!(
+        "malformed {operation} error response ({} bytes, prefix {:02X?}): {error}",
+        body.len(),
+        &body[..body.len().min(128)]
+    ))
 }
 
 fn coded_error(body: &[u8], status: u8) -> Result<(u32, &str), BenchFailure> {
@@ -158,15 +169,20 @@ pub(super) fn require_plain_ok(body: &[u8], operation: &str) -> Result<(), Bench
     if body.first().copied() == Some(0) {
         return Ok(());
     }
+    let message = plain_error(body).map_err(|error| malformed_error(body, operation, &error))?;
+    Err(BenchFailure::domain_error(format!(
+        "{operation} failed: {message}"
+    )))
+}
+
+fn plain_error(body: &[u8]) -> Result<&str, BenchFailure> {
     let mut decoder = PayloadDecoder::new(body);
     if decoder.get_u8().map_err(BenchFailure::validation)? != 1 {
         return Err(BenchFailure::validation("expected a plain error status"));
     }
     let message = decoder.get_string_ref().map_err(BenchFailure::validation)?;
     complete(&decoder)?;
-    Err(BenchFailure::domain_error(format!(
-        "{operation} failed: {message}"
-    )))
+    Ok(message)
 }
 
 pub(super) fn complete(decoder: &PayloadDecoder<'_>) -> Result<(), BenchFailure> {

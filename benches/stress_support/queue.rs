@@ -38,7 +38,9 @@ impl QueueDriver {
         )
         .await?;
         // Only ENQUEUE rejection can leave this lifecycle without an outstanding message.
-        if body.first().copied() != Some(0) && error_code(&body)? == u32::from(ERR_QUEUE_FULL) {
+        if body.first().copied() != Some(0)
+            && error_code(&body, "Queue ENQUEUE")? == u32::from(ERR_QUEUE_FULL)
+        {
             return Ok(StepOutcome::CapacityRejected(u32::from(ERR_QUEUE_FULL)));
         }
         require_ok(&body, "Queue ENQUEUE")?;

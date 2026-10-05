@@ -32,7 +32,7 @@ impl StreamDriver {
         };
         let body = driver.read().await?;
         let missing = body.first().copied() != Some(0)
-            && error_code(&body)? == u32::from(ERR_RESOURCE_NOT_FOUND);
+            && error_code(&body, "Stream seed READ")? == u32::from(ERR_RESOURCE_NOT_FOUND);
         if missing || driver.check_read(&body, true)? == 0 {
             driver.seed().await?;
         }
@@ -158,7 +158,9 @@ impl StreamDriver {
 
     pub(super) async fn step(&mut self, _sequence: u64) -> Result<StepOutcome, BenchFailure> {
         let body = self.read().await?;
-        if body.first().copied() != Some(0) && error_code(&body)? == u32::from(ERR_BUSY) {
+        if body.first().copied() != Some(0)
+            && error_code(&body, "Stream READ")? == u32::from(ERR_BUSY)
+        {
             return Ok(StepOutcome::CapacityRejected(u32::from(ERR_BUSY)));
         }
         self.check_read(&body, false)?;

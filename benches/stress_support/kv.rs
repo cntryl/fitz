@@ -48,7 +48,9 @@ impl KvDriver {
 
     pub(super) async fn step(&mut self, sequence: u64) -> Result<StepOutcome, BenchFailure> {
         let begin = self.begin(1).await?;
-        if begin.first().copied() != Some(0) && error_code(&begin)? == u32::from(ERR_BUSY) {
+        if begin.first().copied() != Some(0)
+            && error_code(&begin, "KV BEGIN")? == u32::from(ERR_BUSY)
+        {
             return Ok(StepOutcome::CapacityRejected(u32::from(ERR_BUSY)));
         }
         let tx_id = Self::transaction(&begin)?;
