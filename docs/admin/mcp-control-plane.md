@@ -35,6 +35,10 @@ S256 PKCE human client and a separate machine client with a narrow Queue read
 grant. It describes signing-key provisioning and the explicit restart required
 for key rotation.
 
+See [MCP client workflows](mcp/client-workflows.md) for the complete tool catalog,
+HTTP and stdio connection examples, a scoped Queue diagnosis, and guarded
+preview/confirmation handling.
+
 ## Bearer token contract
 
 Fitz accepts bounded RS256 bearer tokens only. Signature, issuer, audience,

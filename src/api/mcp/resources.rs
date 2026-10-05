@@ -10,6 +10,9 @@ use crate::api::admin::troubleshooting::{
 use crate::api::admin::ResourcePath;
 use crate::runtime::DomainKind;
 
+const RPC_DEADLINES_UNAVAILABLE: &str = "per-call deadlines are unavailable from the admin projection; request age does not identify the remaining deadline";
+const RPC_OUTCOMES_UNAVAILABLE: &str = "per-call execution, completion and failure outcomes are unavailable from the admin projection; caller completion does not establish worker cleanup";
+
 pub(super) fn build_resource_detail_value(
     runtime: &Runtime,
     invocation: &McpInvocation,
@@ -35,7 +38,7 @@ pub(super) fn build_resource_detail_value(
         reason,
     })?;
     if domain == DomainKind::Rpc {
-        value["_meta"] = serde_json::json!({"unavailable": ["wildcard operation names cannot be enumerated; worker counters and latency from wildcard registrations cannot be attributed to this resource"]});
+        value["_meta"] = serde_json::json!({"unavailable": ["wildcard operation names cannot be enumerated; worker counters and latency from wildcard registrations cannot be attributed to this resource", RPC_DEADLINES_UNAVAILABLE, RPC_OUTCOMES_UNAVAILABLE]});
     }
     Ok(value)
 }
@@ -59,7 +62,8 @@ pub(super) fn build_resource_timeline_value(
         area: &request.area,
         resource: &request.resource,
     };
-    let mut timeline = match DomainKind::from_scheme(&request.scheme).expect("validated domain") {
+    let domain = DomainKind::from_scheme(&request.scheme).expect("validated domain");
+    let mut timeline = match domain {
         DomainKind::Kv => kv_resource_timeline(&snapshot.kv_transactions, &path, limit),
         DomainKind::Queue => queue_resource_timeline(
             &snapshot.queues,
@@ -91,7 +95,15 @@ pub(super) fn build_resource_timeline_value(
         }
     }
     let mut value = serialize_tool_output(name, timeline)?;
-    value["_meta"] = serde_json::json!({ "partial": snapshot.truncated, "collection_limit": snapshot.limit_per_collection, "unavailable": ["durable event history; timeline contains current projection observations", "unattributed Schedule pressure counters", "wildcard Notice/RPC aggregate delivery, publication, handled counts and latency cannot be attributed to this resource"] });
+    let mut unavailable = vec![
+        "durable event history; timeline contains current projection observations",
+        "unattributed Schedule pressure counters",
+        "wildcard Notice/RPC aggregate delivery, publication, handled counts and latency cannot be attributed to this resource",
+    ];
+    if domain == DomainKind::Rpc {
+        unavailable.extend([RPC_DEADLINES_UNAVAILABLE, RPC_OUTCOMES_UNAVAILABLE]);
+    }
+    value["_meta"] = serde_json::json!({ "partial": snapshot.truncated, "collection_limit": snapshot.limit_per_collection, "unavailable": unavailable });
     Ok(value)
 }
 

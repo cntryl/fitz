@@ -14,6 +14,9 @@ current broker process unless a field explicitly names durable domain state.
   unless a separately authorized REST operation explicitly supplies them.
 - RPC worker and pending-request facts describe live request/response work. They
   do not imply durable recovery or exactly-once execution.
+  Per-call deadlines and execution/completion/failure outcomes are unavailable
+  from the admin projection: request age does not identify a remaining deadline,
+  and caller completion does not establish worker cleanup.
 
 Metric samples may be truncated at the advertised result limit. The response
 includes `truncated` and `limit` fields when that happens.

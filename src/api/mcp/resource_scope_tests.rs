@@ -384,3 +384,43 @@ fn should_select_authorized_provisioned_families_before_discovery_limit() {
         .to_string()
         .contains("readiness"));
 }
+
+#[test]
+fn should_report_rpc_deadlines_and_per_call_outcomes_as_unavailable() {
+    // Arrange
+    let model = AdminReadModel::new();
+    model.replace_rpc_pending(vec![crate::control::admin::RpcPendingRequest::snapshot(
+        1,
+        &"request-id",
+        "rpc://acme/jobs/alpha/run",
+        "2026-10-04T00:00:00Z",
+        17,
+        Some("worker".into()),
+    )]);
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), model);
+    let arguments = serde_json::json!({"scheme":"rpc","route_family":1,"realm":"acme","area":"jobs","resource":"alpha"});
+
+    // Act
+    let results = ["inspect_resource_detail", "inspect_resource_timeline"].map(|name| {
+        McpToolRegistry::read_only()
+            .execute(
+                name,
+                &runtime,
+                &context("rpc://acme/jobs/alpha#read"),
+                &McpCapabilityPolicy::read_only(),
+                Some(&arguments),
+            )
+            .unwrap()
+    });
+
+    // Assert
+    for result in results {
+        let unavailable = result["_meta"]["unavailable"].as_array().unwrap();
+        assert!(unavailable.contains(&serde_json::json!(
+            "per-call deadlines are unavailable from the admin projection; request age does not identify the remaining deadline"
+        )));
+        assert!(unavailable.contains(&serde_json::json!(
+            "per-call execution, completion and failure outcomes are unavailable from the admin projection; caller completion does not establish worker cleanup"
+        )));
+    }
+}
