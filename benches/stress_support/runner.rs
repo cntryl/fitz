@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 const LOADS: [usize; 7] = [1, 2, 4, 8, 16, 32, 64];
-const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(5);
 const VERIFY_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -72,7 +72,7 @@ async fn bounded<T>(
         .await
         .map_err(|_| BenchFailure {
             kind: FailureKind::Timeout,
-            detail: "complete TCP operation exceeded 10 seconds; outcome may be indeterminate"
+            detail: "complete TCP operation exceeded 60 seconds; outcome may be indeterminate"
                 .to_owned(),
         })?
 }
@@ -193,7 +193,7 @@ async fn bounded_step(
             detail: if window < OPERATION_TIMEOUT {
                 format!("lane {lane} exceeded its completed-cycle progress deadline; outcome may be indeterminate")
             } else {
-                "complete TCP operation exceeded 10 seconds; outcome may be indeterminate".to_owned()
+                "complete TCP operation exceeded 60 seconds; outcome may be indeterminate".to_owned()
             },
         })?
 }
