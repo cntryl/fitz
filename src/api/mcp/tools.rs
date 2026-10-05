@@ -94,6 +94,7 @@ impl McpToolRegistry {
                 budget: McpCostBudget::summary(),
             },
             |runtime, _invocation, context| {
+                let (families, truncated) = runtime.admin_auth().bounded_provisioned_route_families(256, context.principal.as_ref().map(|principal| &principal.route_family_access));
                 Ok(serde_json::json!({
                     "endpoint": "/mcp",
                     "protocol_revisions": [
@@ -105,10 +106,11 @@ impl McpToolRegistry {
                     "resources": ["domain-guarantees", "operational-fields", "troubleshooting"],
                     "authority": "OAuth grants map to AdminPrincipal route-family authority, SessionPermissions, and MCP capabilities; realm and route_family remain independent",
                     "mutations_default_enabled": false,
-                    "diagnostics_are": "current broker read-model snapshots",
-                    "broker": { "version": env!("CARGO_PKG_VERSION"), "ready": runtime.is_ready_for_traffic(), "draining": runtime.is_draining(), "traffic_status": runtime.traffic_status(), "fatal_domain_failure": runtime.has_fatal_domain_failure() },
-                    "route_families": runtime.admin_auth().provisioned_route_families().into_iter().filter(|family| context.principal.as_ref().is_some_and(|principal| principal.route_family_access.allows(family))).take(256).collect::<Vec<_>>(),
-                    "inventory": "list_resource_inventory: cursor pagination over scoped resource names; realm and route family are independent"
+                    "diagnostics_are": "cached administrative projections with unknown publication age",
+                    "broker": { "version": env!("CARGO_PKG_VERSION"), "ready": null, "draining": runtime.is_draining(), "traffic_status": runtime.traffic_status(), "fatal_domain_failure": runtime.has_fatal_domain_failure() },
+                    "route_families": families.into_iter().map(|family| family.to_string()).collect::<Vec<_>>(),
+                    "inventory": "list_resource_inventory: cursor pagination over scoped resource names; realm and route family are independent",
+                    "_meta": { "source": "fixed runtime flags and configured features; cached diagnostic rows are separate", "cached_projection": false, "partial": truncated, "unavailable": ["aggregate readiness requires a full domain-family health traversal; use the health HTTP endpoint"] }
                 }))
             },
         )
@@ -192,5 +194,22 @@ fn bounded_global(runtime: &Runtime, name: &str, stats: bool) -> McpToolResult<V
         )?
     };
     value["_meta"] = serde_json::json!({ "partial": snapshot.truncated, "collection_limit": snapshot.limit_per_collection, "source": "shared admin projections and broker counters", "unavailable": if snapshot.truncated { vec!["unobserved projection rows beyond the collection bound"] } else { Vec::<&str>::new() } });
+    if stats {
+        value["_meta"]["unavailable_fields"] = serde_json::json!([
+            "/domains/kv/keys_total",
+            "/domains/kv/operations_per_second",
+            "/domains/stream/watermark_lag_buckets",
+            "/domains/schedule/executions_per_minute",
+            "/domains/schedule/subscriptions_active",
+            "/domains/schedule/pending_ack_retries",
+            "/domains/schedule/oldest_pending_claim_age_seconds",
+            "/domains/schedule/notify_failures_total",
+            "/domains/schedule/ack_failures_total",
+            "/domains/schedule/overdue_normalizations_total"
+        ]);
+        value["_meta"]["unavailable"].as_array_mut().expect("array").push(serde_json::json!("fields in unavailable_fields use DTO defaults; their values are unknown, not measured zero"));
+    } else {
+        value["_meta"]["unavailable"].as_array_mut().expect("array").push(serde_json::json!("resource-attributed Schedule claim, retry, age, failure and normalization pressure; aggregate domain latency cannot establish a resource cause"));
+    }
     Ok(value)
 }

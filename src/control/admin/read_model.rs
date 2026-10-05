@@ -14,6 +14,7 @@ use std::sync::Arc;
 mod bounded;
 mod family_rows;
 mod inventory;
+mod resource_snapshot;
 pub(crate) use bounded::AdminSnapshot;
 use family_rows::{FamilyRow, FamilyRows, SessionRows};
 pub(crate) use inventory::{InventoryEntry, InventoryScope};

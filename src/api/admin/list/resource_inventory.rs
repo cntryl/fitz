@@ -15,6 +15,10 @@ use crate::runtime::routing::RouteFamily;
 use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+#[path = "rpc_operation_group_tests.rs"]
+mod rpc_operation_group_tests;
+
 pub(crate) fn kv_storage_error_response(error: &str) -> Response {
     crate::api::admin::error_response(hyper::StatusCode::SERVICE_UNAVAILABLE, error)
 }
@@ -543,11 +547,21 @@ pub(crate) fn rpc_operations_from_rows(
         .iter()
         .map(|worker| worker.route.as_str())
         .chain(pending.iter().map(|request| request.route.as_str()))
+        .filter(|route| super::matches_resource_route(route, path))
         .filter_map(parse_rpc_operation)
-        .filter(|operation| operation.matches_resource_path(path))
+        // A preceding ** can shift the fourth literal into another route position.
+        // Single-segment wildcards preserve its known operation position.
+        .filter(|operation| {
+            ![
+                operation.realm.as_str(),
+                operation.area.as_str(),
+                operation.resource.as_str(),
+            ]
+            .contains(&"**")
+        })
         .map(|operation| operation.operation)
+        .filter(|operation| !operation.contains('*'))
         .collect::<BTreeSet<_>>();
-    let mut matched_worker_indices = BTreeSet::new();
     let operations = operation_names
         .into_iter()
         .map(|operation| {
@@ -559,34 +573,28 @@ pub(crate) fn rpc_operations_from_rows(
             };
             let matching_workers = workers
                 .iter()
-                .enumerate()
-                .filter(|(_, worker)| matches_operation_route(&worker.route, &operation_path))
+                .filter(|worker| matches_operation_route(&worker.route, &operation_path))
                 .collect::<Vec<_>>();
-            matched_worker_indices.extend(matching_workers.iter().map(|(index, _)| *index));
             let requests_pending = pending
                 .iter()
                 .filter(|request| matches_operation_route(&request.route, &operation_path))
                 .count();
-            let exact_route = format!(
-                "rpc://{}/{}/{}/{}",
-                path.realm, path.area, path.resource, operation
-            );
             let attributable = matching_workers
                 .iter()
-                .all(|(_, worker)| !worker.route.contains('*') && worker.route == exact_route);
+                .all(|worker| !worker.route.contains('*'));
             let requests_handled_by_live_workers = attributable.then(|| {
-                matching_workers.iter().fold(0u64, |total, (_, worker)| {
+                matching_workers.iter().fold(0u64, |total, worker| {
                     total.saturating_add(worker.requests_handled)
                 })
             });
             let slowest_worker_average_latency_ms = if attributable
-                && matching_workers.iter().all(|(_, worker)| {
+                && matching_workers.iter().all(|worker| {
                     worker.requests_handled == 0 || worker.average_latency_ms.is_finite()
                 }) {
                 matching_workers
                     .iter()
-                    .filter(|(_, worker)| worker.requests_handled > 0)
-                    .map(|(_, worker)| worker.average_latency_ms.max(0.0))
+                    .filter(|worker| worker.requests_handled > 0)
+                    .map(|worker| worker.average_latency_ms.max(0.0))
                     .reduce(f64::max)
             } else {
                 None
@@ -601,13 +609,19 @@ pub(crate) fn rpc_operations_from_rows(
             }
         })
         .collect::<Vec<_>>();
-    let requests_pending = operations.iter().map(|entry| entry.requests_pending).sum();
+    let requests_pending = pending
+        .iter()
+        .filter(|request| super::matches_resource_route(&request.route, path))
+        .count();
 
     OperationCollection {
         realm: path.realm.to_string(),
         area: path.area.to_string(),
         resource: path.resource.to_string(),
-        workers_registered: matched_worker_indices.len(),
+        workers_registered: workers
+            .iter()
+            .filter(|worker| super::matches_resource_route(&worker.route, path))
+            .count(),
         requests_pending,
         operations,
     }

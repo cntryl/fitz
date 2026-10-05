@@ -1,12 +1,16 @@
 use crate::api::mcp::catalog::{compatibility_revision, primary_revision};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, ClientConfig, GetPromptRequestParams,
-    GetPromptResponse, Implementation, ListPromptsResult, ListResourceTemplatesResult,
-    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+    CallToolRequest, CallToolRequestParams, CallToolResponse, ClientConfig, ClientRequest,
+    GetPromptRequest, GetPromptRequestParams, GetPromptResponse, Implementation,
+    ListPromptsRequest, ListPromptsResult, ListResourceTemplatesRequest,
+    ListResourceTemplatesResult, ListResourcesRequest, ListResourcesResult, ListToolsRequest,
+    ListToolsResult, PaginatedRequestParams, ProtocolVersion, ReadResourceRequest,
     ReadResourceRequestParams, ReadResourceResponse, ServerCapabilities, ServerConfig,
+    ServerResult,
 };
 use rmcp::service::{
-    ClientLifecycleMode, ClientServiceExt, Peer, RoleClient, RoleServer, ServiceExt,
+    ClientLifecycleMode, ClientServiceExt, Peer, PeerRequestOptions, RequestContext, RoleClient,
+    RoleServer, ServiceExt,
 };
 use rmcp::transport::stdio;
 use rmcp::transport::streamable_http_client::{
@@ -76,7 +80,9 @@ fn validate_endpoint(value: &str) -> Result<(), &'static str> {
         || endpoint.fragment().is_some()
         || endpoint.path() != "/mcp"
     {
-        return Err("FITZ_MCP_HTTP_URL must be an HTTPS /mcp URL (HTTP is allowed for loopback development)");
+        return Err(
+            "FITZ_MCP_HTTP_URL must be an HTTPS /mcp URL (HTTP is allowed for loopback development)",
+        );
     }
     Ok(())
 }
@@ -112,6 +118,39 @@ struct StdioProxy {
     remote: Peer<RoleClient>,
 }
 
+impl StdioProxy {
+    async fn forward(
+        &self,
+        request: ClientRequest,
+        context: RequestContext<RoleServer>,
+        may_mutate: bool,
+    ) -> Result<ServerResult, ErrorData> {
+        if context.ct.is_cancelled() {
+            return Err(ErrorData::internal_error(
+                "MCP request was canceled before forwarding",
+                None,
+            ));
+        }
+        let mut handle = self
+            .remote
+            .send_cancellable_request(request, PeerRequestOptions::no_options())
+            .await
+            .map_err(upstream_error)?;
+        tokio::select! {
+            biased;
+            () = context.ct.cancelled() => {
+                let _ = handle.cancel(Some("stdio request canceled".into())).await;
+                Err(ErrorData::internal_error(if may_mutate {
+                    "Action outcome is indeterminate; do not retry; inspect the upstream action audit"
+                } else {
+                    "MCP request was canceled; any running upstream read may finish in the background"
+                }, None))
+            }
+            response = &mut handle.rx => response.map_err(upstream_error)?.map_err(upstream_error),
+        }
+    }
+}
+
 impl ServerHandler for StdioProxy {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(
@@ -133,81 +172,117 @@ impl ServerHandler for StdioProxy {
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParams>,
-        _context: rmcp::service::RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        self.remote
-            .list_tools(request)
-            .await
-            .map_err(upstream_error)
+        let request = ClientRequest::ListToolsRequest(ListToolsRequest {
+            params: request,
+            ..Default::default()
+        });
+        match self.forward(request, context, false).await? {
+            ServerResult::ListToolsResult(result) => Ok(result),
+            _ => Err(upstream_error("unexpected response")),
+        }
     }
 
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: rmcp::service::RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        self.remote
-            .call_tool_once(request)
-            .await
-            .map_err(upstream_error)
+        let may_mutate = matches!(
+            request.name.as_ref(),
+            "confirm_runtime_drain" | "confirm_queue_dead_letter_action"
+        );
+        let request = ClientRequest::CallToolRequest(CallToolRequest::new(request));
+        match self.forward(request, context, may_mutate).await? {
+            ServerResult::CallToolResult(result) => Ok(CallToolResponse::Complete(result)),
+            ServerResult::InputRequiredResult(result) => {
+                Ok(CallToolResponse::InputRequired(result))
+            }
+            ServerResult::CreateTaskResult(result) => Ok(CallToolResponse::Task(result)),
+            _ => Err(upstream_error("unexpected response")),
+        }
     }
 
     async fn list_resources(
         &self,
         request: Option<PaginatedRequestParams>,
-        _context: rmcp::service::RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        self.remote
-            .list_resources(request)
-            .await
-            .map_err(upstream_error)
+        let request = ClientRequest::ListResourcesRequest(ListResourcesRequest {
+            params: request,
+            ..Default::default()
+        });
+        match self.forward(request, context, false).await? {
+            ServerResult::ListResourcesResult(result) => Ok(result),
+            _ => Err(upstream_error("unexpected response")),
+        }
     }
 
     async fn list_resource_templates(
         &self,
         request: Option<PaginatedRequestParams>,
-        _context: rmcp::service::RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
-        self.remote
-            .list_resource_templates(request)
-            .await
-            .map_err(upstream_error)
+        let request = ClientRequest::ListResourceTemplatesRequest(ListResourceTemplatesRequest {
+            params: request,
+            ..Default::default()
+        });
+        match self.forward(request, context, false).await? {
+            ServerResult::ListResourceTemplatesResult(result) => Ok(result),
+            _ => Err(upstream_error("unexpected response")),
+        }
     }
 
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
-        _context: rmcp::service::RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        self.remote
-            .read_resource_once(request)
-            .await
-            .map_err(upstream_error)
+        let request = ClientRequest::ReadResourceRequest(ReadResourceRequest::new(request));
+        match self.forward(request, context, false).await? {
+            ServerResult::ReadResourceResult(result) => Ok(ReadResourceResponse::Complete(result)),
+            ServerResult::InputRequiredResult(result) => {
+                Ok(ReadResourceResponse::InputRequired(result))
+            }
+            _ => Err(upstream_error("unexpected response")),
+        }
     }
 
     async fn list_prompts(
         &self,
         request: Option<PaginatedRequestParams>,
-        _context: rmcp::service::RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, ErrorData> {
-        self.remote
-            .list_prompts(request)
-            .await
-            .map_err(upstream_error)
+        let request = ClientRequest::ListPromptsRequest(ListPromptsRequest {
+            params: request,
+            ..Default::default()
+        });
+        match self.forward(request, context, false).await? {
+            ServerResult::ListPromptsResult(result) => Ok(result),
+            _ => Err(upstream_error("unexpected response")),
+        }
     }
 
     async fn get_prompt(
         &self,
         request: GetPromptRequestParams,
-        _context: rmcp::service::RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, ErrorData> {
-        self.remote
-            .get_prompt_once(request)
-            .await
-            .map_err(upstream_error)
+        let request = ClientRequest::GetPromptRequest(GetPromptRequest::new(request));
+        match self.forward(request, context, false).await? {
+            ServerResult::GetPromptResult(result) => Ok(GetPromptResponse::Complete(result)),
+            ServerResult::InputRequiredResult(result) => {
+                Ok(GetPromptResponse::InputRequired(result))
+            }
+            _ => Err(upstream_error("unexpected response")),
+        }
     }
 }
 
 fn upstream_error(_error: impl std::fmt::Display) -> ErrorData {
     ErrorData::internal_error("Fitz MCP upstream request failed", None)
 }
+
+#[cfg(test)]
+mod tests;

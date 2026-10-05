@@ -34,7 +34,7 @@ impl KvFamilyRuntime<'_> {
             return Ok(None);
         };
         let estimate = decode_estimate(&value)?;
-        Ok(Some(self.inventory_entry_from_estimate(
+        Ok(Some(Self::inventory_metadata_entry_from_estimate(
             family.as_u64(),
             realm,
             area,
@@ -93,20 +93,9 @@ impl KvFamilyRuntime<'_> {
             .map(|(realm, area, resource, value)| {
                 let estimate = decode_estimate(&value)?;
                 // Estimates can be incomplete. Read-only diagnostics never refresh or write them.
-                Ok(crate::control::admin::KvResourceInventoryEntry {
-                    route_family: family,
-                    realm,
-                    area,
-                    resource,
-                    estimated_record_count: estimate.estimated_record_count,
-                    estimated_storage_bytes: estimate.estimated_storage_bytes,
-                    estimate_complete: estimate.estimate_complete,
-                    read_latency_avg_ms: 0.0,
-                    read_latency_p95_ms: 0.0,
-                    write_latency_avg_ms: 0.0,
-                    write_latency_p95_ms: 0.0,
-                    transactions_active: 0,
-                })
+                Ok(Self::inventory_metadata_entry_from_estimate(
+                    family, &realm, &area, &resource, estimate,
+                ))
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok((entries, has_more))
@@ -307,6 +296,26 @@ impl KvFamilyRuntime<'_> {
     ) -> crate::control::admin::KvResourceInventoryEntry {
         let resource_key = KvResourceLockKey::new(family_id, realm, area, resource);
         let (read_latency, write_latency) = self.latency_snapshots(&resource_key);
+        let mut entry = Self::inventory_metadata_entry_from_estimate(
+            family_id, realm, area, resource, estimate,
+        );
+        entry.read_latency_avg_ms = read_latency.avg_ms;
+        entry.read_latency_p95_ms = read_latency.p95_ms;
+        entry.write_latency_avg_ms = write_latency.avg_ms;
+        entry.write_latency_p95_ms = write_latency.p95_ms;
+        entry.transactions_active = self.active_transactions_for_resource(&resource_key);
+        entry
+    }
+
+    /// Metadata reads have no live counters or latency samples. Their zero DTO
+    /// defaults are unavailable values, not observations of idle resources.
+    fn inventory_metadata_entry_from_estimate(
+        family_id: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        estimate: KvInventoryEstimate,
+    ) -> crate::control::admin::KvResourceInventoryEntry {
         crate::control::admin::KvResourceInventoryEntry {
             route_family: family_id,
             realm: realm.to_string(),
@@ -315,11 +324,11 @@ impl KvFamilyRuntime<'_> {
             estimated_record_count: estimate.estimated_record_count,
             estimated_storage_bytes: estimate.estimated_storage_bytes,
             estimate_complete: estimate.estimate_complete,
-            read_latency_avg_ms: read_latency.avg_ms,
-            read_latency_p95_ms: read_latency.p95_ms,
-            write_latency_avg_ms: write_latency.avg_ms,
-            write_latency_p95_ms: write_latency.p95_ms,
-            transactions_active: self.active_transactions_for_resource(&resource_key),
+            read_latency_avg_ms: 0.0,
+            read_latency_p95_ms: 0.0,
+            write_latency_avg_ms: 0.0,
+            write_latency_p95_ms: 0.0,
+            transactions_active: 0,
         }
     }
 }

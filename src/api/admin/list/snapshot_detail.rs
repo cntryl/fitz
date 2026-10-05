@@ -96,18 +96,15 @@ fn kv_snapshot_detail(
         .iter()
         .filter(|item| path.matches(&item.realm, &item.area, &item.resource))
         .count();
-    let families = family.map_or_else(
+    let (families, truncated) = family.map_or_else(
         || {
             runtime
                 .admin_auth()
-                .provisioned_route_families()
-                .into_iter()
-                .filter_map(|value| value.parse().ok())
-                .collect::<Vec<u64>>()
+                .bounded_provisioned_route_families(64, None)
         },
-        |family| vec![family],
+        |family| (vec![family], false),
     );
-    if families.len() > 64 {
+    if truncated {
         return Err("KV detail exceeds the family collection budget; select one family".into());
     }
     let mut entries = Vec::new();

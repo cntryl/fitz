@@ -4,7 +4,7 @@ use super::{
     QueueInflight, QueueInfo, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo, StreamInfo,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct AdminSnapshot {
     pub kv_transactions: Vec<KvTransaction>,
     pub streams: Vec<StreamInfo>,
@@ -103,7 +103,11 @@ impl AdminReadModel {
             &mut truncated,
         );
         let pending_fire_claims = family.map_or_else(
-            || self.schedule_pending_fire_counts.read().values().sum(),
+            || {
+                let counts = self.schedule_pending_fire_counts.read();
+                truncated |= counts.len() > limit;
+                counts.values().take(limit).sum()
+            },
             |family| {
                 self.schedule_pending_fire_counts
                     .read()

@@ -5,11 +5,16 @@ use super::super::{
 };
 use crate::runtime::routing::{route_quad, route_triplet};
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 pub(super) type ResourceIdentity = (u64, String, String, String);
 
 pub(super) trait FamilyRow {
     fn family(&self) -> u64;
     fn inventory_identity(&self) -> Option<ResourceIdentity>;
+    fn matches_resource(&self, realm: &str, area: &str, resource: &str) -> bool {
+        self.inventory_identity()
+            .is_some_and(|key| key.1 == realm && key.2 == area && key.3 == resource)
+    }
 }
 
 macro_rules! resource_row {
@@ -26,6 +31,9 @@ macro_rules! route_row {
             route_quad(route).map(|parts| (self.route_family, parts.realm.to_string(), parts.area.to_string(), parts.resource.to_string()))
                 .or_else(|| route_triplet(route).map(|parts| (self.route_family, parts.realm.to_string(), parts.area.to_string(), parts.resource.to_string())))
         }
+        fn matches_resource(&self, realm: &str, area: &str, resource: &str) -> bool {
+            crate::runtime::matcher::matches_resource_registration(&self.$field, realm, area, resource)
+        }
     })+ };
 }
 resource_row!(route_family; KvTransaction, StreamInfo);
@@ -34,8 +42,10 @@ route_row!(route; NoticeRouteInfo, RpcWorker, RpcPendingRequest);
 route_row!(pattern; NoticeSubscription);
 
 pub(super) struct FamilyRows<T> {
-    families: BTreeMap<u64, Vec<T>>,
-    resources: BTreeMap<ResourceIdentity, usize>,
+    // Both indices reference the same immutable projection row; payloads are never duplicated.
+    families: BTreeMap<u64, Vec<Arc<T>>>,
+    resources: BTreeMap<ResourceIdentity, Vec<Arc<T>>>,
+    patterns: BTreeMap<u64, Vec<Arc<T>>>,
 }
 
 impl<T> Default for FamilyRows<T> {
@@ -43,6 +53,7 @@ impl<T> Default for FamilyRows<T> {
         Self {
             families: BTreeMap::new(),
             resources: BTreeMap::new(),
+            patterns: BTreeMap::new(),
         }
     }
 }
@@ -57,7 +68,7 @@ impl<T: FamilyRow> From<Vec<T>> for FamilyRows<T> {
 
 impl<T: FamilyRow> FamilyRows<T> {
     pub(super) fn iter(&self) -> impl Iterator<Item = &T> {
-        self.families.values().flatten()
+        self.families.values().flatten().map(Arc::as_ref)
     }
 
     pub(super) fn replace_matching(&mut self, item: T, matches: impl Fn(&T) -> bool) {
@@ -71,8 +82,21 @@ impl<T: FamilyRow> FamilyRows<T> {
     }
 
     pub(super) fn push(&mut self, item: T) {
-        if let Some(identity) = item.inventory_identity() {
-            *self.resources.entry(identity).or_default() += 1;
+        let item = Arc::new(item);
+        if let Some(identity) = item.inventory_identity().filter(|key| {
+            ![&key.1, &key.2, &key.3]
+                .iter()
+                .any(|part| part.contains('*'))
+        }) {
+            self.resources
+                .entry(identity)
+                .or_default()
+                .push(Arc::clone(&item));
+        } else {
+            self.patterns
+                .entry(item.family())
+                .or_default()
+                .push(Arc::clone(&item));
         }
         self.families.entry(item.family()).or_default().push(item);
     }
@@ -90,11 +114,17 @@ impl<T: FamilyRow> FamilyRows<T> {
                     return true;
                 }
                 if let Some(identity) = item.inventory_identity() {
-                    if let Some(count) = self.resources.get_mut(&identity) {
-                        *count -= 1;
-                        if *count == 0 {
+                    if let Some(rows) = self.resources.get_mut(&identity) {
+                        rows.retain(|row| !Arc::ptr_eq(row, item));
+                        if rows.is_empty() {
                             self.resources.remove(&identity);
                         }
+                    }
+                }
+                if let Some(rows) = self.patterns.get_mut(&item.family()) {
+                    rows.retain(|row| !Arc::ptr_eq(row, item));
+                    if rows.is_empty() {
+                        self.patterns.remove(&item.family());
                     }
                 }
                 false
@@ -123,6 +153,39 @@ impl<T: FamilyRow> FamilyRows<T> {
         self.families
             .range(start..=end)
             .flat_map(|(_, items)| items)
+            .map(Arc::as_ref)
+    }
+
+    pub(super) fn resource_snapshot(
+        &self,
+        identity: &ResourceIdentity,
+        limit: usize,
+        truncated: &mut bool,
+    ) -> Vec<T>
+    where
+        T: Clone,
+    {
+        let mut exact = self.resources.get(identity).into_iter().flatten();
+        let mut result = exact
+            .by_ref()
+            .take(limit)
+            .map(|row| row.as_ref().clone())
+            .collect::<Vec<_>>();
+        *truncated |= exact.next().is_some();
+        // Wildcard registrations cannot be indexed by one concrete resource. Bound their
+        // inspection separately and report unknown completeness if that scan is exhausted.
+        let mut patterns = self.patterns.get(&identity.0).into_iter().flatten();
+        for row in patterns.by_ref().take(limit) {
+            if row.matches_resource(&identity.1, &identity.2, &identity.3) {
+                if result.len() == limit {
+                    *truncated = true;
+                    break;
+                }
+                result.push(row.as_ref().clone());
+            }
+        }
+        *truncated |= patterns.next().is_some();
+        result
     }
 }
 

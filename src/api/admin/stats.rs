@@ -215,46 +215,141 @@ pub(crate) fn build_bounded_global_stats(
         lease,
         schedule,
     } = troubleshooting::build_bounded_runtime_diagnostics(runtime, snapshot);
-    let mut broker = BrokerStats {
+    let mut stats = build_snapshot_stats(snapshot);
+    stats.broker = BrokerStats {
         uptime_seconds: runtime.uptime().as_secs(),
         connections: runtime.connection_count(),
         sessions: runtime.session_count(),
-        realms: Vec::new(),
+        realms: stats.broker.realms,
         messages_per_second: runtime.messages_per_second(),
         router_backpressure_total: runtime.router_backpressure_total(),
         router_high_lane_backpressure_total: runtime.router_high_lane_backpressure_total(),
     };
-    broker.realms = snapshot
-        .kv_transactions
+    apply_bounded_projection_stats(&mut stats.domains, snapshot);
+    apply_fixed_global_metrics(runtime, &mut stats.domains);
+    stats.domains.kv.diagnostics = kv;
+    stats.domains.stream.diagnostics = stream;
+    stats.domains.notice.diagnostics = notice;
+    stats.domains.queue.diagnostics = queue;
+    stats.domains.rpc.diagnostics = rpc;
+    stats.domains.lease.diagnostics = lease;
+    stats.domains.schedule.diagnostics = schedule;
+    stats.diagnostics = global;
+    stats
+}
+
+fn apply_bounded_projection_stats(
+    domains: &mut DomainStats,
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+) {
+    domains.stream.events_total = snapshot.streams.iter().fold(0_usize, |total, stream| {
+        total.saturating_add(usize::try_from(stream.committed_event_count).unwrap_or(usize::MAX))
+    });
+    domains.stream.subscriptions_active = snapshot
+        .streams
         .iter()
-        .map(|item| item.realm.clone())
-        .chain(snapshot.streams.iter().map(|item| item.realm.clone()))
-        .chain(snapshot.queues.iter().map(|item| item.realm.clone()))
-        .chain(snapshot.leases.iter().map(|item| item.realm.clone()))
-        .chain(snapshot.schedules.iter().map(|item| item.realm.clone()))
-        .chain(
-            snapshot
-                .notice_subscriptions
-                .iter()
-                .map(|item| item.realm.clone()),
-        )
-        .chain(snapshot.rpc_workers.iter().map(|item| item.realm.clone()))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    GlobalStats {
-        broker,
-        domains: DomainStats {
-            kv: build_kv_stats(runtime, kv),
-            stream: build_stream_stats(runtime, stream),
-            notice: build_notice_stats(runtime, notice),
-            queue: build_queue_stats(runtime, queue),
-            rpc: build_rpc_stats(runtime, rpc),
-            lease: build_lease_stats(runtime, lease),
-            schedule: build_schedule_stats(runtime, schedule),
-        },
-        diagnostics: global,
+        .map(|stream| stream.subscriptions_active)
+        .sum();
+    for queue in &snapshot.queues {
+        domains.queue.oldest_message_age_seconds = domains
+            .queue
+            .oldest_message_age_seconds
+            .max(queue.oldest_message_age_seconds);
+        domains.queue.oldest_backlog_age_seconds = domains
+            .queue
+            .oldest_backlog_age_seconds
+            .max(queue.oldest_backlog_age_seconds);
+        domains
+            .queue
+            .backlog_age_buckets
+            .merge(queue.backlog_age_buckets);
+        domains
+            .queue
+            .delay_age_buckets
+            .merge(queue.delay_age_buckets);
     }
+    let latency = troubleshooting::summarize_rpc_worker_latency(snapshot.rpc_workers.iter());
+    domains.rpc.slowest_worker_average_latency_ms = latency.slowest_worker_average_latency_ms;
+    domains.rpc.worker_latency_buckets = latency.worker_latency_buckets;
+    domains.lease.oldest_lease_age_seconds = snapshot
+        .leases
+        .iter()
+        .filter_map(|lease| troubleshooting::age_seconds_since(&lease.acquired_at))
+        .max()
+        .unwrap_or(0);
+}
+
+// Every getter here reads a scalar metric or fixed-size histogram. Actor-wide
+// queries and projection copies belong to the full REST builders below.
+fn apply_fixed_global_metrics(runtime: &Runtime, domains: &mut DomainStats) {
+    let kv = &mut domains.kv;
+    kv.commits_failed_total = runtime.kv_commits_failed_total();
+    kv.invalid_transaction_rejects_total = runtime.kv_invalid_transaction_rejects_total();
+    let stream = &mut domains.stream;
+    stream.requests_total = runtime.stream_requests_total();
+    stream.success_total = runtime.stream_success_total();
+    stream.failure_total = runtime.stream_failure_total();
+    stream.append_sessions_started_total = runtime.stream_append_sessions_started_total();
+    stream.append_sessions_ended_total = runtime.stream_append_sessions_ended_total();
+    stream.append_conflicts_total = runtime.stream_append_conflicts_total();
+    stream.notify_drops_total = runtime.stream_notify_drops_total();
+    stream.request_latency_buckets = runtime.stream_request_latency_buckets();
+    stream.operations_per_second = runtime.stream_operations_per_second();
+    let notice = &mut domains.notice;
+    notice.requests_total = runtime.notice_requests_total();
+    notice.success_total = runtime.notice_success_total();
+    notice.failure_total = runtime.notice_failure_total();
+    notice.delivery_drops_total = runtime.notice_delivery_drops_total();
+    notice.unsubscribes_total = runtime.notice_unsubscribes_total();
+    notice.wildcard_limit_rejects_total = runtime.notice_wildcard_limit_rejects_total();
+    notice.publishes_per_second = runtime.notice_publishes_per_second();
+    let queue = &mut domains.queue;
+    queue.requests_total = runtime.queue_requests_total();
+    queue.success_total = runtime.queue_success_total();
+    queue.failure_total = runtime.queue_failure_total();
+    queue.enqueues_total = runtime.queue_enqueues_total();
+    queue.reserves_total = runtime.queue_reserves_total();
+    queue.completes_total = runtime.queue_completes_total();
+    queue.releases_total = runtime.queue_releases_total();
+    queue.extends_total = runtime.queue_extends_total();
+    queue.notify_drops_total = runtime.queue_notify_drops_total();
+    queue.redeliveries_total = runtime.queue_redeliveries_total();
+    queue.dead_letter_transitions_total = runtime.queue_dead_letter_transitions_total();
+    queue.complete_rejected_total = runtime.queue_complete_rejected_total();
+    queue.operations_per_second = runtime.queue_operations_per_second();
+    let rpc = &mut domains.rpc;
+    rpc.requests_total = runtime.rpc_requests_total();
+    rpc.success_total = runtime.rpc_success_total();
+    rpc.failure_total = runtime.rpc_failure_total();
+    rpc.request_timeouts_total = runtime.rpc_request_timeouts_total();
+    rpc.backpressure_rejects_total = runtime.rpc_backpressure_rejects_total();
+    rpc.duplicate_correlation_rejects_total = runtime.rpc_duplicate_correlation_rejects_total();
+    rpc.wrong_worker_rejects_total = runtime.rpc_wrong_worker_rejects_total();
+    rpc.responses_dropped_closed_caller_total = runtime.rpc_responses_dropped_closed_caller_total();
+    rpc.responses_missing_pending_total = runtime.rpc_responses_missing_pending_total();
+    rpc.invalid_sequence_responses_total = runtime.rpc_invalid_sequence_responses_total();
+    rpc.invalid_sequence_errors_forwarded_total =
+        runtime.rpc_invalid_sequence_errors_forwarded_total();
+    rpc.invalid_sequence_errors_dropped_total = runtime.rpc_invalid_sequence_errors_dropped_total();
+    rpc.operations_per_second = runtime.rpc_operations_per_second();
+    let lease = &mut domains.lease;
+    lease.waiter_depth = runtime.lease_waiter_depth();
+    lease.requests_total = runtime.lease_requests_total();
+    lease.success_total = runtime.lease_success_total();
+    lease.failure_total = runtime.lease_failure_total();
+    lease.acquire_timeouts_total = runtime.lease_acquire_timeouts_total();
+    lease.forced_releases_total = runtime.lease_forced_releases_total();
+    lease.invalid_token_rejects_total = runtime.lease_invalid_token_rejects_total();
+    lease.ownership_churn_total = runtime.lease_ownership_churn_total();
+    lease.operations_per_second = runtime.lease_operations_per_second();
+    let schedule = &mut domains.schedule;
+    schedule.request_latency_buckets = runtime.schedule_request_latency_buckets();
+    schedule.create_persistence_failures_total =
+        runtime.schedule_create_persistence_failures_total();
+    schedule.upsert_persistence_failures_total =
+        runtime.schedule_upsert_persistence_failures_total();
+    schedule.cancel_persistence_failures_total =
+        runtime.schedule_cancel_persistence_failures_total();
 }
 
 fn build_broker_stats(runtime: &Runtime) -> BrokerStats {
@@ -750,3 +845,6 @@ fn handle_schedule_stats(
 ) -> Response {
     crate::api::admin::json_response(build_schedule_stats(runtime, diagnostics))
 }
+
+#[cfg(test)]
+mod tests;

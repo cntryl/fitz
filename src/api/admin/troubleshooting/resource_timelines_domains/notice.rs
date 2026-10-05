@@ -47,10 +47,12 @@ pub(crate) fn notice_resource_timeline(
     let diagnostics = notice_resource_diagnostics(subscriptions_active);
     let publishes_per_minute = matching_routes
         .iter()
+        .filter(|route| !route.route.contains('*'))
         .map(|route| route.publishes_per_minute)
         .fold(0.0_f64, f64::max);
     let publishes_total = matching_routes
         .iter()
+        .filter(|route| !route.route.contains('*'))
         .map(|route| route.publishes_total)
         .sum::<u64>();
     let mut candidates = Vec::new();
@@ -77,9 +79,8 @@ pub(crate) fn notice_resource_timeline(
                     None,
                     None,
                     None,
-                    Some(u64_to_usize_non_negative(
-                        subscription.notifications_received,
-                    )),
+                    (!subscription.pattern.contains('*'))
+                        .then(|| u64_to_usize_non_negative(subscription.notifications_received)),
                 ),
             ));
         }

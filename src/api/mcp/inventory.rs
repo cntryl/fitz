@@ -219,7 +219,7 @@ fn inventory(
     };
     Ok(
         serde_json::json!({ "route_family": request.route_family, "items": items, "next_cursor": next_cursor, "has_more": has_more, "limit": limit,
-            "_meta": { "source": if persisted_kv { "persisted KV inventory estimates; metadata-only read" } else { "shared admin projections" }, "cached_projection": !persisted_kv, "partial": has_more, "unavailable": if persisted_kv { vec!["latency histories and payloads"] } else { vec!["inactive KV resources outside current projections; select scheme kv and a known realm for persisted metadata", "payloads and durable event history"] }, "cursor_ttl_seconds": 300, "cursor_capacity": MAX_CURSORS, "scan_limit_per_projection": limit + 2 }
+            "_meta": { "source": if persisted_kv { "persisted KV inventory estimates; metadata-only read" } else { "shared admin projections" }, "cached_projection": !persisted_kv, "partial": has_more, "unavailable": if persisted_kv { vec!["live transaction counters and latency histories use unknown/default placeholders; payloads are not returned"] } else { vec!["inactive KV resources outside current projections; select scheme kv and a known realm for persisted metadata", "payloads and durable event history"] }, "cursor_ttl_seconds": 300, "cursor_capacity": MAX_CURSORS, "scan_limit_per_projection": limit + 2 }
         }),
     )
 }

@@ -155,19 +155,19 @@ cargo test --lib should_measure_bounded_operational_reads_without_promising_hard
 
 | Tool | p95 (ms) | Largest result (bytes) |
 | --- | ---: | ---: |
-| `get_global_stats` | 2.434 | 8,384 |
-| `get_global_troubleshooting` | 0.576 | 1,033 |
-| `inspect_resource_detail` | 0.945 | 829 |
-| `inspect_resource_timeline` | 0.551 | 2,363 |
-| `explain_global_troubleshooting` | 0.531 | 1,033 |
-| `get_mcp_discovery` | 0.076 | 1,397 |
-| `get_sessions` | 0.043 | 641 |
-| `get_topology` | 5.491 | 69,307 |
-| `get_structured_metrics` | 0.297 | 2,947 |
-| `list_resource_inventory` | 1.158 | 9,285 |
+| `get_global_stats` | 2.630 | 9,097 |
+| `get_global_troubleshooting` | 0.639 | 1,368 |
+| `inspect_resource_detail` | 0.154 | 972 |
+| `inspect_resource_timeline` | 0.235 | 2,483 |
+| `explain_global_troubleshooting` | 0.565 | 1,368 |
+| `get_mcp_discovery` | 0.088 | 1,566 |
+| `get_sessions` | 0.039 | 641 |
+| `get_topology` | 5.671 | 69,307 |
+| `get_structured_metrics` | 0.227 | 2,947 |
+| `list_resource_inventory` | 1.192 | 9,285 |
 
 No read exceeded its item/byte/wait budget in these 200 calls. The largest
-elapsed time was 10.022 ms (`get_global_stats`). These are focused acceptance
+elapsed time was 8.196 ms (`get_global_stats`). These are focused acceptance
 observations, not production latency targets or measurements of source age.
 
 MCP audit records retained in memory are bounded to the most recent 1,024
@@ -231,6 +231,13 @@ disabled on Unix. The adapter negotiates the primary revision and falls back to
 the `2025-11-25` initialize lifecycle. For local development only, it accepts
 plain HTTP when the endpoint host is loopback. It sends diagnostics to stderr
 and reserves stdout for MCP stdio frames.
+
+The adapter forwards cooperative request cancellation upstream for tools,
+resources, prompts and discovery. A request canceled before forwarding starts
+no remote work. After admission, a canceled confirmed action has an
+indeterminate outcome: do not retry it automatically. Remote synchronous
+cleanup may continue; the broker's durable audit remains the action-status
+authority.
 
 ## Tests and changes
 

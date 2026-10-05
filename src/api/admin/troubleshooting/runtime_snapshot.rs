@@ -19,15 +19,69 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
     let snapshot = runtime
         .admin_read_model()
         .bounded_snapshot(None, usize::MAX);
-    build_bounded_runtime_diagnostics(runtime, &snapshot)
+    build_runtime_diagnostics_with_schedule(
+        runtime,
+        &snapshot,
+        ScheduleDiagnosticCounters::from_runtime(runtime),
+    )
 }
 
 pub(crate) fn build_bounded_runtime_diagnostics(
     runtime: &Runtime,
     snapshot: &crate::control::admin::read_model::AdminSnapshot,
 ) -> RuntimeDiagnostics {
+    // Broker/family totals cannot identify the affected Schedule resource.
+    // The bounded path never asks actors for an unbounded live-count scan.
+    let mut diagnostics = build_runtime_diagnostics_with_schedule(
+        runtime,
+        snapshot,
+        ScheduleDiagnosticCounters::default(),
+    );
+    diagnostics.global.incident_summary =
+        bounded_incident_summary(diagnostics.global.incident_summary);
+    diagnostics
+}
+
+fn bounded_incident_summary(mut summary: IncidentSummary) -> IncidentSummary {
+    if summary.status == IncidentStatus::Healthy {
+        summary.status = IncidentStatus::Unknown;
+        summary.title = "Health is unknown from bounded cached evidence".into();
+        summary.confidence = summary.confidence.min(0.5);
+        summary.explanation = "No elevated pressure was established from the bounded cached projection rows and fixed broker counters. Source publication age and unobserved Schedule runtime pressure are unknown; this evidence cannot prove health or ongoing domain progress.".into();
+    }
+    summary
+}
+
+#[derive(Clone, Copy, Default)]
+struct ScheduleDiagnosticCounters {
+    pending_fire_claims: usize,
+    pending_ack_retries: usize,
+    oldest_pending_claim_age_seconds: u64,
+    notify_failures: u64,
+    ack_failures: u64,
+    overdue_normalizations: u64,
+}
+
+impl ScheduleDiagnosticCounters {
+    fn from_runtime(runtime: &Runtime) -> Self {
+        Self {
+            pending_fire_claims: runtime.schedule_pending_fire_claims(),
+            pending_ack_retries: runtime.schedule_pending_ack_retries(),
+            oldest_pending_claim_age_seconds: runtime.schedule_oldest_pending_claim_age_seconds(),
+            notify_failures: runtime.schedule_notify_failures(),
+            ack_failures: runtime.schedule_ack_failures(),
+            overdue_normalizations: runtime.schedule_overdue_normalizations(),
+        }
+    }
+}
+
+fn build_runtime_diagnostics_with_schedule(
+    runtime: &Runtime,
+    snapshot: &crate::control::admin::read_model::AdminSnapshot,
+    schedule_counters: ScheduleDiagnosticCounters,
+) -> RuntimeDiagnostics {
     let now = Utc::now();
-    let analyses = collect_runtime_domain_analyses(runtime, snapshot, now);
+    let analyses = collect_runtime_domain_analyses(runtime, snapshot, &schedule_counters, now);
     let mut all_hotspots = collect_runtime_hotspots(runtime, &analyses);
     all_hotspots.sort_by(compare_scored_hotspots);
     all_hotspots.truncate(5);
@@ -151,6 +205,7 @@ struct RuntimeDomainSnapshot {
 fn collect_runtime_domain_analyses(
     runtime: &Runtime,
     snapshot: &crate::control::admin::read_model::AdminSnapshot,
+    schedule_counters: &ScheduleDiagnosticCounters,
     now: DateTime<Utc>,
 ) -> RuntimeDomainSnapshot {
     RuntimeDomainSnapshot {
@@ -183,13 +238,13 @@ fn collect_runtime_domain_analyses(
         lease: analyze_lease(&snapshot.leases, now),
         schedule: analyze_schedule(
             &snapshot.schedules,
-            runtime.schedule_pending_fire_claims(),
-            runtime.schedule_pending_ack_retries(),
-            runtime.schedule_oldest_pending_claim_age_seconds(),
+            schedule_counters.pending_fire_claims,
+            schedule_counters.pending_ack_retries,
+            schedule_counters.oldest_pending_claim_age_seconds,
             runtime.schedule_request_latency_buckets(),
-            runtime.schedule_notify_failures(),
-            runtime.schedule_ack_failures(),
-            runtime.schedule_overdue_normalizations(),
+            schedule_counters.notify_failures,
+            schedule_counters.ack_failures,
+            schedule_counters.overdue_normalizations,
             now,
         ),
     }
@@ -294,3 +349,6 @@ pub(crate) fn summarize_incident(top_bottleneck: Option<&DiagnosticHotspot>) -> 
         suggested_next_queries,
     }
 }
+
+#[cfg(test)]
+mod tests;

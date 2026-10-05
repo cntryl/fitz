@@ -19,9 +19,9 @@ pub(super) fn build_resource_detail_value(
         .resource_request()
         .expect("validated resource invocation");
     let family = invocation.route_family();
-    let snapshot = runtime.admin_read_model().bounded_snapshot(family, 512);
+    let snapshot = collect_resource(runtime, invocation, name)?;
     if snapshot.truncated {
-        return Err(McpToolError::InvalidArguments { tool_name: name.into(), reason: "resource detail collection exceeds its scan budget; use inventory pagination or a narrower family".into() });
+        return Err(McpToolError::InvalidArguments { tool_name: name.into(), reason: "resource detail exceeds its bounded rows or wildcard-registration scan; evidence is incomplete".into() });
     }
     let path = ResourcePath {
         realm: &request.realm,
@@ -29,12 +29,15 @@ pub(super) fn build_resource_detail_value(
         resource: &request.resource,
     };
     let domain = DomainKind::from_scheme(&request.scheme).expect("validated domain");
-    crate::api::admin::snapshot_detail(runtime, &snapshot, &path, family, domain).map_err(
-        |reason| McpToolError::InvalidArguments {
-            tool_name: name.into(),
-            reason,
-        },
-    )
+    let mut value = crate::api::admin::snapshot_detail(runtime, &snapshot, &path, family, domain)
+        .map_err(|reason| McpToolError::InvalidArguments {
+        tool_name: name.into(),
+        reason,
+    })?;
+    if domain == DomainKind::Rpc {
+        value["_meta"] = serde_json::json!({"unavailable": ["wildcard operation names cannot be enumerated; worker counters and latency from wildcard registrations cannot be attributed to this resource"]});
+    }
+    Ok(value)
 }
 
 pub(super) fn build_resource_timeline_value(
@@ -46,7 +49,7 @@ pub(super) fn build_resource_timeline_value(
         .resource_request()
         .expect("validated resource invocation");
     let family = invocation.route_family();
-    let snapshot = runtime.admin_read_model().bounded_snapshot(family, 512);
+    let snapshot = collect_resource(runtime, invocation, name)?;
     let limit = request
         .limit
         .unwrap_or(McpCostBudget::timeline().max_result_items)
@@ -77,17 +80,9 @@ pub(super) fn build_resource_timeline_value(
         DomainKind::Rpc => {
             rpc_resource_timeline(&snapshot.rpc_workers, &snapshot.rpc_pending, &path, limit)
         }
-        DomainKind::Schedule => schedule_resource_timeline(
-            &snapshot.schedules,
-            snapshot.pending_fire_claims,
-            0,
-            0,
-            0,
-            0,
-            0,
-            &path,
-            limit,
-        ),
+        DomainKind::Schedule => {
+            schedule_resource_timeline(&snapshot.schedules, 0, 0, 0, 0, 0, 0, &path, limit)
+        }
     };
     if let Some(family) = family {
         timeline.family = Some(family);
@@ -96,6 +91,49 @@ pub(super) fn build_resource_timeline_value(
         }
     }
     let mut value = serialize_tool_output(name, timeline)?;
-    value["_meta"] = serde_json::json!({ "partial": snapshot.truncated, "collection_limit": snapshot.limit_per_collection, "unavailable": ["durable event history; timeline contains current projection observations", "unattributed Schedule pressure counters"] });
+    value["_meta"] = serde_json::json!({ "partial": snapshot.truncated, "collection_limit": snapshot.limit_per_collection, "unavailable": ["durable event history; timeline contains current projection observations", "unattributed Schedule pressure counters", "wildcard Notice/RPC aggregate delivery, publication, handled counts and latency cannot be attributed to this resource"] });
     Ok(value)
+}
+
+fn collect_resource(
+    runtime: &Runtime,
+    invocation: &McpInvocation,
+    tool_name: &str,
+) -> McpToolResult<crate::control::admin::read_model::AdminSnapshot> {
+    let request = invocation
+        .resource_request()
+        .expect("validated resource invocation");
+    let (families, truncated) = invocation.route_family().map_or_else(
+        || {
+            runtime
+                .admin_auth()
+                .bounded_provisioned_route_families(64, None)
+        },
+        |family| (vec![family], false),
+    );
+    if truncated {
+        return Err(McpToolError::InvalidArguments { tool_name: tool_name.into(), reason: "all-family resource reads exceed the family budget; select an explicit route_family".into() });
+    }
+    let snapshot = runtime.admin_read_model().bounded_resource_snapshot(
+        &families,
+        crate::control::admin::read_model::InventoryScope {
+            realm: Some(&request.realm),
+            area: Some(&request.area),
+            resource: Some(&request.resource),
+            ..Default::default()
+        },
+        DomainKind::from_scheme(&request.scheme).expect("validated domain"),
+        512,
+    );
+    if request.scheme == "stream"
+        && invocation.route_family().is_none()
+        && snapshot.streams.len() > 1
+    {
+        return Err(McpToolError::InvalidArguments {
+            tool_name: tool_name.into(),
+            reason: "multiple route families contain this Stream; select an explicit route_family"
+                .into(),
+        });
+    }
+    Ok(snapshot)
 }

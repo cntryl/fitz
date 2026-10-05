@@ -801,3 +801,9 @@ mod scope_tests;
 
 #[cfg(test)]
 mod measurements;
+
+#[cfg(test)]
+mod resource_scope_tests;
+
+#[cfg(test)]
+mod stream_scope_tests;
