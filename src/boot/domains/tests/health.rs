@@ -54,7 +54,7 @@ fn should_report_domain_unusable_after_all_its_families_fail() {
 
     // Assert
     assert_eq!(snapshot.failed_families.len(), 7);
-    assert!(snapshot.healthy_families.is_empty());
+    assert_eq!(snapshot.healthy_families.len(), 0);
     assert!(permanently_failed);
 }
 
