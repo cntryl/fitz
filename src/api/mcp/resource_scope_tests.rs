@@ -379,7 +379,7 @@ fn should_select_authorized_provisioned_families_before_discovery_limit() {
     assert_eq!(global.len(), 64);
     assert!(global_truncated);
     assert_eq!(discovery["route_families"], serde_json::json!(["9999"]));
-    assert_eq!(discovery["broker"]["ready"], Value::Null);
+    assert!(discovery["broker"]["ready"].is_boolean());
     assert!(discovery["_meta"]["unavailable"]
         .to_string()
         .contains("readiness"));

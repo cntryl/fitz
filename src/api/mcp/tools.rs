@@ -107,10 +107,10 @@ impl McpToolRegistry {
                     "authority": "OAuth grants map to AdminPrincipal route-family authority, SessionPermissions, and MCP capabilities; realm and route_family remain independent",
                     "mutations_default_enabled": false,
                     "diagnostics_are": "cached administrative projections with unknown publication age",
-                    "broker": { "version": env!("CARGO_PKG_VERSION"), "ready": null, "draining": runtime.is_draining(), "traffic_status": runtime.traffic_status(), "fatal_domain_failure": runtime.has_fatal_domain_failure() },
+                    "broker": { "version": env!("CARGO_PKG_VERSION"), "ready": runtime.is_ready_for_traffic(), "draining": runtime.is_draining(), "traffic_status": runtime.traffic_status(), "fatal_domain_failure": runtime.has_fatal_domain_failure() },
                     "route_families": families.into_iter().map(|family| family.to_string()).collect::<Vec<_>>(),
                     "inventory": "list_resource_inventory: cursor pagination over scoped resource names; realm and route family are independent",
-                    "_meta": { "source": "fixed runtime flags and configured features; cached diagnostic rows are separate", "cached_projection": false, "partial": truncated, "unavailable": ["aggregate readiness requires a full domain-family health traversal; use the health HTTP endpoint"] }
+                    "_meta": { "source": "fixed runtime lifecycle flags, seven domain pool availability flags, and configured features; cached diagnostic rows are separate", "cached_projection": false, "partial": truncated, "unavailable": ["individual family readiness; Discovery reports aggregate domain pool availability"] }
                 }))
             },
         )

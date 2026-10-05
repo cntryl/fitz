@@ -118,8 +118,8 @@ pub(super) fn scope_for_route(route: &str, session_id: Option<String>) -> Topolo
     }
 }
 
-pub(super) fn scope_with_family(mut scope: TopologyScope, family: u64) -> TopologyScope {
-    scope.route_family = Some(family);
+pub(super) fn scope_with_family(mut scope: TopologyScope, family: Option<u64>) -> TopologyScope {
+    scope.route_family = family;
     scope
 }
 

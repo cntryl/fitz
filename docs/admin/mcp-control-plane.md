@@ -155,19 +155,19 @@ cargo test --lib should_measure_bounded_operational_reads_without_promising_hard
 
 | Tool | p95 (ms) | Largest result (bytes) |
 | --- | ---: | ---: |
-| `get_global_stats` | 2.630 | 9,097 |
-| `get_global_troubleshooting` | 0.639 | 1,368 |
-| `inspect_resource_detail` | 0.154 | 972 |
-| `inspect_resource_timeline` | 0.235 | 2,483 |
-| `explain_global_troubleshooting` | 0.565 | 1,368 |
-| `get_mcp_discovery` | 0.088 | 1,566 |
-| `get_sessions` | 0.039 | 641 |
-| `get_topology` | 5.671 | 69,307 |
-| `get_structured_metrics` | 0.227 | 2,947 |
-| `list_resource_inventory` | 1.192 | 9,285 |
+| `get_global_stats` | 1.506 | 9,097 |
+| `get_global_troubleshooting` | 0.537 | 1,368 |
+| `inspect_resource_detail` | 0.153 | 972 |
+| `inspect_resource_timeline` | 0.158 | 2,483 |
+| `explain_global_troubleshooting` | 0.519 | 1,368 |
+| `get_mcp_discovery` | 0.081 | 1,601 |
+| `get_sessions` | 0.040 | 641 |
+| `get_topology` | 5.363 | 69,307 |
+| `get_structured_metrics` | 0.216 | 2,947 |
+| `list_resource_inventory` | 1.036 | 9,285 |
 
 No read exceeded its item/byte/wait budget in these 200 calls. The largest
-elapsed time was 8.196 ms (`get_global_stats`). These are focused acceptance
+elapsed time was 5.514 ms (`get_topology`). These are focused acceptance
 observations, not production latency targets or measurements of source age.
 
 MCP audit records retained in memory are bounded to the most recent 1,024

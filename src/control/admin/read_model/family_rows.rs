@@ -4,7 +4,7 @@ use super::super::{
     RpcPendingRequest, RpcWorker, SessionInfo, StreamInfo,
 };
 use crate::runtime::routing::{route_quad, route_triplet};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 pub(super) type ResourceIdentity = (u64, String, String, String);
 
@@ -46,6 +46,8 @@ pub(super) struct FamilyRows<T> {
     families: BTreeMap<u64, Vec<Arc<T>>>,
     resources: BTreeMap<ResourceIdentity, Vec<Arc<T>>>,
     patterns: BTreeMap<u64, Vec<Arc<T>>>,
+    #[cfg(test)]
+    retention_index_visits: usize,
 }
 
 impl<T> Default for FamilyRows<T> {
@@ -54,6 +56,8 @@ impl<T> Default for FamilyRows<T> {
             families: BTreeMap::new(),
             resources: BTreeMap::new(),
             patterns: BTreeMap::new(),
+            #[cfg(test)]
+            retention_index_visits: 0,
         }
     }
 }
@@ -108,29 +112,41 @@ impl<T: FamilyRow> FamilyRows<T> {
     }
 
     pub(super) fn retain(&mut self, mut include: impl FnMut(&T) -> bool) {
+        #[cfg(test)]
+        {
+            self.retention_index_visits = 0;
+        }
+        // These pointer identities are only compared and never dereferenced.
+        // The secondary indices own the removed rows until cleanup completes.
+        let mut removed = HashSet::new();
         self.families.retain(|_, items| {
             items.retain(|item| {
-                if include(item) {
-                    return true;
+                let keep = include(item);
+                if !keep {
+                    removed.insert(Arc::as_ptr(item));
                 }
-                if let Some(identity) = item.inventory_identity() {
-                    if let Some(rows) = self.resources.get_mut(&identity) {
-                        rows.retain(|row| !Arc::ptr_eq(row, item));
-                        if rows.is_empty() {
-                            self.resources.remove(&identity);
-                        }
-                    }
-                }
-                if let Some(rows) = self.patterns.get_mut(&item.family()) {
-                    rows.retain(|row| !Arc::ptr_eq(row, item));
-                    if rows.is_empty() {
-                        self.patterns.remove(&item.family());
-                    }
-                }
-                false
+                keep
             });
             !items.is_empty()
         });
+        if removed.is_empty() {
+            return;
+        }
+        for rows in self
+            .resources
+            .values_mut()
+            .chain(self.patterns.values_mut())
+        {
+            rows.retain(|row| {
+                #[cfg(test)]
+                {
+                    self.retention_index_visits += 1;
+                }
+                !removed.contains(&Arc::as_ptr(row))
+            });
+        }
+        self.resources.retain(|_, rows| !rows.is_empty());
+        self.patterns.retain(|_, rows| !rows.is_empty());
     }
 
     pub(super) fn resource_page(
@@ -188,6 +204,10 @@ impl<T: FamilyRow> FamilyRows<T> {
         result
     }
 }
+
+#[cfg(test)]
+#[path = "family_rows/tests.rs"]
+mod tests;
 
 /// Sessions retain one record, indexed by family and session ID.
 #[derive(Default)]

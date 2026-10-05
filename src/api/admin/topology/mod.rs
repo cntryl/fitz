@@ -33,8 +33,19 @@ fn build_messaging_topology(runtime: &Runtime) -> MessagingTopology {
     let domains = &global_stats.domains;
     let lanes = vec![
         lanes::queue_lane(&domains.queue, &queues, &queue_inflight, &mut connections),
-        lanes::rpc_lane(&domains.rpc, &rpc_workers, &rpc_pending, &mut connections),
-        lanes::notice_lane(&domains.notice, &notice_subscriptions, &mut connections),
+        lanes::rpc_lane(
+            &domains.rpc,
+            &rpc_workers,
+            &rpc_pending,
+            false,
+            &mut connections,
+        ),
+        lanes::notice_lane(
+            &domains.notice,
+            &notice_subscriptions,
+            false,
+            &mut connections,
+        ),
         lanes::schedule_lane(&domains.schedule, &schedules, &mut connections),
         lanes::stream_lane(&domains.stream, &streams, &mut connections),
         lanes::lease_lane(&domains.lease, &leases, &mut connections),
@@ -98,11 +109,13 @@ fn build_snapshot_topology(
             &domains.rpc,
             &snapshot.rpc_workers,
             &snapshot.rpc_pending,
+            true,
             &mut connections,
         ),
         lanes::notice_lane(
             &domains.notice,
             &snapshot.notice_subscriptions,
+            true,
             &mut connections,
         ),
         lanes::schedule_lane(&domains.schedule, &snapshot.schedules, &mut connections),

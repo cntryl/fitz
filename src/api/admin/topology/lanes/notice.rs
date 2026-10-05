@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 pub(in crate::api::admin::topology) fn notice_lane(
     stats: &stats::NoticeStats,
     subscriptions: &[NoticeSubscription],
+    include_route_family: bool,
     connections: &mut TopologyConnectionBuilder,
 ) -> TopologyLane {
     let pressure = stats.delivery_drops_total
@@ -65,7 +66,7 @@ pub(in crate::api::admin::topology) fn notice_lane(
                     &subscription.realm,
                     Some(subscription.session_id.clone()),
                 ),
-                subscription.route_family,
+                include_route_family.then_some(subscription.route_family),
             ),
             vec![count_u64(
                 "notifications_received",
@@ -82,26 +83,30 @@ pub(in crate::api::admin::topology) fn notice_lane(
         &stats.diagnostics,
         counters,
         (0, stats.subscriptions_active),
-        top_notice_resources(subscriptions),
+        top_notice_resources(subscriptions, include_route_family),
     )
 }
 
-fn top_notice_resources(subscriptions: &[NoticeSubscription]) -> Vec<TopologyScopedResource> {
+fn top_notice_resources(
+    subscriptions: &[NoticeSubscription],
+    include_route_family: bool,
+) -> Vec<TopologyScopedResource> {
     #[derive(Default)]
     struct Rollup {
-        family: u64,
+        family: Option<u64>,
         realm: String,
         pattern: String,
         subscriptions: usize,
         notifications: u64,
     }
 
-    let mut rollups: BTreeMap<(u64, String), Rollup> = BTreeMap::new();
+    let mut rollups: BTreeMap<(Option<u64>, String), Rollup> = BTreeMap::new();
     for subscription in subscriptions {
+        let family = include_route_family.then_some(subscription.route_family);
         let rollup = rollups
-            .entry((subscription.route_family, subscription.pattern.clone()))
+            .entry((family, subscription.pattern.clone()))
             .or_default();
-        rollup.family = subscription.route_family;
+        rollup.family = family;
         rollup.realm.clone_from(&subscription.realm);
         rollup.pattern.clone_from(&subscription.pattern);
         rollup.subscriptions += 1;

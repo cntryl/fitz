@@ -51,9 +51,12 @@ operation names remain unavailable. Wildcard Notice delivery/publication
 counts are also unavailable for a single resource.
 
 Discovery exposes fixed lifecycle flags and configured features. Aggregate
-`broker.ready` is `null` because its source traverses every domain family;
-the HTTP health endpoint provides that complete readiness assessment. Stream
-names shared by multiple route families require an explicit family for
+`broker.ready` uses the existing lifecycle flags and seven domain pool
+availability checks. Each check reads the pool's atomic flags without
+traversing family health rows. One failed family leaves a domain usable while
+a sibling remains available; all families failing or pool shutdown makes it
+unavailable. Individual family readiness detail is unavailable in Discovery.
+Stream names shared by multiple route families require an explicit family for
 resource detail/timeline reads so offsets and watermarks stay independent.
 
 Documentation URIs are versioned as `fitz://docs/v1/<name>`. Operational URI

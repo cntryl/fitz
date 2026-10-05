@@ -15,6 +15,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
     stats: &stats::RpcStats,
     workers: &[RpcWorker],
     pending: &[RpcPendingRequest],
+    include_route_family: bool,
     connections: &mut TopologyConnectionBuilder,
 ) -> TopologyLane {
     let pressure = stats.requests_pending
@@ -60,7 +61,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
             TopologyState::Flowing,
             scope_with_family(
                 scope_for_route(&worker.route, Some(worker.session_id.clone())),
-                worker.route_family,
+                include_route_family.then_some(worker.route_family),
             ),
             vec![
                 count_u64("requests_handled", "Handled", worker.requests_handled),
@@ -95,7 +96,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
             request_state,
             scope_with_family(
                 scope_for_route(&request.route, request.worker_session_id.clone()),
-                request.route_family,
+                include_route_family.then_some(request.route_family),
             ),
             vec![count_u64("age_seconds", "Age", request.age_seconds)],
         ));
@@ -108,17 +109,18 @@ pub(in crate::api::admin::topology) fn rpc_lane(
         &stats.diagnostics,
         counters,
         (stats.workers_registered, 0),
-        top_rpc_resources(workers, pending),
+        top_rpc_resources(workers, pending, include_route_family),
     )
 }
 
 fn top_rpc_resources(
     workers: &[RpcWorker],
     pending: &[RpcPendingRequest],
+    include_route_family: bool,
 ) -> Vec<TopologyScopedResource> {
     #[derive(Default)]
     struct Rollup {
-        family: u64,
+        family: Option<u64>,
         route: String,
         workers: usize,
         pending: usize,
@@ -127,12 +129,11 @@ fn top_rpc_resources(
         oldest_pending_age_seconds: u64,
     }
 
-    let mut rollups: BTreeMap<(u64, String), Rollup> = BTreeMap::new();
+    let mut rollups: BTreeMap<(Option<u64>, String), Rollup> = BTreeMap::new();
     for worker in workers {
-        let rollup = rollups
-            .entry((worker.route_family, worker.route.clone()))
-            .or_default();
-        rollup.family = worker.route_family;
+        let family = include_route_family.then_some(worker.route_family);
+        let rollup = rollups.entry((family, worker.route.clone())).or_default();
+        rollup.family = family;
         rollup.route.clone_from(&worker.route);
         rollup.workers += 1;
         rollup.handled += worker.requests_handled;
@@ -140,10 +141,9 @@ fn top_rpc_resources(
     }
 
     for request in pending {
-        let rollup = rollups
-            .entry((request.route_family, request.route.clone()))
-            .or_default();
-        rollup.family = request.route_family;
+        let family = include_route_family.then_some(request.route_family);
+        let rollup = rollups.entry((family, request.route.clone())).or_default();
+        rollup.family = family;
         rollup.route.clone_from(&request.route);
         rollup.pending += 1;
         rollup.oldest_pending_age_seconds =
