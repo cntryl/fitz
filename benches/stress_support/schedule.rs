@@ -33,7 +33,7 @@ impl ScheduleDriver {
             route,
             lane,
         };
-        if driver.step(0).await? != StepOutcome::Completed {
+        if !driver.step(0).await?.is_completed() {
             return Err(BenchFailure::verification(
                 "Schedule readiness lifecycle was rejected",
             ));

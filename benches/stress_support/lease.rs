@@ -128,7 +128,7 @@ impl LeaseDriver {
             ));
         }
         self.release(token).await?;
-        if self.step().await? != StepOutcome::Completed {
+        if !self.step().await?.is_completed() {
             return Err(BenchFailure::verification(
                 "Lease reacquisition probe failed",
             ));

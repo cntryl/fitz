@@ -144,11 +144,14 @@ fn classify(
             phase.lane_completions[lane] = phase.lane_completions[lane].saturating_add(1);
             phase.latencies.record(elapsed);
         }
+        Ok(StepOutcome::CompletedWithCapacityRejections { code, count }) => {
+            phase.completed = phase.completed.saturating_add(1);
+            phase.lane_completions[lane] = phase.lane_completions[lane].saturating_add(1);
+            phase.latencies.record(elapsed);
+            record_capacity_rejections(phase, lane, code, count);
+        }
         Ok(StepOutcome::CapacityRejected(code)) => {
-            let count = phase.capacity_rejections.entry(code).or_default();
-            *count = count.saturating_add(1);
-            phase.lane_capacity_rejections[lane] =
-                phase.lane_capacity_rejections[lane].saturating_add(1);
+            record_capacity_rejections(phase, lane, code, 1);
         }
         Ok(StepOutcome::Contended) => phase.contentions = phase.contentions.saturating_add(1),
         Ok(StepOutcome::DeliveryWindowMiss) => {
@@ -160,6 +163,13 @@ fn classify(
         }
     }
     None
+}
+
+fn record_capacity_rejections(phase: &mut Phase, lane: usize, code: u32, count: u64) {
+    let capacity_rejections = phase.capacity_rejections.entry(code).or_default();
+    *capacity_rejections = capacity_rejections.saturating_add(count);
+    phase.lane_capacity_rejections[lane] =
+        phase.lane_capacity_rejections[lane].saturating_add(count);
 }
 
 struct Batch {
@@ -214,7 +224,7 @@ async fn batch(
                 let started = Instant::now();
                 let result = bounded_step(driver, *sequence, remaining[lane], lane).await;
                 let completed_at = batch_started.elapsed();
-                if matches!(&result, Ok(StepOutcome::Completed)) {
+                if result.as_ref().is_ok_and(|outcome| outcome.is_completed()) {
                     progress.advance();
                 }
                 *sequence = sequence.saturating_add(1);
@@ -361,7 +371,11 @@ fn apply_batch(report: &mut Phase, batch: Batch) -> Result<(), BenchFailure> {
     report.elapsed_ns = report.elapsed_ns.saturating_add(batch.elapsed.as_nanos());
     let mut failure = None;
     for (lane, observed) in batch.outcomes.into_iter().enumerate() {
-        if matches!(&observed.result, Ok(StepOutcome::Completed)) {
+        if observed
+            .result
+            .as_ref()
+            .is_ok_and(|outcome| outcome.is_completed())
+        {
             report.lane_last_completion_ns[lane] =
                 began_at.saturating_add(observed.completed_at.as_nanos());
         }

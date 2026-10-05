@@ -25,7 +25,7 @@ impl KvDriver {
             lane,
             expected: std::array::from_fn(|_| None),
         };
-        if driver.step(0).await? != StepOutcome::Completed {
+        if !driver.step(0).await?.is_completed() {
             return Err(BenchFailure::verification(
                 "KV seed transaction was rejected",
             ));

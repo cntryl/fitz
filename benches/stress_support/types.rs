@@ -28,9 +28,19 @@ impl Domain {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StepOutcome {
     Completed,
+    CompletedWithCapacityRejections { code: u32, count: u64 },
     CapacityRejected(u32),
     Contended,
     DeliveryWindowMiss,
+}
+
+impl StepOutcome {
+    pub(crate) const fn is_completed(&self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::CompletedWithCapacityRejections { .. }
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
