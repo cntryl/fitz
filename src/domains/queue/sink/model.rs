@@ -101,6 +101,9 @@ pub(super) struct QueueFamilyState {
     pub(super) panic_next_runtime_sweep: AtomicBool,
     pub(super) maintenance_clock: QueueMaintenanceClock,
     pub(super) dirty_fast_flush_families: HashSet<u32>,
+    pub(super) fast_flush_client: Option<super::fast_flush::FastFlushClient>,
+    pub(super) in_flight_fast_flushes:
+        HashMap<u32, crossbeam_channel::Receiver<super::fast_flush::FlushResult>>,
 }
 
 pub(super) enum QueueDomainCommand {
@@ -166,6 +169,8 @@ pub(crate) struct QueueDomain {
     pub(super) route_families: Vec<crate::runtime::routing::RouteFamily>,
     /// Client requests currently blocked on the actor's reply.
     pub(super) inflight_client_deliveries: Arc<std::sync::atomic::AtomicUsize>,
+    /// Joins after the family runtime drops its flush worker senders.
+    pub(super) fast_flush_worker: Option<super::fast_flush::FastFlushWorker>,
 }
 
 #[derive(Clone)]
@@ -178,6 +183,7 @@ pub(super) struct QueueDomainConfig {
     pub(super) metrics: Option<QueueMetrics>,
     pub(super) active: Arc<AtomicBool>,
     pub(super) fast_flush_interval: Option<Duration>,
+    pub(super) fast_flush_client: Option<super::fast_flush::FastFlushClient>,
     pub(super) known_queue_keys: Arc<HashSet<QueueKey>>,
     pub(super) inventory_error: Option<String>,
     pub(super) delivery_service_us: Arc<std::collections::BTreeMap<u32, ServiceEstimateUs>>,

@@ -57,3 +57,9 @@ lifecycle; snapshot consistency does not authorize concurrent queue writers.
 
 Storage formats, acknowledgement guarantees, RouteFamily isolation, and
 ephemeral inflight ownership are unchanged.
+
+In fast write mode, family actors submit dirty column families to one bounded
+Queue-domain flush worker. A family has at most one flush in flight; new writes
+stay dirty for a later pass, and a full worker queue leaves work pending for
+retry. The storage flush no longer occupies the Queue request actor, but slow or
+failed storage can still extend the documented loss window.

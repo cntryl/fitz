@@ -181,6 +181,56 @@ fn should_mark_inventory_incomplete_for_put_without_adding_a_hot_path_read() {
 }
 
 #[test]
+fn should_skip_redundant_incomplete_inventory_writes() {
+    // Arrange
+    let mut actor = test_actor();
+    let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "incomplete");
+    let tx_id = begin_with_scope(&mut actor, scope.clone());
+    put_scan_keys(&mut actor, tx_id, &scope, &[b"first"]);
+    assert!(matches!(
+        actor.handle(KvMessage::Commit {
+            tx_id,
+            scope: scope.clone(),
+        }),
+        KvResponse::CommitOk
+    ));
+    KvActor::fail_next_inventory_update_for_tests();
+    let next_tx_id = begin_with_scope(&mut actor, scope.clone());
+    put_scan_keys(&mut actor, next_tx_id, &scope, &[b"second"]);
+
+    // Act
+    let repeated_update = actor.handle(KvMessage::Commit {
+        tx_id: next_tx_id,
+        scope: scope.clone(),
+    });
+    let repairs_after_repeated_update = actor.take_inventory_repairs();
+    let changed_scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "changed");
+    let changed_tx_id = begin_with_scope(&mut actor, changed_scope.clone());
+    assert!(matches!(
+        actor.handle(KvMessage::Insert {
+            tx_id: changed_tx_id,
+            scope: changed_scope.clone(),
+            key: Bytes::from_static(b"key"),
+            value: Bytes::from_static(b"value"),
+        }),
+        KvResponse::InsertOk
+    ));
+    let changed_update = actor.handle(KvMessage::Commit {
+        tx_id: changed_tx_id,
+        scope: changed_scope.clone(),
+    });
+
+    // Assert
+    assert!(matches!(repeated_update, KvResponse::CommitOk));
+    assert_eq!(
+        repairs_after_repeated_update,
+        Vec::<(u32, KvResourceScope)>::new()
+    );
+    assert!(matches!(changed_update, KvResponse::CommitOk));
+    assert_eq!(actor.take_inventory_repairs(), vec![(1, changed_scope)]);
+}
+
+#[test]
 pub(super) fn should_encode_kv_scope_prefix_with_typed_segments() {
     // Arrange
     let expected = {

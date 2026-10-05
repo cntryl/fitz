@@ -56,17 +56,11 @@ impl KvActor {
         if inventory_delta.is_empty() {
             return Ok(());
         }
-        #[cfg(test)]
-        if FAIL_NEXT_INVENTORY_UPDATE.with(|cell| cell.replace(false)) {
-            return Err(KvError::BackendError(
-                "Injected KV inventory update failure".to_string(),
-            ));
-        }
 
         let key = Self::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
         let mut tx = store.begin(column_family, TxMode::ReadWrite)?;
-        let mut estimate = tx
-            .get(&key)?
+        let existing = tx.get(&key)?;
+        let mut estimate = existing
             .as_deref()
             .map(crate::domains::kv::inventory::decode_estimate)
             .transpose()
@@ -83,7 +77,18 @@ impl KvActor {
             estimate.estimate_complete = false;
         }
 
-        tx.put(key, encode_estimate(estimate))?;
+        let encoded = encode_estimate(estimate);
+        if existing.as_deref() == Some(encoded.as_slice()) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if FAIL_NEXT_INVENTORY_UPDATE.with(|cell| cell.replace(false)) {
+            return Err(KvError::BackendError(
+                "Injected KV inventory update failure".to_string(),
+            ));
+        }
+
+        tx.put(key, encoded)?;
         tx.commit(write_policy)
     }
 
