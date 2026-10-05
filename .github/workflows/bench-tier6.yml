@@ -1,12 +1,16 @@
-name: Bench Tier 6 Endurance
+name: Benchmark Tier 6
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "0 7 1 * *"
-  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: bench-tier6-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   bench:
@@ -15,44 +19,44 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        domain: [queue, kv, stream, schedule, rpc, notice, lease]
+        workload:
+          - should_soak_queue
+          - should_soak_kv
+          - should_soak_stream
+          - should_soak_schedule
+          - should_soak_rpc
+          - should_soak_notice
+          - should_soak_lease
     env:
-      RUSTUP_TOOLCHAIN: "1.99.0"
+      CARGO_INCREMENTAL: "0"
       RUST_LOG: "off"
       FITZ_LOG_LEVEL: "off"
       OTEL_ENABLED: "false"
       FITZ_TIER6_DURATION_SECS: "3600"
       FITZ_STRESS_STORAGE_PROFILE: "local_disk"
       STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
+      STRESS_PROFILE: smoke
       STRESS_TIMEOUT_SECS: "4500"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Install verified Rust toolchain
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      - name: Update Rust to stable
+        run: rustup update stable
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "stress-benches"
-
-      - name: Run domain endurance workload
+      - name: Run Tier 6 workload
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p target/fitz-stress/runner-logs
-          cargo bench --locked --quiet --bench tier6_endurance --features benchkit,stress-soak -- \
-            --workload should_soak_${{ matrix.domain }} \
-            --profile smoke --samples 1 --warmup-samples 0 --cooldown-samples 0 \
-            2>&1 | tee target/fitz-stress/runner-logs/tier6-${{ matrix.domain }}.log
+          cargo bench --locked --bench 'tier6_*' --features benchkit,stress-soak -- --workload ${{ matrix.workload }} 2>&1 | tee target/fitz-stress/runner-logs/workload.log
 
-      - name: Upload stress and partial workload artifacts
+      - name: Upload benchmark reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: bench-tier6-${{ matrix.domain }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: bench-tier6-${{ matrix.workload }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             target/stress/**
             target/fitz-stress/**

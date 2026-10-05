@@ -131,8 +131,9 @@ and a 4,500-second hard timeout. A command without those flags therefore default
 to one owned campaign per selected workload. Explicit CLI and environment values
 remain in effect; increasing samples, warmup, or cooldown can repeat the full
 campaign and requires an appropriate hard timeout. Changing the profile alone
-does not make a single sample authoritative. Hosted workflows keep these settings
-explicit. An unfiltered target selects all seven domain workloads, each with its
+does not make a single sample authoritative. Hosted workflows set smoke and
+deadlines in their environment and use the same single-window startup defaults.
+An unfiltered target selects all seven domain workloads, each with its
 own default duration; use `--workload` to select one domain.
 
 A Tier 6 full-duration pass requires the declared active time, semantic
@@ -239,12 +240,14 @@ or workload artifacts; dynamic values must not change measurement identity.
 
 Each workflow uses seven independent domain jobs with `fail-fast: false`, a
 90-minute job limit, a 60-second progress watchdog, and a 4,500-second framework
-hard timeout. Explicit single-invocation arguments prevent warmup or repeated
-samples from multiplying the owned hour. These workflows do not run on pushes
+hard timeout. They follow Midge's workload-matrix layout, with one wildcard Cargo
+command per job and concurrency per branch that queues overlapping campaigns.
+The target startup defaults prevent warmup or repeated samples from multiplying
+the owned hour. These workflows do not run on pushes
 or pull requests and do not change the existing benchmark performance gates.
 
 Artifact uploads run even after failure and include both artifact directories.
-Names include the tier, domain, commit SHA, run ID, and attempt. The benchmark
+Names include the tier, workload, commit SHA, run ID, and attempt. The benchmark
 command's exit status is preserved when its output is copied to a log. Interpret
 partial evidence alongside the failure and elapsed window; uploading artifacts
 does not turn an interrupted run into a pass.
