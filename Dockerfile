@@ -48,7 +48,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   rm -f target/release/fitz target/release/deps/fitz* \
   && cargo build --release --locked --bin fitz \
-  && strip target/release/fitz || true
+  && (strip target/release/fitz || true)
 
 FROM debian:trixie-slim AS runtime-fs
 
