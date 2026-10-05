@@ -239,8 +239,10 @@ fn should_execute_resource_timeline_given_kv_scope() {
     assert_eq!(audit_records.len(), 1);
     assert_eq!(audit_records[0].decision, McpAuditDecision::Allowed);
     assert_eq!(audit_records[0].tool_name, "inspect_resource_timeline");
-    assert!(audit_records[0].scope_route.is_none());
-    assert_eq!(audit_records[0].result_summary, "scope_denied");
+    assert_eq!(
+        audit_records[0].scope_route.as_deref(),
+        Some("kv://acme/app/users")
+    );
 }
 
 #[test]
@@ -292,10 +294,8 @@ fn should_deny_resource_detail_given_missing_scope() {
     let audit_records = context.audit_records();
     assert_eq!(audit_records.len(), 1);
     assert_eq!(audit_records[0].decision, McpAuditDecision::Denied);
-    assert_eq!(
-        audit_records[0].scope_route.as_deref(),
-        Some("kv://acme/app/users")
-    );
+    assert!(audit_records[0].scope_route.is_none());
+    assert_eq!(audit_records[0].result_summary, "scope_denied");
 }
 
 #[test]
