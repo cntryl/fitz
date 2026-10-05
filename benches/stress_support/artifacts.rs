@@ -1,3 +1,4 @@
+use crate::stress_support::fixture::StorageProfile;
 use crate::stress_support::histogram::Latencies;
 use crate::stress_support::types::BenchFailure;
 use serde::Serialize;
@@ -43,6 +44,8 @@ pub(crate) struct Artifacts {
     pub(crate) domain: &'static str,
     pub(crate) configured_seconds: u64,
     pub(crate) storage_profile: &'static str,
+    /// Historical fixture path; successful shutdown removes this directory.
+    pub(crate) local_storage_path: Option<PathBuf>,
     pub(crate) queue_write_policy: &'static str,
     pub(crate) transport: &'static str,
     pub(crate) status: &'static str,
@@ -59,6 +62,7 @@ impl Artifacts {
         tier: u8,
         domain: &'static str,
         duration: Duration,
+        storage_profile: StorageProfile,
     ) -> Result<Self, BenchFailure> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -74,7 +78,8 @@ impl Artifacts {
             tier,
             domain,
             configured_seconds: duration.as_secs(),
-            storage_profile: "memory",
+            storage_profile: storage_profile.label(),
+            local_storage_path: None,
             queue_write_policy: "fast",
             transport: "tcp",
             status: "running",

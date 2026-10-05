@@ -1,4 +1,4 @@
-use super::{complete, empty_success, error_code, payload, request, require_ok};
+use super::{complete, empty_plain_success, error_code, payload, request, require_ok};
 use crate::stress_support::types::{BenchFailure, StepOutcome};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
 use fitz::protocol::error_codes::queue::ERR_QUEUE_FULL;
@@ -41,14 +41,14 @@ impl QueueDriver {
         if body.first().copied() != Some(0) && error_code(&body)? == u32::from(ERR_QUEUE_FULL) {
             return Ok(StepOutcome::CapacityRejected(u32::from(ERR_QUEUE_FULL)));
         }
-        require_ok(&body)?;
+        require_ok(&body, "Queue ENQUEUE")?;
         let mut decoder = PayloadDecoder::new(&body);
         decoder.get_u8().map_err(BenchFailure::validation)?;
         let enqueued_id = decoder.get_u64().map_err(BenchFailure::validation)?;
         complete(&decoder)?;
 
         let reserved = request(&mut self.client, &build_queue_dequeue(&self.route), 202).await?;
-        require_ok(&reserved)?;
+        require_ok(&reserved, "Queue RESERVE")?;
         let mut decoder = PayloadDecoder::new(&reserved);
         decoder.get_u8().map_err(BenchFailure::validation)?;
         if decoder.get_u32().map_err(BenchFailure::validation)? != 1 {
@@ -71,13 +71,13 @@ impl QueueDriver {
             204,
         )
         .await?;
-        empty_success(&acknowledged)?;
+        empty_plain_success(&acknowledged, "Queue ACK")?;
         Ok(StepOutcome::Completed)
     }
 
     pub(super) async fn verify(&mut self) -> Result<u64, BenchFailure> {
         let body = request(&mut self.client, &build_queue_dequeue(&self.route), 202).await?;
-        require_ok(&body)?;
+        require_ok(&body, "Queue verification RESERVE")?;
         let mut decoder = PayloadDecoder::new(&body);
         decoder.get_u8().map_err(BenchFailure::validation)?;
         if decoder.get_u32().map_err(BenchFailure::validation)? != 0 {

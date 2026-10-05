@@ -92,7 +92,7 @@ This document defines the contract for Tier 2 through Tier 6 benchmarks using th
   the workload and fail the run; expected saturation must not conceal a liveness
   failure. Missing Notice baseline or recovery deliveries fail verification.
 - Follow the [domain scope and artifact contract](tier5-tier6-benchmarks.md),
-  including Queue running-process fast memory ACK scope, finite Stream history,
+  including the declared storage profile, Queue running-process fast ACK scope, finite Stream history,
   Schedule definition churn, legacy RPC terminal responses, received Notice
   deliveries, and process-local Lease tokens.
 

@@ -117,26 +117,56 @@ pub(super) async fn request(
     Ok(response[header_len..].to_vec())
 }
 
-pub(super) fn require_ok(body: &[u8]) -> Result<(), BenchFailure> {
+pub(super) fn require_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
+    require_coded_ok(body, operation, 1)
+}
+
+pub(super) fn require_versioned_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
+    require_coded_ok(body, operation, 2)
+}
+
+fn require_coded_ok(body: &[u8], operation: &str, status: u8) -> Result<(), BenchFailure> {
     if body.first().copied() == Some(0) {
         return Ok(());
     }
-    let error = error_code(body).map_or_else(
-        |_| "uncoded or malformed error response".to_string(),
-        |code| format!("coded error {code}"),
-    );
-    Err(BenchFailure::validation(format!("request failed: {error}")))
+    let (code, message) = coded_error(body, status)?;
+    Err(BenchFailure::domain_error(format!(
+        "{operation} failed: code {code}: {message}"
+    )))
 }
 
 pub(super) fn error_code(body: &[u8]) -> Result<u32, BenchFailure> {
+    coded_error(body, 1).map(|(code, _)| code)
+}
+
+fn coded_error(body: &[u8], status: u8) -> Result<(u32, &str), BenchFailure> {
     let mut decoder = PayloadDecoder::new(body);
-    if !matches!(decoder.get_u8().map_err(BenchFailure::validation)?, 1 | 2) {
+    if decoder.get_u8().map_err(BenchFailure::validation)? != status {
         return Err(BenchFailure::validation("expected a coded error status"));
     }
     let code = decoder.get_u32().map_err(BenchFailure::validation)?;
-    decoder.get_string_ref().map_err(BenchFailure::validation)?;
+    if code > u32::from(u16::MAX) {
+        return Err(BenchFailure::validation("error code exceeds u16 range"));
+    }
+    let message = decoder.get_string_ref().map_err(BenchFailure::validation)?;
     complete(&decoder)?;
-    Ok(code)
+    Ok((code, message))
+}
+
+/// ACK and Schedule CREATE/CANCEL/LIST_V2 retain the legacy plain envelope.
+pub(super) fn require_plain_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
+    if body.first().copied() == Some(0) {
+        return Ok(());
+    }
+    let mut decoder = PayloadDecoder::new(body);
+    if decoder.get_u8().map_err(BenchFailure::validation)? != 1 {
+        return Err(BenchFailure::validation("expected a plain error status"));
+    }
+    let message = decoder.get_string_ref().map_err(BenchFailure::validation)?;
+    complete(&decoder)?;
+    Err(BenchFailure::domain_error(format!(
+        "{operation} failed: {message}"
+    )))
 }
 
 pub(super) fn complete(decoder: &PayloadDecoder<'_>) -> Result<(), BenchFailure> {
@@ -147,8 +177,17 @@ pub(super) fn complete(decoder: &PayloadDecoder<'_>) -> Result<(), BenchFailure>
     }
 }
 
-pub(super) fn empty_success(body: &[u8]) -> Result<(), BenchFailure> {
-    require_ok(body)?;
+pub(super) fn empty_success(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
+    require_ok(body, operation)?;
+    require_empty(body)
+}
+
+pub(super) fn empty_plain_success(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
+    require_plain_ok(body, operation)?;
+    require_empty(body)
+}
+
+fn require_empty(body: &[u8]) -> Result<(), BenchFailure> {
     if body == [0] {
         Ok(())
     } else {

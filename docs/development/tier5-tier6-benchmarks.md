@@ -2,7 +2,7 @@
 
 Tier 5 measures scaling and observed saturation as concurrent load increases.
 Tier 6 exercises sustained work for a declared endurance active-time budget.
-Both use real domain operations, bounded workload state, explicit completed
+Both use real domain operations, bounded logical workload state, explicit completed
 operation counts, and semantic verification. Their rows are diagnostics, separate
 from the existing release benchmark IDs, baselines, and performance targets.
 
@@ -51,13 +51,44 @@ run that ends early is not a completed one-hour endurance run.
 
 | Domain | Measured work and verification | Boundary of the claim |
 | --- | --- | --- |
-| Queue | Enqueue, reserve, validate delivery, and complete acknowledged work. | Fast memory storage and acknowledgements within the running process; this workload does not qualify strict restart durability. |
+| Queue | Enqueue, reserve, validate delivery, and complete acknowledged work. | Fast write policy and acknowledgements within the running process; this workload does not qualify strict restart durability. |
 | KV | Mutate and verify values using a bounded key ring. | Current authoritative values and transaction responses; key cardinality does not grow with elapsed time. |
 | Stream | Read and replay a finite, prebuilt history, validating event identity, order, and payload. | History is finite; the workload does not mutate retention or accumulate an endless sequence of commits. |
 | Schedule | Create, list, and cancel definitions, validating the definition lifecycle. | Definition churn; this workload does not claim that schedules were forced due or that fires were delivered. |
 | RPC | Send a request, receive worker dispatch, and validate the caller's terminal response. | The full legacy request/response lifecycle; this workload does not qualify cooperative cancellation or cleanup acknowledgements. |
 | Notice | Publish and count validated deliveries received by the intended live subscriber. | Live ephemeral fanout; publish acknowledgement or successful socket write is not a received delivery. |
 | Lease | Exercise and validate live ownership operations and tokens. | Process-local ownership and fencing tokens; the workload does not establish ownership continuity across restart. |
+
+## Storage profiles
+
+`FITZ_STRESS_STORAGE_PROFILE` selects `local_disk` (the default) or `memory`.
+The hosted workflows explicitly use `local_disk`. Each workload holds one
+temporary local store for its entire campaign, including baseline, all active
+stages, final verification and recovery. The directory is released after server
+shutdown. The broker's existing storage flush and compaction paths can reclaim
+old versions while Queue, KV and Schedule continually mutate bounded logical
+state. The runner never resets the store or silently slows the workload to avoid
+a storage failure.
+
+`local_storage_path` records the temporary directory before startup. It is a
+historical path after successful cleanup. Startup failure or cancellation and
+unconfirmed shutdown retain that directory; cleanup failure also fails the run.
+
+Memory is an opt-in resource-pressure diagnostic. In pinned Midge 0.3.1, memory
+mode retains published versions and tombstones and skips flush/compaction.
+Keeping Queue depth, KV key cardinality or Schedule definition count fixed does
+not bound that physical history. The write-heavy fixture sets a 512 MiB memtable
+flush threshold; its hard stall starts at twice that threshold. A long memory
+write-churn campaign can therefore fail even with a bounded logical working set.
+Such a backend error remains a failed run, including an error after work was
+admitted. It is never converted into an expected admission-capacity rejection
+or a successful one-hour soak.
+
+Artifacts and framework parameters record the selected profile. Both profiles
+use the existing fast Queue write policy. Running against local disk adds storage
+flush/compaction coverage; this suite still makes no restart-recovery, strict
+Queue durability or ownership-continuity claim. Ephemeral Notice, RPC and Lease
+semantics remain ephemeral when the broker has local storage.
 
 Every workload establishes a successful baseline probe before sustained load,
 performs real semantic verification, and performs low-load probes after load
@@ -116,7 +147,7 @@ qualify the declared one-hour window.
 Run a full Tier 5 Queue sweep:
 
 ```bash
-FITZ_TIER5_DURATION_SECS=3600 STRESS_NO_PROGRESS_TIMEOUT_SECS=60 STRESS_TIMEOUT_SECS=4500 \
+FITZ_STRESS_STORAGE_PROFILE=local_disk FITZ_TIER5_DURATION_SECS=3600 STRESS_NO_PROGRESS_TIMEOUT_SECS=60 STRESS_TIMEOUT_SECS=4500 \
   cargo bench --locked --quiet --bench tier5_saturation --features benchkit,stress-soak -- \
   --workload should_measure_queue_concurrency --profile smoke --samples 1 --warmup-samples 0 --cooldown-samples 0
 ```
@@ -124,7 +155,7 @@ FITZ_TIER5_DURATION_SECS=3600 STRESS_NO_PROGRESS_TIMEOUT_SECS=60 STRESS_TIMEOUT_
 Run a full Tier 6 Queue endurance window:
 
 ```bash
-FITZ_TIER6_DURATION_SECS=3600 STRESS_NO_PROGRESS_TIMEOUT_SECS=60 STRESS_TIMEOUT_SECS=4500 \
+FITZ_STRESS_STORAGE_PROFILE=local_disk FITZ_TIER6_DURATION_SECS=3600 STRESS_NO_PROGRESS_TIMEOUT_SECS=60 STRESS_TIMEOUT_SECS=4500 \
   cargo bench --locked --quiet --bench tier6_endurance --features benchkit,stress-soak -- \
   --workload should_soak_queue --profile smoke --samples 1 --warmup-samples 0 --cooldown-samples 0
 ```
@@ -161,6 +192,12 @@ the workload. Notice records a missing live delivery within its bounded delivery
 window as `delivery_window_misses`; this is not proof of a broker drop or a
 capacity rejection.
 A missing Notice baseline or recovery delivery fails verification.
+
+Valid domain error responses preserve their operation, available error code and
+message and are classified as `DomainError`. Queue ACK and Schedule
+CREATE/CANCEL/LIST_V2 use their documented plain error envelopes; coded responses
+retain their code and message. Invalid error envelopes remain `InvalidResponse`.
+Neither classification permits a correctness pass.
 
 The progress watchdog requires useful validated progress. Rejections, retries,
 verification-only activity, log writes, and sleeps must not keep an otherwise

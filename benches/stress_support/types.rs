@@ -37,6 +37,7 @@ pub(crate) enum StepOutcome {
 pub(crate) enum FailureKind {
     Timeout,
     InvalidResponse,
+    DomainError,
     Transport,
     Verification,
 }
@@ -48,6 +49,13 @@ pub(crate) struct BenchFailure {
 }
 
 impl BenchFailure {
+    pub(crate) fn domain_error(detail: impl Into<String>) -> Self {
+        Self {
+            kind: FailureKind::DomainError,
+            detail: detail.into(),
+        }
+    }
+
     pub(crate) fn validation(detail: impl Into<String>) -> Self {
         Self {
             kind: FailureKind::InvalidResponse,

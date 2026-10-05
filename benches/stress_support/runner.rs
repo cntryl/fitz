@@ -1,13 +1,13 @@
 use crate::stress_support::artifacts::{memory_sample, Artifacts, Phase};
 use crate::stress_support::durable::DurableDriver;
 use crate::stress_support::ephemeral::EphemeralDriver;
+use crate::stress_support::fixture::{BrokerFixture, StorageDirectory, StorageProfile};
 use crate::stress_support::types::{BenchFailure, Domain, FailureKind, StepOutcome};
 use cntryl_stress::{
     LogicalUnit, ObservationDirection, ObservationUnit, OperationOutcome, ProgressHandle,
     StressContext, StressError, StressResult,
 };
 use fitz::benchkit::shared_bench_runtime;
-use fitz::testkit::TestServer;
 use futures_util::future::join_all;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -123,7 +123,7 @@ fn record_failure(phase: &mut Phase, error: &BenchFailure) {
         FailureKind::InvalidResponse | FailureKind::Verification => {
             phase.validation_errors = phase.validation_errors.saturating_add(1);
         }
-        FailureKind::Transport => {}
+        FailureKind::Transport | FailureKind::DomainError => {}
     }
     phase.failure.get_or_insert_with(|| error.to_string());
     phase
@@ -508,9 +508,15 @@ fn phase(
     result.and(saved)
 }
 
-fn configure_context(ctx: &mut StressContext, domain: Domain, tier: u8, duration: Duration) {
+fn configure_context(
+    ctx: &mut StressContext,
+    domain: Domain,
+    tier: u8,
+    duration: Duration,
+    storage_profile: StorageProfile,
+) {
     ctx.parameter("domain", domain.label());
-    ctx.parameter("storage_profile", "memory");
+    ctx.parameter("storage_profile", storage_profile.label());
     ctx.parameter("transport", "tcp");
     ctx.parameter("inflight_per_lane", 1);
     ctx.parameter("configured_seconds", duration.as_secs());
@@ -527,7 +533,7 @@ fn configure_context(ctx: &mut StressContext, domain: Domain, tier: u8, duration
         "latency_estimator",
         "fixed_power_of_two_nanosecond_histogram",
     );
-    ctx.metadata("durability_scope", "running_process_memory_fixture");
+    ctx.metadata("durability_scope", storage_profile.durability_scope());
 }
 
 fn prepare_drivers(
@@ -614,7 +620,7 @@ fn run_phases(
 
 fn close_fixture(
     drivers: Vec<Driver>,
-    server: TestServer,
+    fixture: BrokerFixture,
     result: Result<(), BenchFailure>,
 ) -> Result<(), BenchFailure> {
     let runtime = shared_bench_runtime();
@@ -626,11 +632,34 @@ fn close_fixture(
             final_result = result;
         }
     }
+    let (server, storage_directory) = fixture.into_parts();
+    // Keep the directory outside the timed future: a canceled shutdown must not
+    // remove files still owned by a live storage engine.
     let shutdown = runtime.block_on(bounded(async {
         server.shutdown().await.map_err(BenchFailure::transport)
     }));
-    if final_result.is_ok() {
-        final_result = shutdown;
+    let cleanup = match shutdown {
+        Ok(()) => storage_directory.release(),
+        Err(mut error) => {
+            if let Some(path) = storage_directory.path() {
+                error.detail = format!(
+                    "{}; benchmark storage retained at {}",
+                    error.detail,
+                    path.display()
+                );
+            }
+            drop(storage_directory);
+            Err(error)
+        }
+    };
+    if let Err(cleanup_error) = cleanup {
+        return match final_result {
+            Ok(()) => Err(cleanup_error),
+            Err(mut error) => {
+                error.detail = format!("{}; fixture cleanup failed: {cleanup_error}", error.detail);
+                Err(error)
+            }
+        };
     }
     final_result
 }
@@ -657,35 +686,42 @@ fn finalize(artifacts: &mut Artifacts, result: Result<(), BenchFailure>) -> Stre
 }
 
 pub(crate) fn run(ctx: &mut StressContext, domain: Domain, tier: u8) -> StressResult {
+    let storage_profile =
+        StorageProfile::from_env().map_err(|error| StressError::new(error.to_string()))?;
     let duration =
         configured_duration(tier).map_err(|error| StressError::new(error.to_string()))?;
     let progress_timeout =
         configured_progress_timeout().map_err(|error| StressError::new(error.to_string()))?;
-    let mut artifacts = Artifacts::new(tier, domain.label(), duration)
+    let mut artifacts = Artifacts::new(tier, domain.label(), duration, storage_profile)
         .map_err(|error| StressError::new(error.to_string()))?;
+    let storage_directory = match StorageDirectory::new(storage_profile) {
+        Ok(directory) => directory,
+        Err(error) => return finalize(&mut artifacts, Err(error)),
+    };
+    artifacts.local_storage_path = storage_directory.path().map(std::path::Path::to_path_buf);
     artifacts
         .save()
         .map_err(|error| StressError::new(error.to_string()))?;
-    configure_context(ctx, domain, tier, duration);
-    let server = match shared_bench_runtime().block_on(bounded(async {
-        TestServer::start_with_write_heavy_memory()
-            .await
-            .map_err(BenchFailure::transport)
-    })) {
-        Ok(server) => server,
+    configure_context(ctx, domain, tier, duration, storage_profile);
+    let fixture = match shared_bench_runtime().block_on(bounded(BrokerFixture::start(
+        storage_profile,
+        storage_directory,
+    ))) {
+        Ok(fixture) => fixture,
         Err(error) => return finalize(&mut artifacts, Err(error)),
     };
     let maximum = if tier == 5 { 64 } else { 8 };
     let mut drivers = Vec::with_capacity(maximum);
-    let result = prepare_drivers(domain, server.tcp_addr, maximum, &mut drivers).and_then(|()| {
-        run_phases(
-            ctx,
-            &mut artifacts,
-            &mut drivers,
-            duration,
-            progress_timeout,
-            tier,
-        )
-    });
-    finalize(&mut artifacts, close_fixture(drivers, server, result))
+    let result =
+        prepare_drivers(domain, fixture.tcp_addr(), maximum, &mut drivers).and_then(|()| {
+            run_phases(
+                ctx,
+                &mut artifacts,
+                &mut drivers,
+                duration,
+                progress_timeout,
+                tier,
+            )
+        });
+    finalize(&mut artifacts, close_fixture(drivers, fixture, result))
 }

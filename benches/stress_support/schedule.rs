@@ -1,6 +1,6 @@
 //! Bounded definition create/list/cancel checks; this workload makes no firing claim.
 
-use super::{complete, empty_success, payload, request, require_ok};
+use super::{complete, empty_plain_success, payload, request, require_plain_ok};
 use crate::stress_support::types::{BenchFailure, StepOutcome};
 use fitz::benchkit::build_schedule_create;
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -50,10 +50,10 @@ impl ScheduleDriver {
         )
         .await?;
         // Schedule's mailbox rejection shares its backend error code: never guess capacity.
-        empty_success(&created)?;
+        empty_plain_success(&created, "Schedule CREATE")?;
         self.check_definition(Some(&expected)).await?;
         let cancelled = request(&mut self.client, &self.cancel_frame, 701).await?;
-        empty_success(&cancelled)?;
+        empty_plain_success(&cancelled, "Schedule CANCEL")?;
         self.check_definition(None).await?;
         Ok(StepOutcome::Completed)
     }
@@ -69,7 +69,7 @@ impl ScheduleDriver {
             let mut frame = TlvFrameBuilder::new();
             frame.encode_field(707, &encoder.finish());
             let body = request(&mut self.client, &frame.build(), 707).await?;
-            require_ok(&body)?;
+            require_plain_ok(&body, "Schedule LIST_V2")?;
             let mut decoder = PayloadDecoder::new(&body);
             decoder.get_u8().map_err(BenchFailure::validation)?;
             if decoder.get_u8().map_err(BenchFailure::validation)? != 1 {
