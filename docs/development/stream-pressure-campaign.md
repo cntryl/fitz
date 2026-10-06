@@ -85,8 +85,12 @@ stage guard failed after 158,880 acknowledged events. The next COMMIT returned
 The 100,000-event checkpoint readback passed. Shutdown completed, and the
 failed store and JSON were retained. Restart verification and recovery did
 not run; neither data loss nor the final batch's outcome is established.
-This single failed run is a liveness/indeterminate-outcome observation, not
-a universal event-count boundary or a crash-recovery result.
+A fresh matched repeat at `3cc49383` returned the same timeout after 106,400
+acknowledged events, again with one uncertain 256-event batch. Its 100,000-event
+checkpoint passed, shutdown completed, and the store remained retained.
+These failures are tracked in [#399](https://github.com/cntryl/fitz/issues/399).
+They establish a repeated liveness/indeterminate-outcome observation, not a
+universal event-count boundary, data loss, or a crash-recovery result.
 
 Twelve focused oracle regressions and full workspace/all-target/all-feature
 strict Clippy passed. These diagnostic timings do not qualify throughput.
