@@ -4,6 +4,26 @@ use fitz::protocol::payload_codec::PayloadEncoder;
 
 const ROUTE: &str = "stream://stress-bench/history/growing";
 
+#[test]
+fn should_classify_exact_actor_batch_limit_response() {
+    // Arrange
+    let error = "Stream error code 2012: batch too large";
+    // Act
+    let result = admission::batch_limit(error);
+    // Assert
+    assert!(result);
+}
+
+#[test]
+fn should_reject_incidental_batch_words_in_backend_failure() {
+    // Arrange
+    let error = "Stream error code 2012: write stall while flushing batch too large";
+    // Act
+    let result = admission::batch_limit(error);
+    // Assert
+    assert!(!result);
+}
+
 fn page(route: &str, offsets: &[u64], corrupt: bool, more: u8) -> Vec<u8> {
     let mut data = PayloadEncoder::new();
     data.put_u32(u32::try_from(offsets.len()).unwrap());
@@ -101,3 +121,5 @@ fn should_reject_false_end_of_history_cursor() {
     // Assert
     assert!(result.is_err());
 }
+#[path = "stream_pressure_support/admission.rs"]
+mod admission;

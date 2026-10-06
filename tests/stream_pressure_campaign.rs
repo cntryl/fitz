@@ -1,5 +1,7 @@
 #![cfg(feature = "benchkit")]
 
+#[path = "stream_pressure_support/admission.rs"]
+mod admission;
 #[path = "stream_pressure_support/io.rs"]
 mod io;
 #[path = "stream_pressure_support/readback.rs"]
@@ -66,7 +68,7 @@ async fn grow(
                     stage.accepted_appends += 1;
                     stage.pending_batch_events += 1;
                 }
-                Err(error) if error.starts_with("Stream error code 2012: ERR_BATCH_TOO_LARGE:") => {
+                Err(error) if admission::batch_limit(&error) => {
                     stage.rejection = Some(error);
                     io::rollback(client, session).await?;
                     stage.pending_batch_events = 0;

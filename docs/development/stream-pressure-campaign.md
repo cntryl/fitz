@@ -46,8 +46,9 @@ asserted by this concrete-resource diagnostic.
 An APPEND acknowledgement only stages an event. `committed_events` advances
 after a successful Sync COMMIT response. Accepted appends, commit requests,
 acknowledged batches, pending staged events, and probe events remain separate.
-Only the exact versioned backend response for `ERR_BATCH_TOO_LARGE` is an
-expected boundary: the campaign rolls back the whole batch, verifies the
+Only the exact versioned backend response `2012: batch too large` emitted by
+the actor, or the storage `2012: ERR_BATCH_TOO_LARGE:` prefix, is an expected
+boundary: the campaign rolls back the whole batch, verifies the
 previous history, and still requires clean restart and low-load recovery.
 Other backend failures, deadlines, changed or missing events fail the run.
 An unknown commit outcome remains unknown and is never retried automatically.
@@ -56,7 +57,8 @@ JSON artifacts live under `target/fitz-stress/stream-pressure/` and identify
 source SHA/dirtiness, configuration, storage path, per-stage actual elapsed
 work, accepted and committed counts, complete readback, restart verification,
 original failure, and cleanup. Completed batches checkpoint partial progress.
-Successful shutdown/readback removes the fresh store; failed runs retain it.
+Successful shutdown/readback removes the fresh store; failed workloads retain
+their store without attempting deletion.
 No generated artifact belongs in a commit.
 
 Clean restart evidence is limited to orderly shutdown of this local-disk
