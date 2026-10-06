@@ -42,6 +42,10 @@ struct Report {
     stages: Vec<Stage>,
     ttl_verified: bool,
     holder_disconnect_verified: bool,
+    wall_elapsed_ns: u128,
+    process_rss_bytes: Option<u64>,
+    process_peak_rss_bytes: Option<u64>,
+    cleanup_status: &'static str,
     #[serde(skip)]
     path: PathBuf,
 }
@@ -81,6 +85,10 @@ impl Report {
             stages: Vec::new(),
             ttl_verified: false,
             holder_disconnect_verified: false,
+            wall_elapsed_ns: 0,
+            process_rss_bytes: None,
+            process_peak_rss_bytes: None,
+            cleanup_status: "not_started",
             path: directory.join(format!("{stamp}.json")),
         })
     }
@@ -324,6 +332,8 @@ async fn stage(
     let clients = contention(&mut report.stages[idx], clients).await?;
     assert_query(&mut observer, Some("holder"), 0).await?;
     let mut queued = admission(&mut report.stages[idx], clients).await?;
+    report.stages[idx].elapsed_ns = start.elapsed().as_nanos();
+    report.save()?;
     if queued.len() != count.min(MAX_WAITERS)
         || report.stages[idx].queue_full_rejections
             != u64::try_from(count.saturating_sub(MAX_WAITERS)).unwrap_or(u64::MAX)
@@ -369,6 +379,7 @@ async fn stage(
         assert_query(&mut observer, Some(&owner), total - i - 1).await?;
         release(&mut client, &owner, granted).await?;
         report.stages[idx].grants_verified += 1;
+        report.stages[idx].elapsed_ns = start.elapsed().as_nanos();
         ctx.progress_handle().advance();
         bounded(async { client.close().await.map_err(BenchFailure::transport) }).await?;
     }
@@ -428,6 +439,7 @@ pub(crate) fn run(ctx: &mut StressContext) -> StressResult {
     execute(ctx).map_err(|e| StressError::new(e.to_string()))
 }
 fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
+    let started = Instant::now();
     let mut report = Report::new()?;
     ctx.parameter("workload", "lease_shared_route_waiter_pressure");
     ctx.metadata(
@@ -437,10 +449,19 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
     ctx.metadata("target_class", "stress_characterization");
     report.save()?;
     let runtime = shared_bench_runtime();
-    let fixture = runtime.block_on(bounded(BrokerFixture::start(
+    let fixture = match runtime.block_on(bounded(BrokerFixture::start(
         StorageProfile::Memory,
         StorageDirectory::new(StorageProfile::Memory)?,
-    )))?;
+    ))) {
+        Ok(value) => value,
+        Err(error) => {
+            report.status = "failed";
+            report.failure = Some(error.to_string());
+            report.wall_elapsed_ns = started.elapsed().as_nanos();
+            let _ = report.save();
+            return Err(error);
+        }
+    };
     let mut last = 0;
     let mut result = runtime.block_on(async {
         for count in report.counts.clone() {
@@ -448,6 +469,16 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
         }
         boundaries(ctx, &mut report, fixture.tcp_addr(), &mut last).await
     });
+    if let Err(error) = &result {
+        report.status = "failed";
+        report.failure = Some(error.to_string());
+    }
+    report.cleanup_status = "running";
+    if let Err(error) = report.save() {
+        if result.is_ok() {
+            result = Err(error);
+        }
+    }
     let (server, storage) = fixture.into_parts();
     if let Err(e) = runtime.block_on(bounded(async {
         server.shutdown().await.map_err(BenchFailure::transport)
@@ -458,11 +489,22 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
         }
     }
     drop(storage);
+    report.wall_elapsed_ns = started.elapsed().as_nanos();
+    (report.process_rss_bytes, report.process_peak_rss_bytes) = super::artifacts::memory_sample();
+    report.cleanup_status = if report.cleanup_failure.is_some() {
+        "failed"
+    } else {
+        "completed"
+    };
     report.status = if result.is_ok() { "passed" } else { "failed" };
     if let Err(e) = &result {
         report.failure = Some(e.to_string());
     }
-    report.save()?;
+    if let Err(error) = report.save() {
+        if result.is_ok() {
+            result = Err(error);
+        }
+    }
     for s in &report.stages {
         let failed = u64::from(!s.recovery_verified);
         ctx.record_external_outcome(
