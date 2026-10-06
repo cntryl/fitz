@@ -116,6 +116,7 @@ pub async fn verify_definitions(
     count: usize,
     generation: u64,
     mode: u8,
+    progress: &cntryl_stress::ProgressHandle,
 ) -> Result<(), BenchFailure> {
     let mut cursor: Option<String> = None;
     let mut found = 0;
@@ -163,9 +164,13 @@ pub async fn verify_definitions(
         }
         complete(&decoder)?;
         match has_more {
-            0 if next.is_none() && found == count => return Ok(()),
+            0 if next.is_none() && found == count => {
+                progress.advance();
+                return Ok(());
+            }
             1 if super::pagination::advances(cursor.as_deref(), next.as_deref(), page) => {
                 cursor = next;
+                progress.advance();
             }
             _ => {
                 return Err(BenchFailure::verification(

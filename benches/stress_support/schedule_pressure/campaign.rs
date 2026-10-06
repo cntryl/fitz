@@ -84,8 +84,7 @@ async fn execute(
     );
     let active = server.as_ref().expect("restarted server");
     let mut writer = connect(active).await?;
-    io::verify_definitions(&mut writer, count, generation, mode).await?;
-    ctx.progress_handle().advance();
+    io::verify_definitions(&mut writer, count, generation, mode, &ctx.progress_handle()).await?;
     report
         .stages
         .last_mut()
@@ -102,7 +101,7 @@ async fn execute(
         io::cancel(&mut writer, index).await?;
         ctx.progress_handle().advance();
     }
-    io::verify_definitions(&mut writer, 0, generation, mode).await?;
+    io::verify_definitions(&mut writer, 0, generation, mode, &ctx.progress_handle()).await?;
     report
         .stages
         .last_mut()
