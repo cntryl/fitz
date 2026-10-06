@@ -55,10 +55,19 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
         for count in report.counts.clone() {
             for mode in [0, 1] {
                 generation += 1;
-                campaign::stage(ctx, &mut server, &mut report, count, mode, generation).await?;
+                campaign::stage(
+                    ctx,
+                    &mut server,
+                    &mut report,
+                    count,
+                    mode,
+                    generation,
+                    false,
+                )
+                .await?;
             }
         }
-        campaign::stage(ctx, &mut server, &mut report, 1, 0, generation + 1).await?;
+        campaign::stage(ctx, &mut server, &mut report, 1, 0, generation + 1, true).await?;
         report.recovery_probe_passed = true;
         Ok(())
     });
@@ -97,10 +106,24 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
     }
     report.status = if result.is_ok() { "passed" } else { "failed" };
     report.save()?;
+    record(ctx, &report);
+    result
+}
+
+fn record(ctx: &mut StressContext, report: &Report) {
     for stage in &report.stages {
         let failures = u64::from(stage.failure.is_some());
         ctx.record_external_outcome(
-            format!("due_wave_{}_mode_{}", stage.definitions, stage.mode),
+            format!(
+                "{}_{}_mode_{}",
+                if stage.recovery {
+                    "recovery_wave"
+                } else {
+                    "due_wave"
+                },
+                stage.definitions,
+                stage.mode
+            ),
             Duration::from_nanos(u64::try_from(stage.fire_elapsed_ns).unwrap_or(u64::MAX)),
             LogicalUnit::new("observed_occurrence_receipts"),
             OperationOutcome::new(
@@ -110,5 +133,4 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
             .failures(failures),
         );
     }
-    result
 }

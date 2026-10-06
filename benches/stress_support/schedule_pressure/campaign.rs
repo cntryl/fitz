@@ -24,10 +24,12 @@ pub async fn stage(
     count: usize,
     mode: u8,
     generation: u64,
+    recovery: bool,
 ) -> Result<(), BenchFailure> {
     report.stages.push(Stage {
         definitions: count,
         mode,
+        recovery,
         ..Stage::default()
     });
     report.save()?;

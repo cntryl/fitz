@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub struct Stage {
     pub definitions: usize,
     pub mode: u8,
+    pub recovery: bool,
     pub accepted_definitions: u64,
     pub completed_occurrences: u64,
     pub received: [u64; 2],
