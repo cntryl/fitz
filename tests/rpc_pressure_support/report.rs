@@ -13,6 +13,7 @@ pub struct Stage {
     pub unresolved: usize,
     pub elapsed_ns: u128,
     pub failure: Option<String>,
+    pub worker_failure: Option<String>,
 }
 
 #[derive(Serialize)]

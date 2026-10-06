@@ -6,9 +6,7 @@ mod report;
 mod wire;
 
 use fitz::testkit::{TestClient, TestServer};
-use fixtures::transport::{
-    build_rpc_response_delivery, parse_rpc_request_delivery, parse_rpc_response_delivery,
-};
+use fixtures::transport::{build_rpc_response_delivery, parse_rpc_request_delivery};
 use futures_util::future::join_all;
 use report::{Report, Stage};
 use std::collections::HashMap;
@@ -118,16 +116,18 @@ async fn stage(server: &TestServer, offered: usize, report: &mut Report) -> Resu
             let _ = tokio::time::timeout(Duration::from_secs(1), &mut worker_task).await;
             Err("worker shutdown join exceeded deadline; task aborted".into())
         };
+    let worker_failure = worker_result.err();
     let failure = match result {
         Ok(results) => results.into_iter().find_map(Result::err),
         Err(_) => Some("absolute stage deadline exceeded; outcomes unresolved".into()),
     }
-    .or_else(|| worker_result.err());
+    .or_else(|| worker_failure.clone());
     let mut current = std::mem::take(&mut *counters.lock().unwrap());
     current.elapsed_ns = started.elapsed().as_nanos();
     current.indeterminate_writes = current.attempted - current.sent;
     current.unresolved = current.attempted - current.completed - current.backpressure;
     current.failure = failure;
+    current.worker_failure = worker_failure;
     if current.failure.is_none()
         && (current.sent != offered
             || current.unresolved != 0
@@ -154,6 +154,15 @@ async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
         .await
         .map_err(error)?;
     let delivery = parse_rpc_request_delivery(&worker.recv_frame(2000).await.map_err(error)?)?;
+    if delivery.route != wire::ROUTE
+        || delivery.body != wire::body(99_999)
+        || delivery.correlation_id == id
+        || !delivery
+            .remaining_budget_ms
+            .is_some_and(|budget| budget <= if mode == 4 { 250 } else { 5000 })
+    {
+        return Err("invalid negotiated lifecycle dispatch".into());
+    }
     match mode {
         1 => {
             caller
@@ -166,16 +175,11 @@ async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
             drop(caller);
         }
         4 => {
-            let response =
-                parse_rpc_response_delivery(&caller.recv_frame(2000).await.map_err(error)?)?;
-            let (code, _) = fitz::protocol::error_codes::decode_error_body(&response.body)?;
-            if response.correlation_id != id
-                || response.seq != 0
-                || !response.stream_end
-                || code != fitz::protocol::error_codes::rpc::ERR_RPC_TIMEOUT
-            {
-                return Err("invalid timeout terminal".into());
-            }
+            wire::terminal_error(
+                &caller.recv_frame(2000).await.map_err(error)?,
+                id,
+                fitz::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            )?;
         }
         _ => return Err("unknown lifecycle scenario".into()),
     }
@@ -197,7 +201,13 @@ async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
         .await
         .map_err(error)?;
     let delivery = parse_rpc_request_delivery(&worker.recv_frame(2000).await.map_err(error)?)?;
-    if delivery.body != wire::body(100_000) {
+    if delivery.route != wire::ROUTE
+        || delivery.body != wire::body(100_000)
+        || delivery.correlation_id == probe_id
+        || !delivery
+            .remaining_budget_ms
+            .is_some_and(|budget| budget <= 5000)
+    {
         return Err("cleanup credit probe payload mismatch".into());
     }
     worker
@@ -209,12 +219,8 @@ async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
         ))
         .await
         .map_err(error)?;
-    let response = parse_rpc_response_delivery(&probe.recv_frame(2000).await.map_err(error)?)?;
-    if response.correlation_id != probe_id
-        || response.seq != 0
-        || !response.stream_end
-        || response.body != wire::body(100_000)
-    {
+    let frame = probe.recv_frame(2000).await.map_err(error)?;
+    if !wire::terminal(&frame, &mut HashMap::from([(probe_id, 100_000)]))? {
         return Err("cleanup credit probe failed".into());
     }
     Ok(())

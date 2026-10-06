@@ -76,6 +76,21 @@ pub fn terminal(
     bytes: &[u8],
     pending: &mut std::collections::HashMap<Uuid, u64>,
 ) -> Result<bool, String> {
+    let (id, response) = terminal_envelope(bytes)?;
+    let sequence = pending
+        .remove(&id)
+        .ok_or("unknown or duplicate terminal UUID")?;
+    if response.as_ref() == body(sequence) {
+        return Ok(true);
+    }
+    let (code, message) = fitz::protocol::error_codes::decode_error_body(&response)?;
+    if code != fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE {
+        return Err(format!("unexpected terminal {code}: {message}"));
+    }
+    Ok(false)
+}
+
+fn terminal_envelope(bytes: &[u8]) -> Result<(Uuid, bytes::Bytes), String> {
     let mut parser = TlvFrameParser::new(bytes);
     let (kind, payload) = parser.next_field().ok_or("missing terminal reply")?;
     if kind != 303 || parser.next_field().is_some() {
@@ -86,21 +101,20 @@ pub fn terminal(
     id[..8].copy_from_slice(&decoder.get_u64()?.to_be_bytes());
     id[8..].copy_from_slice(&decoder.get_u64()?.to_be_bytes());
     let id = Uuid::from_bytes(id);
-    let sequence = pending
-        .remove(&id)
-        .ok_or("unknown or duplicate terminal UUID")?;
     let reply_sequence = decoder.get_u64()?;
     let flags = decoder.get_u8()?;
     let response = decoder.get_bytes()?;
     if reply_sequence != 0 || flags != 1 || !decoder.is_complete() {
         return Err("invalid terminal sequence, flags, or trailing data".into());
     }
-    if response.as_ref() == body(sequence) {
-        return Ok(true);
+    Ok((id, response))
+}
+
+pub fn terminal_error(bytes: &[u8], expected_id: Uuid, expected_code: u16) -> Result<(), String> {
+    let (id, response) = terminal_envelope(bytes)?;
+    let (code, _) = fitz::protocol::error_codes::decode_error_body(&response)?;
+    if id != expected_id || code != expected_code {
+        return Err("unexpected terminal error identity/code".into());
     }
-    let (code, message) = fitz::protocol::error_codes::decode_error_body(&response)?;
-    if code != fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE {
-        return Err(format!("unexpected terminal {code}: {message}"));
-    }
-    Ok(false)
+    Ok(())
 }
