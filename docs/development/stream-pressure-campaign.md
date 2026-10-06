@@ -68,3 +68,25 @@ replication, recovery of live sessions, or throughput on an unloaded host.
 Single diagnostic runs do not qualify an hour-long soak or a statistical
 performance baseline. A passing configured envelope is not proof of an
 unbounded capacity limit.
+
+## Executed envelopes
+
+Clean dev-profile runs used fresh local stores and 1 KiB values unless stated.
+At `a61711c5`, targets 1,000/10,000/100,000 with batches of 256 passed full
+readback, then verified 100,001 events after clean restart and committed the
+final recovery event. At `91307161`, attempts above 10,000 staged events or
+10 MiB of staged payload reached the documented batch rejection. Both rolled
+back, verified unchanged history, and passed restart and recovery probes.
+
+At `8d47811c`, targets 10,000/100,000/500,000, batches of 256 and a 300-second
+stage guard failed after 158,880 acknowledged events. The next COMMIT returned
+`2012: domain timeout: request outcome unknown, do not blindly retry` with
+256 staged events and one more commit request than acknowledged commits.
+The 100,000-event checkpoint readback passed. Shutdown completed, and the
+failed store and JSON were retained. Restart verification and recovery did
+not run; neither data loss nor the final batch's outcome is established.
+This single failed run is a liveness/indeterminate-outcome observation, not
+a universal event-count boundary or a crash-recovery result.
+
+Twelve focused oracle regressions and full workspace/all-target/all-feature
+strict Clippy passed. These diagnostic timings do not qualify throughput.
