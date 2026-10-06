@@ -34,11 +34,11 @@ impl Config {
             || targets.len() > 16
             || targets.iter().any(|n| *n < 2 || *n > 1_000_000)
             || targets.windows(2).any(|n| n[0] >= n[1])
-            || targets.last().copied().unwrap_or(0)
+            || (targets.last().copied().unwrap_or(0) + 2)
                 * u64::try_from(payload_bytes).map_err(|e| e.to_string())?
                 > 512 * 1024 * 1024
         {
-            return Err("targets must increase in 2..=1000000, at most 16 stages, <=512MiB retained payload".into());
+            return Err("targets must increase in 2..=1000000, at most 16 stages, <=512MiB retained payload including recovery probes".into());
         }
         Ok(Self {
             targets,

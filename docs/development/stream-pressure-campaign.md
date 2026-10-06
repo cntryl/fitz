@@ -28,7 +28,8 @@ multiwriter conflict behavior, or wildcard replay.
 | `FITZ_STREAM_PRESSURE_PAYLOAD_BYTES` | `1024` | 8 through 32,768. |
 | `FITZ_STREAM_PRESSURE_STAGE_SECS` | `300` | 1 through 600 per growth stage. |
 
-The largest target times payload bytes must not exceed 512 MiB. The actual
+The largest target plus two recovery events, times payload bytes, must not
+exceed 512 MiB. The actual
 store includes indexes, WAL, and metadata, so this guard is not a disk quota.
 Partial final batches stop exactly at the target. Every operation has an
 absolute 60-second deadline; each complete replay has a 600-second deadline.
@@ -40,7 +41,7 @@ committed events from the same store and performs another append/commit/replay.
 The oracle verifies every route, contiguous resource offset, exact payload,
 event kind, metadata absence, page count, and continuation flag. It requests a
 final empty page, so unexpected extra events and leaked rolled-back batches
-cannot silently pass. Scope offsets and global selector ordering are not
+cannot silently pass. Scope offsets, timestamps, and global selector ordering are not
 asserted by this concrete-resource diagnostic.
 
 An APPEND acknowledgement only stages an event. `committed_events` advances

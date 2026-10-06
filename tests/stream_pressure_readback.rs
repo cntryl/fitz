@@ -5,6 +5,22 @@ use fitz::protocol::payload_codec::PayloadEncoder;
 const ROUTE: &str = "stream://stress-bench/history/growing";
 
 #[test]
+fn should_preserve_coded_stream_read_failure_detail() {
+    // Arrange
+    let mut body = PayloadEncoder::new();
+    body.put_u8(1);
+    body.put_u32(2012);
+    body.put_string("no free L0 slot");
+    // Act
+    let result = readback::verify_page(&body.finish(), ROUTE, 0, 1, 1, 32);
+    // Assert
+    assert_eq!(
+        result,
+        Err("Stream READ error code 2012: no free L0 slot".into())
+    );
+}
+
+#[test]
 fn should_accept_status_only_stream_rollback_success() {
     assert!(admission::rollback_success(&[0]).is_ok());
 }
