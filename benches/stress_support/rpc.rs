@@ -114,7 +114,7 @@ impl RpcDriver {
     }
 
     pub(super) async fn verify(&mut self) -> Result<u64, BenchFailure> {
-        if self.step(u64::MAX).await? != StepOutcome::Completed {
+        if !self.step(u64::MAX).await?.is_completed() {
             return Err(BenchFailure::verification(
                 "RPC readiness/recovery probe did not complete",
             ));

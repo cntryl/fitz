@@ -53,6 +53,9 @@ const QUEUE_IDLE_HORIZON: Duration = Duration::from_hours(1);
 const QUEUE_STORAGE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_DUE_ITEMS_PER_PASS: usize = 32;
 pub(super) const QUEUE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
+// Client storage operations use Midge's default runtime response budget.
+// Admission and control-plane waits retain the short latency budget above.
+pub(super) const QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 
 use bytes::Bytes;
 use lexkey::LexKey;

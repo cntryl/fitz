@@ -231,6 +231,10 @@ The [Tier 5 workflow](../../.github/workflows/bench-tier5.yml) runs weekly and t
 seven independent domain jobs. Both require `benchkit,stress-soak`, preserve
 failure logs and partial JSON alongside framework artifacts, and use the
 [owned-window invocation contract](tier5-tier6-benchmarks.md).
+They explicitly use `FITZ_STRESS_STORAGE_PROFILE=local_disk` for continuous
+campaigns. The opt-in `memory` profile is a resource-pressure diagnostic whose
+retained physical write history can exhaust the store despite bounded logical
+workload state.
 
 Run a targeted benchmark:
 

@@ -59,6 +59,8 @@ impl QueueFamilyState {
                 config.fast_flush_interval,
             ),
             dirty_fast_flush_families: HashSet::new(),
+            fast_flush_client: config.fast_flush_client.clone(),
+            in_flight_fast_flushes: HashMap::new(),
         }
     }
 }
@@ -215,6 +217,7 @@ impl QueueDomain {
             metrics: None,
             active: active.clone(),
             fast_flush_interval: None,
+            fast_flush_client: None,
             known_queue_keys: Arc::new(known_queue_keys),
             inventory_error,
             delivery_service_us,
@@ -227,6 +230,7 @@ impl QueueDomain {
             family_runtime,
             route_families,
             inflight_client_deliveries: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            fast_flush_worker: None,
         }
     }
 
@@ -251,6 +255,15 @@ impl QueueDomain {
 
     fn rebuild_actor(&mut self) {
         self.family_runtime.stop();
+        if let Some(worker) = self.fast_flush_worker.as_ref() {
+            if let Err(error) = worker.wait_until_idle() {
+                tracing::error!(
+                    domain = "queue",
+                    error,
+                    "Queue fast flush worker did not drain before actor rebuild"
+                );
+            }
+        }
         self.family_runtime =
             Self::spawn_family_runtime(&self.config, self.active.clone(), &self.route_families);
     }
@@ -277,10 +290,40 @@ impl QueueDomain {
     ///
     /// # Panics
     ///
-    /// Panics if a family runtime retains its core after the runtime has stopped.
+    /// Panics if a family runtime retains its core after the runtime has stopped,
+    /// or if the Queue flush worker cannot be started.
     pub fn with_fast_flush_interval(mut self, interval: Option<Duration>) -> Self {
         self.family_runtime.stop();
+        self.config.fast_flush_client = None;
+        drop(self.fast_flush_worker.take());
         self.config.fast_flush_interval = interval;
+        if interval.is_some()
+            && self.config.queue_write_policy == crate::domains::WritePolicy::BestEffort
+        {
+            let (worker, client) =
+                super::fast_flush::FastFlushWorker::spawn(self.config.store.clone())
+                    .expect("spawn Queue fast flush worker");
+            self.fast_flush_worker = Some(worker);
+            self.config.fast_flush_client = Some(client);
+        }
+        self.rebuild_actor();
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_fast_flush_worker_for_tests(
+        mut self,
+        interval: Duration,
+        flush: impl Fn(u32) -> super::fast_flush::FlushResult + Send + 'static,
+    ) -> Self {
+        self.family_runtime.stop();
+        self.config.fast_flush_client = None;
+        drop(self.fast_flush_worker.take());
+        self.config.fast_flush_interval = Some(interval);
+        let (worker, client) = super::fast_flush::FastFlushWorker::spawn_with(flush)
+            .expect("spawn test Queue fast flush worker");
+        self.fast_flush_worker = Some(worker);
+        self.config.fast_flush_client = Some(client);
         self.rebuild_actor();
         self
     }
@@ -288,6 +331,15 @@ impl QueueDomain {
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
         self.family_runtime.stop();
+        if let Some(worker) = self.fast_flush_worker.as_ref() {
+            if let Err(error) = worker.wait_until_idle() {
+                tracing::error!(
+                    domain = "queue",
+                    error,
+                    "Queue fast flush worker did not drain during shutdown"
+                );
+            }
+        }
     }
 
     pub(crate) fn is_active(&self) -> bool {

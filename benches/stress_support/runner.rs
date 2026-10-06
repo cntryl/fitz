@@ -1,20 +1,20 @@
-use crate::stress_support::artifacts::{memory_sample, Artifacts, Phase};
+use crate::stress_support::artifacts::{memory_sample, Artifacts, CleanupFailure, Phase};
 use crate::stress_support::durable::DurableDriver;
 use crate::stress_support::ephemeral::EphemeralDriver;
+use crate::stress_support::fixture::{BrokerFixture, StorageDirectory, StorageProfile};
 use crate::stress_support::types::{BenchFailure, Domain, FailureKind, StepOutcome};
 use cntryl_stress::{
     LogicalUnit, ObservationDirection, ObservationUnit, OperationOutcome, ProgressHandle,
     StressContext, StressError, StressResult,
 };
 use fitz::benchkit::shared_bench_runtime;
-use fitz::testkit::TestServer;
 use futures_util::future::join_all;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 const LOADS: [usize; 7] = [1, 2, 4, 8, 16, 32, 64];
-const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(5);
 const VERIFY_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -72,7 +72,7 @@ async fn bounded<T>(
         .await
         .map_err(|_| BenchFailure {
             kind: FailureKind::Timeout,
-            detail: "complete TCP operation exceeded 10 seconds; outcome may be indeterminate"
+            detail: "complete TCP operation exceeded 60 seconds; outcome may be indeterminate"
                 .to_owned(),
         })?
 }
@@ -123,7 +123,7 @@ fn record_failure(phase: &mut Phase, error: &BenchFailure) {
         FailureKind::InvalidResponse | FailureKind::Verification => {
             phase.validation_errors = phase.validation_errors.saturating_add(1);
         }
-        FailureKind::Transport => {}
+        FailureKind::Transport | FailureKind::DomainError => {}
     }
     phase.failure.get_or_insert_with(|| error.to_string());
     phase
@@ -144,11 +144,14 @@ fn classify(
             phase.lane_completions[lane] = phase.lane_completions[lane].saturating_add(1);
             phase.latencies.record(elapsed);
         }
+        Ok(StepOutcome::CompletedWithCapacityRejections { code, count }) => {
+            phase.completed = phase.completed.saturating_add(1);
+            phase.lane_completions[lane] = phase.lane_completions[lane].saturating_add(1);
+            phase.latencies.record(elapsed);
+            record_capacity_rejections(phase, lane, code, count);
+        }
         Ok(StepOutcome::CapacityRejected(code)) => {
-            let count = phase.capacity_rejections.entry(code).or_default();
-            *count = count.saturating_add(1);
-            phase.lane_capacity_rejections[lane] =
-                phase.lane_capacity_rejections[lane].saturating_add(1);
+            record_capacity_rejections(phase, lane, code, 1);
         }
         Ok(StepOutcome::Contended) => phase.contentions = phase.contentions.saturating_add(1),
         Ok(StepOutcome::DeliveryWindowMiss) => {
@@ -160,6 +163,13 @@ fn classify(
         }
     }
     None
+}
+
+fn record_capacity_rejections(phase: &mut Phase, lane: usize, code: u32, count: u64) {
+    let capacity_rejections = phase.capacity_rejections.entry(code).or_default();
+    *capacity_rejections = capacity_rejections.saturating_add(count);
+    phase.lane_capacity_rejections[lane] =
+        phase.lane_capacity_rejections[lane].saturating_add(count);
 }
 
 struct Batch {
@@ -193,7 +203,7 @@ async fn bounded_step(
             detail: if window < OPERATION_TIMEOUT {
                 format!("lane {lane} exceeded its completed-cycle progress deadline; outcome may be indeterminate")
             } else {
-                "complete TCP operation exceeded 10 seconds; outcome may be indeterminate".to_owned()
+                "complete TCP operation exceeded 60 seconds; outcome may be indeterminate".to_owned()
             },
         })?
 }
@@ -214,7 +224,7 @@ async fn batch(
                 let started = Instant::now();
                 let result = bounded_step(driver, *sequence, remaining[lane], lane).await;
                 let completed_at = batch_started.elapsed();
-                if matches!(&result, Ok(StepOutcome::Completed)) {
+                if result.as_ref().is_ok_and(StepOutcome::is_completed) {
                     progress.advance();
                 }
                 *sequence = sequence.saturating_add(1);
@@ -361,7 +371,11 @@ fn apply_batch(report: &mut Phase, batch: Batch) -> Result<(), BenchFailure> {
     report.elapsed_ns = report.elapsed_ns.saturating_add(batch.elapsed.as_nanos());
     let mut failure = None;
     for (lane, observed) in batch.outcomes.into_iter().enumerate() {
-        if matches!(&observed.result, Ok(StepOutcome::Completed)) {
+        if observed
+            .result
+            .as_ref()
+            .is_ok_and(StepOutcome::is_completed)
+        {
             report.lane_last_completion_ns[lane] =
                 began_at.saturating_add(observed.completed_at.as_nanos());
         }
@@ -508,9 +522,15 @@ fn phase(
     result.and(saved)
 }
 
-fn configure_context(ctx: &mut StressContext, domain: Domain, tier: u8, duration: Duration) {
+fn configure_context(
+    ctx: &mut StressContext,
+    domain: Domain,
+    tier: u8,
+    duration: Duration,
+    storage_profile: StorageProfile,
+) {
     ctx.parameter("domain", domain.label());
-    ctx.parameter("storage_profile", "memory");
+    ctx.parameter("storage_profile", storage_profile.label());
     ctx.parameter("transport", "tcp");
     ctx.parameter("inflight_per_lane", 1);
     ctx.parameter("configured_seconds", duration.as_secs());
@@ -527,7 +547,7 @@ fn configure_context(ctx: &mut StressContext, domain: Domain, tier: u8, duration
         "latency_estimator",
         "fixed_power_of_two_nanosecond_histogram",
     );
-    ctx.metadata("durability_scope", "running_process_memory_fixture");
+    ctx.metadata("durability_scope", storage_profile.durability_scope());
 }
 
 fn prepare_drivers(
@@ -612,27 +632,115 @@ fn run_phases(
     )
 }
 
-fn close_fixture(
-    drivers: Vec<Driver>,
-    server: TestServer,
-    result: Result<(), BenchFailure>,
-) -> Result<(), BenchFailure> {
-    let runtime = shared_bench_runtime();
-    let mut final_result = result;
-    for result in runtime.block_on(join_all(
-        drivers.into_iter().map(|driver| bounded(driver.close())),
-    )) {
-        if final_result.is_ok() {
-            final_result = result;
+fn remember_failure(artifacts: &mut Artifacts, result: &Result<(), BenchFailure>) {
+    if let Err(error) = result {
+        artifacts.status = "failed";
+        artifacts.failure = Some(error.to_string());
+        artifacts.failure_kind = Some(format!("{:?}", error.kind));
+    }
+}
+
+fn append_failure(result: &mut Result<(), BenchFailure>, error: &BenchFailure, context: &str) {
+    match result {
+        Ok(()) => {
+            *result = Err(BenchFailure {
+                kind: error.kind,
+                detail: format!("{context}: {}", error.detail),
+            });
+        }
+        Err(original) => {
+            original.detail = format!("{}; {context}: {error}", original.detail);
         }
     }
-    let shutdown = runtime.block_on(bounded(async {
+}
+
+fn save_cleanup_progress(artifacts: &mut Artifacts, result: &mut Result<(), BenchFailure>) {
+    remember_failure(artifacts, result);
+    if let Err(error) = artifacts.save() {
+        append_failure(result, &error, "saving cleanup evidence failed");
+        remember_failure(artifacts, result);
+    }
+}
+
+fn record_cleanup_failure(
+    artifacts: &mut Artifacts,
+    result: &mut Result<(), BenchFailure>,
+    stage: &'static str,
+    driver_index: Option<usize>,
+    error: &BenchFailure,
+) {
+    artifacts.cleanup_failures.push(CleanupFailure {
+        stage,
+        driver_index,
+        failure_kind: format!("{:?}", error.kind),
+        failure: error.to_string(),
+    });
+    let context = driver_index.map_or_else(
+        || format!("{stage} cleanup failed"),
+        |index| format!("{stage} cleanup at prepared index {index} failed"),
+    );
+    append_failure(result, error, &context);
+    save_cleanup_progress(artifacts, result);
+}
+
+fn close_server_and_directory(
+    fixture: BrokerFixture,
+    artifacts: &mut Artifacts,
+    result: &mut Result<(), BenchFailure>,
+) {
+    let (server, storage_directory) = fixture.into_parts();
+    // Keep the directory outside the timed future: a canceled shutdown must not
+    // remove files still owned by a live storage engine.
+    let shutdown = shared_bench_runtime().block_on(bounded(async {
         server.shutdown().await.map_err(BenchFailure::transport)
     }));
-    if final_result.is_ok() {
-        final_result = shutdown;
+    match shutdown {
+        Ok(()) => {
+            if let Err(error) = storage_directory.release() {
+                record_cleanup_failure(artifacts, result, "directory", None, &error);
+            }
+        }
+        Err(mut error) => {
+            if let Some(path) = storage_directory.path() {
+                error.detail = format!(
+                    "{}; benchmark storage retained at {}",
+                    error.detail,
+                    path.display()
+                );
+            }
+            drop(storage_directory);
+            record_cleanup_failure(artifacts, result, "server", None, &error);
+        }
     }
-    final_result
+}
+
+fn close_fixture(
+    drivers: Vec<Driver>,
+    fixture: BrokerFixture,
+    mut result: Result<(), BenchFailure>,
+    artifacts: &mut Artifacts,
+) -> Result<(), BenchFailure> {
+    // Persist the workload failure while cleanup is still not_started, then
+    // persist running before any close or synchronous actor join can block.
+    save_cleanup_progress(artifacts, &mut result);
+    artifacts.cleanup_status = "running";
+    save_cleanup_progress(artifacts, &mut result);
+    let closed = shared_bench_runtime().block_on(join_all(
+        drivers.into_iter().map(|driver| bounded(driver.close())),
+    ));
+    for (index, outcome) in closed.into_iter().enumerate() {
+        if let Err(error) = outcome {
+            record_cleanup_failure(artifacts, &mut result, "driver", Some(index), &error);
+        }
+    }
+    close_server_and_directory(fixture, artifacts, &mut result);
+    artifacts.cleanup_status = if artifacts.cleanup_failures.is_empty() {
+        "completed"
+    } else {
+        "failed"
+    };
+    save_cleanup_progress(artifacts, &mut result);
+    result
 }
 
 fn finalize(artifacts: &mut Artifacts, result: Result<(), BenchFailure>) -> StressResult {
@@ -641,11 +749,7 @@ fn finalize(artifacts: &mut Artifacts, result: Result<(), BenchFailure>) -> Stre
     } else {
         "failed"
     };
-    artifacts.failure = result.as_ref().err().map(ToString::to_string);
-    artifacts.failure_kind = result
-        .as_ref()
-        .err()
-        .map(|error| format!("{:?}", error.kind));
+    remember_failure(artifacts, &result);
     if let Err(save_error) = artifacts.save() {
         let detail = result.as_ref().err().map_or_else(
             || format!("saving final workload evidence failed: {save_error}"),
@@ -657,35 +761,43 @@ fn finalize(artifacts: &mut Artifacts, result: Result<(), BenchFailure>) -> Stre
 }
 
 pub(crate) fn run(ctx: &mut StressContext, domain: Domain, tier: u8) -> StressResult {
+    let storage_profile =
+        StorageProfile::from_env().map_err(|error| StressError::new(error.to_string()))?;
     let duration =
         configured_duration(tier).map_err(|error| StressError::new(error.to_string()))?;
     let progress_timeout =
         configured_progress_timeout().map_err(|error| StressError::new(error.to_string()))?;
-    let mut artifacts = Artifacts::new(tier, domain.label(), duration)
+    let mut artifacts = Artifacts::new(tier, domain.label(), duration, storage_profile)
         .map_err(|error| StressError::new(error.to_string()))?;
+    let storage_directory = match StorageDirectory::new(storage_profile) {
+        Ok(directory) => directory,
+        Err(error) => return finalize(&mut artifacts, Err(error)),
+    };
+    artifacts.local_storage_path = storage_directory.path().map(std::path::Path::to_path_buf);
     artifacts
         .save()
         .map_err(|error| StressError::new(error.to_string()))?;
-    configure_context(ctx, domain, tier, duration);
-    let server = match shared_bench_runtime().block_on(bounded(async {
-        TestServer::start_with_write_heavy_memory()
-            .await
-            .map_err(BenchFailure::transport)
-    })) {
-        Ok(server) => server,
+    configure_context(ctx, domain, tier, duration, storage_profile);
+    let fixture = match shared_bench_runtime().block_on(bounded(BrokerFixture::start(
+        storage_profile,
+        storage_directory,
+    ))) {
+        Ok(fixture) => fixture,
         Err(error) => return finalize(&mut artifacts, Err(error)),
     };
     let maximum = if tier == 5 { 64 } else { 8 };
     let mut drivers = Vec::with_capacity(maximum);
-    let result = prepare_drivers(domain, server.tcp_addr, maximum, &mut drivers).and_then(|()| {
-        run_phases(
-            ctx,
-            &mut artifacts,
-            &mut drivers,
-            duration,
-            progress_timeout,
-            tier,
-        )
-    });
-    finalize(&mut artifacts, close_fixture(drivers, server, result))
+    let result =
+        prepare_drivers(domain, fixture.tcp_addr(), maximum, &mut drivers).and_then(|()| {
+            run_phases(
+                ctx,
+                &mut artifacts,
+                &mut drivers,
+                duration,
+                progress_timeout,
+                tier,
+            )
+        });
+    let result = close_fixture(drivers, fixture, result, &mut artifacts);
+    finalize(&mut artifacts, result)
 }

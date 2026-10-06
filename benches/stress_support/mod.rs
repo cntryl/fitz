@@ -2,6 +2,7 @@
 mod artifacts;
 mod durable;
 mod ephemeral;
+mod fixture;
 mod histogram;
 mod runner;
 mod types;
