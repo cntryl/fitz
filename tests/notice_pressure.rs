@@ -25,7 +25,9 @@ fn body(sequence: u64) -> Vec<u8> {
 #[derive(Default, Serialize)]
 struct Stage {
     offered: usize,
+    attempted: usize,
     sent: usize,
+    indeterminate_writes: usize,
     fast_observed: usize,
     slow_observed: usize,
     fast_window_misses: usize,
@@ -42,6 +44,13 @@ struct Report {
     source_sha: Option<String>,
     source_dirty: Option<bool>,
     scope: &'static str,
+    transport: &'static str,
+    storage_mode: &'static str,
+    status: &'static str,
+    planned_bursts: Vec<usize>,
+    send_deadline_seconds: u64,
+    observation_window_seconds: u64,
+    startup_shutdown_deadline_seconds: u64,
     payload_bytes: usize,
     slow_read_delay_ms: u64,
     stages: Vec<Stage>,
@@ -49,6 +58,8 @@ struct Report {
     recovery_passed: bool,
     cleanup_passed: bool,
     failure: Option<String>,
+    cleanup_failure: Option<String>,
+    artifact_failure: Option<String>,
     #[serde(skip)]
     path: PathBuf,
 }
@@ -66,6 +77,13 @@ impl Report {
             source_sha: git(&["rev-parse", "HEAD"]),
             source_dirty: git(&["status", "--porcelain"]).map(|s| !s.is_empty()),
             scope: "live_delivery_observations_no_replay_or_durability",
+            transport: "tcp",
+            storage_mode: "memory",
+            status: "running",
+            planned_bursts: Vec::new(),
+            send_deadline_seconds: 30,
+            observation_window_seconds: 6,
+            startup_shutdown_deadline_seconds: 60,
             payload_bytes: 1024,
             slow_read_delay_ms: 5000,
             stages: Vec::new(),
@@ -73,6 +91,8 @@ impl Report {
             recovery_passed: false,
             cleanup_passed: false,
             failure: None,
+            cleanup_failure: None,
+            artifact_failure: None,
             path: directory.join(format!("{stamp}.json")),
         })
     }
@@ -93,21 +113,47 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 async fn subscribe(server: &TestServer) -> Result<(TestClient, u64), String> {
-    let mut client = TestClient::new(server.tcp_addr).await.map_err(error)?;
-    client
-        .send_frame(&build_notice_subscribe(ROUTE))
+    bounded(10, async {
+        let mut client = TestClient::new(server.tcp_addr).await.map_err(error)?;
+        client
+            .send_frame(&build_notice_subscribe(ROUTE))
+            .await
+            .map_err(error)?;
+        let response = client.recv_frame(2000).await.map_err(error)?;
+        let mut parser = fitz::testkit::transport::TlvFrameParser::new(&response);
+        let (kind, data) = parser.next_field().ok_or("missing subscription reply")?;
+        if kind != 501 || data.first() != Some(&0) || parser.next_field().is_some() {
+            return Err("subscription rejected".into());
+        }
+        Ok((
+            client,
+            parse_notice_subscription_id(&data[1..])?.ok_or("missing subscription identity")?,
+        ))
+    })
+    .await
+}
+
+async fn bounded<T>(
+    seconds: u64,
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::time::timeout(Duration::from_secs(seconds), future)
         .await
-        .map_err(error)?;
-    let response = client.recv_frame(2000).await.map_err(error)?;
-    let mut parser = fitz::testkit::transport::TlvFrameParser::new(&response);
-    let (kind, data) = parser.next_field().ok_or("missing subscription reply")?;
-    if kind != 501 || data.first() != Some(&0) || parser.next_field().is_some() {
-        return Err("subscription rejected".into());
+        .map_err(|_| {
+            format!("absolute {seconds}s operation deadline exceeded; outcome may be unknown")
+        })?
+}
+
+async fn finish_receiver(
+    mut task: tokio::task::JoinHandle<Result<(), String>>,
+) -> Result<(), String> {
+    if let Ok(result) = tokio::time::timeout(Duration::from_secs(2), &mut task).await {
+        result.map_err(error).and_then(|r| r)
+    } else {
+        task.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(1), &mut task).await;
+        Err("receiver join exceeded deadline; task aborted".into())
     }
-    Ok((
-        client,
-        parse_notice_subscription_id(&data[1..])?.ok_or("missing subscription identity")?,
-    ))
 }
 
 fn validate(
@@ -208,6 +254,7 @@ async fn stage(server: &TestServer, offered: usize, report: &mut Report) -> Resu
     let started = Instant::now();
     let send_result = tokio::time::timeout(Duration::from_secs(30), async {
         for sequence in 0..offered {
+            counters.lock().unwrap().attempted += 1;
             publisher
                 .send_frame(&build_notice_publish(
                     ROUTE,
@@ -227,10 +274,11 @@ async fn stage(server: &TestServer, offered: usize, report: &mut Report) -> Resu
     tokio::time::sleep(Duration::from_secs(6)).await;
     let _ = fast_stop.send(());
     let _ = slow_stop.send(());
-    let fast_result = fast_task.await.map_err(error).and_then(|r| r);
-    let slow_result = slow_task.await.map_err(error).and_then(|r| r);
+    let fast_result = finish_receiver(fast_task).await;
+    let slow_result = finish_receiver(slow_task).await;
     let mut current = std::mem::take(&mut *counters.lock().unwrap());
     current.elapsed_ns = started.elapsed().as_nanos();
+    current.indeterminate_writes = current.attempted - current.sent;
     current.fast_window_misses = current.sent.saturating_sub(current.fast_observed);
     current.slow_window_misses = current.sent.saturating_sub(current.slow_observed);
     current.failure = send_result
@@ -259,8 +307,8 @@ async fn probe(server: &TestServer) -> Result<(), String> {
 async fn should_push_notice_slow_receiver_limits() {
     // Arrange
     let mut report = Report::new().expect("report");
-    let server = TestServer::start().await.expect("server");
     report.save().expect("initial artifact");
+    let mut server = None;
     // Act
     let result = async {
         let configured = std::env::var("FITZ_NOTICE_PRESSURE_BURSTS")
@@ -273,22 +321,42 @@ async fn should_push_notice_slow_receiver_limits() {
         if bursts.is_empty() || bursts.len() > 8 || bursts.iter().any(|&n| n == 0 || n > 100_000) {
             return Err("bursts require 1..8 values each in 1..100000".into());
         }
-        probe(&server).await?;
+        report.planned_bursts.clone_from(&bursts);
+        report.save()?;
+        server = Some(bounded(60, async { TestServer::start().await.map_err(error) }).await?);
+        let active = server.as_ref().expect("startup completed");
+        bounded(10, probe(active)).await?;
         report.baseline_passed = true;
         for offered in bursts {
-            stage(&server, offered, &mut report).await?;
-            probe(&server).await?;
+            stage(active, offered, &mut report).await?;
+            bounded(10, probe(active)).await?;
         }
         report.recovery_passed = true;
         Ok::<_, String>(())
     }
     .await;
     report.failure = result.err();
-    let shutdown = server.shutdown().await.map_err(error);
-    report.cleanup_passed = shutdown.is_ok();
-    if let Err(e) = shutdown {
-        report.failure.get_or_insert(e);
+    if let Err(e) = report.save() {
+        report.artifact_failure = Some(e);
     }
+    if let Some(active) = server {
+        let shutdown = bounded(60, async { active.shutdown().await.map_err(error) }).await;
+        report.cleanup_passed = shutdown.is_ok();
+        if let Err(e) = shutdown {
+            report.cleanup_failure = Some(e.clone());
+            report.failure.get_or_insert(e);
+        }
+    }
+    if report.artifact_failure.is_some() {
+        report
+            .failure
+            .get_or_insert_with(|| "partial artifact persistence failed".into());
+    }
+    report.status = if report.failure.is_none() {
+        "passed"
+    } else {
+        "failed"
+    };
     report.save().expect("final artifact");
     // Assert
     assert!(

@@ -24,12 +24,17 @@ identity; every observed delivery must match the concrete route, subscription,
 sequence range, full bytes, and a previously unseen identity. Duplicate,
 unknown, malformed, or corrupt observations fail the run. Retained observation
 sets are bounded by the maximum burst size. Publisher writes have a whole-stage
-30-second deadline, followed by a fixed six-second observation window. Closing
+30-second deadline, followed by a fixed six-second observation window. Receiver
+joins have a two-second deadline and abort plus a bounded join on timeout.
+Startup/shutdown have 60-second wrappers and full low-load probes ten seconds.
+Closing
 a receiver after its observation window discards that connection, so a partially
 read frame can never be reused by another probe.
 
-The artifact records sent writes and observed deliveries separately for each
+The artifact records attempted and fully sent writes and observed deliveries separately for each
 receiver, with per-receiver observation-window misses and disconnect reasons.
+Incomplete writes are explicitly indeterminate; the configured offered envelope
+is planned work, not an inference that unsent work reached the broker.
 There is no publish ACK in this completion ledger. Socket writes do not prove
 broker acceptance, and an unobserved event is not proof of a broker drop. This
 burst diagnostic measures no independent arrival rate or exact fanout capacity.
@@ -46,7 +51,9 @@ recover old subscriptions or replay missed events.
 Atomic JSON artifacts under `target/fitz-stress/notice-pressure/` include source
 SHA/dirty state, payload size, receiver delay, actual offered/sent/observed/missed
 counts, disconnects, elapsed time, partial failure, cleanup, and baseline/recovery
-outcomes. The test is intentionally ignored in ordinary workspace runs. It is
+outcomes. The initial artifact precedes startup; failure checkpoints precede
+shutdown, and artifact-save failures cannot bypass broker cleanup.
+The test is intentionally ignored in ordinary workspace runs. It is
 not a statistical baseline, endurance qualification, wildcard/family isolation
 check, or restart/replay promise. At the largest stage, total published payload
 is about 100MiB and there are three TCP clients plus the broker.
