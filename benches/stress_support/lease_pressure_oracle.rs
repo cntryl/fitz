@@ -10,3 +10,13 @@ pub(crate) fn token(body: &[u8], expected_kind: u8) -> Result<u64, String> {
     }
     Ok(token)
 }
+
+/// QUERY can report Expired before the sweep removes the ephemeral record.
+/// This is a polling transition, never proof of completed cleanup.
+pub(crate) fn pending_expiry(body: &[u8]) -> Result<bool, String> {
+    if body.first() == Some(&0) {
+        return Ok(false);
+    }
+    let (code, _) = fitz::protocol::error_codes::decode_error_body(body)?;
+    Ok(code == fitz::protocol::error_codes::lease::ERR_LEASE_EXPIRED)
+}

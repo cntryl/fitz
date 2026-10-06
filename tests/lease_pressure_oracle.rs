@@ -45,3 +45,23 @@ fn should_validate_complete_ownership_grant() {
     // Assert
     assert_eq!(result.unwrap(), 42);
 }
+
+#[test]
+fn should_poll_documented_expired_query_before_cleanup() {
+    // Arrange
+    let body = fitz::protocol::error_codes::encode_error_body(5003, "Expired");
+    // Act
+    let result = oracle::pending_expiry(&body);
+    // Assert
+    assert!(result.unwrap());
+}
+
+#[test]
+fn should_not_poll_away_unexpected_query_error() {
+    // Arrange
+    let body = fitz::protocol::error_codes::encode_error_body(5009, "Unauthorized");
+    // Act
+    let result = oracle::pending_expiry(&body);
+    // Assert
+    assert!(!result.unwrap());
+}

@@ -155,8 +155,11 @@ fn waiting(owner: &str) -> Vec<u8> {
 }
 async fn query(client: &mut TestClient) -> Result<(Option<String>, usize), BenchFailure> {
     let body = bounded(request(client, &build_lease_query(ROUTE), 403)).await?;
-    require_ok(&body, "Lease QUERY")?;
-    let mut d = PayloadDecoder::new(&body);
+    query_body(&body)
+}
+fn query_body(body: &[u8]) -> Result<(Option<String>, usize), BenchFailure> {
+    require_ok(body, "Lease QUERY")?;
+    let mut d = PayloadDecoder::new(body);
     d.get_u8().map_err(BenchFailure::validation)?;
     let held = d.get_u8().map_err(BenchFailure::validation)?;
     let owner = match held {
@@ -203,9 +206,13 @@ async fn assert_query(
 async fn wait_empty(observer: &mut TestClient) -> Result<(), BenchFailure> {
     let start = Instant::now();
     loop {
-        let (owner, count) = query(observer).await?;
-        if owner.is_none() && count == 0 {
-            return Ok(());
+        let body = bounded(request(observer, &build_lease_query(ROUTE), 403)).await?;
+        let expired = oracle::pending_expiry(&body).map_err(BenchFailure::validation)?;
+        if !expired {
+            let (owner, count) = query_body(&body)?;
+            if owner.is_none() && count == 0 {
+                return Ok(());
+            }
         }
         if start.elapsed() > Duration::from_secs(5) {
             return Err(BenchFailure::verification(
