@@ -126,3 +126,31 @@ last completed rate and the first rejecting rate, retaining the same payload,
 consumer delay, storage, producer pool and stage duration. For generator or
 safety boundaries, change the limiting harness dimension explicitly and record
 that change; do not label it a broker failure.
+
+## Initial local evidence
+
+On clean source `6ba0677abb1a27a406d9de9f0c6bbc6750f1db9e`, an optimized local
+campaign used 128 producer connections, a 5 ms consumer delay, ten seconds per
+rate, a 5,000 outstanding-work guard, and a 180-second drain budget. Requested
+rates were `20,100,200,400,800,1600,3200`.
+
+| Requested arrivals/s | Accepted and ACKed | Known accepted backlog at load stop | Drain seconds | Stop |
+| --- | ---: | ---: | ---: | --- |
+| 20 | 200 | 0 | 0.024 | Full ten-second window |
+| 100 | 1,000 | 618 | 10.825 | Full ten-second window |
+| 200 | 2,000 | 1,433 | 28.689 | Full ten-second window |
+| 400 | 3,993 | 3,339 | 53.045 | Full ten-second window; seven missed sends |
+| 800 | 5,472 | 4,998 | 78.175 | Outstanding-work guard after 6.853 seconds; eleven missed sends |
+
+All 12,665 accepted messages were validated and ACKed. There were no broker
+admission rejections; every stage drained, empty checks and the final recovery
+probe passed, and shutdown/cleanup completed. Rates 1,600 and 3,200 were not
+attempted after the guard. The guard includes pending enqueue replies, so known
+accepted backlog can be slightly below its threshold.
+
+This establishes successful accounting and recovery within the declared local
+workload envelope. It does not establish the broker's maximum capacity, stable
+performance, strict durability, or a full-duration endurance pass. Initial
+shorter diagnostics also exercised a producer-limited stage and an intentionally
+insufficient drain deadline; the latter failed with nine of eleven accepted
+messages still outstanding and retained the failed fixture's store.

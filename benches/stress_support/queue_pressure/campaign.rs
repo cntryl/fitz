@@ -8,6 +8,7 @@ use super::{
 use cntryl_stress::{ProgressHandle, StressContext};
 use fitz::testkit::TestClient;
 use futures_util::{stream::FuturesUnordered, StreamExt};
+use std::fmt::Write;
 use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -333,6 +334,16 @@ pub(super) async fn run_stage(
         result = drain(&shared, &consumer, report, &mut stage, config.drain_seconds).await;
     }
     stop.store(true, Ordering::Relaxed);
+    if let Err(error) = &result {
+        report.status = "failed";
+        report.failure = Some(error.to_string());
+        stage.termination = "failed".into();
+        snapshot(&mut stage, &shared)?;
+        report.current = Some(stage.clone());
+        if let Err(saved) = report.save() {
+            append_failure(&mut result, saved, "failure artifact");
+        }
+    }
     match consumer.await.map_err(BenchFailure::transport) {
         Ok(Ok(mut client)) => {
             if result.is_ok() {
@@ -348,7 +359,7 @@ pub(super) async fn run_stage(
             clients.push(client);
         }
         Ok(Err(error)) | Err(error) => {
-            result = Err(error);
+            append_failure(&mut result, error, "consumer");
         }
     }
     snapshot(&mut stage, &shared)?;
@@ -371,6 +382,15 @@ pub(super) async fn run_stage(
     report.current = None;
     report.save()?;
     result
+}
+
+fn append_failure(result: &mut Result<(), BenchFailure>, error: BenchFailure, context: &str) {
+    match result {
+        Ok(()) => *result = Err(error),
+        Err(original) => {
+            let _ = write!(original.detail, "; {context}: {error}");
+        }
+    }
 }
 
 pub(super) async fn recovery(address: SocketAddr) -> Result<(), BenchFailure> {
