@@ -21,10 +21,13 @@ fn error(error: impl std::fmt::Display) -> String {
 }
 
 async fn connect_worker(server: &TestServer) -> Result<TestClient, String> {
-    let mut worker = TestClient::new(server.tcp_addr).await.map_err(error)?;
-    worker.send_frame(&wire::subscribe()).await.map_err(error)?;
-    wire::registration(&worker.recv_frame(2000).await.map_err(error)?)?;
-    Ok(worker)
+    bounded(10, async {
+        let mut worker = TestClient::new(server.tcp_addr).await.map_err(error)?;
+        worker.send_frame(&wire::subscribe()).await.map_err(error)?;
+        wire::registration(&worker.recv_frame(2000).await.map_err(error)?)?;
+        Ok(worker)
+    })
+    .await
 }
 
 async fn producer(
@@ -38,6 +41,7 @@ async fn producer(
     for sequence in start..start + count {
         let sequence = u64::try_from(sequence).map_err(error)?;
         let id = Uuid::new_v4();
+        counters.lock().unwrap().attempted += 1;
         caller
             .send_frame(&wire::request(id, sequence, 30_000))
             .await
@@ -64,7 +68,7 @@ async fn stage(server: &TestServer, offered: usize, report: &mut Report) -> Resu
     }));
     let counts = counters.clone();
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
-    let worker_task = tokio::spawn(async move {
+    let mut worker_task = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(1000)).await;
         let mut dispatched = std::collections::HashSet::new();
         loop {
@@ -86,15 +90,18 @@ async fn stage(server: &TestServer, offered: usize, report: &mut Report) -> Resu
             }
             counts.lock().unwrap().worker_dispatches += 1;
             tokio::time::sleep(Duration::from_millis(1)).await;
-            worker
-                .send_frame(&build_rpc_response_delivery(
-                    request.correlation_id,
-                    0,
-                    true,
-                    &request.body,
-                ))
-                .await
-                .map_err(error)?;
+            bounded(5, async {
+                worker
+                    .send_frame(&build_rpc_response_delivery(
+                        request.correlation_id,
+                        0,
+                        true,
+                        &request.body,
+                    ))
+                    .await
+                    .map_err(error)
+            })
+            .await?;
         }
     });
     let started = Instant::now();
@@ -103,7 +110,14 @@ async fn stage(server: &TestServer, offered: usize, report: &mut Report) -> Resu
         .map(|start| producer(server, start, (offered - start).min(128), counters.clone()));
     let result = tokio::time::timeout(Duration::from_secs(60), join_all(producers)).await;
     let _ = stop_tx.send(());
-    let worker_result = worker_task.await.map_err(error).and_then(|r| r);
+    let worker_result =
+        if let Ok(result) = tokio::time::timeout(Duration::from_secs(5), &mut worker_task).await {
+            result.map_err(error).and_then(|r| r)
+        } else {
+            worker_task.abort();
+            let _ = tokio::time::timeout(Duration::from_secs(1), &mut worker_task).await;
+            Err("worker shutdown join exceeded deadline; task aborted".into())
+        };
     let failure = match result {
         Ok(results) => results.into_iter().find_map(Result::err),
         Err(_) => Some("absolute stage deadline exceeded; outcomes unresolved".into()),
@@ -111,7 +125,8 @@ async fn stage(server: &TestServer, offered: usize, report: &mut Report) -> Resu
     .or_else(|| worker_result.err());
     let mut current = std::mem::take(&mut *counters.lock().unwrap());
     current.elapsed_ns = started.elapsed().as_nanos();
-    current.unresolved = current.sent - current.completed - current.backpressure;
+    current.indeterminate_writes = current.attempted - current.sent;
+    current.unresolved = current.attempted - current.completed - current.backpressure;
     current.failure = failure;
     if current.failure.is_none()
         && (current.sent != offered
@@ -205,20 +220,28 @@ async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
     Ok(())
 }
 
-async fn wait_for_cleanup(server: &TestServer) -> Result<(), String> {
-    server.wait_for_session_count(0).await.map_err(error)?;
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if server.runtime.rpc_list_workers(None).is_empty()
-                && server.runtime.rpc_list_pending(None).is_empty()
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+async fn wait_for_cleanup(server: &TestServer, report: &mut Report) -> Result<(), String> {
+    bounded(10, async {
+        server.wait_for_session_count(0).await.map_err(error)
     })
-    .await
-    .map_err(|_| "RPC worker/pending cleanup did not settle".into())
+    .await?;
+    // Coalesced read models can be stale when refresh fails; never acceptance proof.
+    report.advisory_workers_after_sessions_closed =
+        Some(server.runtime.rpc_list_workers(None).len());
+    report.advisory_pending_after_sessions_closed =
+        Some(server.runtime.rpc_list_pending(None).len());
+    Ok(())
+}
+
+async fn bounded<T>(
+    seconds: u64,
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::time::timeout(Duration::from_secs(seconds), future)
+        .await
+        .map_err(|_| {
+            format!("absolute {seconds}s operation deadline exceeded; outcome may be unknown")
+        })?
 }
 
 #[tokio::test]
@@ -226,8 +249,8 @@ async fn wait_for_cleanup(server: &TestServer) -> Result<(), String> {
 async fn should_push_rpc_admission_and_cleanup_limits() {
     // Arrange
     let mut report = Report::new().expect("report");
-    let server = TestServer::start().await.expect("server");
     report.save().expect("initial artifact");
+    let mut server = None;
     // Act
     let result = async {
         let stages = std::env::var("FITZ_RPC_PRESSURE_BURSTS")
@@ -240,27 +263,47 @@ async fn should_push_rpc_admission_and_cleanup_limits() {
         if bursts.is_empty() || bursts.len() > 8 || bursts.iter().any(|&n| n == 0 || n > 8192) {
             return Err("bursts must contain 1..8 values each in 1..8192".into());
         }
+        report.planned_bursts.clone_from(&bursts);
+        report.save()?;
+        server = Some(bounded(60, async { TestServer::start().await.map_err(error) }).await?);
+        let active = server.as_ref().expect("startup completed");
         for offered in bursts {
-            stage(&server, offered, &mut report).await?;
-            wait_for_cleanup(&server).await?;
+            stage(active, offered, &mut report).await?;
+            wait_for_cleanup(active, &mut report).await?;
         }
         for mode in [1, 3, 4] {
-            lifecycle(&server, mode).await?;
-            wait_for_cleanup(&server).await?;
+            bounded(10, lifecycle(active, mode)).await?;
+            wait_for_cleanup(active, &mut report).await?;
         }
         report.lifecycle_probes_passed = true;
-        stage(&server, 1, &mut report).await?;
-        wait_for_cleanup(&server).await?;
+        stage(active, 1, &mut report).await?;
+        wait_for_cleanup(active, &mut report).await?;
         report.recovery_passed = true;
         Ok::<_, String>(())
     }
     .await;
     report.failure = result.err();
-    let shutdown = server.shutdown().await.map_err(error);
-    report.cleanup_passed = shutdown.is_ok();
-    if let Err(e) = shutdown {
-        report.failure.get_or_insert(e);
+    if let Err(e) = report.save() {
+        report.artifact_failure = Some(e);
     }
+    if let Some(active) = server {
+        let shutdown = bounded(60, async { active.shutdown().await.map_err(error) }).await;
+        report.cleanup_passed = shutdown.is_ok();
+        if let Err(e) = shutdown {
+            report.cleanup_failure = Some(e.clone());
+            report.failure.get_or_insert(e);
+        }
+    }
+    if report.artifact_failure.is_some() {
+        report
+            .failure
+            .get_or_insert_with(|| "partial artifact persistence failed".into());
+    }
+    report.status = if report.failure.is_none() {
+        "passed"
+    } else {
+        "failed"
+    };
     report.save().expect("final artifact");
     // Assert
     assert!(

@@ -25,8 +25,11 @@ is 1000; the independent process-wide pending limit is 4096. This scenario
 probes the concrete-route cap, not the global cap. Actual admission outcomes
 are measured; do not infer an exact threshold from the offered burst count.
 
-Each call has a 30-second request budget; each whole stage has an absolute
-60-second deadline. Successful terminal replies must match UUID, exact terminal
+Each call has a 30-second request budget; each producer stage has an absolute
+60-second deadline. Worker writes and joins have separate five-second deadlines,
+followed by task abort and a bounded join on timeout. Startup/shutdown have
+60-second wrappers; each complete lifecycle probe has a ten-second wrapper.
+Successful terminal replies must match UUID, exact terminal
 sequence/flags, and every payload byte. Unknown identities, duplicate terminal
 replies, corrupt bodies, timeouts, or unexpected error codes fail the stage.
 Only explicit `ERR_RPC_BACKPRESSURE` is classified as admission rejection.
@@ -36,17 +39,23 @@ After load drains, negotiated explicit cancellation, caller disconnect, and
 budget expiry each receive validated worker cancellation controls. The handler
 sends its cleanup acknowledgement; the same worker registration must then
 execute and answer a new call using its single credit. Each stage and probe
-waits for worker/pending admin state to settle empty after connections close.
+waits for session transport state to reach zero after connections close.
+Worker/pending admin snapshots are advisory: refresh failure can leave stale or
+default-empty read models, so empty snapshots never prove actor cleanup.
 A final low-load request proves current-process service after load.
 
 Atomic JSON artifacts under `target/fitz-stress/rpc-pressure/` include current
-source SHA/dirty state, fixed workload settings, actual offered/sent/completed/
+source SHA/dirty state, fixed workload settings, planned burst envelopes,
+actual attempted/sent/completed/
 backpressure/dispatched/unresolved counts, elapsed time, failure, cleanup, and
-lifecycle/recovery probe outcomes. Stage failures retain partial counts before
-broker shutdown. This test is intentionally ignored by the ordinary workspace
+lifecycle/recovery probe outcomes. A write attempt is counted before its TCP
+write; incomplete writes remain explicitly indeterminate and unresolved.
+Stage failures retain partial counts before broker shutdown. An initial artifact
+precedes startup and a failure checkpoint precedes shutdown; artifact-save errors
+cannot skip broker cleanup. This test is intentionally ignored by the ordinary workspace
 suite; it is a bounded diagnostic, not a performance baseline or release gate.
 
-The admission burst is synchronous per producer socket, with concurrent
+The requested burst envelope is synchronous per producer socket, with concurrent
 producers and independent worker service. Offered burst size is not an offered
 rate, and socket writes are not broker acceptance acknowledgements. There is
 no restart, side-effect rollback, cancellation-grace forced-close, wildcard
