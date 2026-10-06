@@ -38,3 +38,8 @@ pub(crate) fn main() {
 mod kv_pressure;
 #[allow(unused_imports)]
 pub(crate) use kv_pressure::run as run_kv_pressure;
+
+#[allow(dead_code)]
+mod lease_pressure;
+#[allow(unused_imports)]
+pub(crate) use lease_pressure::run as run_lease_pressure;
