@@ -27,7 +27,7 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
     ctx.parameter("fire_deadline_seconds", report.fire_deadline_seconds);
     ctx.metadata(
         "completion_scope",
-        "observed_live_receipt_per_mode_and_empty_persisted_claims",
+        "observed_live_receipt_per_mode_no_claim_ack_proof",
     );
     ctx.metadata(
         "clock_scope",

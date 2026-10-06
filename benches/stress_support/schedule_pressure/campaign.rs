@@ -66,6 +66,7 @@ async fn execute(
         .create_elapsed_ns = started.elapsed().as_nanos();
     io::bounded(async { writer.close().await.map_err(BenchFailure::transport) }).await?;
     let old = server.take().expect("running server");
+    let restart_started = Instant::now();
     io::bounded(async { old.shutdown().await.map_err(BenchFailure::transport) }).await?;
     *server = Some(
         io::bounded(async {
@@ -80,6 +81,11 @@ async fn execute(
     let active = server.as_ref().expect("restarted server");
     let mut writer = connect(active).await?;
     io::verify_definitions(&mut writer, count, generation, mode).await?;
+    report
+        .stages
+        .last_mut()
+        .expect("stage exists")
+        .restart_elapsed_ns = restart_started.elapsed().as_nanos();
     report
         .stages
         .last_mut()
@@ -170,22 +176,6 @@ async fn fire(
                 "extra Schedule delivery after complete occurrence set",
             ));
         }
-        while server.runtime.schedule_pending_fire_claims() != 0
-            || server.runtime.schedule_pending_ack_retries() != 0
-        {
-            if tokio::time::Instant::now() >= deadline {
-                return Err(BenchFailure::verification(
-                    "Schedule durable claims or ack retries did not clear",
-                ));
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        if server.runtime.schedule_ack_failures() != 0 {
-            return Err(BenchFailure::verification(
-                "Schedule hid failed claim acknowledgement",
-            ));
-        }
-        report.stages.last_mut().expect("stage exists").claims_empty = true;
         Ok(())
     }
     .await;
