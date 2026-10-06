@@ -8,11 +8,15 @@ mod histogram;
 #[allow(dead_code)]
 mod queue_pressure;
 mod runner;
+#[allow(dead_code)]
+mod schedule_pressure;
 mod types;
 
 #[allow(unused_imports)]
 pub(crate) use queue_pressure::run as run_queue_pressure;
 pub(crate) use runner::run;
+#[allow(unused_imports)]
+pub(crate) use schedule_pressure::run as run_schedule_pressure;
 pub(crate) use types::Domain;
 
 pub(crate) fn main() {
