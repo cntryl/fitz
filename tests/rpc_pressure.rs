@@ -157,9 +157,9 @@ async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
     if delivery.route != wire::ROUTE
         || delivery.body != wire::body(99_999)
         || delivery.correlation_id == id
-        || !delivery
+        || delivery
             .remaining_budget_ms
-            .is_some_and(|budget| budget <= if mode == 4 { 250 } else { 5000 })
+            .is_none_or(|budget| budget > if mode == 4 { 250 } else { 5000 })
     {
         return Err("invalid negotiated lifecycle dispatch".into());
     }
@@ -204,9 +204,9 @@ async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
     if delivery.route != wire::ROUTE
         || delivery.body != wire::body(100_000)
         || delivery.correlation_id == probe_id
-        || !delivery
+        || delivery
             .remaining_budget_ms
-            .is_some_and(|budget| budget <= 5000)
+            .is_none_or(|budget| budget > 5000)
     {
         return Err("cleanup credit probe payload mismatch".into());
     }
@@ -369,6 +369,22 @@ fn should_reject_unknown_rpc_terminal_identity() {
     let frame = build_rpc_response_delivery(Uuid::new_v4(), 0, true, &wire::body(0));
     // Act
     let result = wire::terminal(&frame, &mut HashMap::from([(Uuid::new_v4(), 0)]));
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+fn should_reject_unknown_rpc_terminal_flags() {
+    // Arrange
+    let id = Uuid::new_v4();
+    let mut payload = fitz::protocol::payload_codec::PayloadEncoder::new();
+    payload.put_raw(id.as_bytes());
+    payload.put_u64(0);
+    payload.put_u8(3);
+    payload.put_bytes(&wire::body(0));
+    let frame = wire::frame(303, &payload.finish());
+    // Act
+    let result = wire::terminal(&frame, &mut HashMap::from([(id, 0)]));
     // Assert
     assert!(result.is_err());
 }
