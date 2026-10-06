@@ -384,3 +384,9 @@ name = "kv_pressure"
 path = "benches/kv_pressure.rs"
 harness = false
 required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "lease_pressure"
+path = "benches/lease_pressure.rs"
+harness = false
+required-features = ["benchkit", "stress-soak"]
