@@ -64,8 +64,8 @@ remain separately named evidence boundaries.
 
 ## Initial clean-source diagnostic
 
-On source `894b0234b94299dee4cbe072978f2bdb309eba9f`, with dirty state false,
-the defaults passed in 13.71 seconds:
+On hardened source `03a7a3a099e7e3c9911464dee49feccfe24eba93`, with dirty state false,
+the defaults passed in 14.97 seconds:
 
 | Offered burst | Validated echoes | Explicit backpressure | Unresolved |
 | ---: | ---: | ---: | ---: |
@@ -73,12 +73,16 @@ the defaults passed in 13.71 seconds:
 | 32 | 32 | 0 | 0 |
 | 256 | 256 | 0 | 0 |
 | 1024 | 1001 | 23 | 0 |
-| 8192 | 1001 | 7191 | 0 |
+| 8192 | 1013 | 7179 | 0 |
 
-Worker dispatches matched validated completions at every stage. The observed
-held-worker envelope matches the current 1000 queued plus one active call
-route boundary. This is an observed admission boundary under the declared
-burst/hold settings, not an independent arrival-rate or global capacity claim.
+Worker dispatches matched validated completions at every stage. All attempted
+writes completed; there were no indeterminate writes. Explicit admission
+backpressure establishes a pressure boundary under the declared burst/hold
+settings, not an independent arrival-rate or global capacity claim. At 8192,
+worker service resumed while late arrivals were still admitted: 1013 is the
+total completed across the stage, not simultaneous capacity. The configured
+1000 queued plus one active route bound is a source fact, not a measured peak.
 All negotiated lifecycle credit probes, final low-load call, and cleanup passed.
-The separate one-call smoke passed in 3.78 seconds. No broker bug was reproduced.
-The full artifact is `1791313739252040000.json` in the documented directory.
+An earlier one-call smoke on `894b0234` passed in 3.78 seconds; the hardened
+full run above requalified the complete code. No broker bug was reproduced.
+The full artifact is `1791314846023208000.json` in the documented directory.
