@@ -1,6 +1,7 @@
 mod campaign;
 mod io;
 mod ledger;
+mod pagination;
 mod report;
 
 use super::{

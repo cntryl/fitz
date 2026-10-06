@@ -164,10 +164,7 @@ pub async fn verify_definitions(
         complete(&decoder)?;
         match has_more {
             0 if next.is_none() && found == count => return Ok(()),
-            1 if page > 0
-                && next.as_deref() == Some(route(found - 1).as_str())
-                && next != cursor =>
-            {
+            1 if super::pagination::advances(cursor.as_deref(), next.as_deref(), page) => {
                 cursor = next;
             }
             _ => {

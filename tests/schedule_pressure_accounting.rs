@@ -1,6 +1,30 @@
 #[path = "../benches/stress_support/schedule_pressure/ledger.rs"]
 mod ledger;
 use ledger::Ledger;
+#[path = "../benches/stress_support/schedule_pressure/pagination.rs"]
+mod pagination;
+
+#[test]
+fn should_accept_opaque_advancing_schedule_cursor() {
+    // Arrange
+    let cursor = "schedule-list-v1:1:schedule://stress-bench/timing/item-000015/run";
+    // Act
+    let accepted = pagination::advances(None, Some(cursor), 16);
+    // Assert
+    assert!(accepted);
+}
+
+#[test]
+fn should_reject_stalled_or_empty_schedule_page() {
+    // Arrange
+    let cursor = "schedule-list-v1:1:schedule://stress-bench/timing/item-000015/run";
+    // Act
+    let stalled = pagination::advances(Some(cursor), Some(cursor), 16);
+    let empty = pagination::advances(None, Some(cursor), 0);
+    // Assert
+    assert!(!stalled);
+    assert!(!empty);
+}
 
 #[test]
 fn should_count_broadcast_only_after_both_receivers() {
