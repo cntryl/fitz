@@ -131,8 +131,8 @@ async fn campaign(server: &TestServer, report: &mut Report) -> Result<(), String
             let boundary = stage.rejection.is_some();
             report.stages.push(stage);
             report.current = None;
-            report.save()?;
-            result?;
+            let saved = report.save();
+            result.and(saved)?;
             if boundary {
                 break;
             }
@@ -263,12 +263,12 @@ async fn execute() -> Result<(), String> {
         report.failure.get_or_insert_with(|| error.clone());
     }
     report.status = if result.is_ok() { "passed" } else { "failed" };
-    report.save()?;
+    let saved = report.save();
     eprintln!(
         "Stream pressure {}: {} committed events; {} verified after clean restart",
         report.status, report.committed_events, report.clean_restart_verified_events
     );
-    result
+    result.and(saved)
 }
 
 #[test]
