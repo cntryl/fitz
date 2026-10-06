@@ -158,7 +158,9 @@ async fn verify_reopened(server: &TestServer, report: &mut Report) -> Result<(),
     )
     .await;
     let close = bounded(client.close(), "readback client close").await;
-    report.clean_restart_verified_events = verified.and(close.map(|()| report.committed_events))?;
+    let verified = verified?;
+    close?;
+    report.clean_restart_verified_events = verified;
     let mut client = bounded(TestClient::new(server.tcp_addr), "recovery client connect").await?;
     let probe = probe(&mut client, report).await;
     let close = bounded(client.close(), "recovery client close").await;
@@ -181,6 +183,10 @@ async fn restart(path: &std::path::Path, report: &mut Report) -> Result<(), Stri
         }
     };
     let readback = verify_reopened(&server, report).await;
+    if let Err(error) = &readback {
+        report.failure.get_or_insert_with(|| error.clone());
+    }
+    let saved = report.save();
     let stopped = shutdown(server).await;
     report.cleanup_status = if stopped.is_ok() {
         "completed"
@@ -190,7 +196,7 @@ async fn restart(path: &std::path::Path, report: &mut Report) -> Result<(), Stri
     if let Err(error) = &stopped {
         report.cleanup_failure = Some(error.clone());
     }
-    readback.and(stopped)
+    readback.and(saved).and(stopped)
 }
 
 async fn execute() -> Result<(), String> {
