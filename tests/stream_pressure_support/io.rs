@@ -98,10 +98,10 @@ pub async fn commit(client: &mut TestClient, session: u64) -> Result<(), String>
 
 pub async fn rollback(client: &mut TestClient, session: u64) -> Result<(), String> {
     let body = request(client, &build_stream_rollback(session), 603).await?;
-    if !write_data(&body)?.is_empty() {
-        return Err("unexpected ROLLBACK data".into());
+    if body.first().copied() != Some(0) {
+        write_data(&body)?;
     }
-    Ok(())
+    super::admission::rollback_success(&body)
 }
 
 pub async fn replay(client: &mut TestClient, committed: u64, bytes: usize) -> Result<u64, String> {

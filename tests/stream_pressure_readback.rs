@@ -5,6 +5,16 @@ use fitz::protocol::payload_codec::PayloadEncoder;
 const ROUTE: &str = "stream://stress-bench/history/growing";
 
 #[test]
+fn should_accept_status_only_stream_rollback_success() {
+    assert!(admission::rollback_success(&[0]).is_ok());
+}
+
+#[test]
+fn should_reject_extended_stream_rollback_success() {
+    assert!(admission::rollback_success(&[0, 0, 0, 0, 0]).is_err());
+}
+
+#[test]
 fn should_classify_exact_actor_batch_limit_response() {
     // Arrange
     let error = "Stream error code 2012: batch too large";

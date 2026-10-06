@@ -5,3 +5,11 @@ pub fn batch_limit(error: &str) -> bool {
     error == "Stream error code 2012: batch too large"
         || error.starts_with("Stream error code 2012: ERR_BATCH_TOO_LARGE:")
 }
+
+pub fn rollback_success(body: &[u8]) -> Result<(), String> {
+    if body == [0] {
+        Ok(())
+    } else {
+        Err("unexpected Stream ROLLBACK response data".into())
+    }
+}
