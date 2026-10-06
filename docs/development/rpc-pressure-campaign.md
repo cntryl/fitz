@@ -52,3 +52,24 @@ rate, and socket writes are not broker acceptance acknowledgements. There is
 no restart, side-effect rollback, cancellation-grace forced-close, wildcard
 fairness, or cross-family isolation qualification in this scenario; those
 remain separately named evidence boundaries.
+
+## Initial clean-source diagnostic
+
+On source `894b0234b94299dee4cbe072978f2bdb309eba9f`, with dirty state false,
+the defaults passed in 13.71 seconds:
+
+| Offered burst | Validated echoes | Explicit backpressure | Unresolved |
+| ---: | ---: | ---: | ---: |
+| 1 | 1 | 0 | 0 |
+| 32 | 32 | 0 | 0 |
+| 256 | 256 | 0 | 0 |
+| 1024 | 1001 | 23 | 0 |
+| 8192 | 1001 | 7191 | 0 |
+
+Worker dispatches matched validated completions at every stage. The observed
+held-worker envelope matches the current 1000 queued plus one active call
+route boundary. This is an observed admission boundary under the declared
+burst/hold settings, not an independent arrival-rate or global capacity claim.
+All negotiated lifecycle credit probes, final low-load call, and cleanup passed.
+The separate one-call smoke passed in 3.78 seconds. No broker bug was reproduced.
+The full artifact is `1791313739252040000.json` in the documented directory.
