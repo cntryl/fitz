@@ -5,7 +5,14 @@ import {
   routeFamilyRequest,
   type RouteFamilyRequestOptions,
 } from "@/shared/navigation/route-family-request";
-import { mapKvCommittedValue, mapKvOverview, mapKvPrefixScan, mapKvRows } from "./kv-mappers";
+import {
+  mapKvCommittedValue,
+  mapKvOverview,
+  mapKvPrefixScan,
+  mapKvResourceDetail,
+  mapKvRows,
+  mapKvTransactions,
+} from "./kv-mappers";
 import type {
   KvCommittedResourceScope,
   KvCommittedValueResult,
@@ -14,6 +21,8 @@ import type {
   KvPrefixScanResult,
   KvResourceScope,
   KvRowsResult,
+  KvResourceDetail,
+  KvTransaction,
 } from "./kv-models";
 
 async function getOverview(options: RouteFamilyRequestOptions = {}): Promise<KvOverview> {
@@ -121,9 +130,47 @@ async function browseCommittedRows(
   );
 }
 
+async function getResource(
+  scope: KvResourceScope,
+  options: RouteFamilyRequestOptions = {},
+): Promise<KvResourceDetail> {
+  const { family, requestOptions } = routeFamilyRequest(options);
+  return mapKvResourceDetail(
+    unwrapResponse(
+      await apiv1.getKvResource(
+        apiParams(
+          { area: scope.area, family, realm: scope.realm, resource: scope.resource },
+          requestOptions,
+        ),
+      ),
+      "Unable to load KV resource detail",
+    ),
+  );
+}
+
+async function listTransactions(
+  scope: KvResourceScope,
+  options: RouteFamilyRequestOptions = {},
+): Promise<KvTransaction[]> {
+  const { family, requestOptions } = routeFamilyRequest(options);
+  return mapKvTransactions(
+    unwrapResponse(
+      await apiv1.listKvTransactions(
+        apiParams(
+          { area: scope.area, family, realm: scope.realm, resource: scope.resource },
+          requestOptions,
+        ),
+      ),
+      "Unable to load KV transactions",
+    ),
+  );
+}
+
 export const kvService = {
   browseCommittedRows,
   getCommittedValue,
   getOverview,
+  getResource,
+  listTransactions,
   scanCommittedPrefix,
 };

@@ -12,6 +12,7 @@ import {
   Text,
 } from "@askrjs/themes/components";
 import DomainDataSection from "@/components/shared/domain-data-section";
+import DomainFacts from "@/components/shared/domain-facts";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { queryHeaderStatus } from "@/components/shared/query-header-status";
@@ -25,7 +26,7 @@ import { formatNumber } from "@/shared/format";
 import { createNoticeOperationRowsQuery } from "@/features/notice/notice-query";
 import type { NoticeDeliveryRow, NoticeDeliveryRows } from "@/features/notice/notice-models";
 
-function countActiveSubscribers(deliveries: NoticeDeliveryRow[]) {
+function countObservedSubscribers(deliveries: NoticeDeliveryRow[]) {
   return new Set(
     deliveries.map((row) => `${row.subscriptionId ?? "session"}:${row.sessionId ?? "session"}`),
   ).size;
@@ -78,15 +79,6 @@ function NoticeDeliveryList(props: { rows: NoticeDeliveryRows["observations"] })
                       Subscription: {formatNumber(observation.subscriptionId)}
                     </Text>
                   )}
-                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
-                    Notifications observed: {formatNumber(observation.notificationsReceived)}
-                  </Text>
-                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
-                    Current publishes / min: {formatNumber(observation.publishesPerMinute)}
-                  </Text>
-                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
-                    Observed publish total: {formatNumber(observation.publishesTotal)}
-                  </Text>
                 </Block>
               </ItemDescription>
             </ItemContent>
@@ -125,12 +117,17 @@ export default function NoticeOperationPage(props: {
 
   const data = rowsQuery.data;
   const deliveries = data?.observations ?? [];
-  const activeSubscribers = countActiveSubscribers(deliveries);
+  const observedSubscribers = countObservedSubscribers(deliveries);
+  const publishesPerMinute = deliveries.reduce(
+    (maximum, row) => Math.max(maximum, row.publishesPerMinute),
+    0,
+  );
   return (
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
-          eyebrow="Notice operation"
+          compact={true}
+          eyebrow="Notice subscription pattern"
           title={query}
           description={`${realm} / ${area} / ${resource} / ${query}`}
           primaryAction={{
@@ -139,13 +136,7 @@ export default function NoticeOperationPage(props: {
             label: "Refresh operation deliveries",
             onPress: () => rowsQuery.refresh(),
           }}
-          status={queryHeaderStatus(rowsQuery, {
-            loading: "Loading notice deliveries for this operation.",
-            ready: data
-              ? `${formatNumber(data.observations.length)} live subscription row${data.observations.length === 1 ? "" : "s"} for this operation route. ${activeSubscribers} active subscriber${activeSubscribers === 1 ? "" : "s"}.`
-              : "",
-            unavailable: "Notice delivery evidence is unavailable for this operation.",
-          })}
+          status={queryHeaderStatus(rowsQuery)}
         />
         <Show when={!data && rowsQuery.loading}>
           <QueryLoadingState description="Loading notice operation deliveries..." />
@@ -165,10 +156,31 @@ export default function NoticeOperationPage(props: {
                 <QueryRefreshingState description="Refreshing notice operation deliveries..." />
               </Show>
 
+              <DomainFacts
+                id="notice-operation-facts"
+                title="Current route"
+                items={[
+                  { label: "Subscribers observed", value: formatNumber(observedSubscribers) },
+                  {
+                    label: "Publishes/min",
+                    value: deliveries.length === 0 ? "--" : formatNumber(publishesPerMinute),
+                  },
+                  {
+                    label: "Delivery rows",
+                    value: `${deliveries.length}${data.observationsReturned >= data.limit ? ` (limit ${data.limit})` : ""}`,
+                    title: "Bounded live observations, not delivery history.",
+                  },
+                ]}
+              />
+
               <DomainDataSection
                 id="notice-delivery-evidence"
                 title="Delivery evidence"
-                description="Live subscription observations for this operation route; not delivery history. The API does not report a reset scope for total counters."
+                actions={
+                  data.observationsReturned >= data.limit ? (
+                    <Badge variant="warning">Observation sample reached {data.limit}</Badge>
+                  ) : undefined
+                }
               >
                 <Show
                   when={data.observations.length === 0}

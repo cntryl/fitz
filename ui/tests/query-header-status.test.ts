@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 
-const copy = {
-  loading: "Loading evidence.",
-  ready: "Evidence is current.",
-  unavailable: "Evidence is unavailable.",
-};
-
 describe("query header status", () => {
   it("presents an initial query as loading", () => {
     const query = {
@@ -17,8 +11,7 @@ describe("query header status", () => {
       stale: false,
     };
 
-    expect(queryHeaderStatus(query, copy)).toEqual({
-      detail: "Loading evidence.",
+    expect(queryHeaderStatus(query)).toEqual({
       label: "Loading",
       tone: "info",
     });
@@ -34,8 +27,7 @@ describe("query header status", () => {
       stale: true,
     };
 
-    expect(queryHeaderStatus(query, copy)).toEqual({
-      detail: "Evidence is unavailable.",
+    expect(queryHeaderStatus(query)).toEqual({
       label: "Unavailable",
       tone: "warning",
     });
@@ -51,10 +43,11 @@ describe("query header status", () => {
       stale: true,
     };
 
-    expect(queryHeaderStatus(query, copy)).toEqual({
-      detail: "Evidence is unavailable.",
-      label: "Update unavailable",
-      tone: "warning",
+    expect(queryHeaderStatus(query)).toEqual({
+      freshness: {
+        label: "Update unavailable",
+        tone: "warning",
+      },
     });
     expect(queryFreshness(query)).toBe("Stale");
   });
@@ -70,26 +63,26 @@ describe("query header status", () => {
     };
 
     // Act
-    const status = queryHeaderStatus(query, copy);
+    const status = queryHeaderStatus(query);
 
     // Assert
     expect(status).toBeUndefined();
   });
 
-  it("preserves a page-specific ready status only for fresh data", () => {
+  it("preserves page-specific evidence while the query refreshes", () => {
     const query = {
       data: { rows: 1 },
       error: null,
-      loading: false,
-      refreshing: false,
+      loading: true,
+      refreshing: true,
       stale: false,
     };
 
-    expect(queryHeaderStatus(query, copy, { label: "Enabled", tone: "success" })).toEqual({
-      detail: "Evidence is current.",
-      label: "Enabled",
-      tone: "success",
+    expect(queryHeaderStatus(query, { label: "Waiters present", tone: "warning" })).toEqual({
+      freshness: { label: "Refreshing", tone: "info" },
+      label: "Waiters present",
+      tone: "warning",
     });
-    expect(queryFreshness(query)).toBe("Live");
+    expect(queryFreshness(query)).toBe("Refreshing");
   });
 });

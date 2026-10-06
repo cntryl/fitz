@@ -129,21 +129,34 @@ async function searchResourceRows(
   options: ServiceRequestOptions = {},
 ): Promise<NoticeResourceOperationRows> {
   const response = await searchDeliveries(request, options);
-  return mapNoticeResourceOperationRows(response);
+  return mapNoticeResourceOperationRows(response, {
+    area: request.area ?? "",
+    realm: request.realm ?? "",
+    resource: request.resource ?? "",
+  });
 }
 
 async function searchOperationRows(
   request: NoticeDeliverySearchRequest,
   options: ServiceRequestOptions = {},
 ): Promise<NoticeDeliveryRows> {
+  const prefix = `notice://${request.realm}/${request.area}/${request.resource}/`;
+  const operation = request.operation?.startsWith(prefix)
+    ? request.operation.slice(prefix.length)
+    : (request.operation ?? "");
   const response = await searchDeliveries(
     {
       ...request,
-      query: request.query ?? request.operation,
+      query: operation,
     },
     options,
   );
-  return mapNoticeDeliveryRows(response);
+  return mapNoticeDeliveryRows(response, {
+    area: request.area ?? "",
+    operation,
+    realm: request.realm ?? "",
+    resource: request.resource ?? "",
+  });
 }
 
 export const noticeService = {

@@ -92,27 +92,55 @@ export function mapNoticeDeliveryRow(
   };
 }
 
-export function mapNoticeDeliveryRows(dto: NoticeDeliveryObservationList): NoticeDeliveryRows {
+export function mapNoticeDeliveryRows(
+  dto: NoticeDeliveryObservationList,
+  scope: { area: string; operation: string; realm: string; resource: string },
+): NoticeDeliveryRows {
+  const prefix = `notice://${scope.realm}/${scope.area}/${scope.resource}/`;
   return {
-    area: dto.observations[0]?.area ?? "",
+    area: scope.area,
     limit: dto.limit,
-    observations: dto.observations.map(mapNoticeDeliveryRow),
-    realm: dto.observations[0]?.realm ?? "",
+    observationsReturned: dto.observations.length,
+    observations: dto.observations
+      .filter(
+        (observation) =>
+          observation.realm === scope.realm &&
+          observation.area === scope.area &&
+          observation.resource === scope.resource &&
+          observation.route.startsWith(prefix) &&
+          observation.route.slice(prefix.length) === scope.operation,
+      )
+      .map(mapNoticeDeliveryRow),
+    realm: scope.realm,
     routeFamily: dto.route_family,
   };
 }
 
 export function mapNoticeResourceOperationRows(
   dto: NoticeDeliveryObservationList,
+  scope: { area: string; realm: string; resource: string },
 ): NoticeResourceOperationRows {
   const aggregation = new Map<string, NoticeResourceOperationRow & { subscribers: Set<string> }>();
 
   for (const observation of dto.observations) {
+    if (
+      observation.realm !== scope.realm ||
+      observation.area !== scope.area ||
+      observation.resource !== scope.resource
+    ) {
+      continue;
+    }
+    const prefix = `notice://${scope.realm}/${scope.area}/${scope.resource}/`;
+    if (!observation.route.startsWith(prefix)) continue;
+    const operation = observation.route.slice(prefix.length);
+    if (!operation) continue;
+
     const bucket = aggregation.get(observation.route);
 
     if (!bucket) {
       aggregation.set(observation.route, {
-        operation: observation.route,
+        operation,
+        route: observation.route,
         activeSubscribers: 0,
         rollingMessageCount: 0,
         latencyMs: null,
@@ -139,6 +167,7 @@ export function mapNoticeResourceOperationRows(
   const operations = Array.from(aggregation.values())
     .map((row) => ({
       operation: row.operation,
+      route: row.route,
       activeSubscribers: row.subscribers.size,
       rollingMessageCount: row.rollingMessageCount,
       latencyMs: row.latencyMs,
@@ -146,11 +175,12 @@ export function mapNoticeResourceOperationRows(
     .sort((left, right) => left.operation.localeCompare(right.operation));
 
   return {
-    area: dto.observations[0]?.area ?? "",
+    area: scope.area,
     limit: dto.limit,
+    observationsReturned: dto.observations.length,
     operations,
-    realm: dto.observations[0]?.realm ?? "",
-    resource: dto.observations[0]?.resource ?? "",
+    realm: scope.realm,
+    resource: scope.resource,
     routeFamily: dto.route_family,
   };
 }

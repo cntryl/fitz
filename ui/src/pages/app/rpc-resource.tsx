@@ -6,7 +6,6 @@ import DomainOperationTable, {
   type DomainOperationMetricColumn,
 } from "@/components/shared/domain-operation-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
 import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryErrorState,
@@ -15,8 +14,7 @@ import {
 } from "@/components/shared/query-state";
 import { createRpcResourceQuery } from "@/features/rpc/rpc-query";
 import type { RpcResourceOperationRows } from "@/features/rpc/rpc-models";
-import { formatCount, formatNumber } from "@/shared/format";
-import { RPC_HANDLED_CAPTION } from "@/features/rpc/rpc-models";
+import { formatNumber } from "@/shared/format";
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -32,18 +30,18 @@ type RpcOperationRow = RpcResourceOperationRows["operations"][number];
 
 const rpcOperationColumns: readonly DomainOperationMetricColumn<RpcOperationRow>[] = [
   {
-    id: "workers",
-    header: "Workers",
-    width: "12%",
-    cell: (row) => formatNumber(row.workers),
-    sortValue: (row) => row.workers,
-  },
-  {
     id: "pending",
     header: "Pending",
     width: "12%",
     cell: (row) => formatNumber(row.pendingRequests),
     sortValue: (row) => row.pendingRequests,
+  },
+  {
+    id: "workers",
+    header: "Matching registrations",
+    width: "12%",
+    cell: (row) => formatNumber(row.workers),
+    sortValue: (row) => row.workers,
   },
   {
     id: "handled",
@@ -70,37 +68,25 @@ export default function RpcResourcePage() {
   const resource = decodeParam(route.params.resource);
   const query = createRpcResourceQuery(realm, area, resource);
   const data = query.data;
-  const totalWorkers = data?.totalWorkers ?? 0;
   const pendingRequests = data?.totalPendingRequests ?? 0;
-  const requestsHandled =
-    data?.operations.reduce<number | null>(
-      (sum, row) => (sum == null || row.requestsHandled == null ? null : sum + row.requestsHandled),
-      0,
-    ) ?? null;
 
   return (
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
+          compact={true}
           eyebrow="RPC resource"
           title={resource}
-          description={`Live operation evidence for ${realm} / ${area} / ${resource}.`}
           primaryAction={{
             busy: query.refreshing,
             disabled: query.refreshing,
             label: "Refresh operations",
             onPress: () => query.refresh(),
           }}
-          status={queryHeaderStatus(query, {
-            loading: "Loading RPC operations.",
-            ready: data
-              ? `${formatCount(data.operations.length, "operation")}, ${formatCount(
-                  totalWorkers,
-                  "live worker",
-                )}, ${formatCount(pendingRequests, "pending request")}.`
-              : "",
-            unavailable: "RPC operation evidence is unavailable for this resource.",
-          })}
+          status={queryHeaderStatus(
+            query,
+            pendingRequests > 0 ? { label: "Pending calls", tone: "info" } : {},
+          )}
         />
         <Show when={!data && query.loading}>
           <QueryLoadingState description="Loading RPC operations..." />
@@ -117,24 +103,8 @@ export default function RpcResourcePage() {
             <Show when={query.refreshing}>
               <QueryRefreshingState description="Refreshing RPC operations..." />
             </Show>
-            <DomainSummaryStrip
-              id="rpc-resource-rollup"
-              class="domain-inventory-summary domain-detail-summary"
-              description="Complete worker and pending counts. Handled and latency are unavailable for operations matched by wildcard registrations; handled counters cover exact live registrations only, not historical traffic."
-              items={[
-                { label: "Operations", value: formatNumber(data?.operations.length ?? 0) },
-                { label: "Workers", value: formatNumber(totalWorkers) },
-                { label: "Pending", value: formatNumber(pendingRequests) },
-                {
-                  label: "Handled by live workers",
-                  value: requestsHandled == null ? "--" : formatNumber(requestsHandled),
-                  caption: RPC_HANDLED_CAPTION,
-                },
-              ]}
-            />
             <DomainOperationTable<RpcOperationRow>
               domain="rpc"
-              description="Live operation totals from complete summaries; -- means handled calls or latency cannot be attributed to one operation. Pending requests are in-memory state."
               emptyDescription="No RPC operations are currently visible for this resource."
               metricColumns={rpcOperationColumns}
               rows={data?.operations ?? []}

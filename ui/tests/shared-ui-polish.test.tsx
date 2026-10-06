@@ -236,6 +236,7 @@ describe("shared UI polish contracts", () => {
       () => (
         <DomainPageFrame>
           <DomainHeader
+            compact={true}
             title="Queue inventory"
             description="Durable work resources."
             status={{

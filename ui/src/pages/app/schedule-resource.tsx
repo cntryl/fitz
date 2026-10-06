@@ -7,7 +7,6 @@ import DomainOperationTable, {
   type DomainOperationMetricColumn,
 } from "@/components/shared/domain-operation-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
 import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryErrorState,
@@ -15,12 +14,8 @@ import {
   QueryRefreshingState,
 } from "@/components/shared/query-state";
 import { createScheduleResourceQuery } from "@/features/schedule/schedule-query";
-import {
-  decodeScheduleParam,
-  formatScheduleTimestamp,
-  scheduleTimingMetric,
-} from "@/features/schedule/schedule-format";
-import { formatCount, formatNumber, formatRelativeTime } from "@/shared/format";
+import { decodeScheduleParam, formatScheduleTimestamp } from "@/features/schedule/schedule-format";
+import { formatNumber, formatRelativeTime } from "@/shared/format";
 import { domainResourceHref } from "@/shared/navigation/domains";
 
 const RESOURCE_SCHEDULE_LIMIT = 50;
@@ -99,34 +94,22 @@ export default function ScheduleResourcePage() {
     offset,
   });
   const data = query.data;
-  const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
   const rows = data?.executionObservations.observations ?? [];
-  const pendingHandoffs = rows.reduce((sum, row) => sum + row.pending_handoffs, 0);
-  const paginated = offset > 0 || Boolean(data?.executionObservations.has_more);
 
   return (
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
+          compact={true}
           eyebrow="Schedule resource"
           title={ref.resource}
-          description={`Durable timing intent and schedule-owned handoff evidence for ${scopeLabel}.`}
           primaryAction={{
             busy: query.refreshing,
             disabled: query.refreshing,
             label: "Refresh schedule",
             onPress: () => query.refresh(),
           }}
-          status={queryHeaderStatus(query, {
-            loading: "Loading schedules for this resource.",
-            ready: data
-              ? `${formatCount(rows.length, "observed schedule")}, ${formatCount(
-                  pendingHandoffs,
-                  "pending handoff",
-                )}.`
-              : "",
-            unavailable: "Schedule operations are unavailable for this resource.",
-          })}
+          status={queryHeaderStatus(query)}
         />
 
         <Show when={!data && query.loading}>
@@ -148,36 +131,8 @@ export default function ScheduleResourcePage() {
                 <QueryRefreshingState description="Refreshing schedules..." />
               </Show>
 
-              {/* A resource groups schedules; only rollups belong here, never one schedule's fields. */}
-              <DomainSummaryStrip
-                id="schedule-resource-detail"
-                class="domain-detail-summary"
-                title="Durable timing intent"
-                description={
-                  paginated
-                    ? "Earliest next run covers every schedule; counts cover this page."
-                    : "Rolled up from every schedule in this resource."
-                }
-                items={[
-                  {
-                    label: paginated ? "Schedules on this page" : "Schedules",
-                    value: formatNumber(rows.length),
-                  },
-                  {
-                    // The server rolls next_run up across every enabled schedule.
-                    ...scheduleTimingMetric(current.detail?.next_run),
-                    label: "Earliest next run",
-                  },
-                  {
-                    label: paginated ? "Pending handoffs on this page" : "Pending handoffs",
-                    value: pendingHandoffs,
-                  },
-                ]}
-              />
-
               <DomainOperationTable<ScheduleExecutionObservation>
                 domain="schedule"
-                description={`Schedule-owned observations from persisted timing intent and acknowledged handoffs. Showing ${formatCount(rows.length, "schedule")} from offset ${formatNumber(offset)}; a schedule with no observation does not appear.`}
                 emptyDescription="No schedule observations are currently visible for this resource."
                 metricColumns={scheduleOperationColumns}
                 rows={rows}

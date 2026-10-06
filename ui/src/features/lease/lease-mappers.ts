@@ -11,7 +11,7 @@ import type {
   LeaseOverview,
   LeaseRealmInventory,
   LeaseRemainingLifetime,
-  LeaseSearchState,
+  LeaseOwnershipRowState,
   LeaseStatsSummary,
   LeaseOwnershipSearchResult,
   LeaseOwnershipSearchRow,
@@ -144,7 +144,7 @@ export function mapLeaseOwnershipSearchRow(
     realm: dto.realm,
     resource: dto.resource,
     routeFamily: dto.route_family,
-    state: dto.state as LeaseSearchState,
+    state: dto.state as LeaseOwnershipRowState,
   };
 }
 

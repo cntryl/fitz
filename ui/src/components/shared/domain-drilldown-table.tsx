@@ -32,7 +32,6 @@ export interface DomainDrilldownMetricColumn<Row> {
 }
 
 export interface DomainDrilldownTableProps<Row> {
-  description?: string;
   emptyDescription: string;
   id: string;
   metricColumns?: readonly DomainDrilldownMetricColumn<Row>[];
@@ -145,7 +144,6 @@ function shouldIgnoreRowClick(event: MouseEvent) {
 }
 
 export default function DomainDrilldownTable<Row>({
-  description,
   emptyDescription,
   id,
   metricColumns = [],
@@ -247,13 +245,12 @@ export default function DomainDrilldownTable<Row>({
       <div class="domain-section-header">
         <div>
           <h2 id={id}>{title}</h2>
-          {description ? <p>{description}</p> : null}
         </div>
-        <span role="status" aria-live="polite" aria-atomic="true">
-          {routeFilter
-            ? `${formatNumber(filteredRows.length)} of ${formatNumber(allRows.length)} visible`
-            : `${formatNumber(allRows.length)} visible`}
-        </span>
+        {routeFilter ? (
+          <span role="status" aria-live="polite" aria-atomic="true">
+            {formatNumber(filteredRows.length)} of {formatNumber(allRows.length)} routes match
+          </span>
+        ) : null}
       </div>
 
       {searchable ? (

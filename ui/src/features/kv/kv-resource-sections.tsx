@@ -1,5 +1,6 @@
 import { Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
+import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { RefreshCwIcon } from "@askrjs/lucide";
 import {
   Block,
@@ -30,8 +31,9 @@ import type {
   KvResourceScope,
 } from "@/features/kv/kv-models";
 import { createKvRowsQuery } from "@/features/kv/kv-rows-query";
+import { createKvTransactionsQuery } from "@/features/kv/kv-query";
 import { createKvValueQuery } from "@/features/kv/kv-value-query";
-import { formatNumber } from "@/shared/format";
+import { formatNumber, formatTimestamp } from "@/shared/format";
 import { domainResourceHref } from "@/shared/navigation/domains";
 import { rowsRequestQuery } from "@/shared/navigation/rows-request";
 
@@ -200,6 +202,70 @@ export function KvRowsSection({
         </Show>
       </Block>
     </Block>
+  );
+}
+
+export function KvTransactionsSection({ scope }: { scope: KvResourceScope }) {
+  const query = createKvTransactionsQuery(scope);
+  const transactions = query.data ?? [];
+
+  return (
+    <DomainDataSection id="kv-active-transactions" title="Active transactions">
+      <Block direction="column" gap="sm">
+        <Show when={query.loading && !query.data}>
+          <QueryLoadingState description="Loading active KV transactions..." />
+        </Show>
+        <Show when={query.error}>
+          <QueryErrorState
+            title="Unable to load active KV transactions"
+            error={query.error}
+            onRetry={() => query.refresh()}
+          />
+        </Show>
+        <Show when={query.data && transactions.length === 0}>
+          <QueryCompactEmptyState
+            title="No active transactions"
+            description="No active transaction rows are currently reported."
+          />
+        </Show>
+        <Show when={transactions.length > 0}>
+          <div class="domain-table-wrap">
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableHeaderCell>Transaction</TableHeaderCell>
+                  <TableHeaderCell>Mode</TableHeaderCell>
+                  <TableHeaderCell>Started</TableHeaderCell>
+                  <TableHeaderCell>Idle</TableHeaderCell>
+                  <TableHeaderCell>Operations</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {transactions.map((transaction) => (
+                  <TableRow>
+                    <TableCell>{transaction.txId ?? "--"}</TableCell>
+                    <TableCell>{transaction.mode ?? "--"}</TableCell>
+                    <TableCell>
+                      {transaction.startedAt ? formatTimestamp(transaction.startedAt) : "--"}
+                    </TableCell>
+                    <TableCell>
+                      {transaction.idleSeconds === undefined
+                        ? "--"
+                        : `${formatNumber(transaction.idleSeconds)}s`}
+                    </TableCell>
+                    <TableCell>
+                      {transaction.operationsCount === undefined
+                        ? "--"
+                        : formatNumber(transaction.operationsCount)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </Show>
+      </Block>
+    </DomainDataSection>
   );
 }
 

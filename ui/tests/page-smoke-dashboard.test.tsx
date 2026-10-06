@@ -7,7 +7,6 @@ import {
   emptyTopology,
   healthyGlobalDiagnostics,
   queueInventory,
-  queueOverview,
   systemOverview,
   topologyAppLane,
   topologyOverview,
@@ -248,9 +247,8 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("No known summary metrics");
     expect(root.textContent).not.toContain("Broker snapshot");
     expect(root.textContent).toContain("Incomplete");
-    expect(root.querySelector(".domain-status-reason")?.textContent).toMatch(
-      /^Missing from this snapshot: .+\. Refresh, then check those metric families\.$/,
-    );
+    expect(root.querySelector(".domain-status-reason")).toBeNull();
+    expect(root.querySelector(".domain-header [role='status']")?.textContent).toBe("Incomplete");
     expect(root.textContent).not.toContain("Missing telemetry is not treated as zero");
     expect(root.textContent).not.toContain("Uptime0seconds");
     expect(root.textContent).toContain("Metric samples");
@@ -493,7 +491,7 @@ describe("admin page smoke tests", () => {
   it("keeps queue inventory content visible while refresh is in flight", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
 
-    mocks.queryStates.queue = queryState.refreshing(queueOverview, queryOptions());
+    mocks.queryStates.queueInventory = queryState.refreshing(queueInventory, queryOptions());
 
     const root = await mountRoute("/queue", "/queue", QueuePage);
 

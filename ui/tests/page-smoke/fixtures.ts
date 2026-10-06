@@ -7,6 +7,9 @@ import {
 
 export { diagnostics, healthyGlobalDiagnostics, topologyAppLane, topologyOverview };
 
+const scenarioNow = Date.now();
+const scenarioTime = (offsetMs: number) => new Date(scenarioNow + offsetMs).toISOString();
+
 export const realm = { realm: "default" };
 
 export const inventory = {
@@ -27,6 +30,21 @@ export const inventory = {
               transactionsActive: 1,
               writeLatencyAvgMs: 4.1,
               writeLatencyP95Ms: 18.3,
+              activeLeases: 1,
+              committedEventCount: 12,
+              nextRun: scenarioTime(5 * 60_000),
+              notificationsReceived: 20,
+              oldestLeaseAgeSeconds: 3600,
+              pendingClaims: 1,
+              publishesPerMinute: 12.5,
+              requestsPending: 1,
+              schedulesActive: 2,
+              sessionsActive: 1,
+              sizeBytes: 4096,
+              slowestWorkerAverageLatencyMs: 12,
+              subscriptionsActive: 3,
+              waiters: 0,
+              workersRegistered: 2,
             },
           ],
           resources: ["primary"],
@@ -64,6 +82,18 @@ export const kvRows = {
     lenBytes: 0,
     utf8: "",
   },
+};
+
+export const kvResourceDetail = {
+  estimatedRecordCount: 300,
+  estimatedStorageBytes: 16_384,
+  estimateComplete: true,
+  measurementsAvailable: true,
+  readLatencyAvgMs: 2.4,
+  readLatencyP95Ms: 12.5,
+  transactionsActive: 1,
+  writeLatencyAvgMs: 4.1,
+  writeLatencyP95Ms: 18.3,
 };
 
 export const queueOverview = {
@@ -106,6 +136,16 @@ export const queueInventory = {
         {
           area: "ops",
           resources: ["primary"],
+          resourceEntries: [
+            {
+              resource: "primary",
+              messagesReady: 4,
+              messagesDeadLettered: 0,
+              messagesDelayed: 1,
+              messagesInflight: 2,
+              subscriptionsActive: 2,
+            },
+          ],
         },
       ],
     },
@@ -216,9 +256,11 @@ export const noticeAreaInventory = {
 export const noticeResourceRows = {
   area: "ops",
   limit: 50,
+  observationsReturned: 2,
   operations: [
     {
       operation: "GetStatus",
+      route: "notice://default/ops/primary/GetStatus",
       activeSubscribers: 2,
       rollingMessageCount: 18,
       latencyMs: null,
@@ -232,6 +274,7 @@ export const noticeResourceRows = {
 export const noticeOperationRows = {
   area: "ops",
   limit: 50,
+  observationsReturned: 2,
   observations: [
     {
       area: "ops",
@@ -240,7 +283,7 @@ export const noticeOperationRows = {
       publishesTotal: 120,
       realm: "default",
       resource: "primary",
-      route: "GetStatus",
+      route: "notice://default/ops/primary/GetStatus",
       sessionId: "session-1",
       status: "open",
       subscriptionId: 11,
@@ -252,7 +295,7 @@ export const noticeOperationRows = {
       publishesTotal: 45,
       realm: "default",
       resource: "primary",
-      route: "GetStatus",
+      route: "notice://default/ops/primary/GetStatus",
       sessionId: "session-2",
       status: "open",
       subscriptionId: 12,
@@ -318,7 +361,7 @@ export const rpcOperation = {
         correlation_id: null,
         operation: "GetStatus",
         realm: "default",
-        registered_at: "2026-05-21T13:00:00.000Z",
+        registered_at: scenarioTime(-30_000),
         requests_handled: 9,
         resource: "primary",
         route: "rpc://default/ops/primary/GetStatus",
@@ -384,7 +427,7 @@ export const scheduleResource = {
     diagnostics: healthyGlobalDiagnostics,
     enabled: true,
     executions_total: 42,
-    next_run: "2026-05-21T13:05:00.000Z",
+    next_run: scenarioTime(5 * 60_000),
     realm: "default",
     resource: "primary",
   },
@@ -398,8 +441,8 @@ export const scheduleResource = {
         area: "ops",
         cron: "*/5 * * * *",
         executions_total: 42,
-        last_run: "2026-05-21T13:00:00.000Z",
-        next_run: "2026-05-21T13:05:00.000Z",
+        last_run: scenarioTime(-5 * 60_000),
+        next_run: scenarioTime(5 * 60_000),
         operation: "handoff",
         pending_handoffs: 1,
         realm: "default",
@@ -422,9 +465,9 @@ export const scheduleOperation = {
       {
         age_seconds: 90,
         area: "ops",
-        claimed_at: "2026-05-21T12:59:30.000Z",
-        fire_at: "2026-05-21T12:59:00.000Z",
-        fire_ms: 1780001940000,
+        claimed_at: scenarioTime(-30_000),
+        fire_at: scenarioTime(-120_000),
+        fire_ms: scenarioNow - 90_000,
         operation: "handoff",
         realm: "default",
         resource: "primary",
@@ -491,7 +534,7 @@ export const streamResource = {
         area: "ops",
         area_offset: 0,
         body: { base64: "eyJvayI6dHJ1ZX0=", len_bytes: 11, utf8: '{"ok":true}' },
-        created_at_ms: 1780000000000,
+        created_at_ms: scenarioNow - 1_000,
         metadata: null,
         realm: "default",
         realm_offset: 0,
@@ -517,7 +560,11 @@ export const domainOverviews = [
     errorTitle: "Unable to load KV tables",
     loadingText: "Loading KV tables",
     resourceHref: "/admin/1/kv/default/ops/primary",
-    statLabels: ["Domain keys", "Active txns", "Ops / sec"],
+    statLabels: [
+      "Active transactions",
+      "Worst reported read p95 ms",
+      "Worst reported write p95 ms",
+    ],
   },
   {
     assertText: "Lease inventory",
@@ -530,7 +577,7 @@ export const domainOverviews = [
     errorText: "Lease inventory unavailable",
     loadingText: "Loading lease inventory...",
     resourceHref: "/admin/1/lease/default/ops/primary",
-    statLabels: ["Active leases", "Waiters", "Oldest lease"],
+    statLabels: ["Waiters", "Active leases", "Oldest ownership"],
   },
   {
     assertText: "Notice inventory",
@@ -543,7 +590,7 @@ export const domainOverviews = [
     errorText: "Notice inventory unavailable",
     loadingText: "Loading notice inventory...",
     resourceHref: "/admin/1/notice/default/ops/primary",
-    statLabels: ["Subscriptions", "Active operation routes", "Publishes / sec"],
+    statLabels: ["Observed subscribers", "Publishes/min"],
   },
   {
     assertText: "RPC inventory",
@@ -556,7 +603,7 @@ export const domainOverviews = [
     errorText: "RPC inventory unavailable",
     loadingText: "Loading RPC inventory...",
     resourceHref: "/admin/1/rpc/default/ops/primary",
-    statLabels: ["Pending", "Workers", "Ops / sec"],
+    statLabels: ["Pending", "Matching worker registrations", "Slowest worker avg ms"],
   },
   {
     assertText: "Schedule inventory",
@@ -569,7 +616,7 @@ export const domainOverviews = [
     errorText: "Schedule inventory unavailable",
     loadingText: "Loading schedule inventory...",
     resourceHref: "/admin/1/schedule/default/ops/primary",
-    statLabels: ["Active", "Pending claims", "Handoffs / min"],
+    statLabels: ["Pending claims", "Next run", "Enabled schedules"],
   },
   {
     assertText: "Stream inventory",
@@ -582,7 +629,7 @@ export const domainOverviews = [
     errorText: "Stream inventory unavailable",
     loadingText: "Loading stream inventory",
     resourceHref: "/admin/1/stream/default/ops/primary",
-    statLabels: ["Committed events", "Streams", "Subscriptions"],
+    statLabels: ["Committed", "Live subscriptions", "Storage"],
   },
   {
     assertText: "Queue inventory",
@@ -595,7 +642,7 @@ export const domainOverviews = [
     errorText: "Queue inventory unavailable",
     loadingText: "Loading queue inventory",
     resourceHref: "/admin/1/queue/default/ops/primary",
-    statLabels: ["Ready", "In flight", "Dead letters"],
+    statLabels: ["Ready", "Dead-lettered", "Delayed"],
   },
 ];
 
@@ -655,7 +702,7 @@ export const systemOverview = {
       successTotal: 1,
     },
   },
-  fetchedAt: "2026-05-21T13:10:00.000Z",
+  fetchedAt: scenarioTime(0),
   metrics: {
     lineCount: 1,
     lines: ["fitz_broker_up 1"],
@@ -702,7 +749,7 @@ export const metricsOverview = {
 export const activeSessions = {
   sessions: [
     {
-      connectedAt: "2026-05-21T13:00:00Z",
+      connectedAt: scenarioTime(-60_000),
       idleSeconds: 12,
       identityClaim: "tid",
       identityValue: "default",
@@ -716,7 +763,7 @@ export const activeSessions = {
       transport: "ws",
     },
     {
-      connectedAt: "2026-05-21T13:01:00Z",
+      connectedAt: scenarioTime(-30_000),
       idleSeconds: 45,
       identityClaim: "tenant",
       identityValue: "ops",
@@ -786,7 +833,7 @@ export function leaseResourceRowsFixture(expiresOffsetSeconds = 120) {
   return {
     items: [
       {
-        acquiredAt: "2026-05-21T13:00:00.000Z",
+        acquiredAt: scenarioTime(-3600_000),
         ageSeconds: 12,
         area: "ops",
         expiresAt,

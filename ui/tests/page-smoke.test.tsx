@@ -212,7 +212,7 @@ describe("admin page smoke tests", () => {
           expect(text).toContain(statLabel);
         }
         expect(text).toContain("Refresh");
-        expect(text).toMatch(/Healthy|Idle|Active|Ready|Pressure|Attention/);
+        expect(text).toMatch(/unavailable|Waiters present|Claims pending|Dead letters/i);
         expect(root.querySelector('[data-slot="table"]')).toBeTruthy();
         expect(root.querySelector(`a[href="/admin/1${page.path}/default"]`)).toBeTruthy();
         expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeNull();

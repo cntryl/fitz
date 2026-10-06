@@ -49,6 +49,7 @@ export interface NoticeDeliveryRow {
 export interface NoticeDeliveryRows {
   area: string;
   limit: number;
+  observationsReturned: number;
   observations: NoticeDeliveryRow[];
   realm: string;
   routeFamily: number;
@@ -56,6 +57,7 @@ export interface NoticeDeliveryRows {
 
 export interface NoticeResourceOperationRow {
   operation: string;
+  route: string;
   activeSubscribers: number;
   rollingMessageCount: number;
   latencyMs: number | null;
@@ -64,6 +66,7 @@ export interface NoticeResourceOperationRow {
 export interface NoticeResourceOperationRows {
   area: string;
   limit: number;
+  observationsReturned: number;
   operations: NoticeResourceOperationRow[];
   realm: string;
   resource: string;

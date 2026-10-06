@@ -1,20 +1,11 @@
-import { For, Show } from "@askrjs/askr/control";
+import { Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
-import {
-  Badge,
-  Block,
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemTitle,
-  Text,
-} from "@askrjs/themes/components";
+import { Badge, Block } from "@askrjs/themes/components";
+import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
+import DomainFacts from "@/components/shared/domain-facts";
 import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryCompactEmptyState,
@@ -24,8 +15,7 @@ import {
 } from "@/components/shared/query-state";
 import type { RpcCallObservation } from "@/adapters";
 import { createRpcOperationQuery } from "@/features/rpc/rpc-query";
-import { formatCount, formatNumber } from "@/shared/format";
-import { RPC_HANDLED_CAPTION } from "@/features/rpc/rpc-models";
+import { formatNumber, formatTimestamp } from "@/shared/format";
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -56,42 +46,38 @@ function formatObservationState(value: string) {
 
 function RpcCallEvidenceList(props: { rows: RpcCallObservation[] }) {
   return (
-    <ItemGroup as="ul" aria-label="Live call evidence" class="domain-divided-list rpc-call-list">
-      <For
-        each={props.rows}
-        by={(row, index) => row.correlation_id ?? `${row.worker_session_id}:${index}`}
-      >
-        {(row) => (
-          <Item as="li">
-            <ItemContent>
-              <ItemTitle>
-                <Text as="strong" font="mono" weight="semibold" wrap="anywhere">
-                  {row.correlation_id ?? row.worker_session_id ?? "--"}
-                </Text>
-              </ItemTitle>
-              <ItemDescription>
-                <Block direction="row" gap="md" wrap>
-                  <Text as="span" font="mono" size="sm" tone="muted" wrap="anywhere">
-                    Worker: {row.worker_session_id ?? "--"}
-                  </Text>
-                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
-                    Observed handled total: {formatNumber(row.requests_handled ?? 0)}
-                  </Text>
-                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
-                    Latency: {formatLatency(row.average_latency_ms)}
-                  </Text>
-                </Block>
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Badge aria-label={`State: ${formatObservationState(row.state)}`} variant="outline">
-                {formatObservationState(row.state)}
-              </Badge>
-            </ItemActions>
-          </Item>
-        )}
-      </For>
-    </ItemGroup>
+    <div class="domain-table-wrap">
+      <Table>
+        <TableHead>
+          <TableRow>
+            <TableHeaderCell>Correlation</TableHeaderCell>
+            <TableHeaderCell>State</TableHeaderCell>
+            <TableHeaderCell>Age</TableHeaderCell>
+            <TableHeaderCell>Observed at</TableHeaderCell>
+            <TableHeaderCell>Worker</TableHeaderCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {props.rows.map((row) => (
+            <TableRow>
+              <TableCell>{row.correlation_id ?? "--"}</TableCell>
+              <TableCell>{formatObservationState(row.state)}</TableCell>
+              <TableCell>
+                {row.age_seconds === null ? "--" : `${formatNumber(row.age_seconds)}s`}
+              </TableCell>
+              <TableCell>
+                {row.submitted_at
+                  ? `Submitted ${formatTimestamp(row.submitted_at)}`
+                  : row.registered_at
+                    ? `Registered ${formatTimestamp(row.registered_at)}`
+                    : "--"}
+              </TableCell>
+              <TableCell>{row.worker_session_id ?? "--"}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -111,6 +97,7 @@ export default function RpcOperationPage() {
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
+          compact={true}
           eyebrow="RPC operation"
           title={operation}
           description={`${realm} / ${area} / ${resource}`}
@@ -120,16 +107,10 @@ export default function RpcOperationPage() {
             label: "Refresh operation",
             onPress: () => query.refresh(),
           }}
-          status={queryHeaderStatus(query, {
-            loading: "Loading RPC operation.",
-            ready: detail
-              ? `${formatCount(detail.workers_registered, "worker")}, ${formatCount(
-                  detail.requests_pending,
-                  "pending request",
-                )}. Pending RPC state is live in-memory state only.`
-              : "",
-            unavailable: "RPC operation evidence is unavailable.",
-          })}
+          status={queryHeaderStatus(
+            query,
+            detail?.requests_pending ? { label: "Pending calls", tone: "info" } : {},
+          )}
         />
         <Show when={!data && query.loading}>
           <QueryLoadingState description="Loading RPC operation..." />
@@ -147,31 +128,50 @@ export default function RpcOperationPage() {
               <Show when={query.refreshing}>
                 <QueryRefreshingState description="Refreshing RPC operation..." />
               </Show>
-              <DomainSummaryStrip
-                title="RPC operation metrics"
-                description="Live worker capacity and pending requests. Handled counts cover exact live registrations only; -- means wildcard workers prevent per-operation attribution. Latency buckets are current observations, not historical totals. The API does not report a reset window for handled counters."
+              <DomainFacts
+                id="rpc-operation-facts"
+                title="Current route"
                 items={[
-                  { label: "Workers", value: detail.workers_registered },
-                  { label: "Pending requests", value: detail.requests_pending },
+                  { label: "Pending calls", value: formatNumber(detail.requests_pending) },
                   {
-                    label: "Handled by live workers",
-                    value: detail.requests_handled_by_live_workers ?? "--",
-                    caption: RPC_HANDLED_CAPTION,
+                    label: "Matching worker registrations",
+                    value: formatNumber(detail.workers_registered),
                   },
                   {
-                    label: "Slowest average latency",
-                    value: formatLatency(detail.slowest_worker_average_latency_ms),
+                    label: "Slowest worker average",
+                    value:
+                      detail.workers_registered === 0
+                        ? "--"
+                        : formatLatency(detail.slowest_worker_average_latency_ms),
                   },
-                  { label: "Latency <5ms", value: detail.worker_latency_buckets.under_5ms },
-                  { label: "Latency <25ms", value: detail.worker_latency_buckets.under_25ms },
-                  { label: "Latency <100ms", value: detail.worker_latency_buckets.under_100ms },
-                  { label: "Latency 100ms+", value: detail.worker_latency_buckets.over_100ms },
                 ]}
               />
+              <details class="domain-evidence-disclosure">
+                <summary>Worker averages and handled counts</summary>
+                <DomainFacts
+                  id="rpc-worker-average-distribution"
+                  title="Workers by average latency"
+                  items={[
+                    { label: "Under 5 ms", value: detail.worker_latency_buckets.under_5ms },
+                    { label: "Under 25 ms", value: detail.worker_latency_buckets.under_25ms },
+                    { label: "Under 100 ms", value: detail.worker_latency_buckets.under_100ms },
+                    { label: "100 ms and over", value: detail.worker_latency_buckets.over_100ms },
+                    {
+                      label: "Handled by exact live workers",
+                      value: detail.requests_handled_by_live_workers ?? "--",
+                      title: "Wildcard registrations prevent exact operation attribution.",
+                    },
+                  ]}
+                />
+              </details>
               <DomainDataSection
                 id="rpc-live-call-evidence"
                 title="Live call evidence"
-                description="Broker-local worker registrations, pending calls, and correlation rows."
+                actions={
+                  data && rows.length >= data.calls.limit ? (
+                    <Badge variant="warning">Observation sample reached {data.calls.limit}</Badge>
+                  ) : undefined
+                }
               >
                 <Show when={rows.length === 0} fallback={<RpcCallEvidenceList rows={rows} />}>
                   <QueryCompactEmptyState
