@@ -109,9 +109,9 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
         }
     }
     report.status = if result.is_ok() { "passed" } else { "failed" };
-    report.save()?;
+    let saved = report.save();
     record(ctx, &report);
-    result
+    result.and(saved)
 }
 
 fn record(ctx: &mut StressContext, report: &Report) {

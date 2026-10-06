@@ -37,8 +37,8 @@ pub async fn stage(
     if let Err(error) = &result {
         report.stages.last_mut().expect("stage exists").failure = Some(error.to_string());
     }
-    report.save()?;
-    result
+    let saved = report.save();
+    result.and(saved)
 }
 
 async fn execute(
