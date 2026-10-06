@@ -24,10 +24,16 @@ struct Config {
 }
 impl Config {
     fn load() -> Result<Self, BenchFailure> {
+        let stage = list("FITZ_KV_PRESSURE_STAGE_SECS", "120", 600)?;
+        if stage.len() != 1 {
+            return Err(BenchFailure::validation(
+                "stage duration must be one integer",
+            ));
+        }
         Ok(Self {
             keys: list("FITZ_KV_PRESSURE_KEYS", "100,1000,10000", 200_000)?,
             batches: list("FITZ_KV_PRESSURE_BATCHES", "1,16,256,4096", 4096)?,
-            stage_seconds: list("FITZ_KV_PRESSURE_STAGE_SECS", "120", 600)?[0],
+            stage_seconds: stage[0],
         })
     }
 }
@@ -83,6 +89,10 @@ struct Report {
     keys_verified_after_restart: u64,
     recovery_probe_passed: bool,
     clean_restart_passed: bool,
+    process_rss_bytes: Option<u64>,
+    process_peak_rss_bytes: Option<u64>,
+    wall_elapsed_ns: u128,
+    cleanup_status: &'static str,
     #[serde(skip)]
     path: PathBuf,
 }
@@ -109,6 +119,10 @@ impl Report {
             keys_verified_after_restart: 0,
             recovery_probe_passed: false,
             clean_restart_passed: false,
+            process_rss_bytes: None,
+            process_peak_rss_bytes: None,
+            wall_elapsed_ns: 0,
+            cleanup_status: "not_started",
             path: directory.join(format!("{stamp}.json")),
         })
     }
@@ -261,7 +275,69 @@ async fn campaign(
 pub(crate) fn run(ctx: &mut StressContext) -> StressResult {
     execute(ctx).map_err(|e| StressError::new(e.to_string()))
 }
+fn reopen(
+    ctx: &StressContext,
+    report: &mut Report,
+    storage: StorageDirectory,
+) -> Result<(), BenchFailure> {
+    let runtime = shared_bench_runtime();
+    let mut result: Result<(), BenchFailure>;
+    match runtime.block_on(bounded(BrokerFixture::start(
+        StorageProfile::LocalDisk,
+        storage,
+    ))) {
+        Ok(reopened) => {
+            result = runtime.block_on(async {
+                let mut client = bounded(async {
+                    TestClient::new(reopened.tcp_addr())
+                        .await
+                        .map_err(BenchFailure::transport)
+                })
+                .await?;
+                verify(
+                    &mut client,
+                    0,
+                    report.total_keys_committed,
+                    ctx,
+                    &mut report.keys_verified_after_restart,
+                )
+                .await?;
+                bounded(async { client.close().await.map_err(BenchFailure::transport) }).await?;
+                report.clean_restart_passed = true;
+                Ok(())
+            });
+            if let Err(error) = &result {
+                report.status = "failed";
+                report.failure = Some(error.to_string());
+            }
+            if let Err(error) = report.save() {
+                if result.is_ok() {
+                    result = Err(error);
+                }
+            }
+            let (server, storage) = reopened.into_parts();
+            let shutdown = runtime.block_on(bounded(async {
+                server.shutdown().await.map_err(BenchFailure::transport)
+            }));
+            if let Err(e) = shutdown {
+                report.cleanup_failure = Some(e.to_string());
+                if result.is_ok() {
+                    result = Err(e);
+                }
+            }
+            if result.is_ok() {
+                if let Err(e) = storage.release() {
+                    report.cleanup_failure = Some(e.to_string());
+                    result = Err(e);
+                }
+            }
+        }
+        Err(e) => result = Err(e),
+    }
+    result
+}
 fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
+    let started = Instant::now();
     let mut report = Report::new(Config::load()?)?;
     // Product bounds limit stored bytes even when every configured stage fills.
     if report.config.keys.iter().sum::<u64>()
@@ -278,11 +354,31 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
     let storage = StorageDirectory::new(StorageProfile::LocalDisk)?;
     report.storage_path = storage.path().map(std::path::Path::to_path_buf);
     report.save()?;
-    let fixture = runtime.block_on(bounded(BrokerFixture::start(
+    let fixture = match runtime.block_on(bounded(BrokerFixture::start(
         StorageProfile::LocalDisk,
         storage,
-    )))?;
+    ))) {
+        Ok(value) => value,
+        Err(error) => {
+            report.status = "failed";
+            report.failure = Some(error.to_string());
+            report.wall_elapsed_ns = started.elapsed().as_nanos();
+            let _ = report.save();
+            return Err(error);
+        }
+    };
     let mut result = runtime.block_on(campaign(ctx, &mut report, fixture.tcp_addr()));
+    if let Err(error) = &result {
+        report.status = "failed";
+        report.failure = Some(error.to_string());
+    }
+    report.cleanup_status = "running";
+    // Preserve original failure before shutdown; artifact errors must not skip cleanup.
+    if let Err(error) = report.save() {
+        if result.is_ok() {
+            result = Err(error);
+        }
+    }
     let (server, storage) = fixture.into_parts();
     if let Err(e) = runtime.block_on(bounded(async {
         server.shutdown().await.map_err(BenchFailure::transport)
@@ -293,63 +389,34 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
         }
     }
     if result.is_ok() {
-        match runtime.block_on(bounded(BrokerFixture::start(
-            StorageProfile::LocalDisk,
-            storage,
-        ))) {
-            Ok(reopened) => {
-                result = runtime.block_on(async {
-                    let mut client = bounded(async {
-                        TestClient::new(reopened.tcp_addr())
-                            .await
-                            .map_err(BenchFailure::transport)
-                    })
-                    .await?;
-                    verify(
-                        &mut client,
-                        0,
-                        report.total_keys_committed,
-                        ctx,
-                        &mut report.keys_verified_after_restart,
-                    )
-                    .await?;
-                    bounded(async { client.close().await.map_err(BenchFailure::transport) })
-                        .await?;
-                    report.clean_restart_passed = true;
-                    Ok(())
-                });
-                let (server, storage) = reopened.into_parts();
-                let shutdown = runtime.block_on(bounded(async {
-                    server.shutdown().await.map_err(BenchFailure::transport)
-                }));
-                if let Err(e) = shutdown {
-                    report.cleanup_failure = Some(e.to_string());
-                    if result.is_ok() {
-                        result = Err(e);
-                    }
-                }
-                if result.is_ok() {
-                    if let Err(e) = storage.release() {
-                        report.cleanup_failure = Some(e.to_string());
-                        result = Err(e);
-                    }
-                }
-            }
-            Err(e) => result = Err(e),
-        }
+        result = reopen(ctx, &mut report, storage);
     }
+    report.wall_elapsed_ns = started.elapsed().as_nanos();
+    (report.process_rss_bytes, report.process_peak_rss_bytes) = super::artifacts::memory_sample();
+    report.cleanup_status = if report.cleanup_failure.is_some() {
+        "failed"
+    } else {
+        "completed"
+    };
     report.status = if result.is_ok() { "passed" } else { "failed" };
     if let Err(e) = &result {
         report.failure = Some(e.to_string());
     }
-    report.save()?;
+    if let Err(error) = report.save() {
+        if result.is_ok() {
+            result = Err(error);
+        }
+    }
     for (idx, stage) in report.stages.iter().enumerate() {
-        let failures = u64::from(stage.keys_committed != stage.keys_verified);
+        let failures = u64::from(
+            stage.keys_committed != stage.keys_verified
+                || (result.is_err() && idx + 1 == report.stages.len()),
+        );
         ctx.record_external_outcome(
             format!("stage_{idx}_batch_{}", stage.batch_keys),
             Duration::from_nanos(u64::try_from(stage.elapsed_ns).unwrap_or(u64::MAX)),
             LogicalUnit::new("committed_authoritative_key"),
-            OperationOutcome::new(stage.keys_committed + failures, stage.keys_verified)
+            OperationOutcome::new(stage.keys_verified + failures, stage.keys_verified)
                 .failures(failures),
         );
     }
