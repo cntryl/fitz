@@ -38,7 +38,7 @@ describe("admin page smoke tests", () => {
     );
     const table = root.querySelector<HTMLTableElement>("#queue-inventory-table");
 
-    expect(root.textContent).toMatch(/Active subscriptions\s*3/);
+    expect(root.textContent).toMatch(/Live subscriptions\s*3/);
     expect(table?.querySelector('th[data-column-id="subscriptions"]')).toBeTruthy();
     expect(
       Array.from(table?.querySelectorAll('tbody td[data-column-id="subscriptions"]') ?? []).map(
@@ -47,14 +47,14 @@ describe("admin page smoke tests", () => {
     ).toEqual(["0", "3"]);
 
     const sort = root.querySelector<HTMLButtonElement>(
-      'button[aria-label="Sort by Active subscriptions, not sorted"]',
+      'button[aria-label="Sort by Live subscriptions, not sorted"]',
     );
     expect(sort).toBeTruthy();
     click(sort!);
     await new Promise<void>((resolve) => queueMicrotask(resolve));
 
     expect(
-      root.querySelector('button[aria-label="Sort by Active subscriptions, descending"]'),
+      root.querySelector('button[aria-label="Sort by Live subscriptions, descending"]'),
     ).toBeTruthy();
     expect(
       Array.from(
@@ -71,7 +71,7 @@ describe("admin page smoke tests", () => {
   it("waits for an explicit request before loading data rows on detail pages", async () => {
     const pages = [
       {
-        loadLabel: "Load messages",
+        loadLabel: "Inspect messages",
         module: () => import("@/pages/app/queue-resource"),
         path: "/admin/1/queue/default/ops/primary",
         routePath: "/admin/{family}/queue/{realm}/{area}/{resource}",
@@ -118,12 +118,14 @@ describe("admin page smoke tests", () => {
     const { createQueueResourceInflightQuery } =
       await import("@/features/queue/queue-resource-query");
     const { createKvRowsQuery } = await import("@/features/kv/kv-rows-query");
+    const { createKvTransactionsQuery } = await import("@/features/kv/kv-query");
     const { createKvValueQuery } = await import("@/features/kv/kv-value-query");
     const { createStreamRecordsQuery } = await import("@/features/stream/stream-query");
     const factories = [
       createQueueDeadLettersQuery,
       createQueueResourceInflightQuery,
       createKvRowsQuery,
+      createKvTransactionsQuery,
       createKvValueQuery,
       createStreamRecordsQuery,
     ].map((factory) => vi.mocked(factory));
@@ -147,7 +149,7 @@ describe("admin page smoke tests", () => {
     }
 
     // Assert
-    expect(factories.map((factory) => factory.mock.calls.length)).toEqual([0, 0, 0, 0, 0]);
+    expect(factories.map((factory) => factory.mock.calls.length)).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
   it("fits queue realms without structural columns or a scroll hint", async () => {
@@ -185,7 +187,7 @@ describe("admin page smoke tests", () => {
     ).toBe(false);
     expect(
       table?.querySelector('tbody td[data-column-id="route"] .domain-row-detail')?.textContent,
-    ).toMatch(/^Delayed \S+ · In flight \S+ · Active subscriptions \S+$/);
+    ).toMatch(/^Delayed \S+ · In flight \S+ · Live subscriptions \S+$/);
 
     cleanupApp(root);
     document.body.innerHTML = "";
@@ -253,7 +255,7 @@ describe("admin page smoke tests", () => {
     );
 
     const text = root.textContent ?? "";
-    const order = ["Current values", "Dead letters", "Inflight", "Timeline"];
+    const order = ["Queue state", "Dead letters", "Inflight", "Inspect transitions"];
     let cursor = -1;
     for (const label of order) {
       const index = text.indexOf(label, cursor + 1);
@@ -380,7 +382,7 @@ describe("admin page smoke tests", () => {
 
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
     const root = await mountRoute(
-      "/queue/default/ops/primary?rows=1",
+      "/queue/default/ops/primary?rows=1&timeline=1",
       "/queue/{realm}/{area}/{resource}",
       QueueResourcePage,
     );
@@ -445,12 +447,12 @@ describe("admin page smoke tests", () => {
 
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
     const root = await mountRoute(
-      "/queue/default/ops/primary?rows=1",
+      "/queue/default/ops/primary?rows=1&timeline=1",
       "/queue/{realm}/{area}/{resource}",
       QueueResourcePage,
     );
 
-    expect(root.textContent).toContain("Current values");
+    expect(root.textContent).toContain("Queue state");
     expect(root.querySelector('table[aria-label="Inflight queue messages"]')).toBeTruthy();
     expect(root.querySelector('table[aria-label="Dead-letter queue messages"]')).toBeTruthy();
     expect(

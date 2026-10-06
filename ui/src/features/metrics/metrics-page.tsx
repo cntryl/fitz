@@ -38,11 +38,7 @@ type MetricsSampleRow = {
 };
 
 interface MetricsPostureSummary {
-  detail: string;
   label: string;
-  nextStep: string;
-  /** One visible sentence: why the badge reads as it does. */
-  reason: string;
   tone: MetricsHeaderTone;
 }
 
@@ -103,10 +99,6 @@ function fixedFamilyValue(index: Map<string, MetricFamily>, name: string) {
   return value === null ? "--" : value.toFixed(2);
 }
 
-function signalText(label: string, value: number) {
-  return `${label} ${formatNumber(value)}`;
-}
-
 function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSummary {
   const deadLetters = observedFamilyValue(index, "fitz_queue_messages_dead_lettered");
   const activitySignals = [
@@ -123,10 +115,7 @@ function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSumm
 
   if (deadLetters !== null && deadLetters > 0) {
     return {
-      detail: `${signalText("queue dead letters", deadLetters)} currently require a replay or purge decision. Cumulative failure counters below describe process history, not active incidents.`,
       label: "Attention",
-      nextStep: "Open Queue and inspect the current dead-letter set.",
-      reason: `${signalText("queue dead letters", deadLetters)} need a replay or purge decision. Open Queue to inspect them.`,
       tone: "danger" as const,
     };
   }
@@ -134,14 +123,7 @@ function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSumm
   const missingSignals = activitySignals.filter((signal) => signal.value === null);
   if (missingSignals.length > 0 || deadLetters === null) {
     return {
-      detail: `${formatNumber(activitySignals.length - missingSignals.length)} of ${formatNumber(activitySignals.length)} current-activity families are available. Missing telemetry is not treated as zero.`,
       label: "Incomplete",
-      nextStep:
-        "Refresh the snapshot, then inspect the missing metric families before judging health.",
-      reason: `Missing from this snapshot: ${[
-        ...(deadLetters === null ? ["queue dead letters"] : []),
-        ...missingSignals.map((signal) => signal.label),
-      ].join(", ")}. Refresh, then check those metric families.`,
       tone: "warning" as const,
     };
   }
@@ -151,28 +133,13 @@ function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSumm
   );
   if (activeSignals.length > 0) {
     return {
-      detail: `${activeSignals.length} current activity signal${activeSignals.length === 1 ? " is" : "s are"} non-zero: ${activeSignals
-        .slice(0, 3)
-        .map((signal) => signalText(signal.label, signal.value))
-        .join(", ")}. Activity alone does not establish pressure.`,
       label: "Active",
-      reason: `Current activity: ${activeSignals
-        .slice(0, 3)
-        .map((signal) => signalText(signal.label, signal.value))
-        .join(", ")}. Activity alone is not pressure.`,
-      nextStep:
-        "Use age, lag, and broker diagnostics to decide whether active work needs attention.",
       tone: "info" as const,
     };
   }
 
   return {
-    detail:
-      "All observed current-activity gauges are zero. Cumulative counters below remain historical process totals.",
     label: "Quiet",
-    reason: "Every current-activity gauge reads zero.",
-    nextStep:
-      "Use the search box to inspect a specific metric family when you need a narrower read.",
     tone: "success",
   };
 }
@@ -563,31 +530,17 @@ export default function MetricsPage() {
       ),
     },
   ];
-  const detailSummary = data
-    ? filterValue.length === 0
-      ? `${formatNumber(data.families.length)} families / ${formatNumber(sampleCount)} samples in the current snapshot.`
-      : `${formatNumber(families.length)} of ${formatNumber(data.families.length)} families match “${filterValue}” with ${formatNumber(
-          sampleRows.length,
-        )} matching samples.`
-    : "Searching metric families and samples for current counter values.";
-
-  const headerStatus: { detail: string; label: string; tone: MetricsHeaderTone } = snapshotSummary
+  const headerStatus: { label: string; tone: MetricsHeaderTone } = snapshotSummary
     ? {
-        detail:
-          filterValue.length === 0
-            ? `${detailSummary} ${snapshotSummary.detail}`
-            : `${detailSummary} ${snapshotSummary.nextStep}`,
         label: metrics.refreshing ? "Refreshing" : metrics.stale ? "Stale" : snapshotSummary.label,
         tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : snapshotSummary.tone,
       }
     : metrics.error
       ? {
-          detail: "The structured metrics snapshot is unavailable.",
           label: "Unavailable",
           tone: "danger",
         }
       : {
-          detail: "Searching metric families and samples from structured broker metrics.",
           label: metrics.refreshing ? "Refreshing" : metrics.stale ? "Stale" : "Loading",
           tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : "info",
         };
@@ -596,9 +549,9 @@ export default function MetricsPage() {
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
+          compact={true}
           eyebrow="Metrics inspection"
           title="Metrics explorer"
-          description="Use the filters below to inspect live broker metric families and sample labels."
           primaryAction={{
             busy: metrics.refreshing,
             disabled: metrics.refreshing,
@@ -607,9 +560,6 @@ export default function MetricsPage() {
           }}
           status={headerStatus}
         />
-        <Show when={snapshotSummary}>
-          {(summary) => <p class="domain-status-reason">{summary.reason}</p>}
-        </Show>
 
         <Show when={!data && metrics.loading}>
           <QueryLoadingState
@@ -633,10 +583,6 @@ export default function MetricsPage() {
                 <div class="domain-section-header">
                   <div>
                     <h2>Live state</h2>
-                    <p>
-                      The summary below reflects the full snapshot, even when the sample table is
-                      filtered.
-                    </p>
                   </div>
                 </div>
                 <div class="chart-grid">
@@ -644,7 +590,6 @@ export default function MetricsPage() {
                     <DomainMetricTable
                       title="Broker snapshot"
                       titleAs="h3"
-                      description="The broker process itself: uptime, connections, sessions, and cumulative routing counters."
                       metrics={summaryCards.broker}
                     />
                   ) : null}
@@ -653,7 +598,6 @@ export default function MetricsPage() {
                     <DomainMetricTable
                       title="Delivery activity"
                       titleAs="h3"
-                      description="Current queued work and request/response activity. Non-zero values are not pressure by themselves."
                       metrics={summaryCards.delivery}
                     />
                   ) : null}
@@ -662,7 +606,6 @@ export default function MetricsPage() {
                     <DomainMetricTable
                       title="Coordination state"
                       titleAs="h3"
-                      description="Lease ownership, schedule claims, and stream append activity."
                       metrics={summaryCards.coordination}
                     />
                   ) : null}
@@ -671,7 +614,6 @@ export default function MetricsPage() {
                     <DomainMetricTable
                       title="Durable surfaces"
                       titleAs="h3"
-                      description="The long-lived state and live fanout that make Fitz useful."
                       metrics={summaryCards.state}
                     />
                   ) : null}
@@ -680,7 +622,6 @@ export default function MetricsPage() {
                     <DomainMetricTable
                       title="Failure counters"
                       titleAs="h3"
-                      description="Cumulative totals since the broker process started. Inspect changes between snapshots before treating them as active failures."
                       metrics={summaryCards.failures}
                     />
                   ) : null}

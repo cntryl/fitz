@@ -61,58 +61,32 @@ export function formatQueueScope(
 }
 
 export function describeQueueState(detail: QueueResourceDetail): {
-  detail: string;
   label: string;
   tone: QueueStateTone;
 } {
-  const counts = [
-    detail.messagesReady > 0 ? `${detail.messagesReady} ready` : null,
-    detail.messagesInflight > 0 ? `${detail.messagesInflight} inflight` : null,
-    detail.messagesDelayed > 0 ? `${detail.messagesDelayed} delayed` : null,
-    detail.messagesDeadLettered > 0 ? `${detail.messagesDeadLettered} dead-lettered` : null,
-  ].filter((value): value is string => value !== null);
-
-  const snapshotSentence = counts.length
-    ? `Current scope has ${counts.join(", ")}.`
-    : "No ready, inflight, delayed, or dead-lettered messages are visible.";
-
-  const ageSentence = `Oldest visible message age: ${humanizeSeconds(
-    detail.oldestMessageAgeSeconds,
-  )}.`;
   if (detail.messagesDeadLettered > 0) {
     return {
-      detail: `${snapshotSentence} ${ageSentence} Dead letters need attention.`,
-      label: "Attention",
-      tone: "danger",
+      label: "Dead letters",
+      tone: "warning",
+    };
+  }
+
+  if (detail.messagesReady > 0) {
+    return {
+      label: "Ready work",
+      tone: "info",
     };
   }
 
   if (detail.messagesDelayed > 0) {
     return {
-      detail: `${snapshotSentence} ${ageSentence} Delayed work is visible.`,
-      label: "Warning",
-      tone: "warning",
+      label: "Scheduled messages",
+      tone: "info",
     };
   }
 
-  if (
-    detail.messagesReady === 0 &&
-    detail.messagesInflight === 0 &&
-    detail.messagesDelayed === 0 &&
-    detail.messagesDeadLettered === 0
-  ) {
-    return {
-      detail: `${snapshotSentence} ${ageSentence}`,
-      label: "Healthy",
-      tone: "success",
-    };
-  }
-
-  return {
-    detail: `${snapshotSentence} ${ageSentence} The queue is active and moving messages.`,
-    label: "Healthy",
-    tone: "success",
-  };
+  if (detail.messagesInflight > 0) return { label: "Reservations active", tone: "info" };
+  return { label: "No queued work", tone: "info" };
 }
 
 export function formatTimelineContext(event: QueueResourceTimelineEvent) {

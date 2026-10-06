@@ -10,39 +10,25 @@ import {
   mockScheduleResourceApis,
 } from "./shell/resource-mocks";
 
-async function expectDomainSummary(page: Page, mobile: boolean) {
-  const stats = page.locator('.domain-inventory-summary [data-slot="stat"]');
-  await expect(stats).toHaveCount(3);
-  const statTops = await stats.evaluateAll((elements) =>
-    elements.map((stat) => Math.round(stat.getBoundingClientRect().top)),
-  );
-  expect(statTops).toHaveLength(3);
-  expect(new Set(statTops).size).toBe(mobile ? 3 : 1);
-}
-
-const rollupHeaders: Record<string, string[]> = {
-  lease: ["Active", "Waiters", "Oldest"],
-  notice: ["Subscriptions", "Publishes / min", "Delivered"],
-  rpc: ["Workers", "Pending", "Slowest avg ms"],
-  stream: ["Committed", "Storage", "Append sessions"],
+const primaryInventoryHeaders: Record<string, string> = {
+  kv: "Worst reported read p95 ms",
+  lease: "Waiters",
+  notice: "Observed subscribers",
+  rpc: "Pending",
+  schedule: "Pending claims",
+  stream: "Committed",
+  queue: "Ready",
 };
 
-async function expectInventoryRollups(page: Page, domain: string, mobile: boolean) {
-  const headers = rollupHeaders[domain];
-  if (!headers) return;
-
-  for (const header of headers) {
-    await expect(page.getByRole("columnheader", { name: new RegExp(header) })).toBeVisible();
-  }
-  await page.getByRole("button", { name: new RegExp(`Sort by ${headers[0]}`) }).click();
+async function expectInventoryEvidence(page: Page, domain: string, mobile: boolean) {
+  const primaryHeader = primaryInventoryHeaders[domain];
+  const table = page.locator(".domain-resource-data-table").first();
+  await expect(table.getByRole("columnheader", { name: primaryHeader })).toBeVisible();
+  await table.getByRole("button", { name: `Sort by ${primaryHeader}, not sorted` }).click();
   await expect(
-    page.getByRole("button", {
-      name: new RegExp(`Sort by ${headers[0]}, descending`),
-    }),
+    table.getByRole("button", { name: `Sort by ${primaryHeader}, descending` }),
   ).toBeVisible();
-  // Tables never scroll sideways; narrow layouts fold secondary metrics instead.
-  await expect(page.getByText(/Scroll horizontally/)).toHaveCount(0);
-  const table = page.locator(".domain-resource-data-table");
+  await expect(page.locator(".domain-summary-strip")).toHaveCount(0);
   expect(await table.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
   if (!mobile) return;
   await expect(page.locator(".domain-row-detail").first()).toBeVisible();
@@ -76,13 +62,14 @@ test("omits comparison controls from queue resource inspection", async ({ page }
   await page.setViewportSize({ width: 1440, height: 1200 });
   const queueScope = {
     area: "payments",
+    routeFamily: 2,
     realm: "acme",
     resource: "orders",
   };
   await mockQueueResourceApis(page, queueScope);
-  await page.goto("/admin/1/queue/acme/payments/orders");
+  await page.goto("/admin/2/queue/acme/payments/orders");
   await expect(page.getByRole("table", { name: "Dead-letter queue messages" })).toHaveCount(0);
-  await page.getByRole("link", { name: "Load messages" }).click();
+  await page.getByRole("link", { name: "Inspect messages" }).click();
 
   await expect(page.getByRole("heading", { level: 1, name: "orders" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Compare scopes" })).toHaveCount(0);
@@ -90,6 +77,8 @@ test("omits comparison controls from queue resource inspection", async ({ page }
   await expect(page.getByRole("heading", { level: 2, name: "Dead letters" })).toBeVisible();
   await expect(page.getByRole("table", { name: "Dead-letter queue messages" })).toBeVisible();
   await expect(page.getByRole("table", { name: "Inflight queue messages" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Queue resource timeline" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Inspect transitions" }).click();
   const timeline = page.getByRole("list", { name: "Queue resource timeline" });
   await expect(timeline).toBeVisible();
   await expect(timeline.getByRole("listitem")).toHaveCount(1);
@@ -139,11 +128,10 @@ test("navigates lease scope drill-down links and shows ownership countdown updat
     "primary",
   );
 
-  const ownershipDetails = page.getByRole("region", {
-    name: "Ownership details",
-  });
+  const ownershipDetails = page.locator(
+    '[aria-labelledby="lease-ownership-rows"] [data-slot="table"]',
+  );
   await expect(ownershipDetails).toBeVisible();
-  await expect(page.getByRole("table", { name: "Lease ownership rows" })).toHaveCount(0);
   const remainingCell = ownershipDetails.locator("[data-field='remaining-ttl']");
   const initialRemaining = (await remainingCell.textContent())?.trim();
   await page.waitForTimeout(1200);
@@ -165,17 +153,18 @@ test("navigates notice scope drill-down links to operation detail", async ({ pag
   await page.locator('a[href="/admin/1/notice/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/notice/default/default/primary");
   await expect(page.getByRole("heading", { level: 1, name: "primary" })).toBeVisible();
-  const operations = page.getByRole("table", { name: "Notice operations" });
+  const operations = page.getByRole("table", { name: "Observed subscription patterns" });
   await expect(operations).toBeVisible();
   await expect(operations.getByRole("row")).toHaveCount(3);
-  await expect(page.getByRole("columnheader", { name: /Subscriptions/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /Observed subscribers/ })).toBeVisible();
   await page.locator('a[href="/admin/1/notice/default/default/primary/GetStatus"]').click();
   await expect(page).toHaveURL("/admin/1/notice/default/default/primary/GetStatus");
   await expect(page.getByRole("heading", { level: 1, name: "GetStatus" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Delivery evidence" })).toBeVisible();
   const deliveries = page.getByRole("list", { name: "Delivery evidence" });
   await expect(deliveries.getByRole("listitem")).toHaveCount(1);
-  await expect(deliveries).toContainText("Notifications observed");
+  await expect(deliveries).toContainText("session-1");
+  await expect(deliveries).toContainText("Subscription: 11");
   await expect(page.locator("#notice-delivery-evidence table")).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "Resource hierarchy" })).toContainText(
     "primary",
@@ -193,7 +182,7 @@ test("renders notice delivery evidence as semantic list items", async ({ page })
   const deliveries = page.getByRole("list", { name: "Delivery evidence" });
   await expect(deliveries.getByRole("listitem")).toHaveCount(1);
   await expect(deliveries).toContainText("session-1");
-  await expect(deliveries).toContainText("Notifications observed: 12");
+  await expect(deliveries).toContainText("Subscription: 11");
   await expect(deliveries.getByLabel("Status: open")).toBeVisible();
   await expect(page.locator("#notice-delivery-evidence table")).toHaveCount(0);
 });
@@ -213,8 +202,7 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await expect(page.getByRole("heading", { name: /Schedule inventory/ })).toBeVisible();
   await page.locator('a[href="/admin/1/schedule/default"]').click();
   await page.locator('a[href="/admin/1/schedule/default/default"]').click();
-  // Schedule reports these per resource, so its inventory carries them like every
-  // other domain rather than rendering a bare route list.
+  // Schedule reports pending claims and next run per resource.
   await expect(page.getByRole("columnheader", { name: /Pending claims/ })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: /next run/i })).toBeVisible();
   await page.locator('a[href="/admin/1/schedule/default/default/primary"]').click();
@@ -226,7 +214,6 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await expect(schedules.getByRole("row")).toHaveCount(3);
   await expect(page.getByRole("columnheader", { name: /next run/i })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: /Pending/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Durable timing intent" })).toBeVisible();
   // Single-schedule detail and the run action stay on the operation tier.
   await expect(page.getByRole("heading", { name: "Schedule timing" })).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Run now" })).not.toBeVisible();
@@ -234,7 +221,7 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await page.locator('a[href="/admin/1/schedule/default/default/primary/handoff"]').click();
   await expect(page).toHaveURL("/admin/1/schedule/default/default/primary/handoff");
   await expect(page.getByRole("heading", { level: 1, name: "handoff" })).toBeVisible();
-  await expect(page.getByText("Non-authoritative; not downstream execution history")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Schedule timing" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Pending and missed handoffs" })).toBeVisible();
 });
 
@@ -399,7 +386,8 @@ test.describe("captures domain overview templates", () => {
       await expect(page.getByRole("heading", { name: overviewPage.heading })).toBeVisible();
       await expect(page.locator("main#main-content")).toHaveCount(1);
       await expect(page.getByRole("table", { name: "Realms" })).toBeVisible();
-      await expectDomainSummary(page, false);
+      await expect(page.locator(".domain-summary-strip")).toHaveCount(0);
+      await expect(page.locator(".domain-resource-data-table")).toHaveCount(1);
       expect(detailRequests).toEqual([]);
 
       await page.screenshot({
@@ -421,7 +409,14 @@ test.describe("captures domain overview templates", () => {
       await expect(page.getByRole("heading", { name: overviewPage.heading })).toBeVisible();
       await expect(page.locator("main#main-content")).toHaveCount(1);
       await expect(page.getByRole("table", { name: "Realms" })).toBeVisible();
-      await expectDomainSummary(page, true);
+      await expect(page.locator(".domain-summary-strip")).toHaveCount(0);
+      await expect(page.locator(".domain-resource-data-table")).toHaveCount(1);
+      await expect(page.locator(".domain-row-detail").first()).toBeVisible();
+      expect(
+        await page
+          .locator(".domain-resource-data-table")
+          .evaluate((node) => node.scrollWidth <= node.clientWidth),
+      ).toBe(true);
       expect(detailRequests).toEqual([]);
 
       await page.screenshot({
@@ -455,7 +450,7 @@ test.describe("progressive domain drilldown", () => {
       await expect(page).toHaveURL(areaHref ?? "");
 
       await expect(page.getByRole("table", { name: "Resource inventory" })).toBeVisible();
-      await expectInventoryRollups(page, overviewPage.domain, false);
+      await expectInventoryEvidence(page, overviewPage.domain, false);
     });
   }
 });

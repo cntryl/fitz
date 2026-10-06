@@ -90,6 +90,8 @@ vi.mock("@/features/queue/queue-actions", () => ({
 
 vi.mock("@/features/kv/kv-query", () => ({
   createKvOverviewQuery: () => mocks.queryStates.kv,
+  createKvResourceDetailQuery: () => mocks.queryStates.kvResourceDetail,
+  createKvTransactionsQuery: vi.fn(() => mocks.queryStates.kvTransactions),
 }));
 
 vi.mock("@/features/kv/kv-rows-query", () => ({
@@ -148,6 +150,7 @@ import {
   activeSessions,
   inventory,
   kvOverview,
+  kvResourceDetail,
   kvRows,
   leaseArea,
   leaseOverview,
@@ -241,6 +244,8 @@ export function resetQueries() {
   mocks.queryStates.queueInflight = queryState.fresh(queueResource.inflight, queryOptions());
   mocks.queryStates.queueTimeline = queryState.fresh(queueResource.timeline, queryOptions());
   mocks.queryStates.kv = queryState.fresh(kvOverview, queryOptions());
+  mocks.queryStates.kvResourceDetail = queryState.fresh(kvResourceDetail, queryOptions());
+  mocks.queryStates.kvTransactions = queryState.fresh([], queryOptions());
   mocks.queryStates.lease = queryState.fresh(leaseOverview, queryOptions());
   mocks.queryStates.leaseRealm = queryState.fresh(leaseRealm, queryOptions());
   mocks.queryStates.leaseArea = queryState.fresh(leaseArea, queryOptions());

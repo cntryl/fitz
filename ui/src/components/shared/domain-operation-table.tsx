@@ -17,7 +17,6 @@ export interface DomainOperationScope {
 }
 
 export interface DomainOperationTableProps<Row extends DomainOperationRow> {
-  description?: string;
   domain: DomainSegment;
   emptyDescription: string;
   metricColumns?: readonly DomainOperationMetricColumn<Row>[];
@@ -31,7 +30,6 @@ export interface DomainOperationTableProps<Row extends DomainOperationRow> {
  * realms, areas, and resources: full route, row click, search, sortable metrics.
  */
 export default function DomainOperationTable<Row extends DomainOperationRow>({
-  description,
   domain,
   emptyDescription,
   metricColumns = [],
@@ -50,7 +48,6 @@ export default function DomainOperationTable<Row extends DomainOperationRow>({
 
   return (
     <DomainDrilldownTable<Row>
-      description={description}
       emptyDescription={emptyDescription}
       id={`${domain}-operations`}
       metricColumns={metricColumns}

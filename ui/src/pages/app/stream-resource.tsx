@@ -8,13 +8,14 @@ import { hasRowsRequest } from "@/shared/navigation/rows-request";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
+import DomainFacts from "@/components/shared/domain-facts";
 import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import { createStreamResourceQuery } from "@/features/stream/stream-query";
 import StreamRecordsSection, {
   DEFAULT_RECORDS_LIMIT,
   recordsHref,
 } from "@/features/stream/stream-records-section";
+import { formatBytes, formatNumber } from "@/shared/format";
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -47,11 +48,7 @@ export default function StreamResourcePage() {
   const recordsRequested = hasRowsRequest(route.query, ["fromOffset", "discriminator"]);
   const detailQuery = createStreamResourceQuery(scope);
   const detail = detailQuery.data;
-  const headerStatus = queryHeaderStatus(detailQuery, {
-    loading: "Loading stream resource.",
-    ready: "Stream resource metadata is current.",
-    unavailable: "Stream resource metadata is unavailable.",
-  });
+  const headerStatus = queryHeaderStatus(detailQuery);
 
   function applyFilters(event: Event) {
     event.preventDefault();
@@ -68,6 +65,7 @@ export default function StreamResourcePage() {
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
+          compact={true}
           eyebrow="Stream resource"
           title={scope.resource}
           description={`${scope.realm} / ${scope.area}`}
@@ -80,36 +78,32 @@ export default function StreamResourcePage() {
           status={headerStatus}
         />
         {detail ? (
-          <DomainSummaryStrip
-            id="stream-committed-metadata"
-            class="domain-detail-summary"
-            title="Committed metadata"
-            description="Durable committed metadata. Append sessions are live and separate from replay history."
+          <DomainFacts
+            id="stream-current-state"
+            title="Stream state"
             items={[
               {
                 label: "Latest committed offset",
-                value: detail.offset,
-                caption: "Resource high-water metadata, not the read cursor",
+                value: formatNumber(detail.offset),
+                title:
+                  "Latest committed offset available for replay; this does not report a subscriber cursor.",
               },
               {
-                label: "Watermark",
-                value: detail.watermark,
-                caption: "Durable committed metadata",
+                label: "Committed watermark",
+                value: formatNumber(detail.watermark),
+                title: "Durable committed boundary; this does not report subscriber progress.",
               },
               {
-                label: "Size bytes",
-                value: detail.size_bytes,
-                caption: "Durable committed metadata",
+                label: "Storage",
+                value: formatBytes(detail.size_bytes),
               },
               {
-                label: "Append sessions",
-                value: detail.sessions_active,
-                caption: "Live append sessions",
+                label: "Live append sessions",
+                value: formatNumber(detail.sessions_active),
               },
               {
                 label: "Active subscriptions",
-                value: detail.subscriptions_active,
-                caption: "Live subscriptions; resets on disconnect cleanup or broker restart",
+                value: formatNumber(detail.subscriptions_active),
               },
             ]}
           />
