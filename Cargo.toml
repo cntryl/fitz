@@ -366,6 +366,12 @@ harness = false
 path = "benches/tier5_saturation.rs"
 required-features = ["benchkit", "stress-soak"]
 
+[[bench]]
+name = "queue_pressure"
+harness = false
+path = "benches/queue_pressure.rs"
+required-features = ["benchkit", "stress-soak"]
+
 # Tier 6: Full TCP endurance with bounded workload state.
 [[bench]]
 name = "tier6_endurance"
