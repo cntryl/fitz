@@ -16,7 +16,12 @@ pub struct QueueStore {
     engine: crate::storage::FitzStorageEngine,
 }
 
-pub(crate) struct QueueTransaction(cntryl_midge::Transaction);
+pub(crate) struct QueueTransaction {
+    inner: cntryl_midge::Transaction,
+    engine: crate::storage::FitzStorageEngine,
+    family: u32,
+    read_only: bool,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum QueueTransactionMode {
@@ -61,13 +66,19 @@ impl QueueStore {
         family: u32,
         mode: QueueTransactionMode,
     ) -> Result<QueueTransaction, QueueStoreError> {
+        let read_only = matches!(mode, QueueTransactionMode::ReadOnly);
         let mode = match mode {
             QueueTransactionMode::ReadOnly => cntryl_midge::TransactionMode::ReadOnly,
             QueueTransactionMode::ReadWrite => cntryl_midge::TransactionMode::ReadWrite,
         };
         self.engine
             .begin_tx(family, mode)
-            .map(QueueTransaction)
+            .map(|inner| QueueTransaction {
+                inner,
+                engine: self.engine.clone(),
+                family,
+                read_only,
+            })
             .map_err(QueueStoreError::from_midge)
     }
 
@@ -118,7 +129,7 @@ impl From<crate::storage::FitzStorageEngine> for QueueStore {
 
 impl QueueTransaction {
     pub(super) fn get(&self, key: &[u8]) -> Result<Option<Bytes>, QueueStoreError> {
-        self.0.get(key).map_err(QueueStoreError::from_midge)
+        self.inner.get(key).map_err(QueueStoreError::from_midge)
     }
 
     pub(super) fn put(
@@ -127,23 +138,42 @@ impl QueueTransaction {
         value: Vec<u8>,
         ttl: Option<u64>,
     ) -> Result<(), QueueStoreError> {
-        self.0
+        self.inner
             .put(key, value, ttl)
             .map_err(QueueStoreError::from_midge)
     }
 
     pub(super) fn delete(&mut self, key: Vec<u8>) -> Result<(), QueueStoreError> {
-        self.0.delete(key).map_err(QueueStoreError::from_midge)
+        self.inner.delete(key).map_err(QueueStoreError::from_midge)
     }
 
     pub(super) fn commit(self, policy: WritePolicy) -> Result<(), QueueStoreError> {
-        self.0
+        self.commit_with_pressure_wait(policy, std::time::Duration::from_secs(30))
+    }
+
+    pub(super) fn commit_with_pressure_wait(
+        self,
+        policy: WritePolicy,
+        timeout: std::time::Duration,
+    ) -> Result<(), QueueStoreError> {
+        // Wait before mutation submission; never retry an unknown commit outcome.
+        if !self.read_only
+            && !self
+                .engine
+                .wait_for_write_stall_clear(self.family, timeout)
+                .map_err(QueueStoreError::from_midge)?
+        {
+            return Err(QueueStoreError {
+                message: format!("Queue storage admission remained stalled for {timeout:?}"),
+            });
+        }
+        self.inner
             .commit(policy.into())
             .map_err(QueueStoreError::from_midge)
     }
 
     pub(crate) fn scan_all(&self) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {
-        self.0
+        self.inner
             .scan(&cntryl_midge::Query::new())
             .map_err(QueueStoreError::from_midge)?
             .collect::<Result<Vec<_>, _>>()
@@ -151,7 +181,7 @@ impl QueueTransaction {
     }
 
     fn scan_prefix(&self, prefix: Bytes) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {
-        self.0
+        self.inner
             .scan(&Query::new().prefix(prefix))
             .map_err(QueueStoreError::from_midge)?
             .collect::<Result<Vec<_>, _>>()
