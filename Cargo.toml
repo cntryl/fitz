@@ -378,3 +378,9 @@ name = "tier6_endurance"
 harness = false
 path = "benches/tier6_endurance.rs"
 required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "kv_pressure"
+path = "benches/kv_pressure.rs"
+harness = false
+required-features = ["benchkit", "stress-soak"]
