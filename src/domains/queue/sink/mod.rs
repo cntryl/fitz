@@ -3,6 +3,7 @@ mod actors;
 mod cleanup;
 mod delivery;
 mod facade;
+mod fast_flush;
 mod ingress;
 mod mailbox;
 mod maintenance_clock;

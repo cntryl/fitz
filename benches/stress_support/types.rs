@@ -28,15 +28,26 @@ impl Domain {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StepOutcome {
     Completed,
+    CompletedWithCapacityRejections { code: u32, count: u64 },
     CapacityRejected(u32),
     Contended,
     DeliveryWindowMiss,
+}
+
+impl StepOutcome {
+    pub(crate) const fn is_completed(&self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::CompletedWithCapacityRejections { .. }
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FailureKind {
     Timeout,
     InvalidResponse,
+    DomainError,
     Transport,
     Verification,
 }
@@ -48,6 +59,13 @@ pub(crate) struct BenchFailure {
 }
 
 impl BenchFailure {
+    pub(crate) fn domain_error(detail: impl Into<String>) -> Self {
+        Self {
+            kind: FailureKind::DomainError,
+            detail: detail.into(),
+        }
+    }
+
     pub(crate) fn validation(detail: impl Into<String>) -> Self {
         Self {
             kind: FailureKind::InvalidResponse,

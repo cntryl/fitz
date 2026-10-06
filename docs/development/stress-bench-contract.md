@@ -90,9 +90,15 @@ This document defines the contract for Tier 2 through Tier 6 benchmarks using th
 - Require useful progress and bounded per-client waits. Required-response
   timeouts, invalid responses, unexpected errors, and verification failures stop
   the workload and fail the run; expected saturation must not conceal a liveness
-  failure. Missing Notice baseline or recovery deliveries fail verification.
+  failure. Bound complete TCP requests to the default 60-second Midge runtime
+  response budget, alongside the independent per-lane progress watchdog. Missing
+  Notice baseline or recovery deliveries fail verification.
+- Queue RESERVE backpressure after an accepted ENQUEUE retries with exponential
+  backoff within that cycle's deadline. The stage records the retries and ends at
+  a capacity boundary only after every in-flight cycle completes; an exhausted
+  deadline remains a failure.
 - Follow the [domain scope and artifact contract](tier5-tier6-benchmarks.md),
-  including Queue running-process fast memory ACK scope, finite Stream history,
+  including the declared storage profile, Queue running-process fast ACK scope, finite Stream history,
   Schedule definition churn, legacy RPC terminal responses, received Notice
   deliveries, and process-local Lease tokens.
 

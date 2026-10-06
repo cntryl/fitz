@@ -2,7 +2,7 @@
 //! the thin runtime-to-core delegation used by both.
 
 use super::model::{QueueDomain, QueueDomainCommand, QueueFamilyRuntime};
-use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
+use crate::domains::queue::actor::{QUEUE_ACTOR_REPLY_TIMEOUT, QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT};
 #[cfg(test)]
 use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink};
@@ -118,8 +118,13 @@ impl QueueDomain {
             .try_enqueue(family, lane, command)
             .map_err(crate::runtime::family_actor_enqueue_error_to_delivery_error)?;
 
+        let reply_timeout = if is_control_plane {
+            QUEUE_ACTOR_REPLY_TIMEOUT
+        } else {
+            QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT
+        };
         reply_rx
-            .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
+            .recv_timeout(reply_timeout)
             .unwrap_or_else(|error| Err(crate::runtime::reply_wait::map_reply_wait_error(error)))
     }
 }

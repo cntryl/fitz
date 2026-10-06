@@ -25,7 +25,7 @@ impl KvDriver {
             lane,
             expected: std::array::from_fn(|_| None),
         };
-        if driver.step(0).await? != StepOutcome::Completed {
+        if !driver.step(0).await?.is_completed() {
             return Err(BenchFailure::verification(
                 "KV seed transaction was rejected",
             ));
@@ -38,7 +38,7 @@ impl KvDriver {
     }
 
     fn transaction(body: &[u8]) -> Result<u64, BenchFailure> {
-        require_ok(body)?;
+        require_ok(body, "KV BEGIN")?;
         let mut decoder = PayloadDecoder::new(body);
         decoder.get_u8().map_err(BenchFailure::validation)?;
         let id = decoder.get_u64().map_err(BenchFailure::validation)?;
@@ -48,7 +48,9 @@ impl KvDriver {
 
     pub(super) async fn step(&mut self, sequence: u64) -> Result<StepOutcome, BenchFailure> {
         let begin = self.begin(1).await?;
-        if begin.first().copied() != Some(0) && error_code(&begin)? == u32::from(ERR_BUSY) {
+        if begin.first().copied() != Some(0)
+            && error_code(&begin, "KV BEGIN")? == u32::from(ERR_BUSY)
+        {
             return Ok(StepOutcome::CapacityRejected(u32::from(ERR_BUSY)));
         }
         let tx_id = Self::transaction(&begin)?;
@@ -62,10 +64,10 @@ impl KvDriver {
             104,
         )
         .await?;
-        empty_success(&put)?;
+        empty_success(&put, "KV PUT")?;
         let committed =
             request(&mut self.client, &build_kv_commit(tx_id, &self.route), 101).await?;
-        empty_success(&committed)?;
+        empty_success(&committed, "KV COMMIT")?;
         self.expected[slot] = Some(expected);
         self.verify_slot(slot).await?;
         Ok(StepOutcome::Completed)
@@ -81,7 +83,7 @@ impl KvDriver {
         let mut frame = TlvFrameBuilder::new();
         frame.encode_field(103, &encoder.finish());
         let body = request(&mut self.client, &frame.build(), 103).await?;
-        require_ok(&body)?;
+        require_ok(&body, "KV GET")?;
         let mut decoder = PayloadDecoder::new(&body);
         decoder.get_u8().map_err(BenchFailure::validation)?;
         let found = decoder.get_u8().map_err(BenchFailure::validation)?;
@@ -97,7 +99,7 @@ impl KvDriver {
             102,
         )
         .await?;
-        empty_success(&rolled_back)?;
+        empty_success(&rolled_back, "KV ROLLBACK")?;
         if !matches {
             return Err(BenchFailure::verification(format!(
                 "KV committed readback changed slot {slot}"

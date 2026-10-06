@@ -59,7 +59,6 @@ pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_mins(5);
 pub(super) const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const QUEUE_IDLE_SWEEP_BATCH_SIZE: usize = 64;
 pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
-use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
 
 /// Queue domain runtime core with per-queue `QueueActor` instances.
 ///
@@ -101,6 +100,9 @@ pub(super) struct QueueFamilyState {
     pub(super) panic_next_runtime_sweep: AtomicBool,
     pub(super) maintenance_clock: QueueMaintenanceClock,
     pub(super) dirty_fast_flush_families: HashSet<u32>,
+    pub(super) fast_flush_client: Option<super::fast_flush::FastFlushClient>,
+    pub(super) in_flight_fast_flushes:
+        HashMap<u32, crossbeam_channel::Receiver<super::fast_flush::FlushResult>>,
 }
 
 pub(super) enum QueueDomainCommand {
@@ -166,6 +168,8 @@ pub(crate) struct QueueDomain {
     pub(super) route_families: Vec<crate::runtime::routing::RouteFamily>,
     /// Client requests currently blocked on the actor's reply.
     pub(super) inflight_client_deliveries: Arc<std::sync::atomic::AtomicUsize>,
+    /// Joins after the family runtime drops its flush worker senders.
+    pub(super) fast_flush_worker: Option<super::fast_flush::FastFlushWorker>,
 }
 
 #[derive(Clone)]
@@ -178,6 +182,7 @@ pub(super) struct QueueDomainConfig {
     pub(super) metrics: Option<QueueMetrics>,
     pub(super) active: Arc<AtomicBool>,
     pub(super) fast_flush_interval: Option<Duration>,
+    pub(super) fast_flush_client: Option<super::fast_flush::FastFlushClient>,
     pub(super) known_queue_keys: Arc<HashSet<QueueKey>>,
     pub(super) inventory_error: Option<String>,
     pub(super) delivery_service_us: Arc<std::collections::BTreeMap<u32, ServiceEstimateUs>>,
@@ -187,8 +192,9 @@ pub(super) struct QueueDomainConfig {
 /// Hard ceiling on concurrent client requests, whatever the measured service
 /// time suggests.
 pub(super) const QUEUE_ADMISSION_MAX_WINDOW: usize = 64;
+pub(super) const QUEUE_ADMISSION_LATENCY_TARGET: Duration = Duration::from_secs(1);
 
-/// Fraction of the reply deadline the admitted backlog may consume, leaving
+/// Fraction of the latency target the admitted backlog may consume, leaving
 /// headroom for enqueue, scheduling, and a slower-than-average commit.
 const QUEUE_ADMISSION_BUDGET_NUMERATOR: u32 = 4;
 const QUEUE_ADMISSION_BUDGET_DENOMINATOR: u32 = 5;
@@ -200,17 +206,15 @@ const QUEUE_ADMISSION_ASSUMED_SERVICE_US: u64 = 5_000;
 ///
 /// Queued concurrency adds no throughput: the actor serves deliveries one at a
 /// time, so admitting `n` requests commits the tail caller to `n x
-/// service_time`. A fixed window therefore cannot bound the deadline - at 20ms
-/// per synchronous commit, a 64-deep window needs 1.28s and the tail caller
-/// times out with an indeterminate outcome while its command still executes,
-/// which is precisely what admission exists to prevent.
+/// service_time`. At 20ms per synchronous commit, a fixed 64-deep window needs
+/// 1.28s and exceeds the one-second admission latency target.
 ///
 /// The window is derived from observed service time instead, so the admitted
-/// backlog stays inside the reply deadline as the backend gets slower. It never
+/// backlog targets short latency independently of the client reply budget. It never
 /// drops below 1: the active operation is always admitted, or nothing would
 /// ever run to produce a new measurement.
 pub(super) fn queue_admission_window(service_us: u64) -> usize {
-    let deadline_us = u64::try_from(QUEUE_ACTOR_REPLY_TIMEOUT.as_micros()).unwrap_or(u64::MAX);
+    let deadline_us = u64::try_from(QUEUE_ADMISSION_LATENCY_TARGET.as_micros()).unwrap_or(u64::MAX);
     let budget_us = deadline_us.saturating_mul(u64::from(QUEUE_ADMISSION_BUDGET_NUMERATOR))
         / u64::from(QUEUE_ADMISSION_BUDGET_DENOMINATOR);
     let service_us = service_us.max(1);
