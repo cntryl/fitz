@@ -668,16 +668,13 @@ fn should_hold_queue_admission_while_a_timed_out_command_is_still_pending() {
 }
 
 #[test]
-fn should_size_queue_admission_to_the_reply_deadline() {
+fn should_size_queue_admission_to_the_latency_target() {
     // Arrange
-    // A fixed window cannot bound the deadline. Queued concurrency adds no
-    // throughput - the actor serves commands one at a time - so admitting N
-    // requests commits the tail caller to N x service_time. At 20ms per
-    // synchronous commit a 64-deep window needs 1.28s, past
-    // QUEUE_ACTOR_REPLY_TIMEOUT, so the tail times out with an indeterminate
-    // outcome and its command still executes: exactly what the gate exists to
-    // prevent. The window must therefore follow observed service time.
-    use crate::domains::queue::sink::model::{queue_admission_window, QUEUE_ADMISSION_MAX_WINDOW};
+    // At 20ms per synchronous commit, a fixed 64-deep window exceeds the
+    // one-second latency target. Admission must follow observed service time.
+    use crate::domains::queue::sink::model::{
+        queue_admission_window, QUEUE_ADMISSION_LATENCY_TARGET, QUEUE_ADMISSION_MAX_WINDOW,
+    };
 
     // Act
     let slow = queue_admission_window(20_000);
@@ -686,7 +683,7 @@ fn should_size_queue_admission_to_the_reply_deadline() {
 
     // Assert
     let deadline_us =
-        u64::try_from(QUEUE_ACTOR_REPLY_TIMEOUT.as_micros())
+        u64::try_from(QUEUE_ADMISSION_LATENCY_TARGET.as_micros())
             .expect("deadline fits u64");
     assert!(
         u64::try_from(slow).unwrap() * 20_000 <= deadline_us,

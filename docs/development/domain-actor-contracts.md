@@ -10,6 +10,7 @@
 
 ## Queue
 - Actor owner: `QueueDomain` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each family worker directly owns one `QueueFamilyState`, serializing delivery, cleanup, sweeps, admin mutations, watch state, projections, reservation state, retry bookkeeping, and durable dead-letter transitions. The family state groups warm actors and idle rotation in `QueueActorRegistry`, wildcard inventory and waiting reservations in `ReservationBook`, and maintenance deadlines in `QueueMaintenanceClock`; all three remain on the same synchronous worker.
+- Reply deadline: normal client commands wait up to 60 seconds, matching the default Midge runtime response budget so an admitted storage operation is not abandoned after one second. Admission still sizes its bounded window against a one-second latency target; control and admin commands retain a one-second wait. A reply deadline after admission reports an indeterminate outcome and does not authorize an automatic retry.
 - Persistence: durable backlog and dead-letter records live in storage; inflight reservations, watch subscriptions, and fast-flush state are ephemeral.
 - Cleanup: disconnect cleanup is enqueued on the Queue family control lane, which clears worker reservations and watch state without implying durable ownership continuity or hidden worker recovery.
 - `RouteFamily`/`realm`: queue data is isolated by exact `RouteFamily`, while `realm` remains an application-defined namespace inside the queue route.
