@@ -264,3 +264,8 @@ Names include the tier, workload, commit SHA, run ID, and attempt. The benchmark
 command's exit status is preserved when its output is copied to a log. Interpret
 partial evidence alongside the failure and elapsed window; uploading artifacts
 does not turn an interrupted run into a pass.
+
+The opt-in [Queue offered-rate pressure campaign](queue-pressure-campaign.md)
+adds an independently scheduled producer workload with a fixed consumer,
+backlog accounting, explicit harness limits, and drain/recovery verification.
+It is separate from the seven-domain closed-loop workflow matrix.

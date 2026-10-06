@@ -4,9 +4,14 @@ mod durable;
 mod ephemeral;
 mod fixture;
 mod histogram;
+// Shared helpers; only the queue_pressure target registers the offered-rate row.
+#[allow(dead_code)]
+mod queue_pressure;
 mod runner;
 mod types;
 
+#[allow(unused_imports)]
+pub(crate) use queue_pressure::run as run_queue_pressure;
 pub(crate) use runner::run;
 pub(crate) use types::Domain;
 
