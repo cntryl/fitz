@@ -54,6 +54,8 @@ async fn execute(
     for index in 0..count {
         let request_started = Instant::now();
         io::create(&mut writer, index, generation, mode).await?;
+        // Validated setup work advances liveness, never measured receipt counts.
+        ctx.progress_handle().advance();
         let stage = report.stages.last_mut().expect("stage exists");
         stage.accepted_definitions += 1;
         stage.create_latencies.record(request_started.elapsed());
@@ -83,6 +85,7 @@ async fn execute(
     let active = server.as_ref().expect("restarted server");
     let mut writer = connect(active).await?;
     io::verify_definitions(&mut writer, count, generation, mode).await?;
+    ctx.progress_handle().advance();
     report
         .stages
         .last_mut()
@@ -97,6 +100,7 @@ async fn execute(
     fire(ctx, active, report, count, mode, generation).await?;
     for index in 0..count {
         io::cancel(&mut writer, index).await?;
+        ctx.progress_handle().advance();
     }
     io::verify_definitions(&mut writer, 0, generation, mode).await?;
     report

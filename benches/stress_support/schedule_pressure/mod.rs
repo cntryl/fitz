@@ -35,6 +35,10 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
         "one_test_hook_due_reset_then_normal_scans_not_natural_due_latency",
     );
     ctx.metadata(
+        "watchdog_progress_scope",
+        "validated_setup_create_cancel_restart_readback_and_occurrence_receipts",
+    );
+    ctx.metadata(
         "durability_scope",
         "local_sync_intent_clean_restart_no_crash_or_downstream_ack_proof",
     );

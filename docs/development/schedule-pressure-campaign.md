@@ -37,6 +37,9 @@ at most ten increasing values from 1 through 4096;
 accounting is bounded by cardinality, the receive channel by 128 frames, and
 each list page by 16 entries. Creation and clean restart time are reported
 separately from firing time; completed counts come from receipts, never creates.
+The liveness watchdog also advances on validated setup CREATE, CANCEL and
+post-restart definition readback, so productive preparation cannot appear stuck.
+Those setup checks never enter measured occurrence completions.
 
 Atomic JSON under `target/fitz-stress/schedule-pressure/` records the source SHA,
 dirty state, accepted definitions, completed occurrences, per-receiver counts,
