@@ -46,18 +46,12 @@ fn cloud_domain_setup_options(
 
 fn assert_cloud_domain_bootstrap(prefix: &str, durable_write_policy: crate::domains::WritePolicy) {
     let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
-    let store = Arc::new(
-        cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::cloud_simulated(
-                tempdir.path(),
-                "fitz-domain-bootstrap",
-                prefix,
-            )
+    let options =
+        cntryl_midge::OpenOptions::cloud_simulated(tempdir.path(), "fitz-domain-bootstrap", prefix)
             .build()
-            .expect("build cloud-simulated options"),
-        )
-        .expect("open cloud-simulated engine"),
-    );
+            .expect("build cloud-simulated options");
+    let shutdown_budget = options.runtime_response_timeout();
+    let store = Arc::new(cntryl_midge::Engine::open(options).expect("open cloud-simulated engine"));
     crate::api::storage_runtime::ensure_route_family(&store, RouteFamily::new(1))
         .expect("provision route family");
     let router = Arc::new(Router::new());
@@ -75,7 +69,7 @@ fn assert_cloud_domain_bootstrap(prefix: &str, durable_write_policy: crate::doma
     router.clear();
     drop(domains);
     drop(router);
-    crate::testkit::midge::shutdown_test_engine(store);
+    crate::testkit::midge::shutdown_test_engine_with_timeout(store, shutdown_budget);
 }
 
 fn encode_kv_begin(route: &str) -> Bytes {

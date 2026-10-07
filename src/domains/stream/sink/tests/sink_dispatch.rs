@@ -621,18 +621,15 @@ fn should_create_stream_sink_given_promotion_frontier_layout() {
 fn should_create_stream_sink_with_background_cloud_policy_through_public_api() {
     // Arrange
     let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
-    let store = Arc::new(
-        cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::cloud_simulated(
-                tempdir.path(),
-                "fitz-stream-sink",
-                "background",
-            )
-            .build()
-            .expect("build cloud-simulated options"),
-        )
-        .expect("open cloud-simulated engine"),
-    );
+    let options = cntryl_midge::OpenOptions::cloud_simulated(
+        tempdir.path(),
+        "fitz-stream-sink",
+        "background",
+    )
+    .build()
+    .expect("build cloud-simulated options");
+    let shutdown_budget = options.runtime_response_timeout();
+    let store = Arc::new(cntryl_midge::Engine::open(options).expect("open cloud-simulated engine"));
     store
         .create_column_family("tenant_default")
         .expect("create route-family column family");
@@ -652,25 +649,19 @@ fn should_create_stream_sink_with_background_cloud_policy_through_public_api() {
         panic!("cloud Stream sink creation failed: {error}");
     }
     drop(result);
-    crate::testkit::midge::shutdown_test_engine(store);
+    crate::testkit::midge::shutdown_test_engine_with_timeout(store, shutdown_budget);
 }
 
 #[test]
 fn should_configure_strict_cloud_writes_before_stream_initialization() {
     // Arrange
     let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
-    let store = Arc::new(
-        cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::cloud_simulated(
-                tempdir.path(),
-                "fitz-stream-sink",
-                "strict",
-            )
+    let options =
+        cntryl_midge::OpenOptions::cloud_simulated(tempdir.path(), "fitz-stream-sink", "strict")
             .build()
-            .expect("build cloud-simulated options"),
-        )
-        .expect("open cloud-simulated engine"),
-    );
+            .expect("build cloud-simulated options");
+    let shutdown_budget = options.runtime_response_timeout();
+    let store = Arc::new(cntryl_midge::Engine::open(options).expect("open cloud-simulated engine"));
     store
         .create_column_family("tenant_default")
         .expect("create route-family column family");
@@ -687,7 +678,7 @@ fn should_configure_strict_cloud_writes_before_stream_initialization() {
     // Assert
     assert!(result.is_ok());
     drop(result);
-    crate::testkit::midge::shutdown_test_engine(store);
+    crate::testkit::midge::shutdown_test_engine_with_timeout(store, shutdown_budget);
 }
 
 #[test]
