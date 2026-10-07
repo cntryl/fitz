@@ -23,7 +23,7 @@ jobs:
         run: rustup update stable
 
       - name: Install cntryl-tools
-        run: cargo install --locked --git https://github.com/cntryl/tools --rev 0cb0d0c8be5951753580a6f8a527f3e47d293466 cntryl-tools
+        run: cargo install --locked --git https://github.com/cntryl/tools --rev d31924bfdbb75e7e417bcf498c7e7b15a4cb9273 cntryl-tools
 
       - name: Validate benchmark contract
         run: cntryl-tools validate-benchmarks

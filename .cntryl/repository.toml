@@ -17,7 +17,14 @@ documentation = [
   "docs/operations/performance-tuning.md",
 ]
 workflow = ".github/workflows/bench.yml"
+additional_workflows = [".github/workflows/bench-tier5.yml", ".github/workflows/bench-tier6.yml"]
 not_pr_gate_phrase = "not a pull-request performance gate"
+
+[benchmarks.manual_targets]
+queue_pressure = "Bounded Queue diagnostic requires an explicit resource envelope"
+schedule_pressure = "Forced-clock Schedule diagnostic requires an explicit resource envelope"
+kv_pressure = "Bounded KV cardinality diagnostic requires an explicit resource envelope"
+lease_pressure = "Bounded Lease contender diagnostic requires an explicit resource envelope"
 
 [module_sizes]
 warn_lines = 1200
