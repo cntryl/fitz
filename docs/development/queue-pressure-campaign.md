@@ -170,3 +170,20 @@ performance, strict durability, or a full-duration endurance pass. Initial
 shorter diagnostics also exercised a producer-limited stage and an intentionally
 insufficient drain deadline; the latter failed with nine of eleven accepted
 messages still outstanding and retained the failed fixture's store.
+
+## Local Fast persistence
+
+Local-disk Fast Queue writes append an unsynced WAL record before responding.
+The existing `FITZ_QUEUE_LOSS_WINDOW_MS` background worker synchronizes that WAL
+without forcing an SST publication. Write admission protection, retry limits,
+unknown-outcome handling and the timer cadence remain unchanged. Failed background
+syncs retain dirty families and increment the existing fast-flush failure metric.
+An acknowledged mutation can still be lost before a successful background barrier;
+ACK is not a per-response durability confirmation. Cloud-backed and memory fixtures
+retain SST flushing, and the configured storage mode selects this path explicitly.
+
+The focused process-exit regression reopens WAL-only state after a child exits
+without storage shutdown: it requires remaining backlog to survive and an ACKed
+message to stay absent. This verifies that tested process-exit path, not power-loss,
+cloud recovery, or continuation of live reservations. The pressure campaign still
+uses Fast policy, the original 100ms timer, 5ms consumer pause and 600-second drain.
