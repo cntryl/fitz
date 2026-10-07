@@ -172,7 +172,7 @@ jobs:
             --publish 127.0.0.1::4090 --publish 127.0.0.1::4091 \
             --env FITZ_AUTH_REQUIRED=false --env FITZ_ADMIN_AUTH_MODE=open \
             --env FITZ_STORAGE_MODE=local --env FITZ_STORAGE_PATH=/data \
-            --env FITZ_LOG_LEVEL=warn --env FITZ_OTEL_ENABLED=false \
+            --env FITZ_LOG_LEVEL=warn --env OTEL_ENABLED=false \
             "${FITZ_TEST_IMAGE}"
           export FITZ_EXTERNAL_HTTP_ENDPOINT="http://$(docker port fitz-resource-ci 4090/tcp)"
           export FITZ_EXTERNAL_TCP_ADDRESS="$(docker port fitz-resource-ci 4091/tcp)"

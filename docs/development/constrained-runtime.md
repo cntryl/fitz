@@ -29,7 +29,7 @@ docker run --detach --name fitz-resource-local \
   --publish 127.0.0.1::4090 --publish 127.0.0.1::4091 \
   --env FITZ_AUTH_REQUIRED=false --env FITZ_ADMIN_AUTH_MODE=open \
   --env FITZ_STORAGE_MODE=local --env FITZ_STORAGE_PATH=/data \
-  --env FITZ_LOG_LEVEL=warn --env FITZ_OTEL_ENABLED=false fitz-resource-local
+  --env FITZ_LOG_LEVEL=warn --env OTEL_ENABLED=false fitz-resource-local
 export FITZ_EXTERNAL_CONTAINER=fitz-resource-local
 export FITZ_EXTERNAL_HTTP_ENDPOINT="http://$(docker port fitz-resource-local 4090/tcp)"
 export FITZ_EXTERNAL_TCP_ADDRESS="$(docker port fitz-resource-local 4091/tcp)"
