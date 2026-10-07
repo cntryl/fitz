@@ -160,6 +160,7 @@ jobs:
           shared-key: "ci"
 
       - name: Qualify quarter-core and 512MiB survival
+        shell: bash
         timeout-minutes: 25
         env:
           FITZ_EXTERNAL_CONTAINER: fitz-resource-ci
