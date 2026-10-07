@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-pub(super) const QUERY_BUDGET: Duration = Duration::from_millis(100);
+const QUERY_BUDGET: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Serialize)]
 pub(super) struct Phase {
@@ -20,7 +20,11 @@ pub(super) struct Snapshot {
 }
 
 impl Snapshot {
-    pub async fn capture(metrics: cntryl_midge::EngineMetrics, budget: Duration) -> Self {
+    pub async fn capture(metrics: cntryl_midge::EngineMetrics) -> Self {
+        Self::capture_with_budget(metrics, QUERY_BUDGET).await
+    }
+
+    async fn capture_with_budget(metrics: cntryl_midge::EngineMetrics, budget: Duration) -> Self {
         let ack_phases = phase_snapshot();
         let started = Instant::now();
         let result = if budget.is_zero() {
@@ -79,13 +83,12 @@ fn phase_snapshot() -> BTreeMap<&'static str, Phase> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::stress_support::fixture::{BrokerFixture, StorageDirectory, StorageProfile};
-    use fitz::testkit::TestClient;
-    use std::time::Duration;
-
     #[tokio::test]
     async fn should_capture_storage_progress_and_ack_phases_after_a_verified_pair() {
+        use super::Snapshot;
+        use crate::stress_support::fixture::{BrokerFixture, StorageDirectory, StorageProfile};
+        use fitz::testkit::TestClient;
+        use std::time::Duration;
         // Arrange
         let directory = StorageDirectory::new(StorageProfile::LocalDisk).unwrap();
         let fixture = BrokerFixture::start(StorageProfile::LocalDisk, directory)
@@ -97,10 +100,10 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let before = Snapshot::capture(metrics.clone(), Duration::from_secs(1)).await;
+        let before = Snapshot::capture_with_budget(metrics.clone(), Duration::from_secs(1)).await;
         // Act
         let delivery = super::super::io::consume(&mut client).await.unwrap();
-        let after = Snapshot::capture(metrics, Duration::from_secs(1)).await;
+        let after = Snapshot::capture_with_budget(metrics, Duration::from_secs(1)).await;
         // Assert
         assert!(
             matches!(delivery, super::super::io::Delivery::Acknowledged { id: actual, .. } if actual == id)
@@ -123,10 +126,13 @@ mod tests {
 
     #[tokio::test]
     async fn should_report_unavailable_pressure_when_the_snapshot_deadline_is_zero() {
+        use super::Snapshot;
+        use std::time::Duration;
         // Arrange
         let server = fitz::testkit::TestServer::start().await.unwrap();
         // Act
-        let snapshot = Snapshot::capture(server.storage_metrics(), Duration::ZERO).await;
+        let snapshot =
+            Snapshot::capture_with_budget(server.storage_metrics(), Duration::ZERO).await;
         let json = serde_json::to_value(&snapshot).unwrap();
         // Assert
         assert!(json["runtime"].is_null());
@@ -139,13 +145,18 @@ mod tests {
 
     #[tokio::test]
     async fn should_exclude_enqueue_work_from_ack_phase_observations() {
+        use super::Snapshot;
+        use fitz::testkit::TestClient;
+        use std::time::Duration;
         // Arrange
         let server = fitz::testkit::TestServer::start().await.unwrap();
         let mut client = TestClient::new(server.tcp_addr).await.unwrap();
-        let before = Snapshot::capture(server.storage_metrics(), Duration::from_secs(1)).await;
+        let before =
+            Snapshot::capture_with_budget(server.storage_metrics(), Duration::from_secs(1)).await;
         // Act
         let id = super::super::io::enqueue(&mut client, 0).await.unwrap();
-        let after = Snapshot::capture(server.storage_metrics(), Duration::from_secs(1)).await;
+        let after =
+            Snapshot::capture_with_budget(server.storage_metrics(), Duration::from_secs(1)).await;
         // Assert
         assert!(id.is_some());
         for phase in ["admission", "commit"] {

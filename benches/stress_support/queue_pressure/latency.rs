@@ -61,10 +61,7 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
     ));
     report.workload_elapsed_ns = started.elapsed().as_nanos();
     report.storage_after = Some(shared_bench_runtime().block_on(
-        super::attribution::Snapshot::capture(
-            fixture.storage_metrics(),
-            super::attribution::QUERY_BUDGET,
-        ),
+        super::attribution::Snapshot::capture(fixture.storage_metrics()),
     ));
     (report.process_rss_bytes, report.process_peak_rss_bytes) =
         crate::stress_support::artifacts::memory_sample();
@@ -134,13 +131,8 @@ async fn measure(
     seed(ctx, report, &mut client, &mut ledger, pairs).await?;
     report.setup_elapsed_ns = started.elapsed().as_nanos();
     report.capture_metrics_before();
-    report.storage_before = Some(
-        super::attribution::Snapshot::capture(
-            fixture.storage_metrics(),
-            super::attribution::QUERY_BUDGET,
-        )
-        .await,
-    );
+    report.storage_before =
+        Some(super::attribution::Snapshot::capture(fixture.storage_metrics()).await);
     drain(ctx, report, &mut client, &mut ledger, pairs).await
 }
 

@@ -263,9 +263,7 @@ async fn drain(
     metrics: cntryl_midge::EngineMetrics,
 ) -> Result<(), BenchFailure> {
     let begin = Instant::now();
-    stage.storage_drain_start = Some(
-        super::attribution::Snapshot::capture(metrics, super::attribution::QUERY_BUDGET).await,
-    );
+    stage.storage_drain_start = Some(super::attribution::Snapshot::capture(metrics).await);
     let mut saved = Instant::now();
     loop {
         let (drained, last_ack) = {
@@ -319,13 +317,8 @@ pub(super) async fn run_stage(
         clients.push(connect(address).await?);
     }
     let consumer_client = connect(address).await?;
-    stage.storage_before = Some(
-        super::attribution::Snapshot::capture(
-            fixture.storage_metrics(),
-            super::attribution::QUERY_BUDGET,
-        )
-        .await,
-    );
+    stage.storage_before =
+        Some(super::attribution::Snapshot::capture(fixture.storage_metrics()).await);
     let consumer = tokio::spawn(consumer(
         consumer_client,
         Arc::clone(&shared),
@@ -382,13 +375,8 @@ pub(super) async fn run_stage(
             append_failure(&mut result, error, "consumer");
         }
     }
-    stage.storage_after = Some(
-        super::attribution::Snapshot::capture(
-            fixture.storage_metrics(),
-            super::attribution::QUERY_BUDGET,
-        )
-        .await,
-    );
+    stage.storage_after =
+        Some(super::attribution::Snapshot::capture(fixture.storage_metrics()).await);
     snapshot(&mut stage, &shared)?;
     if result.is_err() {
         stage.termination = "failed".into();
