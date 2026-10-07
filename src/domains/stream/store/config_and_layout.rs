@@ -19,6 +19,7 @@ impl StreamStore {
         self.delay_next_promotion_frontier_commit_ms
             .store(5_000, std::sync::atomic::Ordering::Release);
     }
+
     pub(crate) fn column_family_ids(&self) -> Result<Vec<u64>, String> {
         self.db
             .list_column_families()

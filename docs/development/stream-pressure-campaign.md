@@ -55,7 +55,8 @@ Other backend failures, deadlines, changed or missing events fail the run.
 An unknown commit outcome remains unknown and is never retried automatically.
 
 Normal Stream client commands use a bounded 60-second actor reply wait, aligned
-with the configured synchronous storage runtime response budget. Admin/control
+with the explicit synchronous storage runtime response setting. Midge may raise
+its effective budget to the provider I/O timeout plus 30 seconds. Admin/control
 requests retain their one-second wait. Mailbox queueing consumes the client
 budget too, so this does not guarantee that every accepted commit finishes
 before expiry. A true post-dispatch timeout still reports an unknown outcome;
@@ -109,6 +110,16 @@ transaction completed successfully in 5.3537 seconds; total actor delivery took
 maintenance, reservation, or watermark operation exceeded 250 ms in that run.
 This evidence motivates matching the client wait to storage's existing budget;
 it does not diagnose an engine defect or establish a storage throughput limit.
+
+At clean fix source `6632a5a1`, the unchanged 10,000/100,000/500,000 targets,
+256-event batches, 1 KiB payloads, and 300-second stage guard passed in
+425.13 seconds. All 1,955 growth COMMIT requests were acknowledged, every
+checkpoint replayed exactly, and no batch remained pending. The final growth
+stage took 254.47 seconds and its full replay took 33.14 seconds. The same-resource
+post-load probe passed; orderly restart then verified 500,001 events and the
+fresh-session recovery probe committed/replayed the final event (500,002 total).
+Cleanup completed and removed the fresh store. This is one qualified local-disk
+envelope with unchanged external guards, not a crash-recovery or throughput claim.
 
 Twelve focused oracle regressions and full workspace/all-target/all-feature
 strict Clippy passed. These diagnostic timings do not qualify throughput.
