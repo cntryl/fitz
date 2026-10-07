@@ -905,6 +905,10 @@ impl StreamStore {
         let _ = family;
         #[cfg(test)]
         {
+            let delay_ms = self
+                .delay_next_promotion_frontier_commit_ms
+                .swap(0, Ordering::AcqRel);
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             let should_fail = self
                 .fail_next_promotion_frontier_commit
                 .swap(false, Ordering::AcqRel);

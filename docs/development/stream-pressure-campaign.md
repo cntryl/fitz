@@ -54,6 +54,13 @@ previous history, and still requires clean restart and low-load recovery.
 Other backend failures, deadlines, changed or missing events fail the run.
 An unknown commit outcome remains unknown and is never retried automatically.
 
+Normal Stream client commands use a bounded 60-second actor reply wait, aligned
+with the configured synchronous storage runtime response budget. Admin/control
+requests retain their one-second wait. Mailbox queueing consumes the client
+budget too, so this does not guarantee that every accepted commit finishes
+before expiry. A true post-dispatch timeout still reports an unknown outcome;
+the 60-second external diagnostic request guard is unchanged.
+
 JSON artifacts live under `target/fitz-stress/stream-pressure/` and identify
 source SHA/dirtiness, configuration, storage path, per-stage actual elapsed
 work, accepted and committed counts, complete readback, restart verification,
@@ -91,6 +98,17 @@ checkpoint passed, shutdown completed, and the store remained retained.
 These failures are tracked in [#399](https://github.com/cntryl/fitz/issues/399).
 They establish a repeated liveness/indeterminate-outcome observation, not a
 universal event-count boundary, data loss, or a crash-recovery result.
+
+The #399 investigation later reopened copies of both retained stores without
+retrying either commit. Exact full-history and final-empty-page readback passed
+at 159,136 and 106,656 events: each uncertain 256-event batch had committed.
+The original stores were preserved. A fresh unchanged 500,000-target diagnostic
+with temporary phase timings failed at 160,672 acknowledgements. Its main Sync
+transaction completed successfully in 5.3537 seconds; total actor delivery took
+5.4179 seconds, exceeding the old four-second client reply wait. No measured
+maintenance, reservation, or watermark operation exceeded 250 ms in that run.
+This evidence motivates matching the client wait to storage's existing budget;
+it does not diagnose an engine defect or establish a storage throughput limit.
 
 Twelve focused oracle regressions and full workspace/all-target/all-feature
 strict Clippy passed. These diagnostic timings do not qualify throughput.

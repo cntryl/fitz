@@ -489,5 +489,8 @@ pub(super) struct StreamDomainConfig {
 /// Control and admin callers retain a short family-actor reply deadline.
 pub(super) const STREAM_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Normal client commands may wait behind durable synchronous Stream commits.
-pub(super) const STREAM_CLIENT_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(4);
+/// Normal client commands may wait for a synchronous storage commit. Match the
+/// configured storage runtime response budget instead of timing out a healthy
+/// commit at four seconds. Queueing still consumes this bounded wait; expiry
+/// after dispatch remains an unknown outcome and is never safe to blindly retry.
+pub(super) const STREAM_CLIENT_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
