@@ -3,6 +3,9 @@ use crate::stress_support::types::BenchFailure;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static REPORT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize)]
 pub(super) struct PairTiming {
@@ -41,6 +44,8 @@ pub(super) struct Report {
     metric_bucket_upper_ms: [Option<u64>; 9],
     metrics_before: BTreeMap<String, [u64; 9]>,
     metrics_after: BTreeMap<String, [u64; 9]>,
+    pub storage_before: Option<super::super::attribution::Snapshot>,
+    pub storage_after: Option<super::super::attribution::Snapshot>,
     pub status: &'static str,
     pub phase: &'static str,
     pub failure: Option<String>,
@@ -100,6 +105,8 @@ impl Report {
             metric_bucket_upper_ms: [Some(1), Some(5), Some(10), Some(50), Some(100), Some(500), Some(1000), Some(5000), None],
             metrics_before: BTreeMap::new(),
             metrics_after: BTreeMap::new(),
+            storage_before: None,
+            storage_after: None,
             status: "running",
             phase: "startup",
             failure: None,
@@ -116,7 +123,7 @@ impl Report {
             samples: Vec::with_capacity(pairs),
             accepted_messages: Vec::with_capacity(pairs),
             current_reserved: None,
-            path: directory.join(format!("{stamp}.json")),
+            path: directory.join(format!("{stamp}-{}-{}.json", std::process::id(), REPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed))),
         })
     }
 

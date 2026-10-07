@@ -175,25 +175,39 @@ impl QueueTransaction {
         policy: WritePolicy,
         timeout: std::time::Duration,
     ) -> Result<(), QueueStoreError> {
+        self.commit_with_pressure_wait_timed(policy, timeout, false)
+    }
+
+    pub(super) fn commit_with_pressure_wait_timed(
+        self,
+        policy: WritePolicy,
+        timeout: std::time::Duration,
+        ack: bool,
+    ) -> Result<(), QueueStoreError> {
         // Wait before mutation submission; never retry an unknown commit outcome.
-        if !self.read_only
-            && !self
-                .engine
-                .wait_for_write_stall_clear(self.family, timeout)
-                .map_err(QueueStoreError::from_midge)?
-        {
-            return Err(QueueStoreError {
-                message: format!("Queue storage admission remained stalled for {timeout:?}"),
-                midge_error: None,
-            });
+        if !self.read_only {
+            let allowed =
+                super::ack_timing::measure(ack, super::ack_timing::Phase::Admission, || {
+                    self.engine
+                        .wait_for_write_stall_clear(self.family, timeout)
+                        .map_err(QueueStoreError::from_midge)
+                });
+            if !allowed? {
+                return Err(QueueStoreError {
+                    message: format!("Queue storage admission remained stalled for {timeout:?}"),
+                    midge_error: None,
+                });
+            }
         }
         #[cfg(test)]
         if let Some(error) = NEXT_COMMIT_ERROR.with(|cell| cell.borrow_mut().take()) {
             return Err(QueueStoreError::from_midge(error));
         }
-        self.inner
-            .commit(policy.into())
-            .map_err(QueueStoreError::from_midge)
+        super::ack_timing::measure(ack, super::ack_timing::Phase::Commit, || {
+            self.inner
+                .commit(policy.into())
+                .map_err(QueueStoreError::from_midge)
+        })
     }
 
     pub(crate) fn scan_all(&self) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {

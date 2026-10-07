@@ -1,3 +1,4 @@
+mod attribution;
 mod campaign;
 mod config;
 mod io;
@@ -57,7 +58,7 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
     let mut result: Result<(), BenchFailure> = shared_bench_runtime().block_on(async {
         campaign::recovery(fixture.tcp_addr()).await?;
         for rate in report.config.rates.clone() {
-            campaign::run_stage(ctx, &mut report, fixture.tcp_addr(), rate).await?;
+            campaign::run_stage(ctx, &mut report, &fixture, rate).await?;
             let stage = report
                 .stages
                 .last()

@@ -260,8 +260,12 @@ async fn drain(
     report: &mut Report,
     stage: &mut Stage,
     seconds: u64,
+    metrics: cntryl_midge::EngineMetrics,
 ) -> Result<(), BenchFailure> {
     let begin = Instant::now();
+    stage.storage_drain_start = Some(
+        super::attribution::Snapshot::capture(metrics, super::attribution::QUERY_BUDGET).await,
+    );
     let mut saved = Instant::now();
     loop {
         let (drained, last_ack) = {
@@ -299,10 +303,11 @@ async fn drain(
 pub(super) async fn run_stage(
     ctx: &mut StressContext,
     report: &mut Report,
-    address: SocketAddr,
+    fixture: &crate::stress_support::fixture::BrokerFixture,
     rate: u64,
 ) -> Result<(), BenchFailure> {
     let config = report.config.clone();
+    let address = fixture.tcp_addr();
     let mut stage = Stage {
         rate_per_second: rate,
         ..Stage::default()
@@ -314,6 +319,13 @@ pub(super) async fn run_stage(
         clients.push(connect(address).await?);
     }
     let consumer_client = connect(address).await?;
+    stage.storage_before = Some(
+        super::attribution::Snapshot::capture(
+            fixture.storage_metrics(),
+            super::attribution::QUERY_BUDGET,
+        )
+        .await,
+    );
     let consumer = tokio::spawn(consumer(
         consumer_client,
         Arc::clone(&shared),
@@ -331,7 +343,15 @@ pub(super) async fn run_stage(
     )
     .await;
     if result.is_ok() {
-        result = drain(&shared, &consumer, report, &mut stage, config.drain_seconds).await;
+        result = drain(
+            &shared,
+            &consumer,
+            report,
+            &mut stage,
+            config.drain_seconds,
+            fixture.storage_metrics(),
+        )
+        .await;
     }
     stop.store(true, Ordering::Relaxed);
     if let Err(error) = &result {
@@ -362,6 +382,13 @@ pub(super) async fn run_stage(
             append_failure(&mut result, error, "consumer");
         }
     }
+    stage.storage_after = Some(
+        super::attribution::Snapshot::capture(
+            fixture.storage_metrics(),
+            super::attribution::QUERY_BUDGET,
+        )
+        .await,
+    );
     snapshot(&mut stage, &shared)?;
     if result.is_err() {
         stage.termination = "failed".into();

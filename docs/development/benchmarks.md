@@ -249,6 +249,26 @@ Its JSON under `target/fitz-stress/queue-drain-latency` records source and dirty
 state, actual accepted/verified work, bounded per-pair timings, Queue histogram
 snapshots, and cleanup outcome. Failure preserves the store and partial report;
 no crash-recovery or ownership-continuity guarantee is inferred.
+Both Queue diagnostic targets also capture Midge runtime snapshots and cumulative
+ACK admission-wait/inner-commit timings. Phase instrumentation compiles only with
+`benchkit`; counts include failed attempts and admission retries, not just ACKs.
+Each snapshot query has a 100ms caller budget and records its actual duration and
+any error. An unavailable snapshot means unknown pressure, never zero pressure.
+Snapshots traverse the runtime queue; slow queries alone do not prove a stall.
+The counters are process-wide, and gauges describe only the capture instant;
+compare cumulative counter deltas, rather than treating gauges or maximum values
+as additive. Phase histogram buckets are separate counts, rounded to milliseconds;
+their sum is the observation count, while `total_ns` retains finer timing.
+Phase counters are sampled before the runtime query, so the combined record is
+not an atomic engine/actor snapshot. Zero hard-stall duration also does not rule
+out every admission rejection path. Instrumentation overhead remains part of
+the observed client latency; these runs are attribution, not a production baseline.
+The small diagnostic captures before drain and after workload completion. Its
+final query is outside the 90-second workload window and before cleanup. Query
+timing is separate from client pair timings. A pressure stage captures before load,
+at drain start, and after the consumer settles, including failure. Its drain-start
+query consumes the original drain budget. These observations do not bypass any
+pressure gate, retry an unknown mutation, or change completion accounting.
 The failure report retains the current reserved identity and ACK state:
 dispatch started, frame sent, frame received, validated success, or validated
 error response. A valid error response leaves the ACK's application effect

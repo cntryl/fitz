@@ -271,10 +271,11 @@ impl QueueActor {
             }
         }
 
-        #[cfg(not(test))]
-        let _ = commit;
-
-        txn.commit_with_pressure_wait(write_options, timeout)
+        txn.commit_with_pressure_wait_timed(
+            write_options,
+            timeout,
+            matches!(commit, QueueCommit::Ack),
+        )
     }
 
     #[cfg(test)]

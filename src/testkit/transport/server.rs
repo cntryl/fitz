@@ -88,6 +88,15 @@ pub struct TestServer {
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 impl TestServer {
+    /// Return an observer for bounded benchmark storage snapshots.
+    ///
+    /// This does not retain an additional owning `Arc<Engine>`.
+    #[cfg(feature = "benchkit")]
+    #[must_use]
+    pub fn storage_metrics(&self) -> cntryl_midge::EngineMetrics {
+        self.store.metrics()
+    }
+
     /// Start a test server with auth disabled (backward compatible)
     ///
     /// # Errors
