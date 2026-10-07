@@ -117,7 +117,7 @@ persist the mode.
 
 ## Midge 0.3 cloud storage metadata
 
-Fitz now embeds `cntryl-midge` 0.3.0. For provider-backed cloud storage it
+Fitz now embeds `cntryl-midge` 0.3.2. For provider-backed cloud storage it
 commits immutable `FORMAT`, manifest, journal, and intent generations under
 `metadata/generations/`, fenced by a version 2 lease descriptor and a version 2
 DDL registry. It rejects the legacy lease and mutable metadata written by Midge
@@ -129,6 +129,10 @@ Upgrade requires a logical export with the old broker and import into a new
 empty prefix, or a fresh prefix rebuilt from the operator's source of truth.
 Rollback returns to the preserved original prefix with the previous broker.
 See [../operations/migration-guide.md](../operations/migration-guide.md).
+
+The Midge 0.3.1 to 0.3.2 dependency update preserves these formats and all Fitz
+row encodings. Cloud reads now fail with `MidgeError::Fenced` after lease loss;
+this changes authority enforcement, not persisted representation.
 
 ## Single-generation storage formats
 
