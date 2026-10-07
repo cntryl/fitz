@@ -2,10 +2,14 @@ use super::*;
 use crate::domains::queue::actor::recovery_store::QueueStore;
 
 fn local_engine(path: &std::path::Path) -> Arc<cntryl_midge::Engine> {
+    local_engine_with_ttl(path, Duration::from_secs(1))
+}
+
+fn local_engine_with_ttl(path: &std::path::Path, ttl: Duration) -> Arc<cntryl_midge::Engine> {
     Arc::new(
         cntryl_midge::Engine::open(
             cntryl_midge::OpenOptions::local(path)
-                .lease_ttl(Duration::from_secs(1))
+                .lease_ttl(ttl)
                 .lease_clock_skew_tolerance(Duration::ZERO)
                 .build()
                 .unwrap(),
@@ -96,17 +100,19 @@ fn should_preserve_fast_queue_backlog_and_ack_after_process_exit() {
     let (acked, remaining, published): (u64, u64, u64) =
         serde_json::from_slice(&std::fs::read(directory.path().join("receipt.json")).unwrap())
             .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // The child's 30-second deadline precedes the first renewal at 40 seconds.
+    // This isolates WAL recovery from exiting during a lease-file mutation.
+    let deadline = Instant::now() + Duration::from_secs(130);
     let engine = loop {
         let options = cntryl_midge::OpenOptions::local(directory.path().join("db"))
-            .lease_ttl(Duration::from_secs(1))
+            .lease_ttl(Duration::from_secs(120))
             .lease_clock_skew_tolerance(Duration::ZERO)
             .build()
             .unwrap();
         match cntryl_midge::Engine::open(options) {
             Ok(engine) => break Arc::new(engine),
             Err(cntryl_midge::MidgeError::LeaseHeld(_)) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(20));
+                std::thread::sleep(Duration::from_millis(100));
             }
             Err(error) => panic!("reopen after child exit failed: {error}"),
         }
@@ -144,7 +150,7 @@ fn should_write_fast_queue_child_without_shutdown() {
         return;
     };
     let directory = std::path::PathBuf::from(directory);
-    let engine = local_engine(&directory.join("db"));
+    let engine = local_engine_with_ttl(&directory.join("db"), Duration::from_secs(120));
     engine.create_column_family("queue").unwrap();
     let store = QueueStore::new(engine.clone()).with_local_fast_wal(true);
     let mut actor = QueueActor::new_with_write_policy(
