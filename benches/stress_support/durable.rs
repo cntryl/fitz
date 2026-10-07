@@ -100,6 +100,13 @@ pub(super) async fn request(
         .recv_frame_bytes_without_timeout()
         .await
         .map_err(BenchFailure::transport)?;
+    response_payload(&response, expected_type)
+}
+
+pub(super) fn response_payload(
+    response: &[u8],
+    expected_type: u16,
+) -> Result<Vec<u8>, BenchFailure> {
     let (message_type, header_len, length_offset) = match response.first().copied() {
         Some(0xFF) if response.len() >= 5 => (u16::from_be_bytes([response[1], response[2]]), 5, 3),
         Some(message_type) if response.len() >= 3 && message_type != 0xFF => {

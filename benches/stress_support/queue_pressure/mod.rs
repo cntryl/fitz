@@ -1,6 +1,7 @@
 mod campaign;
 mod config;
 mod io;
+mod latency;
 mod ledger;
 mod report;
 
@@ -10,6 +11,8 @@ use cntryl_stress::{LogicalUnit, OperationOutcome, StressContext, StressError, S
 use fitz::benchkit::shared_bench_runtime;
 use report::Report;
 use std::time::Duration;
+
+pub(crate) use latency::run as run_latency;
 
 pub(crate) fn run(ctx: &mut StressContext) -> StressResult {
     execute(ctx).map_err(|error| StressError::new(error.to_string()))

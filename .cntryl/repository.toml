@@ -22,6 +22,7 @@ not_pr_gate_phrase = "not a pull-request performance gate"
 
 [benchmarks.manual_targets]
 queue_pressure = "Bounded Queue diagnostic requires an explicit resource envelope"
+queue_drain_latency = "Finite Queue RESERVE and ACK timing diagnostic requires explicit invocation"
 schedule_pressure = "Forced-clock Schedule diagnostic requires an explicit resource envelope"
 kv_pressure = "Bounded KV cardinality diagnostic requires an explicit resource envelope"
 lease_pressure = "Bounded Lease contender diagnostic requires an explicit resource envelope"

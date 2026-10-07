@@ -1,5 +1,5 @@
 use super::super::durable::{
-    complete, empty_legacy_success, error_code, payload, request, require_ok,
+    complete, empty_legacy_success, error_code, payload, request, require_ok, response_payload,
 };
 use super::super::types::{BenchFailure, FailureKind};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
@@ -55,11 +55,36 @@ pub(super) enum Delivery {
 }
 
 pub(super) async fn consume(client: &mut TestClient) -> Result<Delivery, BenchFailure> {
+    match reserve(client).await? {
+        Reservation::Empty => Ok(Delivery::Empty),
+        Reservation::Rejected => Ok(Delivery::Rejected),
+        Reservation::Message {
+            sequence,
+            id,
+            token,
+        } => {
+            acknowledge(client, id, token).await?;
+            Ok(Delivery::Acknowledged { sequence, id })
+        }
+    }
+}
+
+pub(super) enum Reservation {
+    Empty,
+    Rejected,
+    Message {
+        sequence: usize,
+        id: u64,
+        token: u64,
+    },
+}
+
+pub(super) async fn reserve(client: &mut TestClient) -> Result<Reservation, BenchFailure> {
     let body = request(client, &build_queue_dequeue(ROUTE), 202).await?;
     if body.first().copied() != Some(0)
         && error_code(&body, "Queue RESERVE")? == u32::from(ERR_QUEUE_FULL)
     {
-        return Ok(Delivery::Rejected);
+        return Ok(Reservation::Rejected);
     }
     require_ok(&body, "Queue RESERVE")?;
     let mut decoder = PayloadDecoder::new(&body);
@@ -67,7 +92,7 @@ pub(super) async fn consume(client: &mut TestClient) -> Result<Delivery, BenchFa
     match decoder.get_u32().map_err(BenchFailure::validation)? {
         0 => {
             complete(&decoder)?;
-            return Ok(Delivery::Empty);
+            return Ok(Reservation::Empty);
         }
         1 => {}
         _ => return Err(BenchFailure::validation("expected one reserved message")),
@@ -87,11 +112,73 @@ pub(super) async fn consume(client: &mut TestClient) -> Result<Delivery, BenchFa
     if body.as_ref() != payload(0, sequence) {
         return Err(BenchFailure::verification("Queue pressure payload changed"));
     }
-    let result = request(client, &build_queue_complete(ROUTE, id, token), 204).await?;
-    empty_legacy_success(&result, "Queue ACK")?;
-    Ok(Delivery::Acknowledged {
+    Ok(Reservation::Message {
         sequence: usize::try_from(sequence)
             .map_err(|error| BenchFailure::validation(error.to_string()))?,
         id,
+        token,
     })
+}
+
+pub(super) async fn acknowledge(
+    client: &mut TestClient,
+    id: u64,
+    token: u64,
+) -> Result<(), BenchFailure> {
+    let result = request(client, &build_queue_complete(ROUTE, id, token), 204).await?;
+    empty_legacy_success(&result, "Queue ACK")
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum AckProgress {
+    DispatchStarted,
+    FrameSent,
+    FrameReceived,
+    SuccessValidated,
+    ErrorResponseValidated,
+}
+
+pub(super) async fn acknowledge_observed(
+    client: &mut TestClient,
+    id: u64,
+    token: u64,
+    mut observe: impl FnMut(AckProgress) -> Result<(), BenchFailure>,
+) -> Result<(), BenchFailure> {
+    let frame = build_queue_complete(ROUTE, id, token);
+    observe(AckProgress::DispatchStarted)?;
+    client
+        .send_frame(&frame)
+        .await
+        .map_err(BenchFailure::transport)?;
+    observe(AckProgress::FrameSent)?;
+    let response = client
+        .recv_frame_bytes_without_timeout()
+        .await
+        .map_err(BenchFailure::transport)?;
+    validate_ack_response(&response, observe)
+}
+
+pub(super) fn validate_ack_response(
+    response: &[u8],
+    mut observe: impl FnMut(AckProgress) -> Result<(), BenchFailure>,
+) -> Result<(), BenchFailure> {
+    observe(AckProgress::FrameReceived)?;
+    validate_ack_payload(&response_payload(response, 204)?, observe)
+}
+
+pub(super) fn validate_ack_payload(
+    payload: &[u8],
+    mut observe: impl FnMut(AckProgress) -> Result<(), BenchFailure>,
+) -> Result<(), BenchFailure> {
+    if let Err(error) = empty_legacy_success(payload, "Queue ACK") {
+        if matches!(
+            error.kind,
+            crate::stress_support::types::FailureKind::DomainError
+        ) {
+            observe(AckProgress::ErrorResponseValidated)?;
+        }
+        return Err(error);
+    }
+    observe(AckProgress::SuccessValidated)
 }

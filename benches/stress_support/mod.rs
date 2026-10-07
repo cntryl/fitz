@@ -14,6 +14,8 @@ mod types;
 
 #[allow(unused_imports)]
 pub(crate) use queue_pressure::run as run_queue_pressure;
+#[allow(unused_imports)]
+pub(crate) use queue_pressure::run_latency as run_queue_drain_latency;
 pub(crate) use runner::run;
 #[allow(unused_imports)]
 pub(crate) use schedule_pressure::run as run_schedule_pressure;
