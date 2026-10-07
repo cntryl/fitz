@@ -439,6 +439,7 @@ fn stream_read_response(
 mod active_subscriptions;
 mod actor_retention;
 mod capacity;
+mod commit_deadline;
 mod correctness;
 mod fault_injection;
 mod global_reads;

@@ -14,6 +14,12 @@ fn u64_to_u32_saturating(value: u64) -> u32 {
 }
 
 impl StreamStore {
+    #[cfg(test)]
+    pub(crate) fn delay_next_promotion_frontier_commit_for_tests(&self) {
+        self.delay_next_promotion_frontier_commit_ms
+            .store(5_000, std::sync::atomic::Ordering::Release);
+    }
+
     pub(crate) fn column_family_ids(&self) -> Result<Vec<u64>, String> {
         self.db
             .list_column_families()
@@ -174,6 +180,8 @@ impl StreamStore {
             maintenance_metrics: crate::observability::metrics().as_ref().clone(),
             #[cfg(test)]
             fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            delay_next_promotion_frontier_commit_ms: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             fence_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
