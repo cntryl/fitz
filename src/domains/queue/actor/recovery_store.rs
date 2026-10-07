@@ -32,11 +32,13 @@ pub(crate) enum QueueTransactionMode {
 #[derive(Debug)]
 pub(crate) struct QueueStoreError {
     message: String,
+    midge_error: Option<cntryl_midge::MidgeError>,
 }
 
 #[cfg(test)]
 std::thread_local! {
     static FAIL_NEXT_FLUSH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static NEXT_COMMIT_ERROR: std::cell::RefCell<Option<cntryl_midge::MidgeError>> = const { std::cell::RefCell::new(None) };
 }
 
 impl std::fmt::Display for QueueStoreError {
@@ -47,10 +49,16 @@ impl std::fmt::Display for QueueStoreError {
 
 impl QueueStoreError {
     #[allow(clippy::needless_pass_by_value)]
-    fn from_midge(error: cntryl_midge::MidgeError) -> Self {
+    pub(super) fn from_midge(error: cntryl_midge::MidgeError) -> Self {
         Self {
             message: error.to_string(),
+            midge_error: Some(error),
         }
+    }
+
+    pub(super) fn is_l0_admission_rejection(&self, family: u32) -> bool {
+        matches!(&self.midge_error, Some(cntryl_midge::MidgeError::WriteStall(detail))
+            if detail.starts_with(&format!("column family {family} has no free L0 slot (")))
     }
 }
 
@@ -94,6 +102,7 @@ impl QueueStore {
         if FAIL_NEXT_FLUSH.with(|cell| cell.replace(false)) {
             return Err(QueueStoreError {
                 message: "Injected queue fast flush failure".to_string(),
+                midge_error: None,
             });
         }
         let families = self
@@ -112,6 +121,16 @@ impl QueueStore {
     #[cfg(test)]
     pub(crate) fn fail_next_flush_for_tests() {
         FAIL_NEXT_FLUSH.with(|cell| cell.set(true));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_commit_for_tests(error: cntryl_midge::MidgeError) {
+        NEXT_COMMIT_ERROR.with(|cell| *cell.borrow_mut() = Some(error));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_commit_error_for_tests() {
+        NEXT_COMMIT_ERROR.with(|cell| *cell.borrow_mut() = None);
     }
 }
 
@@ -165,7 +184,12 @@ impl QueueTransaction {
         {
             return Err(QueueStoreError {
                 message: format!("Queue storage admission remained stalled for {timeout:?}"),
+                midge_error: None,
             });
+        }
+        #[cfg(test)]
+        if let Some(error) = NEXT_COMMIT_ERROR.with(|cell| cell.borrow_mut().take()) {
+            return Err(QueueStoreError::from_midge(error));
         }
         self.inner
             .commit(policy.into())

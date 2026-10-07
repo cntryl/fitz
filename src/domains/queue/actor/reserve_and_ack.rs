@@ -3,8 +3,8 @@
 use super::{
     decode_cached_response, encode_cached_response, obs, DlqReason, Duration, FxBuildHasher,
     HashMap, HashSet, Inflight, InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan,
-    PersistedReadyMutation, QueueActor, QueueCommit, QueueRecord, QueueResponse, QueueState,
-    ReadyRange, ReservedMessage, Reverse, VecDeque,
+    PersistedReadyMutation, QueueActor, QueueRecord, QueueResponse, QueueState, ReadyRange,
+    ReservedMessage, Reverse, VecDeque,
 };
 use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
 
@@ -687,76 +687,49 @@ impl QueueActor {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
 
-        match self.persistence.store.begin(
-            self.queue_key.family.id(),
-            super::recovery_store::QueueTransactionMode::ReadWrite,
-        ) {
-            Ok(mut txn) => {
-                if let Err(error) = Self::delete_record(&mut txn, header_key, body_key) {
-                    tracing::warn!(
-                        queue = ?self.queue_key,
-                        route_family = self.queue_key.family.as_u64(),
-                        message_id = id.as_u64(),
-                        error = ?error,
-                        "Failed to delete queue message in transaction"
-                    );
-                    return Err(format!("Failed to delete message {id} in txn: {error:?}"));
-                }
-
-                self.write_index_mutation_plan(&mut txn, id, index_plan, None)?;
-                Self::commit_transaction(txn, self.persistence.write_options(), QueueCommit::Ack)
-                    .map_err(|error| {
-                    tracing::warn!(
-                        queue = ?self.queue_key,
-                        route_family = self.queue_key.family.as_u64(),
-                        message_id = id.as_u64(),
-                        error_reason = %error,
-                        "Failed to commit queue delete transaction"
-                    );
-                    format!("Failed to commit delete txn for message {id}: {error}")
-                })?;
-                self.apply_index_mutation_plan(id, index_plan, None);
-                Ok(())
-            }
-            Err(error) => Err(format!(
-                "Failed to begin tx to delete message {id}: {error:?}"
-            )),
-        }
+        self.commit_ack_with_admission_retry(|txn| {
+            Self::delete_record(txn, header_key.clone(), body_key.clone())
+                .map_err(|error| format!("Failed to delete message {id} in txn: {error}"))?;
+            self.write_index_mutation_plan(txn, id, index_plan, None)
+        })
+        .map_err(|error| {
+            tracing::warn!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                message_id = id.as_u64(),
+                error_reason = %error,
+                "Failed to commit queue delete transaction"
+            );
+            format!("Failed to commit delete txn for message {id}: {error}")
+        })?;
+        self.apply_index_mutation_plan(id, index_plan, None);
+        Ok(())
     }
 
     fn commit_ack_batch_delete(&self, deletes: &[AckBatchDelete]) -> Result<(), String> {
-        let mut txn = self
-            .persistence
-            .store
-            .begin(
-                self.queue_key.family.id(),
-                super::recovery_store::QueueTransactionMode::ReadWrite,
-            )
-            .map_err(|error| format!("Failed to begin queue ack batch tx: {error:?}"))?;
-
-        for delete in deletes {
-            Self::delete_record(&mut txn, delete.header_key.clone(), delete.body_key.clone())
-                .map_err(|error| {
-                    format!(
-                        "Failed to delete message {} in queue ack batch tx: {error:?}",
-                        delete.id
-                    )
-                })?;
-            self.write_index_mutation_plan(&mut txn, delete.id, delete.index_plan, None)?;
-        }
-
-        Self::commit_transaction(txn, self.persistence.write_options(), QueueCommit::Ack).map_err(
-            |error| {
-                tracing::warn!(
-                    queue = ?self.queue_key,
-                    route_family = self.queue_key.family.as_u64(),
-                    error_reason = %error,
-                    ack_count = deletes.len(),
-                    "Failed to commit queue ack batch transaction"
-                );
-                format!("Failed to commit queue ack batch transaction: {error}")
-            },
-        )
+        self.commit_ack_with_admission_retry(|txn| {
+            for delete in deletes {
+                Self::delete_record(txn, delete.header_key.clone(), delete.body_key.clone())
+                    .map_err(|error| {
+                        format!(
+                            "Failed to delete message {} in queue ack batch tx: {error}",
+                            delete.id
+                        )
+                    })?;
+                self.write_index_mutation_plan(txn, delete.id, delete.index_plan, None)?;
+            }
+            Ok(())
+        })
+        .map_err(|error| {
+            tracing::warn!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                error_reason = %error,
+                ack_count = deletes.len(),
+                "Failed to commit queue ack batch transaction"
+            );
+            format!("Failed to commit queue ack batch transaction: {error}")
+        })
     }
 
     fn finish_ack_success(&mut self, id: MessageId, dedup_key: DedupKey) -> QueueResponse {

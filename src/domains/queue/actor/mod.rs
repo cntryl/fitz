@@ -175,6 +175,7 @@ enum DlqReason {
 #[derive(Clone, Copy)]
 enum QueueCommit {
     Ack,
+    Enqueue,
     Redelivery,
 }
 
@@ -670,6 +671,7 @@ mod dead_letter_admin;
 mod dlq;
 mod enqueue;
 mod inflight_release;
+mod mutation_storage;
 mod recovery_state;
 mod reserve_and_ack;
 mod startup_reconciliation;
