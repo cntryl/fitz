@@ -1,5 +1,6 @@
 //! Benchmark-only cumulative timing; these observations never control retries.
 
+#[derive(Clone, Copy)]
 pub(super) enum Phase {
     Admission,
     Commit,
