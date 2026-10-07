@@ -66,18 +66,12 @@ pub(super) fn should_create_queue_domain_sink() {
 pub(super) fn should_create_fast_queue_sink_with_explicit_background_cloud_recovery() {
     // Arrange
     let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
-    let store = Arc::new(
-        cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::cloud_simulated(
-                tempdir.path(),
-                "fitz-queue-sink",
-                "background",
-            )
+    let options =
+        cntryl_midge::OpenOptions::cloud_simulated(tempdir.path(), "fitz-queue-sink", "background")
             .build()
-            .expect("build cloud-simulated options"),
-        )
-        .expect("open cloud-simulated engine"),
-    );
+            .expect("build cloud-simulated options");
+    let shutdown_budget = options.runtime_response_timeout();
+    let store = Arc::new(cntryl_midge::Engine::open(options).expect("open cloud-simulated engine"));
     store
         .create_column_family("tenant_default")
         .expect("create route-family column family");
@@ -95,7 +89,7 @@ pub(super) fn should_create_fast_queue_sink_with_explicit_background_cloud_recov
     // Assert
     assert!(result.is_ok());
     drop(result);
-    crate::testkit::midge::shutdown_test_engine(store);
+    crate::testkit::midge::shutdown_test_engine_with_timeout(store, shutdown_budget);
 }
 
 #[test]

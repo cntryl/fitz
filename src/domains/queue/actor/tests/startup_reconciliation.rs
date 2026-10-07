@@ -102,18 +102,15 @@ fn should_reconcile_orphan_queue_body_for_fast_policy_during_preflight() {
 fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
     // Arrange
     let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
-    let store = Arc::new(
-        cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::cloud_simulated(
-                tempdir.path(),
-                "fitz-queue-recovery",
-                "background",
-            )
-            .build()
-            .expect("build cloud-simulated options"),
-        )
-        .expect("open cloud-simulated engine"),
-    );
+    let options = cntryl_midge::OpenOptions::cloud_simulated(
+        tempdir.path(),
+        "fitz-queue-recovery",
+        "background",
+    )
+    .build()
+    .expect("build cloud-simulated options");
+    let shutdown_budget = options.runtime_response_timeout();
+    let store = Arc::new(cntryl_midge::Engine::open(options).expect("open cloud-simulated engine"));
     store
         .create_column_family("tenant_default")
         .expect("create route-family column family");
@@ -151,7 +148,7 @@ fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
     );
     assert!(read_queue_validation_row(store.as_ref(), &body_suffix).is_none());
     assert!(read_queue_validation_row(store.as_ref(), &ready_index_suffix).is_none());
-    crate::testkit::midge::shutdown_test_engine(store);
+    crate::testkit::midge::shutdown_test_engine_with_timeout(store, shutdown_budget);
 }
 
 #[test]

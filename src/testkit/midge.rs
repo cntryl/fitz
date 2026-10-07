@@ -43,8 +43,9 @@ pub fn shutdown_test_engine(engine: Arc<Engine>) {
 
 /// Shut down a test engine using the fixture's explicit cleanup budget.
 ///
-/// `CloudAsync` cleanup includes WAL publication and a final checkpoint, so its
-/// tests may need more scheduling headroom than ordinary local fixtures.
+/// `CloudAsync` cleanup includes WAL publication, a final checkpoint, and fencing
+/// cleanup. Cloud fixtures pass their built `OpenOptions::runtime_response_timeout`
+/// so cleanup uses the configured I/O response budget.
 ///
 /// # Panics
 ///
