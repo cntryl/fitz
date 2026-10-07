@@ -71,3 +71,20 @@ tier4_integration`, and hard gating.
 | --- | --- | --- |
 | 2026-08-07 | 2.4 | Rebuilt the rubric from the clean 14-row release manifest, removed stale workload expectations, and promoted memory-backed KV and Stream transport gates. |
 | 2026-07-07 | 2.3 | Previous target rubric. |
+
+## Workflow coverage and manual diagnostics
+
+The ordinary benchmark workflow runs tiers 1–4. Tier 5 and Tier 6 have separate
+scheduled and manual workflows with their own resource budgets. The repository
+contract validates coverage across all three workflows.
+
+The following bounded diagnostics are explicitly manual in
+`.cntryl/repository.toml`; select and review the resource envelope documented for
+each campaign before running it. They are not scheduled tier 1–4 measurements.
+
+```sh
+cargo bench --bench queue_pressure --features benchkit,stress-soak
+cargo bench --bench schedule_pressure --features benchkit,stress-soak
+cargo bench --bench kv_pressure --features benchkit,stress-soak
+cargo bench --bench lease_pressure --features benchkit,stress-soak
+```
