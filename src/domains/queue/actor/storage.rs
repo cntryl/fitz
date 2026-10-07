@@ -232,7 +232,21 @@ impl QueueActor {
         txn: super::recovery_store::QueueTransaction,
         write_options: crate::domains::WritePolicy,
         commit: QueueCommit,
-    ) -> Result<(), String> {
+    ) -> Result<(), super::recovery_store::QueueStoreError> {
+        Self::commit_transaction_with_pressure_wait(
+            txn,
+            write_options,
+            commit,
+            std::time::Duration::from_secs(30),
+        )
+    }
+
+    pub(super) fn commit_transaction_with_pressure_wait(
+        txn: super::recovery_store::QueueTransaction,
+        write_options: crate::domains::WritePolicy,
+        commit: QueueCommit,
+        timeout: std::time::Duration,
+    ) -> Result<(), super::recovery_store::QueueStoreError> {
         #[cfg(test)]
         {
             let failpoint = match commit {
@@ -252,14 +266,18 @@ impl QueueActor {
                     QueueCommit::Ack => "ack",
                     QueueCommit::Redelivery => "redelivery",
                 };
-                return Err(format!("Injected queue {operation} commit failure"));
+                return Err(super::recovery_store::QueueStoreError::from_midge(
+                    cntryl_midge::MidgeError::Internal(format!(
+                        "Injected queue {operation} commit failure"
+                    )),
+                ));
             }
         }
 
         #[cfg(not(test))]
         let _ = commit;
 
-        txn.commit(write_options).map_err(|e| format!("{e:?}"))
+        txn.commit_with_pressure_wait(write_options, timeout)
     }
 
     #[cfg(test)]

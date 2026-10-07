@@ -252,6 +252,7 @@ fn should_fail_reservation_recovery_when_persisted_row_cannot_be_read() {
     // Arrange
     let error = QueueStoreError {
         message: "injected reservation read failure".to_string(),
+        midge_error: None,
     };
 
     // Act

@@ -664,6 +664,7 @@ pub struct QueueActor {
     next_delayed_deadline: Instant,
 }
 
+mod ack_storage;
 mod admin_snapshot;
 mod constructors_validation;
 mod dead_letter_admin;

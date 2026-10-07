@@ -72,6 +72,15 @@ work advances useful progress; rejection, retry, polling, and artifact writes do
 not. Drain has its own deadline and a useful-progress check. Unknown outcomes
 are never retried or reclassified as expected capacity pressure.
 
+Queue ACK storage retries only Midge 0.3.1's typed, family-specific
+`WriteStall` rejection for a missing L0 slot. That rejection occurs before WAL
+submission. A fresh transaction restages the same actor-owned record/index
+deletions, and the actor applies its in-memory plan only after commit succeeds.
+All attempts share the existing 30-second storage-admission wait budget. This
+does not bound transaction staging or Midge's separate commit response wait.
+Unknown outcomes, conflicts, and other storage errors remain terminal; the
+client must not blindly repeat the ACK.
+
 This uses the existing fast Queue write policy. Accepted/ACKed work is checked
 inside the running broker process. There is no broker restart, crash recovery,
 strict durability, cloud qualification, or exactly-once claim.
