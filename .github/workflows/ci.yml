@@ -50,6 +50,9 @@ jobs:
       - name: Test
         run: cargo test --locked --workspace
 
+      - name: Queue diagnostic artifact regressions
+        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
