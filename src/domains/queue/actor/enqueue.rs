@@ -1,5 +1,5 @@
 use super::{
-    obs, Bytes, DelayedMessage, Duration, Instant, MessageId, QueueActor, QueueRecord,
+    obs, Bytes, DelayedMessage, Duration, Instant, MessageId, QueueActor, QueueCommit, QueueRecord,
     QueueResponse, ReadyRange, Reverse,
 };
 
@@ -117,33 +117,37 @@ impl QueueActor {
             None
         };
 
-        if let Err(response) = self.write_send_record(
-            &mut txn,
-            id,
-            &cached_body,
-            &record,
-            ready_index_write,
-            timing.visible_at_ms,
-        ) {
-            return response;
-        }
-        if let Err(response) = self.write_enqueue_meta(
-            &mut txn,
-            reserved_limit,
-            staged_next_id,
-            staged_ready_count,
-            staged_delayed_count,
-            staged_next_delayed_visibility,
-        ) {
+        let prepare = |txn: &mut super::recovery_store::QueueTransaction| {
+            self.write_send_record(
+                txn,
+                id,
+                &cached_body,
+                &record,
+                ready_index_write,
+                timing.visible_at_ms,
+            )?;
+            self.write_enqueue_meta(
+                txn,
+                reserved_limit,
+                staged_next_id,
+                staged_ready_count,
+                staged_delayed_count,
+                staged_next_delayed_visibility,
+            )
+        };
+        if let Err(response) = prepare(&mut txn) {
             return response;
         }
 
-        // Commit with buffered mode for high throughput
-        // The store will sync periodically, maintaining durability without per-operation cost
+        // Commit with the queue's configured policy; admission retries do not
+        // strengthen buffered writes into strict durability.
         let commit_start = Instant::now();
-        if let Err(e) = txn.commit(self.persistence.write_options()) {
+        let result = self.commit_prepared_with_admission_retry(txn, QueueCommit::Enqueue, |txn| {
+            prepare(txn).map_err(Self::enqueue_staging_error)
+        });
+        if let Err(error) = result {
             return QueueResponse::Error {
-                message: format!("Failed to commit transaction: {e:?}"),
+                message: format!("Failed to commit transaction: {error}"),
             };
         }
         Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
@@ -195,40 +199,40 @@ impl QueueActor {
             Err(response) => return response,
         };
 
-        let mut staged_ready_tails: Vec<Option<ReadyRange>> = self
-            .persisted_ready_shards
-            .iter()
-            .map(|ranges| ranges.back().copied())
-            .collect();
-        let plan = match self.stage_batch_send(
-            &mut txn,
-            items,
-            now_instant,
-            now_epoch_ms,
-            &mut staged_ready_tails,
-        ) {
+        let prepare = |txn: &mut super::recovery_store::QueueTransaction| {
+            let mut tails = self
+                .persisted_ready_shards
+                .iter()
+                .map(|ranges| ranges.back().copied())
+                .collect::<Vec<_>>();
+            let plan = self.stage_batch_send(txn, items, now_instant, now_epoch_ms, &mut tails)?;
+            self.write_enqueue_meta(
+                txn,
+                plan.reserved_limit,
+                plan.reserved_limit.unwrap_or(self.next_id_limit),
+                self.persisted_ready_count
+                    .saturating_add(plan.staged_ready_add),
+                self.persisted_delayed
+                    .len()
+                    .saturating_add(plan.staged_delayed.len()),
+                plan.staged_next_delayed_visibility,
+            )?;
+            Ok(plan)
+        };
+        let plan = match prepare(&mut txn) {
             Ok(plan) => plan,
             Err(response) => return response,
         };
-        let staged_next_id = plan.reserved_limit.unwrap_or(self.next_id_limit);
-        if let Err(response) = self.write_enqueue_meta(
-            &mut txn,
-            plan.reserved_limit,
-            staged_next_id,
-            self.persisted_ready_count
-                .saturating_add(plan.staged_ready_add),
-            self.persisted_delayed
-                .len()
-                .saturating_add(plan.staged_delayed.len()),
-            plan.staged_next_delayed_visibility,
-        ) {
-            return response;
-        }
 
         let commit_start = Instant::now();
-        if let Err(e) = txn.commit(self.persistence.write_options()) {
+        let result = self.commit_prepared_with_admission_retry(txn, QueueCommit::Enqueue, |txn| {
+            prepare(txn)
+                .map(|_| ())
+                .map_err(Self::enqueue_staging_error)
+        });
+        if let Err(error) = result {
             return QueueResponse::Error {
-                message: format!("Failed to commit transaction: {e:?}"),
+                message: format!("Failed to commit transaction: {error}"),
             };
         }
         Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
@@ -272,6 +276,13 @@ impl QueueActor {
             .record(now_epoch_ms, Self::usize_to_u64(plan.ids.len()));
 
         QueueResponse::SentBatch { ids: plan.ids }
+    }
+
+    fn enqueue_staging_error(response: QueueResponse) -> String {
+        match response {
+            QueueResponse::Error { message } => message,
+            other => format!("Failed to restage queue enqueue: {other:?}"),
+        }
     }
 
     fn begin_enqueue_tx(&self) -> Result<super::recovery_store::QueueTransaction, QueueResponse> {

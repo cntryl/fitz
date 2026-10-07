@@ -249,21 +249,18 @@ impl QueueActor {
     ) -> Result<(), super::recovery_store::QueueStoreError> {
         #[cfg(test)]
         {
-            let failpoint = match commit {
-                QueueCommit::Ack => &FAIL_NEXT_ACK_COMMIT,
-                QueueCommit::Redelivery => &FAIL_NEXT_REDELIVERY_COMMIT,
-            };
-            let should_fail = failpoint.with(|cell| {
-                let should_fail = cell.get();
-                if should_fail {
-                    cell.set(false);
+            let should_fail = match commit {
+                QueueCommit::Ack => FAIL_NEXT_ACK_COMMIT.with(|cell| cell.replace(false)),
+                QueueCommit::Redelivery => {
+                    FAIL_NEXT_REDELIVERY_COMMIT.with(|cell| cell.replace(false))
                 }
-                should_fail
-            });
+                QueueCommit::Enqueue => false,
+            };
 
             if should_fail {
                 let operation = match commit {
                     QueueCommit::Ack => "ack",
+                    QueueCommit::Enqueue => "enqueue",
                     QueueCommit::Redelivery => "redelivery",
                 };
                 return Err(super::recovery_store::QueueStoreError::from_midge(
