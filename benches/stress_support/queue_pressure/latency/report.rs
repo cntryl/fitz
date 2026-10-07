@@ -20,6 +20,7 @@ pub(super) struct CurrentReservation {
     pub message_id: u64,
     pub token: u64,
     pub ack_state: Option<super::super::io::AckProgress>,
+    pub ack_application_effect: &'static str,
     pub ledger_acknowledged: bool,
     pub pause_completed: bool,
     pub reserve_ns: u128,
@@ -70,6 +71,12 @@ impl Report {
             .as_mut()
             .ok_or_else(|| BenchFailure::validation("missing current reservation"))?;
         current.ack_state = Some(state);
+        current.ack_application_effect =
+            if matches!(state, super::super::io::AckProgress::SuccessValidated) {
+                "confirmed_ack"
+            } else {
+                "unconfirmed"
+            };
         Ok(())
     }
 
@@ -154,6 +161,7 @@ mod tests {
             message_id: 42,
             token: 7,
             ack_state: None,
+            ack_application_effect: "not_dispatched",
             ledger_acknowledged: false,
             pause_completed: false,
             reserve_ns: 1,
@@ -187,17 +195,70 @@ mod tests {
     }
 
     #[test]
-    fn should_record_terminal_rejection_without_counting_an_ack() {
+    fn should_preserve_unknown_ack_effect_after_coded_backend_error() {
         // Arrange
         let mut report = reserved_report();
+        let body = fitz::protocol::error_codes::encode_error_body(
+            fitz::protocol::error_codes::queue::ERR_BACKEND_ERROR,
+            "storage commit outcome unknown",
+        );
         // Act
-        report.observe_ack(AckProgress::TerminalReceived).unwrap();
-        report.observe_ack(AckProgress::RejectionValidated).unwrap();
+        report.observe_ack(AckProgress::FrameReceived).unwrap();
+        let result =
+            super::super::super::io::validate_ack_payload(&body, |state| report.observe_ack(state));
         let artifact = failure_artifact(&mut report);
         let state = &artifact["current_reserved"];
         // Assert
-        assert_eq!(state["ack_state"], "rejection_validated");
+        assert_eq!(state["ack_state"], "error_response_validated");
+        assert!(result.is_err());
+        assert_eq!(state["ack_application_effect"], "unconfirmed");
         assert_eq!(state["ledger_acknowledged"], false);
+    }
+
+    #[test]
+    fn should_preserve_unknown_ack_effect_after_plain_commit_error() {
+        // Arrange
+        let mut report = reserved_report();
+        let mut encoder = fitz::protocol::payload_codec::PayloadEncoder::new();
+        encoder.put_u8(1);
+        encoder.put_string("storage commit outcome unknown");
+        let body = encoder.finish();
+        // Act
+        report.observe_ack(AckProgress::FrameReceived).unwrap();
+        let result =
+            super::super::super::io::validate_ack_payload(&body, |state| report.observe_ack(state));
+        let artifact = failure_artifact(&mut report);
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(
+            artifact["current_reserved"]["ack_state"],
+            "error_response_validated"
+        );
+        assert_eq!(
+            artifact["current_reserved"]["ack_application_effect"],
+            "unconfirmed"
+        );
+        assert_eq!(artifact["accounting"]["acknowledged"], 0);
+    }
+
+    #[test]
+    fn should_not_claim_a_valid_ack_response_after_malformed_frame() {
+        // Arrange
+        let mut report = reserved_report();
+        let bytes = [204, 0, 2, 0];
+        // Act
+        let result = super::super::super::io::validate_ack_response(&bytes, |state| {
+            report.observe_ack(state)
+        });
+        let artifact = failure_artifact(&mut report);
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(artifact["current_reserved"]["ack_state"], "frame_received");
+        assert_eq!(
+            artifact["current_reserved"]["ack_application_effect"],
+            "unconfirmed"
+        );
+        assert_eq!(artifact["accounting"]["acknowledged"], 0);
     }
 
     #[test]

@@ -195,6 +195,7 @@ async fn drain(
             message_id: id,
             token,
             ack_state: None,
+            ack_application_effect: "not_dispatched",
             ledger_acknowledged: false,
             pause_completed: false,
             reserve_ns,

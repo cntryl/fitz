@@ -250,8 +250,10 @@ state, actual accepted/verified work, bounded per-pair timings, Queue histogram
 snapshots, and cleanup outcome. Failure preserves the store and partial report;
 no crash-recovery or ownership-continuity guarantee is inferred.
 The failure report retains the current reserved identity and ACK state:
-dispatch started, frame sent, terminal received, validated success, or validated
-rejection. ACK counts require validated success; timing samples additionally
+dispatch started, frame sent, frame received, validated success, or validated
+error response. A valid error response leaves the ACK's application effect
+unconfirmed; it does not prove rejection before mutation. ACK counts require
+validated success; timing samples additionally
 require the pause to finish. Cancellation during that pause records
 `acknowledged_pause_pending_sample`. An unresolved dispatched ACK is never retried.
 

@@ -134,9 +134,9 @@ pub(super) async fn acknowledge(
 pub(super) enum AckProgress {
     DispatchStarted,
     FrameSent,
-    TerminalReceived,
+    FrameReceived,
     SuccessValidated,
-    RejectionValidated,
+    ErrorResponseValidated,
 }
 
 pub(super) async fn acknowledge_observed(
@@ -156,13 +156,27 @@ pub(super) async fn acknowledge_observed(
         .recv_frame_bytes_without_timeout()
         .await
         .map_err(BenchFailure::transport)?;
-    observe(AckProgress::TerminalReceived)?;
-    if let Err(error) = empty_legacy_success(&response_payload(&response, 204)?, "Queue ACK") {
+    validate_ack_response(&response, observe)
+}
+
+pub(super) fn validate_ack_response(
+    response: &[u8],
+    mut observe: impl FnMut(AckProgress) -> Result<(), BenchFailure>,
+) -> Result<(), BenchFailure> {
+    observe(AckProgress::FrameReceived)?;
+    validate_ack_payload(&response_payload(response, 204)?, observe)
+}
+
+pub(super) fn validate_ack_payload(
+    payload: &[u8],
+    mut observe: impl FnMut(AckProgress) -> Result<(), BenchFailure>,
+) -> Result<(), BenchFailure> {
+    if let Err(error) = empty_legacy_success(payload, "Queue ACK") {
         if matches!(
             error.kind,
             crate::stress_support::types::FailureKind::DomainError
         ) {
-            observe(AckProgress::RejectionValidated)?;
+            observe(AckProgress::ErrorResponseValidated)?;
         }
         return Err(error);
     }
