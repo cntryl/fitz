@@ -6,7 +6,7 @@ use crate::stress_support::types::{BenchFailure, FailureKind};
 use cntryl_stress::{LogicalUnit, OperationOutcome, StressContext, StressError, StressResult};
 use fitz::benchkit::shared_bench_runtime;
 use fitz::testkit::TestClient;
-use report::{PairTiming, Report};
+use report::{CurrentReservation, PairTiming, Report};
 use std::time::{Duration, Instant};
 
 #[path = "latency_oracle.rs"]
@@ -125,11 +125,24 @@ async fn measure(
         .await
         .map_err(BenchFailure::transport)?;
     let mut ledger = Ledger::default();
+    seed(ctx, report, &mut client, &mut ledger, pairs).await?;
+    report.setup_elapsed_ns = started.elapsed().as_nanos();
+    report.capture_metrics_before();
+    drain(ctx, report, &mut client, &mut ledger, pairs).await
+}
+
+async fn seed(
+    ctx: &StressContext,
+    report: &mut Report,
+    client: &mut TestClient,
+    ledger: &mut Ledger,
+    pairs: usize,
+) -> Result<(), BenchFailure> {
     report.phase = "seed";
     for _ in 0..pairs {
         let sequence = ledger.dispatch();
         report.accounting = ledger.counts;
-        let accepted = io::enqueue(&mut client, sequence).await?;
+        let accepted = io::enqueue(client, sequence).await?;
         let Some(id) = accepted else {
             ledger
                 .rejected(sequence)
@@ -149,15 +162,23 @@ async fn measure(
             report.save()?;
         }
     }
-    report.setup_elapsed_ns = started.elapsed().as_nanos();
-    report.capture_metrics_before();
+    Ok(())
+}
+
+async fn drain(
+    ctx: &StressContext,
+    report: &mut Report,
+    client: &mut TestClient,
+    ledger: &mut Ledger,
+    pairs: usize,
+) -> Result<(), BenchFailure> {
     report.phase = "reserve";
     let drain_started = Instant::now();
     for _ in 0..pairs {
         let cycle = Instant::now();
         report.phase = "reserve";
         let reserve = Instant::now();
-        let reservation = io::reserve(&mut client).await?;
+        let reservation = io::reserve(client).await?;
         let reserve_ns = reserve.elapsed().as_nanos();
         let io::Reservation::Message {
             sequence,
@@ -169,6 +190,16 @@ async fn measure(
                 "diagnostic backlog unexpectedly empty or reserve rejected",
             ));
         };
+        report.current_reserved = Some(CurrentReservation {
+            sequence,
+            message_id: id,
+            token,
+            ack_state: None,
+            ledger_acknowledged: false,
+            pause_completed: false,
+            reserve_ns,
+            ack_ns: None,
+        });
         if report.accepted_messages.get(sequence) != Some(&(sequence, id))
             || report
                 .samples
@@ -180,17 +211,22 @@ async fn measure(
             ));
         }
         report.phase = "ack";
-        let ack = Instant::now();
-        io::acknowledge(&mut client, id, token).await?;
-        let ack_ns = ack.elapsed().as_nanos();
+        let ack_ns = acknowledge(report, client, id, token).await?;
         ledger
             .acknowledged(sequence, id)
             .map_err(BenchFailure::verification)?;
         report.accounting = ledger.counts;
+        if let Some(current) = report.current_reserved.as_mut() {
+            current.ledger_acknowledged = true;
+            current.ack_ns = Some(ack_ns);
+        }
         ctx.progress_handle().advance();
-        report.phase = "pause";
+        report.phase = "acknowledged_pause_pending_sample";
         let pause = Instant::now();
         tokio::time::sleep(PAUSE).await;
+        if let Some(current) = report.current_reserved.as_mut() {
+            current.pause_completed = true;
+        }
         report.samples.push(PairTiming {
             sequence,
             message_id: id,
@@ -199,6 +235,7 @@ async fn measure(
             pause_ns: pause.elapsed().as_nanos(),
             cycle_ns: cycle.elapsed().as_nanos(),
         });
+        report.current_reserved = None;
         report.drain_elapsed_ns = drain_started.elapsed().as_nanos();
         if report.samples.len().is_multiple_of(100) {
             report.save()?;
@@ -208,7 +245,7 @@ async fn measure(
         .verify_drained()
         .map_err(BenchFailure::verification)?;
     report.phase = "empty_verification";
-    if !matches!(io::reserve(&mut client).await?, io::Reservation::Empty) {
+    if !matches!(io::reserve(client).await?, io::Reservation::Empty) {
         return Err(BenchFailure::verification(
             "Queue not empty after diagnostic ACKs",
         ));
@@ -218,12 +255,23 @@ async fn measure(
     Ok(())
 }
 
+async fn acknowledge(
+    report: &mut Report,
+    client: &mut TestClient,
+    id: u64,
+    token: u64,
+) -> Result<u128, BenchFailure> {
+    let ack = Instant::now();
+    io::acknowledge_observed(client, id, token, |state| report.observe_ack(state)).await?;
+    Ok(ack.elapsed().as_nanos())
+}
+
 async fn until<T>(
     deadline: tokio::time::Instant,
     future: impl std::future::Future<Output = Result<T, BenchFailure>>,
 ) -> Result<T, BenchFailure> {
     tokio::time::timeout_at(deadline, future).await.map_err(|_| BenchFailure {
         kind: FailureKind::Timeout,
-        detail: "Queue diagnostic exceeded 90-second workload deadline; in-flight outcome may be unknown".into(),
+        detail: "Queue diagnostic exceeded 90-second workload deadline; consult current_reserved ACK state and accounting for known outcomes or an unresolved dispatched ACK".into(),
     })?
 }

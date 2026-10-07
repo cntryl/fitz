@@ -1,5 +1,5 @@
 use super::super::durable::{
-    complete, empty_legacy_success, error_code, payload, request, require_ok,
+    complete, empty_legacy_success, error_code, payload, request, require_ok, response_payload,
 };
 use super::super::types::{BenchFailure, FailureKind};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
@@ -127,4 +127,44 @@ pub(super) async fn acknowledge(
 ) -> Result<(), BenchFailure> {
     let result = request(client, &build_queue_complete(ROUTE, id, token), 204).await?;
     empty_legacy_success(&result, "Queue ACK")
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum AckProgress {
+    DispatchStarted,
+    FrameSent,
+    TerminalReceived,
+    SuccessValidated,
+    RejectionValidated,
+}
+
+pub(super) async fn acknowledge_observed(
+    client: &mut TestClient,
+    id: u64,
+    token: u64,
+    mut observe: impl FnMut(AckProgress) -> Result<(), BenchFailure>,
+) -> Result<(), BenchFailure> {
+    let frame = build_queue_complete(ROUTE, id, token);
+    observe(AckProgress::DispatchStarted)?;
+    client
+        .send_frame(&frame)
+        .await
+        .map_err(BenchFailure::transport)?;
+    observe(AckProgress::FrameSent)?;
+    let response = client
+        .recv_frame_bytes_without_timeout()
+        .await
+        .map_err(BenchFailure::transport)?;
+    observe(AckProgress::TerminalReceived)?;
+    if let Err(error) = empty_legacy_success(&response_payload(&response, 204)?, "Queue ACK") {
+        if matches!(
+            error.kind,
+            crate::stress_support::types::FailureKind::DomainError
+        ) {
+            observe(AckProgress::RejectionValidated)?;
+        }
+        return Err(error);
+    }
+    observe(AckProgress::SuccessValidated)
 }

@@ -249,9 +249,14 @@ Its JSON under `target/fitz-stress/queue-drain-latency` records source and dirty
 state, actual accepted/verified work, bounded per-pair timings, Queue histogram
 snapshots, and cleanup outcome. Failure preserves the store and partial report;
 no crash-recovery or ownership-continuity guarantee is inferred.
+The failure report retains the current reserved identity and ACK state:
+dispatch started, frame sent, terminal received, validated success, or validated
+rejection. ACK counts require validated success; timing samples additionally
+require the pause to finish. Cancellation during that pause records
+`acknowledged_pause_pending_sample`. An unresolved dispatched ACK is never retried.
 
 ```bash
-FITZ_QUEUE_DRAIN_PAIRS=1000 cargo bench --quiet --bench queue_drain_latency \
+FITZ_QUEUE_DRAIN_PAIRS=1000 cargo bench --locked --bench queue_drain_latency \
   --features benchkit,stress-soak
 ```
 

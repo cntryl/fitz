@@ -15,6 +15,18 @@ pub(super) struct PairTiming {
 }
 
 #[derive(Serialize)]
+pub(super) struct CurrentReservation {
+    pub sequence: usize,
+    pub message_id: u64,
+    pub token: u64,
+    pub ack_state: Option<super::super::io::AckProgress>,
+    pub ledger_acknowledged: bool,
+    pub pause_completed: bool,
+    pub reserve_ns: u128,
+    pub ack_ns: Option<u128>,
+}
+
+#[derive(Serialize)]
 pub(super) struct Report {
     schema: &'static str,
     source_sha: Option<String>,
@@ -43,11 +55,24 @@ pub(super) struct Report {
     pub process_peak_rss_bytes: Option<u64>,
     pub samples: Vec<PairTiming>,
     pub accepted_messages: Vec<(usize, u64)>,
+    pub current_reserved: Option<CurrentReservation>,
     #[serde(skip)]
     path: PathBuf,
 }
 
 impl Report {
+    pub fn observe_ack(
+        &mut self,
+        state: super::super::io::AckProgress,
+    ) -> Result<(), BenchFailure> {
+        let current = self
+            .current_reserved
+            .as_mut()
+            .ok_or_else(|| BenchFailure::validation("missing current reservation"))?;
+        current.ack_state = Some(state);
+        Ok(())
+    }
+
     pub fn new(pairs: usize) -> Result<Self, BenchFailure> {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -60,7 +85,7 @@ impl Report {
             source_sha: git_output(&["rev-parse", "HEAD"]).map(|sha| sha.trim().to_owned()),
             source_dirty: git_output(&["status", "--porcelain"]).map(|status| !status.is_empty()),
             build_mode: if cfg!(debug_assertions) { "debug_assertions" } else { "optimized" },
-            measurement_scope: "client send, receive and validation; cycle includes ledger checks and requested sleep, excludes periodic artifact writes; no performance baseline or crash-recovery claim",
+            measurement_scope: "client send, receive and validation; cycle includes identity/ledger checks and requested sleep, excludes periodic report writes; counters count validated ACK success, samples additionally require completed pause; no performance baseline or crash-recovery claim",
             workload_deadline_seconds: 90,
             requested_pairs: pairs,
             requested_pause_ms: 5,
@@ -83,6 +108,7 @@ impl Report {
             process_peak_rss_bytes: None,
             samples: Vec::with_capacity(pairs),
             accepted_messages: Vec::with_capacity(pairs),
+            current_reserved: None,
             path: directory.join(format!("{stamp}.json")),
         })
     }
@@ -114,4 +140,86 @@ fn queue_histograms() -> BTreeMap<String, [u64; 9]> {
         .into_iter()
         .filter(|(name, _)| name.starts_with("fitz_queue_"))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::io::AckProgress;
+    use super::{CurrentReservation, Report};
+
+    fn reserved_report() -> Report {
+        let mut report = Report::new(1).unwrap();
+        report.current_reserved = Some(CurrentReservation {
+            sequence: 0,
+            message_id: 42,
+            token: 7,
+            ack_state: None,
+            ledger_acknowledged: false,
+            pause_completed: false,
+            reserve_ns: 1,
+            ack_ns: None,
+        });
+        report
+    }
+
+    fn failure_artifact(report: &mut Report) -> serde_json::Value {
+        report.fail(&crate::stress_support::types::BenchFailure::transport(
+            "injected cancellation",
+        ));
+        report.save().unwrap();
+        serde_json::from_slice(&std::fs::read(&report.path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn should_retain_identity_without_claiming_success_after_ack_dispatch() {
+        // Arrange
+        let mut report = reserved_report();
+        // Act
+        report.observe_ack(AckProgress::DispatchStarted).unwrap();
+        report.observe_ack(AckProgress::FrameSent).unwrap();
+        let artifact = failure_artifact(&mut report);
+        let state = &artifact["current_reserved"];
+        // Assert
+        assert_eq!(state["message_id"], 42);
+        assert_eq!(state["token"], 7);
+        assert_eq!(state["ack_state"], "frame_sent");
+        assert_eq!(state["ledger_acknowledged"], false);
+    }
+
+    #[test]
+    fn should_record_terminal_rejection_without_counting_an_ack() {
+        // Arrange
+        let mut report = reserved_report();
+        // Act
+        report.observe_ack(AckProgress::TerminalReceived).unwrap();
+        report.observe_ack(AckProgress::RejectionValidated).unwrap();
+        let artifact = failure_artifact(&mut report);
+        let state = &artifact["current_reserved"];
+        // Assert
+        assert_eq!(state["ack_state"], "rejection_validated");
+        assert_eq!(state["ledger_acknowledged"], false);
+    }
+
+    #[test]
+    fn should_preserve_known_ack_while_pause_has_no_sample() {
+        // Arrange
+        let mut report = reserved_report();
+        report.observe_ack(AckProgress::SuccessValidated).unwrap();
+        report
+            .current_reserved
+            .as_mut()
+            .unwrap()
+            .ledger_acknowledged = true;
+        report.phase = "acknowledged_pause_pending_sample";
+        report.accounting.acknowledged = 1;
+        // Act
+        let artifact = failure_artifact(&mut report);
+        let state = &artifact["current_reserved"];
+        // Assert
+        assert_eq!(state["ack_state"], "success_validated");
+        assert_eq!(state["ledger_acknowledged"], true);
+        assert_eq!(state["pause_completed"], false);
+        assert_eq!(artifact["accounting"]["acknowledged"], 1);
+        assert_eq!(artifact["samples"], serde_json::json!([]));
+    }
 }
