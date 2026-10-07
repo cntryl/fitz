@@ -63,13 +63,19 @@ a repository release tag.
 
 ## Midge 0.3 cloud storage release gate
 
-Before releasing a broker that embeds `cntryl-midge` 0.3.0, confirm every
+Before upgrading a broker from Midge 0.2.0 to the 0.3 release line, confirm every
 cloud-mode deployment (`FITZ_STORAGE_MODE=cloud`) has chosen logical migration
 or a fresh prefix, and has preserved its original prefix and cache for
 rollback. Rehearse the chosen path on a copy, including restart recovery and
 recovery after local-cache loss. Local-mode deployments only need a verified
 copy of `FITZ_STORAGE_PATH`. Follow the procedure in the
 [migration guide](migration-guide.md).
+
+For the 0.3.1 to 0.3.2 dependency update, preserve a verified pre-upgrade copy
+and qualify reads, writes, shutdown, and recovery separately; include empty-cache
+recovery for cloud deployments. No logical export/import is required solely by
+this update. Verify that lease-loss storage errors remain terminal and do not
+become successful reads or automatic mutation retries.
 
 ## Stream error envelope generation 2 release gate
 

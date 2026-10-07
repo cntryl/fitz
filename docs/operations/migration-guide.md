@@ -2,10 +2,30 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## Midge 0.3.1 to 0.3.2
+
+Fitz now embeds `cntryl-midge` 0.3.2. Relative to 0.3.1, Midge FORMAT 4,
+SST V4, cloud control formats, and Fitz row encodings are unchanged. This
+dependency update requires no logical export/import for an otherwise compatible
+Fitz store. Stop writes, complete broker shutdown, preserve a verified database
+and cloud-prefix copy, and qualify reads, writes, and recovery on a separate
+copy before cutover; cloud qualification should also cover local-cache loss.
+
+Cloud transactions and active iterators now return `MidgeError::Fenced` after
+lease loss, including reads. Fitz propagates storage failures; an operator must
+restore healthy writer authority rather than treat those failures as successful
+reads or safe mutation retries. The new optional Midge startup timeout is not
+enabled by this dependency update.
+
+Rollback uses the preserved pre-upgrade copy with the previous broker image.
+Writes after that copy require separate reconciliation, and rollback restores
+the Midge defects fixed in 0.3.2. Salvage-mutated stores are excluded from this
+rollback procedure. See the [Midge migration guide](https://github.com/cntryl/midge/blob/v0.3.2/docs/operations/migration-guide.md#031-to-032).
+
 ## Breaking: Midge 0.3 cloud storage metadata
 
 **A cloud-mode broker (`FITZ_STORAGE_MODE=cloud`) cannot open a storage prefix
-written by an earlier broker.** This release embeds `cntryl-midge` 0.3.0. It
+written by a broker using Midge 0.2.0.** The Midge 0.3 release line
 commits provider-backed control metadata as immutable generations under a
 version 2 lease descriptor and DDL registry, and it rejects the legacy lease and
 mutable metadata that earlier Fitz releases (Midge 0.2.0) wrote. The broker
@@ -25,7 +45,7 @@ fails to start against an old prefix; nothing is migrated in place.
    - **Logical migration.** While Midge 0.2.0 (the old broker's engine) can
      still read the prefix, export every route-family column family's
      key/value contents through Midge's public API. Then create a new empty
-     prefix and a fresh local cache with the new broker's Midge 0.3.0 and
+     prefix and a fresh local cache with the new broker's Midge 0.3.2 and
      import. Fitz does not ship an export/import tool. Public scans do not
      return expiration timestamps, and Stream rows carry retention TTLs, so an
      importer must recompute each Stream row's remaining TTL from its creation
