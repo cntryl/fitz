@@ -11,6 +11,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, timeout};
 
+#[cfg(test)]
+mod shutdown_tests;
+
 use super::{
     TestClient, TestWebSocketClient, TEST_AUDIENCE, TEST_ISSUER, TEST_RUNTIME_AUTH_SECRET,
 };
@@ -721,6 +724,7 @@ impl TestServer {
                     "test server shutdown".to_string(),
                 ))
                 .await;
+            ingress.drain_session_cleanups().await;
             drop(ingress);
         }
 
