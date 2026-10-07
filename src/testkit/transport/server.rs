@@ -422,6 +422,7 @@ impl TestServer {
                 queue_write_policy,
                 queue_recovery_write_policy: boot_config.request_sync_write_policy(),
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
+                queue_fast_local_wal: crate::boot::domains::queue_fast_local_wal(&boot_config),
                 request_sync_write_policy: boot_config.request_sync_write_policy(),
                 request_buffered_write_policy: boot_config.request_buffered_write_policy(),
                 rpc_request_timeout,

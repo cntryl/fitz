@@ -10,3 +10,5 @@ mod live_counts;
 mod recovery_and_storage;
 mod startup_reconciliation;
 mod storage_admission;
+
+mod fast_flush;

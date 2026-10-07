@@ -364,7 +364,12 @@ Queue guarantees:
 - exclusive live reservation per active inflight token
 - retry and redelivery after lease expiry
 - optional dead-letter transition when retry policy is exhausted
-- `FITZ_QUEUE_WRITE_POLICY=fast` may lose accepted recent queue mutations before the `FITZ_QUEUE_LOSS_WINDOW_MS` background flush window closes
+- `FITZ_QUEUE_WRITE_POLICY=fast` may lose accepted recent queue mutations before the `FITZ_QUEUE_LOSS_WINDOW_MS` background persistence window closes
+- local-disk fast queues append mutations to an unsynced WAL and synchronize it
+  on the configured background timer; an individual ENQUEUE or ACK response does
+  not wait for that sync. SST publication follows storage maintenance pressure,
+  rather than being forced by each timer tick. Cloud-backed and memory fast
+  queues retain their existing flush path; memory storage remains non-durable.
 - fast-policy startup durably discards incomplete split message remnants from that
   loss window and rebuilds the affected queue indexes; buffered and strict
   policies fail closed on the same incomplete authoritative state

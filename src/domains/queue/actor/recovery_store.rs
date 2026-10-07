@@ -14,6 +14,7 @@ use crate::domains::WritePolicy;
 #[derive(Clone)]
 pub struct QueueStore {
     engine: crate::storage::FitzStorageEngine,
+    local_fast_wal: bool,
 }
 
 pub(crate) struct QueueTransaction {
@@ -21,6 +22,7 @@ pub(crate) struct QueueTransaction {
     engine: crate::storage::FitzStorageEngine,
     family: u32,
     read_only: bool,
+    local_fast_wal: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -66,7 +68,13 @@ impl QueueStore {
     pub(crate) fn new(engine: Arc<cntryl_midge::Engine>) -> Self {
         Self {
             engine: crate::storage::FitzStorageEngine::new(engine),
+            local_fast_wal: false,
         }
+    }
+
+    pub(crate) fn with_local_fast_wal(mut self, enabled: bool) -> Self {
+        self.local_fast_wal = enabled;
+        self
     }
 
     pub(crate) fn begin(
@@ -86,6 +94,7 @@ impl QueueStore {
                 engine: self.engine.clone(),
                 family,
                 read_only,
+                local_fast_wal: self.local_fast_wal,
             })
             .map_err(QueueStoreError::from_midge)
     }
@@ -112,10 +121,17 @@ impl QueueStore {
         let Some(family) = families.iter().find(|family| family.id() == family_id) else {
             return Ok(false);
         };
-        self.engine
-            .flush_cf(family)
-            .map(|()| true)
-            .map_err(QueueStoreError::from_midge)
+        if self.local_fast_wal {
+            // Fast local writes append to an unsynced WAL. An empty read-write
+            // Sync commit establishes the barrier without materializing SSTs.
+            self.engine
+                .begin_tx(family_id, cntryl_midge::TransactionMode::ReadWrite)
+                .and_then(|transaction| transaction.commit(cntryl_midge::WriteOptions::sync()))
+        } else {
+            self.engine.flush_cf(family)
+        }
+        .map(|()| true)
+        .map_err(QueueStoreError::from_midge)
     }
 
     #[cfg(test)]
@@ -142,7 +158,10 @@ impl From<Arc<cntryl_midge::Engine>> for QueueStore {
 
 impl From<crate::storage::FitzStorageEngine> for QueueStore {
     fn from(engine: crate::storage::FitzStorageEngine) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            local_fast_wal: false,
+        }
     }
 }
 
@@ -203,6 +222,13 @@ impl QueueTransaction {
         if let Some(error) = NEXT_COMMIT_ERROR.with(|cell| cell.borrow_mut().take()) {
             return Err(QueueStoreError::from_midge(error));
         }
+        // Local Fast keeps its asynchronous acknowledgement/window contract,
+        // but records mutations in the WAL for the periodic sync barrier.
+        let policy = if self.local_fast_wal && policy == WritePolicy::BestEffort {
+            WritePolicy::Buffered
+        } else {
+            policy
+        };
         super::ack_timing::measure(ack, super::ack_timing::Phase::Commit, || {
             self.inner
                 .commit(policy.into())

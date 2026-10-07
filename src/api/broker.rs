@@ -203,6 +203,7 @@ fn register_domains_stage(
         queue_write_policy: config.queue_write_policy(),
         queue_recovery_write_policy: config.request_sync_write_policy(),
         queue_fast_flush_interval: config.queue_fast_flush_interval(),
+        queue_fast_local_wal: crate::boot::domains::queue_fast_local_wal(config),
         request_sync_write_policy: config.request_sync_write_policy(),
         request_buffered_write_policy: config.request_buffered_write_policy(),
         rpc_request_timeout: None,
