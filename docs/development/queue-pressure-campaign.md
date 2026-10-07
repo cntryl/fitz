@@ -5,6 +5,13 @@ through independent scheduled arrivals, increasing producer rates, and one fixed
 consumer. It supplements the existing closed-loop lifecycle sweeps. It does not
 change Queue behavior or qualify restart durability.
 
+Stage reports include Midge snapshots before load, at drain start, and after the
+consumer settles, plus benchmark-only cumulative ACK admission/commit timings.
+The drain-start query consumes the existing drain deadline; no target is extended.
+See the [diagnostic interpretation rules](benchmarks.md) for query errors, timing
+scope, and counter deltas. Missing snapshots remain unknown pressure, and these
+observations do not establish a cause from stall transition gauges alone.
+
 ## Workload
 
 One local-disk broker and store remain alive for the whole campaign. Every stage

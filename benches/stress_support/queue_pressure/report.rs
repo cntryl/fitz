@@ -25,6 +25,9 @@ pub(super) struct Stage {
     pub accounting: Counts,
     pub process_rss_bytes: Option<u64>,
     pub process_peak_rss_bytes: Option<u64>,
+    pub storage_before: Option<super::attribution::Snapshot>,
+    pub storage_drain_start: Option<super::attribution::Snapshot>,
+    pub storage_after: Option<super::attribution::Snapshot>,
 }
 
 #[derive(Serialize)]

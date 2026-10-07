@@ -123,6 +123,10 @@ impl BrokerFixture {
         self.server.tcp_addr
     }
 
+    pub(crate) fn storage_metrics(&self) -> cntryl_midge::EngineMetrics {
+        self.server.storage_metrics()
+    }
+
     pub(crate) fn into_parts(self) -> (TestServer, StorageDirectory) {
         let Self {
             server,
