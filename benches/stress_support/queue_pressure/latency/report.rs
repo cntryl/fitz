@@ -151,7 +151,6 @@ fn queue_histograms() -> BTreeMap<String, [u64; 9]> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::io::AckProgress;
     use super::{CurrentReservation, Report};
 
     fn reserved_report() -> Report {
@@ -183,8 +182,12 @@ mod tests {
         // Arrange
         let mut report = reserved_report();
         // Act
-        report.observe_ack(AckProgress::DispatchStarted).unwrap();
-        report.observe_ack(AckProgress::FrameSent).unwrap();
+        report
+            .observe_ack(super::super::super::io::AckProgress::DispatchStarted)
+            .unwrap();
+        report
+            .observe_ack(super::super::super::io::AckProgress::FrameSent)
+            .unwrap();
         let artifact = failure_artifact(&mut report);
         let state = &artifact["current_reserved"];
         // Assert
@@ -203,7 +206,9 @@ mod tests {
             "storage commit outcome unknown",
         );
         // Act
-        report.observe_ack(AckProgress::FrameReceived).unwrap();
+        report
+            .observe_ack(super::super::super::io::AckProgress::FrameReceived)
+            .unwrap();
         let result =
             super::super::super::io::validate_ack_payload(&body, |state| report.observe_ack(state));
         let artifact = failure_artifact(&mut report);
@@ -224,7 +229,9 @@ mod tests {
         encoder.put_string("storage commit outcome unknown");
         let body = encoder.finish();
         // Act
-        report.observe_ack(AckProgress::FrameReceived).unwrap();
+        report
+            .observe_ack(super::super::super::io::AckProgress::FrameReceived)
+            .unwrap();
         let result =
             super::super::super::io::validate_ack_payload(&body, |state| report.observe_ack(state));
         let artifact = failure_artifact(&mut report);
@@ -265,7 +272,9 @@ mod tests {
     fn should_preserve_known_ack_while_pause_has_no_sample() {
         // Arrange
         let mut report = reserved_report();
-        report.observe_ack(AckProgress::SuccessValidated).unwrap();
+        report
+            .observe_ack(super::super::super::io::AckProgress::SuccessValidated)
+            .unwrap();
         report
             .current_reserved
             .as_mut()
