@@ -238,6 +238,23 @@ workload state.
 
 Run a targeted benchmark:
 
+The opt-in `queue_drain_latency` target seeds a fresh Fast local-disk Queue,
+then records separate validated client RESERVE and ACK round trips and the
+actual duration of each requested 5ms pause. `FITZ_QUEUE_DRAIN_PAIRS` selects
+1–1,000 messages (default 1,000); startup, seeding, draining, and empty-state
+verification share one 90-second deadline. Shutdown has a separate bounded
+cleanup window. This is a timing diagnostic on the current host, not a capacity
+or throughput baseline, and it does not reproduce a 100,000-message backlog.
+Its JSON under `target/fitz-stress/queue-drain-latency` records source and dirty
+state, actual accepted/verified work, bounded per-pair timings, Queue histogram
+snapshots, and cleanup outcome. Failure preserves the store and partial report;
+no crash-recovery or ownership-continuity guarantee is inferred.
+
+```bash
+FITZ_QUEUE_DRAIN_PAIRS=1000 cargo bench --quiet --bench queue_drain_latency \
+  --features benchkit,stress-soak
+```
+
 ```bash
 export FITZ_LOG_LEVEL=off
 export OTEL_ENABLED=false

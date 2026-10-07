@@ -396,3 +396,9 @@ name = "lease_pressure"
 path = "benches/lease_pressure.rs"
 harness = false
 required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "queue_drain_latency"
+path = "benches/queue_drain_latency.rs"
+harness = false
+required-features = ["benchkit", "stress-soak"]

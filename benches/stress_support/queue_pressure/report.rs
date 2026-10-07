@@ -82,7 +82,7 @@ impl Report {
     }
 }
 
-fn git_output(arguments: &[&str]) -> Option<String> {
+pub(super) fn git_output(arguments: &[&str]) -> Option<String> {
     let output = std::process::Command::new("git")
         .args(arguments)
         .output()
