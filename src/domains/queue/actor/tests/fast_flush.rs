@@ -1,4 +1,6 @@
 use super::*;
+
+mod cross_domain;
 use crate::domains::queue::actor::recovery_store::QueueStore;
 
 fn local_engine(path: &std::path::Path) -> Arc<cntryl_midge::Engine> {

@@ -40,7 +40,7 @@ base64 = "0.23.1"
 brotli = "9"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-cntryl-midge = "0.3.2"
+cntryl-midge = { version = "0.3.2", git = "https://github.com/cntryl/midge", rev = "b8a2b680cfa2f100ee04b2ab50e4b4c2218536fb" }
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"
 flate2 = "1"

@@ -101,8 +101,10 @@ jobs:
             runner: ubuntu-24.04-arm
             cache_scope: linux-arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      RUST_LOG: "off"
       FITZ_TEST_IMAGE: fitz-ci:${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout repository
@@ -148,6 +150,68 @@ jobs:
           for path in /mcp /.well-known/oauth-protected-resource/mcp; do
             test "$(curl --silent --show-error --max-time 2 --output /dev/null --write-out '%{http_code}' "${fitz_test_endpoint}${path}")" = 404
           done
+
+      - name: Install external driver toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Cache external driver dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci"
+
+      - name: Qualify quarter-core and 512MiB survival
+        timeout-minutes: 25
+        env:
+          FITZ_EXTERNAL_CONTAINER: fitz-resource-ci
+          FITZ_RESOURCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          FITZ_RESOURCE_REPORT_PATH: target/fitz-stress/constrained-runtime/report.json
+        run: |
+          mkdir -p target/fitz-stress/constrained-runtime
+          docker run --detach --name fitz-resource-ci \
+            --cpus 0.25 --memory 512m --memory-swap 512m \
+            --publish 127.0.0.1::4090 --publish 127.0.0.1::4091 \
+            --env FITZ_AUTH_REQUIRED=false --env FITZ_ADMIN_AUTH_MODE=open \
+            --env FITZ_STORAGE_MODE=local --env FITZ_STORAGE_PATH=/data \
+            --env FITZ_LOG_LEVEL=warn --env FITZ_OTEL_ENABLED=false \
+            "${FITZ_TEST_IMAGE}"
+          export FITZ_EXTERNAL_HTTP_ENDPOINT="http://$(docker port fitz-resource-ci 4090/tcp)"
+          export FITZ_EXTERNAL_TCP_ADDRESS="$(docker port fitz-resource-ci 4091/tcp)"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --max-time 2 "$FITZ_EXTERNAL_HTTP_ENDPOINT/healthz" | jq -e '.status == "ready"'; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent --max-time 2 "$FITZ_EXTERNAL_HTTP_ENDPOINT/healthz" | jq -e '.status == "ready"'
+          cargo test --locked --test constrained_runtime --no-run
+          docker stats --format '{{json .}}' fitz-resource-ci > target/fitz-stress/constrained-runtime/stats.jsonl &
+          fitz_stats_pid=$!
+          trap 'kill "$fitz_stats_pid" || true' EXIT
+          cargo test --locked --test constrained_runtime \
+            should_remain_usable_after_bounded_storage_pressure -- --ignored --nocapture \
+            2>&1 | tee target/fitz-stress/constrained-runtime/campaign.log
+
+      - name: Retain constrained broker evidence
+        if: always()
+        run: |
+          mkdir -p target/fitz-stress/constrained-runtime
+          docker inspect fitz-resource-ci > target/fitz-stress/constrained-runtime/container.json || true
+          docker logs fitz-resource-ci > target/fitz-stress/constrained-runtime/broker.log 2>&1 || true
+          if [ "${{ job.status }}" != "success" ]; then
+            docker cp fitz-resource-ci:/data target/fitz-stress/constrained-runtime/failed-store || true
+          fi
+
+      - name: Upload constrained runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: constrained-runtime-${{ matrix.cache_scope }}
+          path: target/fitz-stress/constrained-runtime
+          if-no-files-found: warn
+
+      - name: Remove constrained test container
+        if: always()
+        run: docker rm --force --volumes fitz-resource-ci || true
 
       - name: Show container logs on failure
         if: failure()
