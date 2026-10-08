@@ -62,7 +62,8 @@ jobs:
           groups = [('tier4_stream_gate', None),
                     ('tier4_stream_shapes', 'should_replay_'),
                     ('tier4_stream_compacted', None),
-                    ('tier4_stream_shapes', 'should_characterize_disk_sync_write'),
+                    *[('tier4_stream_shapes', 'should_characterize_disk_sync_write_' + size)
+                      for size in ('64b', '1k', '15k', '16k', '17k', 'max_event')],
                     ('tier4_stream_shapes', 'should_characterize_hot_resource_append_after_100000_events')]
           binaries = {}
           def execute(phase, target, pattern, label, command):
@@ -127,6 +128,25 @@ jobs:
                       run = json.loads(next((output / label / 'stress').glob('*/latest.json')).read_text())
                       for row in run['summaries']:
                           summaries[phase].setdefault(row['name'], []).append(row)
+          # Pair each disk size directly instead of separating equivalent rows
+          # with five other disk workloads. Keep an unchanged-binary control.
+          control_rows = {'left': [], 'right': []}
+          for iteration in range(1, 4):
+              for side in ('left', 'right'):
+                  label = f'control-max-{iteration}-{side}'
+                  command = [str(binaries[('before', 'tier4_stream_shapes')]), '--bench',
+                             '--output-dir', str(output / label / 'stress'), '--workload',
+                             'should_characterize_disk_sync_write_max_event']
+                  execute('before', 'tier4_stream_shapes', None, label, command)
+                  run = json.loads(next((output / label / 'stress').glob('*/latest.json')).read_text())
+                  control_rows[side].extend(run['summaries'])
+          control_value = lambda side, name: statistics.median(
+              row['stats']['mean'] for row in control_rows[side] if row['name'] == name)
+          control = {'binary_sha256': hashlib.sha256(binaries[('before', 'tier4_stream_shapes')].read_bytes()).hexdigest(),
+                     'throughput_ratio': control_value('right', 'disk_sync_write_max_event') / control_value('left', 'disk_sync_write_max_event'),
+                     'p95_ratio': control_value('right', 'disk_sync_write_max_event_latency') / control_value('left', 'disk_sync_write_max_event_latency')}
+          control['stable_within_five_percent'] = all(.95 <= control[key] <= 1.05 for key in ('throughput_ratio', 'p95_ratio'))
+          (output / 'control.json').write_text(json.dumps(control, indent=2))
           records = []
           for name, before in sorted(summaries['before'].items()):
               if name.endswith('_latency'):
@@ -159,8 +179,10 @@ jobs:
               for row in records:
                   file.write(f"| {row['name']} | {row['throughput_ratio']:.3f} | {row['p95_ratio']:.3f} |\n")
               file.write('\nBudget checks: ' + json.dumps(checks) + '\n')
+              file.write('\nUnchanged-binary control: ' + json.dumps(control) + '\n')
           assert len(records) == 32 and len(checks) == 8
           assert all(checks.values()), checks
+          assert control['stable_within_five_percent'], control
           PY
       - name: Upload immutable comparisons and raw evidence
         if: always()
@@ -174,5 +196,6 @@ jobs:
             ${{ env.STREAM_OUTPUT }}/**/stress/**
             ${{ env.STREAM_OUTPUT }}/comparison.csv
             ${{ env.STREAM_OUTPUT }}/budgets.json
+            ${{ env.STREAM_OUTPUT }}/control.json
           if-no-files-found: error
           retention-days: 14

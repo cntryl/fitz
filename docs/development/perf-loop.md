@@ -32,6 +32,9 @@ regression-gate throughput must remain at least 90% of baseline with p95 at most
 110%; the maximum-valid-event write row must retain 95% throughput with p95 at
 most 105%; and hot-resource append with 100,000 prior events must remain within
 10% of an empty resource.
+Pair individual disk-size rows directly across source versions. The Stream
+qualification workflow also requires an unchanged-binary maximum-event control
+to stay within 5% for throughput and p95; retain failed comparisons.
 
 ## Selection Rules
 
