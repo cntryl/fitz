@@ -3,12 +3,13 @@
 use crate::tier4_stream_support::measure_operations;
 use bytes::Bytes;
 use cntryl_stress::{stress, StressContext};
-use fitz::benchkit::create_write_heavy_bench_store;
+use fitz::benchkit::{create_local_bench_store, create_write_heavy_bench_store};
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::StreamReadItem;
 use fitz::testkit::domain_internals::stream::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
 };
+use std::sync::Arc;
 use std::time::Instant;
 
 const HISTORY: usize = 64;
@@ -42,8 +43,8 @@ fn measure_replay(
     limit: u64,
     payload_size: usize,
     measurement: &'static str,
+    recovered: bool,
 ) {
-    let store = StreamStore::new(create_write_heavy_bench_store());
     let events = (0..HISTORY)
         .map(|offset| {
             let mut body = vec![0x45; payload_size];
@@ -57,24 +58,18 @@ fn measure_replay(
             }
         })
         .collect::<Vec<_>>();
-    store
-        .commit_records(CommitRecordsParams {
-            family: 1,
-            realm: REALM,
-            area: AREA,
-            resource: RESOURCE,
-            expected_resource_next_offset: 0,
-            events: &events,
-            ingest_metadata: None,
-            mode: StreamWriteMode::Sync,
-        })
-        .expect("commit full replay fragment");
-    store.set_watermark(1, REALM, AREA, 63).unwrap();
-    store.set_realm_watermark(1, REALM, 63).unwrap();
+    let (store, _history_dir) = replay_store(&events, recovered);
     let route = format!("stream://{REALM}/{AREA}/{RESOURCE}");
     ctx.parameter("scenario", "bounded_replay");
     ctx.parameter("measurement_scope", "direct_store");
-    ctx.parameter("storage_profile", "memory");
+    ctx.parameter(
+        "storage_profile",
+        if recovered {
+            "recovered_local_disk"
+        } else {
+            "memory"
+        },
+    );
     ctx.parameter("read_scope", scope.label());
     ctx.parameter("history_depth", HISTORY);
     ctx.parameter("from_offset", from);
@@ -83,6 +78,8 @@ fn measure_replay(
     ctx.parameter("discriminator_present", true);
     ctx.parameter("filter_selectivity", "unfiltered");
     ctx.parameter("fragment_shape", "full_64_record_fragment");
+    ctx.parameter("logical_unit", "read_request");
+    ctx.parameter("read_requests_per_logical_operation", 1);
     measure_operations(ctx, measurement, 1, |latencies| {
         let started = Instant::now();
         let (items, cursor) = match scope {
@@ -124,11 +121,60 @@ fn measure_replay(
     });
 }
 
+fn replay_store(
+    events: &[EventPayload],
+    recovered: bool,
+) -> (StreamStore, Option<tempfile::TempDir>) {
+    let (engine, history_dir) = if recovered {
+        let (engine, directory) = create_local_bench_store();
+        (engine, Some(directory))
+    } else {
+        (create_write_heavy_bench_store(), None)
+    };
+    let mut store = StreamStore::new(engine);
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: REALM,
+            area: AREA,
+            resource: RESOURCE,
+            expected_resource_next_offset: 0,
+            events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Sync,
+        })
+        .expect("commit full replay fragment");
+    store.set_watermark(1, REALM, AREA, 63).unwrap();
+    store.set_realm_watermark(1, REALM, 63).unwrap();
+    if let Some(directory) = &history_dir {
+        drop(store);
+        let engine = cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::local(directory.path())
+                .build()
+                .expect("recovery options"),
+        )
+        .expect("recover committed replay history");
+        store = StreamStore::new(Arc::new(engine));
+    }
+    (store, history_dir)
+}
+
 macro_rules! replay_row {
     ($name:ident, $scope:ident, $from:expr, $limit:expr, $size:expr, $measurement:literal) => {
+        replay_row!($name, $scope, $from, $limit, $size, $measurement, false);
+    };
+    ($name:ident, $scope:ident, $from:expr, $limit:expr, $size:expr, $measurement:literal, $recovered:expr) => {
         #[stress(tier = 4)]
         fn $name(ctx: &mut StressContext) {
-            measure_replay(ctx, Scope::$scope, $from, $limit, $size, $measurement);
+            measure_replay(
+                ctx,
+                Scope::$scope,
+                $from,
+                $limit,
+                $size,
+                $measurement,
+                $recovered,
+            );
         }
     };
 }
@@ -188,4 +234,41 @@ replay_row!(
     48,
     64,
     "global_projection_unfiltered"
+);
+
+replay_row!(
+    should_replay_recovered_blob_resource_checkpoint,
+    Resource,
+    31,
+    1,
+    17 * 1024,
+    "recovered_blob_resource_checkpoint_one",
+    true
+);
+replay_row!(
+    should_replay_recovered_blob_area_checkpoint,
+    Area,
+    31,
+    1,
+    17 * 1024,
+    "recovered_blob_area_checkpoint_one",
+    true
+);
+replay_row!(
+    should_replay_recovered_blob_realm_checkpoint,
+    Realm,
+    31,
+    1,
+    17 * 1024,
+    "recovered_blob_realm_checkpoint_one",
+    true
+);
+replay_row!(
+    should_replay_recovered_blob_global_checkpoint,
+    Global,
+    31,
+    1,
+    17 * 1024,
+    "recovered_blob_global_checkpoint_one",
+    true
 );
