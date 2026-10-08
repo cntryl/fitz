@@ -112,9 +112,9 @@ fn should_scan_1000_committed_keys(ctx: &mut StressContext) {
     let tx_id = begin_transaction(&mut actor, 1, "scan", TxMode::ReadWrite)
         .expect("scan fixture transaction");
     let keys = (0..1000)
-        .map(|index| Bytes::from(format!("key-{index:04}-{}", "x".repeat(55))))
+        .map(|index| Bytes::from(format!("key-{index:04}-{}", "x".repeat(23))))
         .collect::<Vec<_>>();
-    let value = Bytes::from_static(b"scan-value-16byt");
+    let value = Bytes::from_static(b"scan-value-16byt!");
     for key in &keys {
         assert!(matches!(
             actor.handle(KvMessage::Put {
