@@ -3,7 +3,9 @@ use super::{
     config::Config,
     io::{self, Delivery},
     ledger::Ledger,
+    pacing::Pacer,
     report::{Report, Stage},
+    timing::ConsumerTiming,
 };
 use cntryl_stress::{ProgressHandle, StressContext};
 use fitz::testkit::TestClient;
@@ -21,6 +23,7 @@ struct State {
     ledger: Ledger,
     last_ack: Option<Instant>,
     reserve_rejections: u64,
+    consumer_timing: ConsumerTiming,
 }
 
 async fn connect(address: SocketAddr) -> Result<TestClient, BenchFailure> {
@@ -38,18 +41,40 @@ async fn consumer(
     stop: Arc<AtomicBool>,
     delay: Duration,
     progress: ProgressHandle,
+    cancel: Arc<tokio::sync::Notify>,
 ) -> Result<TestClient, BenchFailure> {
-    while !stop.load(Ordering::Relaxed) {
-        let pause = match io::bounded(io::consume(&mut client)).await? {
+    let mut pacer = Pacer::new();
+    let result = async {
+      while !stop.load(Ordering::Relaxed) {
+        let cycle = Instant::now();
+        let delivery = io::bounded(io::consume_observed(&mut client, |operation, elapsed| {
+            let mut shared = shared.lock().map_err(BenchFailure::transport)?;
+            match operation {
+                io::ConsumerOperation::Reserve => shared.consumer_timing.reserve.record(elapsed),
+                io::ConsumerOperation::Ack => shared.consumer_timing.ack.record(elapsed),
+            }
+            Ok(())
+        })).await?;
+        let acknowledged_at = Instant::now();
+        let pause = match delivery {
             Delivery::Acknowledged { sequence, id } => {
-                let mut shared = shared.lock().map_err(BenchFailure::transport)?;
-                shared
-                    .ledger
-                    .acknowledged(sequence, id)
-                    .map_err(BenchFailure::verification)?;
-                shared.last_ack = Some(Instant::now());
+                {
+                    let mut shared = shared.lock().map_err(BenchFailure::transport)?;
+                    shared.ledger.acknowledged(sequence, id)
+                        .map_err(BenchFailure::verification)?;
+                    shared.last_ack = Some(acknowledged_at);
+                }
                 progress.advance();
-                delay
+                let permitted = tokio::select! {
+                    result = pacer.wait_after(acknowledged_at, delay) => result.map_err(BenchFailure::transport)?,
+                    () = cancel.notified() => break,
+                };
+                let pause = permitted.duration_since(acknowledged_at);
+                let mut shared = shared.lock().map_err(BenchFailure::transport)?;
+                shared.consumer_timing.pause.record(pause);
+                shared.consumer_timing.overshoot.record(pause.saturating_sub(delay));
+                shared.consumer_timing.cycle.record(cycle.elapsed());
+                continue;
             }
             Delivery::Empty => Duration::from_millis(1),
             Delivery::Rejected => {
@@ -60,9 +85,15 @@ async fn consumer(
                 Duration::from_millis(5)
             }
         };
-        tokio::time::sleep(pause).await;
-    }
-    Ok(client)
+        tokio::select! {
+            () = tokio::time::sleep(pause) => {},
+            () = cancel.notified() => break,
+        }
+      }
+      Ok(client)
+    }.await;
+    let cleanup = pacer.shutdown().await.map_err(BenchFailure::transport);
+    result.and_then(|client| cleanup.map(|()| client))
 }
 
 async fn produce(
@@ -100,6 +131,7 @@ fn snapshot(stage: &mut Stage, shared: &Mutex<State>) -> Result<(), BenchFailure
         let oracle = shared.lock().map_err(BenchFailure::transport)?;
         stage.accounting = oracle.ledger.counts;
         stage.reserve_rejections = oracle.reserve_rejections;
+        stage.consumer_timing = oracle.consumer_timing.clone();
     }
     stage.p95_enqueue_upper_ns = stage.enqueue_latencies.percentile_upper_ns(95);
     (stage.process_rss_bytes, stage.process_peak_rss_bytes) =
@@ -212,6 +244,7 @@ async fn active(
         }
     }
     stage.producer_settle_elapsed_ns = settling.elapsed().as_nanos();
+    stage.configured_window_completed = result.is_ok() && stage.termination == "configured_window";
     result
 }
 
@@ -224,6 +257,7 @@ fn finish_active(
     {
         let oracle = shared.lock().map_err(BenchFailure::transport)?;
         stage.accepted_at_stop = oracle.ledger.counts.accepted;
+        stage.consumer_timing_at_stop = Some(oracle.consumer_timing.clone());
         stage.acknowledged_at_stop = oracle.ledger.counts.acknowledged;
         stage.backlog_at_stop = oracle.ledger.counts.accepted_unacknowledged;
         stage.pending_enqueue_outcomes_at_stop = oracle.ledger.counts.sent
@@ -263,7 +297,15 @@ async fn drain(
     metrics: cntryl_midge::EngineMetrics,
 ) -> Result<(), BenchFailure> {
     let begin = Instant::now();
+    let deadline = begin + Duration::from_secs(seconds);
     stage.storage_drain_start = Some(super::attribution::Snapshot::capture(metrics).await);
+    stage.consumer_timing_drain_start = Some(
+        shared
+            .lock()
+            .map_err(BenchFailure::transport)?
+            .consumer_timing
+            .clone(),
+    );
     let mut saved = Instant::now();
     loop {
         let (drained, last_ack) = {
@@ -272,6 +314,7 @@ async fn drain(
         };
         stage.drain_elapsed_ns = begin.elapsed().as_nanos();
         if drained {
+            verify_drain_deadline(last_ack, deadline)?;
             stage.drained = true;
             return Ok(());
         }
@@ -283,7 +326,7 @@ async fn drain(
                 "no useful Queue progress during drain",
             ));
         }
-        if begin.elapsed() >= Duration::from_secs(seconds) {
+        if Instant::now() >= deadline {
             return Err(BenchFailure::verification(
                 "accepted Queue backlog did not drain before deadline",
             ));
@@ -312,6 +355,7 @@ pub(super) async fn run_stage(
     };
     let shared = Arc::new(Mutex::new(State::default()));
     let stop = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(tokio::sync::Notify::new());
     let mut clients = Vec::new();
     for _ in 0..config.producer_connections {
         clients.push(connect(address).await?);
@@ -325,6 +369,7 @@ pub(super) async fn run_stage(
         Arc::clone(&stop),
         Duration::from_millis(config.consumer_delay_ms),
         ctx.progress_handle(),
+        Arc::clone(&cancel),
     ));
     let mut result = active(
         report,
@@ -347,6 +392,11 @@ pub(super) async fn run_stage(
         .await;
     }
     stop.store(true, Ordering::Relaxed);
+    // Successful drain waits for the final minimum pause before empty RESERVE.
+    // A failed campaign issues no more RESERVEs and may cancel its pending pause.
+    if result.is_err() {
+        cancel.notify_one();
+    }
     if let Err(error) = &result {
         report.status = "failed";
         report.failure = Some(error.to_string());
@@ -360,14 +410,7 @@ pub(super) async fn run_stage(
     match consumer.await.map_err(BenchFailure::transport) {
         Ok(Ok(mut client)) => {
             if result.is_ok() {
-                result = match io::bounded(io::consume(&mut client)).await {
-                    Ok(Delivery::Empty) => {
-                        stage.empty_verified = true;
-                        Ok(())
-                    }
-                    Ok(_) => Err(BenchFailure::verification("Queue not empty after drain")),
-                    Err(error) => Err(error),
-                };
+                result = verify_empty(&mut client, &mut stage).await;
             }
             clients.push(client);
         }
@@ -377,6 +420,7 @@ pub(super) async fn run_stage(
     }
     stage.storage_after =
         Some(super::attribution::Snapshot::capture(fixture.storage_metrics()).await);
+    record_storage_deltas(&mut stage);
     snapshot(&mut stage, &shared)?;
     if result.is_err() {
         stage.termination = "failed".into();
@@ -399,6 +443,16 @@ pub(super) async fn run_stage(
     result
 }
 
+async fn verify_empty(client: &mut TestClient, stage: &mut Stage) -> Result<(), BenchFailure> {
+    match io::bounded(io::consume(client)).await? {
+        Delivery::Empty => {
+            stage.empty_verified = true;
+            Ok(())
+        }
+        _ => Err(BenchFailure::verification("Queue not empty after drain")),
+    }
+}
+
 fn append_failure(result: &mut Result<(), BenchFailure>, error: BenchFailure, context: &str) {
     match result {
         Ok(()) => *result = Err(error),
@@ -410,6 +464,7 @@ fn append_failure(result: &mut Result<(), BenchFailure>, error: BenchFailure, co
 
 pub(super) async fn recovery(address: SocketAddr) -> Result<(), BenchFailure> {
     let mut client = connect(address).await?;
+    let mut pacer = Pacer::new();
     let result = async {
         let id = io::bounded(io::enqueue(&mut client, 0))
             .await?
@@ -425,6 +480,10 @@ pub(super) async fn recovery(address: SocketAddr) -> Result<(), BenchFailure> {
                 ))
             }
         }
+        pacer
+            .wait_after(Instant::now(), Duration::from_millis(5))
+            .await
+            .map_err(BenchFailure::transport)?;
         if !matches!(
             io::bounded(io::consume(&mut client)).await?,
             Delivery::Empty
@@ -435,5 +494,56 @@ pub(super) async fn recovery(address: SocketAddr) -> Result<(), BenchFailure> {
     }
     .await;
     let closed = io::bounded(async { client.close().await.map_err(BenchFailure::transport) }).await;
-    result.and(closed)
+    let worker = pacer.shutdown().await.map_err(BenchFailure::transport);
+    result.and(closed).and(worker)
+}
+
+fn verify_drain_deadline(last_ack: Option<Instant>, deadline: Instant) -> Result<(), BenchFailure> {
+    if last_ack.is_some_and(|ack| ack > deadline) {
+        return Err(BenchFailure::verification(
+            "accepted Queue backlog did not drain before deadline",
+        ));
+    }
+    Ok(())
+}
+
+fn record_storage_deltas(stage: &mut Stage) {
+    if let Some((before, drain_start)) = stage
+        .storage_before
+        .as_ref()
+        .zip(stage.storage_drain_start.as_ref())
+    {
+        stage.storage_load_delta = Some(super::attribution::Delta::between(before, drain_start));
+    }
+    if let Some((drain_start, after)) = stage
+        .storage_drain_start
+        .as_ref()
+        .zip(stage.storage_after.as_ref())
+    {
+        stage.storage_drain_delta = Some(super::attribution::Delta::between(drain_start, after));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn should_reject_completion_after_the_original_drain_deadline() {
+        // Arrange
+        let deadline = std::time::Instant::now();
+        let last_ack = deadline + std::time::Duration::from_nanos(1);
+        // Act
+        let result = super::verify_drain_deadline(Some(last_ack), deadline);
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_accept_ack_at_the_deadline_when_the_observer_wakes_later() {
+        // Arrange
+        let deadline = std::time::Instant::now();
+        // Act
+        let result = super::verify_drain_deadline(Some(deadline), deadline);
+        // Assert
+        assert!(result.is_ok());
+    }
 }

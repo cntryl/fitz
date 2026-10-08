@@ -665,7 +665,7 @@ pub struct QueueActor {
     next_delayed_deadline: Instant,
 }
 
-mod ack_timing;
+pub(in crate::domains::queue) mod ack_timing;
 mod admin_snapshot;
 mod constructors_validation;
 mod dead_letter_admin;

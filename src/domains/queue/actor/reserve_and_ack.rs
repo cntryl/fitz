@@ -113,7 +113,11 @@ impl QueueActor {
                 return (QueueResponse::Received { messages }, true);
             }
 
-            let (body, attempts) = match self.hydrate_record_for_receive(id) {
+            let (body, attempts) = match super::ack_timing::measure(
+                true,
+                super::ack_timing::Phase::ReserveHydration,
+                || self.hydrate_record_for_receive(id),
+            ) {
                 Ok(record) => record,
                 Err(e) => {
                     tracing::warn!(

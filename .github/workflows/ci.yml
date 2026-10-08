@@ -51,7 +51,7 @@ jobs:
         run: cargo test --locked --workspace
 
       - name: Queue diagnostic artifact regressions
-        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts
+        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts --test queue_pressure_accounting --test queue_pacing
 
   frontend:
     runs-on: ubuntu-latest

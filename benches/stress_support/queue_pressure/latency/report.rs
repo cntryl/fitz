@@ -14,6 +14,7 @@ pub(super) struct PairTiming {
     pub reserve_ns: u128,
     pub ack_ns: u128,
     pub pause_ns: u128,
+    pub overshoot_ns: u128,
     pub cycle_ns: u128,
 }
 
@@ -40,6 +41,8 @@ pub(super) struct Report {
     workload_deadline_seconds: u64,
     requested_pairs: usize,
     requested_pause_ms: u64,
+    pacing_implementation: &'static str,
+    comparison_label: &'static str,
     durability_scope: &'static str,
     metric_bucket_upper_ms: [Option<u64>; 9],
     metrics_before: BTreeMap<String, [u64; 9]>,
@@ -101,6 +104,8 @@ impl Report {
             workload_deadline_seconds: 90,
             requested_pairs: pairs,
             requested_pause_ms: 5,
+            pacing_implementation: super::super::pacing::IMPLEMENTATION,
+            comparison_label: "corrected_pacing",
             durability_scope: "running_process_fast_local_disk",
             metric_bucket_upper_ms: [Some(1), Some(5), Some(10), Some(50), Some(100), Some(500), Some(1000), Some(5000), None],
             metrics_before: BTreeMap::new(),

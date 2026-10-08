@@ -34,6 +34,8 @@ fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {
     ctx.parameter("storage_profile", "local_disk");
     ctx.metadata("durability_scope", "running_process_fast_local_disk");
     ctx.metadata("target_class", "correctness_timing_diagnostic");
+    ctx.metadata("pacing_implementation", super::pacing::IMPLEMENTATION);
+    ctx.metadata("comparison_label", "corrected_pacing");
     ctx.metadata(
         "elapsed_scope",
         "startup, seed, drain and empty verification; excludes cleanup",
@@ -177,6 +179,20 @@ async fn drain(
     ledger: &mut Ledger,
     pairs: usize,
 ) -> Result<(), BenchFailure> {
+    let mut pacer = super::pacing::Pacer::new();
+    let result = drain_paced(ctx, report, client, ledger, pairs, &mut pacer).await;
+    let cleanup = pacer.shutdown().await.map_err(BenchFailure::transport);
+    result.and(cleanup)
+}
+
+async fn drain_paced(
+    ctx: &StressContext,
+    report: &mut Report,
+    client: &mut TestClient,
+    ledger: &mut Ledger,
+    pairs: usize,
+    pacer: &mut super::pacing::Pacer,
+) -> Result<(), BenchFailure> {
     report.phase = "reserve";
     let drain_started = Instant::now();
     for _ in 0..pairs {
@@ -218,6 +234,7 @@ async fn drain(
         }
         report.phase = "ack";
         let ack_ns = acknowledge(report, client, id, token).await?;
+        let acknowledged_at = Instant::now();
         ledger
             .acknowledged(sequence, id)
             .map_err(BenchFailure::verification)?;
@@ -228,8 +245,11 @@ async fn drain(
         }
         ctx.progress_handle().advance();
         report.phase = "acknowledged_pause_pending_sample";
-        let pause = Instant::now();
-        tokio::time::sleep(PAUSE).await;
+        let permitted = pacer
+            .wait_after(acknowledged_at, PAUSE)
+            .await
+            .map_err(BenchFailure::transport)?;
+        let pause = permitted.duration_since(acknowledged_at);
         if let Some(current) = report.current_reserved.as_mut() {
             current.pause_completed = true;
         }
@@ -238,7 +258,8 @@ async fn drain(
             message_id: id,
             reserve_ns,
             ack_ns,
-            pause_ns: pause.elapsed().as_nanos(),
+            pause_ns: pause.as_nanos(),
+            overshoot_ns: pause.saturating_sub(PAUSE).as_nanos(),
             cycle_ns: cycle.elapsed().as_nanos(),
         });
         report.current_reserved = None;
