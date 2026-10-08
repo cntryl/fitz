@@ -3,6 +3,8 @@ name: Stream Performance
 on:
   pull_request:
     paths:
+      - Cargo.toml
+      - Cargo.lock
       - src/domains/stream/**
       - benches/tier4_stream*
       - .github/workflows/stream-perf.yml
@@ -47,9 +49,9 @@ jobs:
           fi
           baseline="$RUNNER_TEMP/fitz-stream-baseline"
           git worktree add --detach "$baseline" "$BASE_SHA"
-          git diff --binary "$BASE_SHA" HEAD -- Cargo.toml benches > "$RUNNER_TEMP/stream-fixtures.patch"
+          git diff --binary "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/stream-fixtures.patch"
           git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
-          git -C "$baseline" add Cargo.toml benches
+          git -C "$baseline" add Cargo.toml Cargo.lock benches
           git -C "$baseline" -c user.name=Stream-qualification -c user.email=stream-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Stream benchmark fixtures'
           test -z "$(git -C "$baseline" diff --name-only "$BASE_SHA" -- src)"
           echo "STREAM_BASELINE=$baseline" >> "$GITHUB_ENV"
