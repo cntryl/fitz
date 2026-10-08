@@ -67,12 +67,24 @@ fn command_history(size: usize) -> (StreamStore, Vec<EventPayload>) {
                     .is_none(),
                 "stale parent hint must be gone"
             );
-            let page = CompactGlobalPageValue::try_decode(
-                &txn.get(&encode_compact_global_page_key(0))
-                    .unwrap()
-                    .unwrap(),
-            )
-            .unwrap();
+            let mut prefix = encode_compact_global_page_key(0);
+            prefix.truncate(prefix.len() - 24);
+            let rows: Vec<_> = txn
+                .scan(
+                    &cntryl_midge::Query::new()
+                        .prefix(Bytes::from(prefix))
+                        .start_key(Bytes::from(encode_compact_global_page_key(0)))
+                        .limit(2),
+                )
+                .expect("inspect generation-stamped global replacement")
+                .try_collect()
+                .unwrap();
+            assert_eq!(
+                rows.len(),
+                1,
+                "global history must occupy one compacted fragment"
+            );
+            let page = CompactGlobalPageValue::try_decode(&rows[0].1).unwrap();
             assert_eq!(
                 page.records.len(),
                 64,
