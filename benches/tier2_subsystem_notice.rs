@@ -229,4 +229,11 @@ notice_publish_bench!(
     "notice://realm/area/**"
 );
 
+notice_publish_bench!(
+    should_publish_double_star_suffix_16_subscribers,
+    "publish_double_star_suffix_16_subscribers",
+    16,
+    "notice://realm/**/create"
+);
+
 stress_main!();

@@ -1,10 +1,48 @@
 use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressContext};
 use fitz::runtime::matcher::Pattern;
-use fitz::runtime::routing::Route;
+use fitz::runtime::routing::{Route, RouteFamily};
+use fitz::runtime::{SubscriptionId, SubscriptionIndex};
 
 stress_allocator!();
 
 const MATCH_BATCH_OPS: u64 = 64;
+
+fn measure_indexed_suffix(ctx: &mut StressContext, name: &str, pattern: &str, route: &str) {
+    let family = RouteFamily::new(1);
+    let mut index = SubscriptionIndex::new();
+    index.insert(family, &Route::new(pattern), SubscriptionId(1));
+    let route = Route::new(route);
+    assert_eq!(
+        index.match_all(family, &route).as_slice(),
+        &[SubscriptionId(1)]
+    );
+    record_group(ctx);
+    ctx.measure_batch(name, MATCH_BATCH_OPS, || {
+        for _ in 0..MATCH_BATCH_OPS {
+            black_box(index.match_all(family, black_box(&route)));
+        }
+    });
+}
+
+#[stress(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+fn should_match_indexed_double_star_suffix(ctx: &mut StressContext) {
+    measure_indexed_suffix(
+        ctx,
+        "indexed_double_star_suffix",
+        "notice://realm/**/action",
+        "notice://realm/orders/items/action",
+    );
+}
+
+#[stress(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+fn should_match_indexed_multiple_double_star_suffixes(ctx: &mut StressContext) {
+    measure_indexed_suffix(
+        ctx,
+        "indexed_multiple_double_star_suffixes",
+        "notice://realm/**/orders/*/**/action",
+        "notice://realm/area/orders/items/history/action",
+    );
+}
 
 fn record_group(ctx: &mut StressContext) {
     ctx.parameter("group", "hotpath_matcher");
