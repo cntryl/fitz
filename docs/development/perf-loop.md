@@ -32,6 +32,23 @@ regression-gate throughput must remain at least 90% of baseline with p95 at most
 110%; the maximum-valid-event write row must retain 95% throughput with p95 at
 most 105%; and hot-resource append with 100,000 prior events must remain within
 10% of an empty resource.
+
+The Stream performance workflow isolates each of the eight transport workloads
+in its own process capture. Memory replay therefore never follows disk writes
+within a capture. All 32 workloads, fixtures, and the default sampling profile
+remain required. Each workload has three alternating baseline/candidate pairs.
+The maximum-event write and WebSocket exact-replay workloads also have three
+alternating same-binary control pairs; both throughput and p95 ratios must lie
+within 0.95–1.05. An unstable control labels the entire run
+`measurement_unstable`, regardless of observed budget results.
+
+Compilation and binary/dependency/fixture audits finish before timing. One full
+qualification and one predeclared full confirmation use the same archived
+executables on the same host. Both must pass every original budget and both
+controls. Preserve raw quality labels, semantic checks, source SHAs, executable
+hashes, locked resolution, and untimed CPU/I/O snapshots. Retain failures and
+leave qualification open when controls remain unstable; additional exploratory
+runs do not replace the declared pair.
 Pair individual disk-size rows directly across source versions. The Stream
 qualification workflow also requires an unchanged-binary maximum-event control
 to stay within 5% for throughput and p95; retain failed comparisons.
