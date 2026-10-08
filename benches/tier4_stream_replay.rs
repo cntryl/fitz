@@ -10,7 +10,7 @@ use fitz::testkit::domain_internals::stream::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
 };
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const HISTORY: usize = 64;
 const REALM: &str = "replay";
@@ -131,7 +131,7 @@ fn replay_store(
     } else {
         (create_write_heavy_bench_store(), None)
     };
-    let mut store = StreamStore::new(engine);
+    let mut store = StreamStore::new(engine.clone());
     store
         .commit_records(CommitRecordsParams {
             family: 1,
@@ -148,6 +148,12 @@ fn replay_store(
     store.set_realm_watermark(1, REALM, 63).unwrap();
     if let Some(directory) = &history_dir {
         drop(store);
+        let mut engine = Arc::try_unwrap(engine)
+            .unwrap_or_else(|_| panic!("replay store must release the recovery engine"));
+        engine
+            .shutdown(Duration::from_secs(30))
+            .expect("finish durable shutdown and release writer fencing");
+        drop(engine);
         let engine = cntryl_midge::Engine::open(
             cntryl_midge::OpenOptions::local(directory.path())
                 .build()
