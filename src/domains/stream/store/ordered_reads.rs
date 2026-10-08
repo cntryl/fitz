@@ -112,7 +112,7 @@ impl StreamStore {
                 &mut previous_fragment_end,
             )?;
             let mut page_records = Vec::with_capacity(page.records.len());
-            for (slot, mut page_record) in page.records.into_iter().enumerate() {
+            for (slot, page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
                     // Only records the caller has not already paged past may
@@ -127,7 +127,6 @@ impl StreamStore {
                     }
                     continue;
                 }
-                resolve_blob_payload(&txn, &mut page_record.body, &mut page_record.metadata)?;
                 page_records.push((offset, page_record));
             }
 
@@ -157,12 +156,13 @@ impl StreamStore {
                     )
                 },
                 |page_record, matches_filter| {
-                    stream_read_item_wire_bytes(
+                    resolve_blob_payload(&txn, &mut page_record.body, &mut page_record.metadata)?;
+                    Ok(stream_read_item_wire_bytes(
                         matches_filter,
                         route.as_str().len(),
                         page_record.body.len(),
                         page_record.metadata.as_ref().map_or(0, Bytes::len),
-                    )
+                    ))
                 },
                 update_resource_cursor,
                 |offset, _page_record| StreamReadItem::Filtered {
@@ -284,7 +284,7 @@ impl StreamStore {
                 &mut previous_fragment_end,
             )?;
             let mut page_records = Vec::with_capacity(page.records.len());
-            for (slot, mut page_record) in page.records.into_iter().enumerate() {
+            for (slot, page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
                     // Only records the caller has not already paged past may
@@ -299,13 +299,6 @@ impl StreamStore {
                     }
                     continue;
                 }
-                hydrate_area_locator(
-                    &txn,
-                    params.realm,
-                    params.area,
-                    &mut page_record,
-                    &mut global_cache,
-                )?;
                 page_records.push((offset, page_record));
             }
 
@@ -334,12 +327,19 @@ impl StreamStore {
                     )
                 },
                 |page_record, matches_filter| {
-                    stream_read_item_wire_bytes(
+                    hydrate_area_locator(
+                        &txn,
+                        params.realm,
+                        params.area,
+                        page_record,
+                        &mut global_cache,
+                    )?;
+                    Ok(stream_read_item_wire_bytes(
                         matches_filter,
                         stream_route_len(params.realm, params.area, &page_record.resource),
                         page_record.body.len(),
                         page_record.metadata.as_ref().map_or(0, Bytes::len),
-                    )
+                    ))
                 },
                 update_area_cursor,
                 |offset, page_record| StreamReadItem::Filtered {
@@ -459,7 +459,7 @@ impl StreamStore {
                 &mut previous_fragment_end,
             )?;
             let mut page_records = Vec::with_capacity(page.records.len());
-            for (slot, mut page_record) in page.records.into_iter().enumerate() {
+            for (slot, page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
                     // Only records the caller has not already paged past may
@@ -474,7 +474,6 @@ impl StreamStore {
                     }
                     continue;
                 }
-                hydrate_realm_locator(&txn, realm, &mut page_record, &mut global_cache)?;
                 page_records.push((offset, page_record));
             }
 
@@ -502,12 +501,13 @@ impl StreamStore {
                     )
                 },
                 |page_record, matches_filter| {
-                    stream_read_item_wire_bytes(
+                    hydrate_realm_locator(&txn, realm, page_record, &mut global_cache)?;
+                    Ok(stream_read_item_wire_bytes(
                         matches_filter,
                         stream_route_len(realm, &page_record.area, &page_record.resource),
                         page_record.body.len(),
                         page_record.metadata.as_ref().map_or(0, Bytes::len),
-                    )
+                    ))
                 },
                 update_realm_cursor,
                 |offset, page_record| StreamReadItem::Filtered {
