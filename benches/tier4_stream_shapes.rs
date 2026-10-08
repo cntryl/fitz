@@ -2,6 +2,8 @@
 
 #[path = "tier4_stream_direct.rs"]
 mod tier4_stream_direct;
+#[path = "tier4_stream_replay.rs"]
+mod tier4_stream_replay;
 #[path = "tier4_stream_support.rs"]
 mod tier4_stream_support;
 #[path = "tier4_stream_transport.rs"]
