@@ -94,6 +94,10 @@ jobs:
           # Actual benchmark runs build each binary; preserve those diagnostic captures.
           # Both heads finish compiling before any alternating acceptance measurement.
           for phase in ('before', 'after'):
+              # Cargo freshness can alias workspace packages across worktree paths.
+              # Rebuild Fitz for each source while preserving shared dependencies.
+              subprocess.run(['cargo', 'clean', '--release', '--package', 'fitz'],
+                             cwd=sources[phase], env=env, check=True)
               for target in dict.fromkeys(target for target, _ in groups):
                   pattern = 'should_replay_' if target == 'tier4_stream_shapes' else None
                   command = ['cargo', 'bench', '--locked', '--features', 'benchkit', '--bench', target, '--']
@@ -105,6 +109,10 @@ jobs:
                   archive.mkdir(parents=True, exist_ok=True)
                   binaries[(phase, target)] = archive / executable.name
                   shutil.copy2(executable, binaries[(phase, target)])
+          for target in dict.fromkeys(target for target, _ in groups):
+              before_hash = hashlib.sha256(binaries[('before', target)].read_bytes()).hexdigest()
+              after_hash = hashlib.sha256(binaries[('after', target)].read_bytes()).hexdigest()
+              assert before_hash != after_hash, 'Source variants reused the same binary: ' + target
           summaries = {'before': {}, 'after': {}}
           for group_index, (target, pattern) in enumerate(groups):
               for iteration in range(1, 4):
