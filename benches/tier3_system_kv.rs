@@ -13,8 +13,8 @@ mod stress_config;
 use stress_config::StressContextExt;
 
 use bytes::Bytes;
-use cntryl_stress::{stress, stress_main, StressContext};
-use fitz::domains::kv::{KvMessage, KvResourceScope, KvResponse, TxMode};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
+use fitz::domains::kv::{KvMessage, KvResourceScope, KvResponse, ScanQuery, TxMode};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use fitz::testkit::domain_internals::kv::KvActor;
@@ -102,6 +102,76 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
         });
     }
     stress_config::record_completed(ctx, 3 * TRIPLE_FAMILY_PUTS_PER_FAMILY * iterations);
+}
+
+#[stress(tier = 3)]
+fn should_scan_1000_committed_keys(ctx: &mut StressContext) {
+    let store = create_test_engine_with_cfs(vec![1]);
+    let mut actor = KvActor::new(store);
+    let scope = KvResourceScope::new(RouteFamily::new(1), "system", "kv", "scan");
+    let tx_id = begin_transaction(&mut actor, 1, "scan", TxMode::ReadWrite)
+        .expect("scan fixture transaction");
+    let keys = (0..1000)
+        .map(|index| Bytes::from(format!("key-{index:04}-{}", "x".repeat(55))))
+        .collect::<Vec<_>>();
+    let value = Bytes::from_static(b"scan-value-16byt");
+    for key in &keys {
+        assert!(matches!(
+            actor.handle(KvMessage::Put {
+                tx_id,
+                scope: scope.clone(),
+                key: key.clone(),
+                value: value.clone(),
+            }),
+            KvResponse::PutOk
+        ));
+    }
+    assert!(matches!(
+        actor.handle(KvMessage::Commit {
+            tx_id,
+            scope: scope.clone(),
+        }),
+        KvResponse::CommitOk
+    ));
+    let read_tx =
+        begin_transaction(&mut actor, 1, "scan", TxMode::ReadOnly).expect("scan read transaction");
+    let query = ScanQuery {
+        start: None,
+        end: None,
+        limit: Some(1000),
+        reverse: false,
+        start_exclusive: false,
+    };
+    ctx.parameter("scenario", "committed_range_scan");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("key_size", keys[0].len());
+    ctx.parameter("row_count", keys.len());
+    ctx.parameter("completed_unit", "scan_rows");
+    ctx.parameter("logical_unit", "scan_row");
+    let iterations = ctx.measure_workload("scan_1000_committed_keys", || {
+        let KvResponse::ScanResult { items, has_more } = actor.handle(KvMessage::Scan {
+            tx_id: read_tx,
+            scope: scope.clone(),
+            query: query.clone(),
+        }) else {
+            panic!("scan should return committed rows");
+        };
+        assert!(!has_more);
+        assert_eq!(items.len(), keys.len());
+        for (item, key) in items.iter().zip(&keys) {
+            assert_eq!(&item.key, key);
+            assert_eq!(item.value, value);
+        }
+        black_box(items);
+    });
+    assert!(matches!(
+        actor.handle(KvMessage::Rollback {
+            tx_id: read_tx,
+            scope,
+        }),
+        KvResponse::RollbackOk
+    ));
+    stress_config::record_completed(ctx, 1000 * iterations);
 }
 
 stress_main!();
