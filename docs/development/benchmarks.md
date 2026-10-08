@@ -18,6 +18,9 @@ fast-path results are in the
 The actor-level Schedule due-burst/control measurements, raw artifact and model
 limits are recorded in the [Schedule control latency characterization](schedule-control-latency-characterization.md).
 
+The shared wildcard allocation and validated KV scan before/after measurements
+are recorded in the [October domain optimization sweep](domain-optimization-20261007.md).
+
 ## Philosophy
 
 Benchmarks measure real broker performance across routes, domains, and
