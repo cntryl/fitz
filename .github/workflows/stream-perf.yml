@@ -47,6 +47,7 @@ jobs:
           test -z "$(git -C "$baseline" diff --name-only "$BASE_SHA" -- src)"
           echo "STREAM_BASELINE=$baseline" >> "$GITHUB_ENV"
           echo "STREAM_BASE_PRODUCTION=$BASE_SHA" >> "$GITHUB_ENV"
+          echo "STREAM_OUTPUT=$RUNNER_TEMP/stream-qualification" >> "$GITHUB_ENV"
       - name: Measure and compare unchanged default workloads
         shell: bash
         run: |
@@ -54,7 +55,7 @@ jobs:
           import csv, datetime, hashlib, json, os, shutil, statistics, subprocess
           from pathlib import Path
           root = Path.cwd()
-          output = root / 'target' / 'stream-qualification'
+          output = Path(os.environ['STREAM_OUTPUT'])
           output.mkdir(parents=True)
           sources = {'before': Path(os.environ['STREAM_BASELINE']), 'after': root}
           env = dict(os.environ, CARGO_TARGET_DIR=str(root / 'target'))
@@ -167,11 +168,11 @@ jobs:
         with:
           name: stream-performance-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
-            target/stream-qualification/**/capture.json
-            target/stream-qualification/**/run.log
-            target/stream-qualification/**/initial.json
-            target/stream-qualification/**/stress/**
-            target/stream-qualification/comparison.csv
-            target/stream-qualification/budgets.json
+            ${{ env.STREAM_OUTPUT }}/**/capture.json
+            ${{ env.STREAM_OUTPUT }}/**/run.log
+            ${{ env.STREAM_OUTPUT }}/**/initial.json
+            ${{ env.STREAM_OUTPUT }}/**/stress/**
+            ${{ env.STREAM_OUTPUT }}/comparison.csv
+            ${{ env.STREAM_OUTPUT }}/budgets.json
           if-no-files-found: error
           retention-days: 14
