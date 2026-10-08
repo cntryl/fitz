@@ -27,9 +27,8 @@ threads. Empty/rejected RESERVE backoff remains separate from ACK pacing.
 Artifacts label this implementation `corrected_pacing`, preserve the requested
 pause, and record observed pause, overshoot, RESERVE RTT, ACK RTT and complete
 validated cycle time. Worker wake and async handoff timings distinguish sleep
-overshoot from consumer
-scheduling delay. Pressure timing uses bounded aggregate distributions and
-totals, with load-stop and drain-start checkpoints. Storage deltas cover the
+overshoot from consumer scheduling delay. Pressure timing uses bounded aggregate
+distributions and totals, with load-stop and drain-start checkpoints. Storage deltas cover the
 existing three snapshots. Missing snapshots or counter resets produce unknown
 values, never zero cost. The drain-start snapshot consumes the same 600-second
 deadline, and post-drain observation does not extend it. Failed ACKs remain
@@ -51,6 +50,10 @@ capture and requires the full intended message count, reconciled known outcomes,
 verified ACKs, the 5 ms observed minimum, empty verification, recovery and cleanup
 for all six captures. It reports finite drain qualification separately from a
 completed 120-second active window and constrained-resource survival.
+Generator misses remain visible when a safety guard stops load. The existing 1%
+generator limit applies to completed active windows; a guard drain qualifies its
+verified accepted-message envelope only. It does not qualify the requested
+arrival rate or the broker's capacity, regardless of drain success.
 
 ## Workload
 

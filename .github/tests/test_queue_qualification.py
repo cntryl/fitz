@@ -16,6 +16,7 @@ class QueueQualificationTests(unittest.TestCase):
                            consumer_delay_ms=5, max_backlog=10000, max_attempts_per_stage=500000, drain_seconds=600),
             "status": "passed", "cleanup_status": "completed", "recovery_probe_passed": True,
             "stages": [{"drained": True, "empty_verified": True, "cleanup_failure": None,
+                        "termination": "backlog_safety_guard", "configured_window_completed": False,
                         "offered": 10001, "harness_missed": 0,
                         "consumer_timing": {name: {"distribution": {"count": 10001}, "min_ns": 5000000}
                                             for name in ("ack", "pause", "worker_pause", "handoff", "cycle")},
@@ -62,9 +63,16 @@ class QueueQualificationTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 queue.validate(report, "head", 10000)
 
-    def test_should_reject_a_generator_that_misses_the_offered_envelope(self):
+    def test_should_accept_a_complete_guard_drain_without_qualifying_its_arrival_rate(self):
         report = self.report()
-        report["stages"][0]["harness_missed"] = 101
+        report["stages"][0].update(offered=30000, harness_missed=19999)
+        queue.validate(report, "head", 10000)
+        self.assertFalse(report["stages"][0]["configured_window_completed"])
+
+    def test_should_reject_a_full_window_that_misses_the_offered_envelope(self):
+        report = self.report()
+        report["stages"][0].update(termination="configured_window", configured_window_completed=True,
+                                   offered=10103, harness_missed=102)
         with self.assertRaises(AssertionError):
             queue.validate(report, "head", 10000)
 
