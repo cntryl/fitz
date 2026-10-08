@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn should_keep_returned_scan_keys_alive_after_transaction_rollback() {
+    // Arrange
+    let fixtures = [2, 64].map(|key_len| {
+        let mut actor = test_actor();
+        let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "scan-lifetime");
+        let tx_id = begin_with_scope(&mut actor, scope.clone());
+        let key = Bytes::from(vec![b'k'; key_len]);
+        assert!(matches!(
+            actor.handle(KvMessage::Put {
+                tx_id,
+                scope: scope.clone(),
+                key: key.clone(),
+                value: Bytes::from_static(b"retained-value"),
+            }),
+            KvResponse::PutOk
+        ));
+        (actor, scope, tx_id, key)
+    });
+
+    // Act
+    let results = fixtures.map(|(mut actor, scope, tx_id, key)| {
+        let response = actor.handle(KvMessage::Scan {
+            tx_id,
+            scope: scope.clone(),
+            query: ScanQuery {
+                start: None,
+                end: None,
+                limit: Some(1),
+                reverse: false,
+                start_exclusive: false,
+            },
+        });
+        assert!(matches!(
+            actor.handle(KvMessage::Rollback { tx_id, scope }),
+            KvResponse::RollbackOk
+        ));
+        drop(actor);
+        (response, key)
+    });
+
+    // Assert
+    for (response, key) in results {
+        let KvResponse::ScanResult { items, has_more } = response else {
+            panic!("expected owned scan result");
+        };
+        assert!(!has_more);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, key);
+        assert_eq!(items[0].value, Bytes::from_static(b"retained-value"));
+    }
+}
+
+#[test]
 fn should_treat_explicit_zero_limit_as_unbounded_not_a_dead_end() {
     // Arrange
     // `limit=0` is a legal encoding on the wire (has_limit=1, limit=0), but

@@ -43,6 +43,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use self::segments_cache::SegmentsCache;
+use self::suffix::matches_suffix_compiled;
+
+mod suffix;
 
 type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 type FastSet<K> = HashSet<K, FxBuildHasher>;
@@ -267,12 +270,27 @@ impl Node {
         segment_index: usize,
         collector: &mut MatchCollector,
     ) {
+        // Many sessions register the same suffix. Reuse its result within this
+        // node lookup; the route and remaining segment position are unchanged.
+        let mut last_match: Option<(&[CompiledPatternSegment], bool)> = None;
         for (subscription_id, suffix) in self
             .double_star_subs
             .iter()
             .zip(self.double_star_suffixes.iter())
         {
-            if suffix.is_empty() || matches_suffix_compiled(suffix, route_segments, segment_index) {
+            if suffix.is_empty() {
+                collector.push(*subscription_id);
+                continue;
+            }
+            let matched = match last_match {
+                Some((previous, matched)) if previous == suffix.as_ref() => matched,
+                _ => {
+                    let matched = matches_suffix_compiled(suffix, route_segments, segment_index);
+                    last_match = Some((suffix, matched));
+                    matched
+                }
+            };
+            if matched {
                 collector.push(*subscription_id);
             }
         }
@@ -750,45 +768,6 @@ impl Default for SubscriptionIndex {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Check if a suffix pattern matches the route tail at any starting position.
-///
-/// The leading implicit `**` is represented by initializing every empty-pattern
-/// state as reachable. The rolling frontier keeps this bounded by
-/// `O(pattern_len * route_len)` and avoids recursive backtracking.
-#[inline]
-fn matches_suffix_compiled(
-    suffix: &[CompiledPatternSegment],
-    route: &[CompiledRouteSegment],
-    start_idx: usize,
-) -> bool {
-    let route = route.get(start_idx..).unwrap_or_default();
-    let mut previous = vec![true; route.len() + 1];
-
-    for pattern in suffix {
-        let mut current = vec![false; route.len() + 1];
-        match pattern {
-            CompiledPatternSegment::DoubleStar => {
-                current[0] = previous[0];
-                for index in 1..=route.len() {
-                    current[index] = previous[index] || current[index - 1];
-                }
-            }
-            CompiledPatternSegment::Star => {
-                current[1..].copy_from_slice(&previous[..route.len()]);
-            }
-            CompiledPatternSegment::Exact(expected_id) => {
-                for index in 1..=route.len() {
-                    current[index] =
-                        previous[index - 1] && route[index - 1].exact_id == Some(*expected_id);
-                }
-            }
-        }
-        previous = current;
-    }
-
-    previous[route.len()]
 }
 
 #[cfg(test)]
