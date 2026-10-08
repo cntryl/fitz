@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import csv, datetime, hashlib, json, os, shutil, statistics, subprocess
+          import csv, datetime, hashlib, json, os, shutil, statistics, subprocess, time
           from pathlib import Path
           root = Path.cwd()
           output = Path(os.environ['STREAM_OUTPUT'])
@@ -72,13 +72,24 @@ jobs:
               head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source, text=True).strip()
               destination = output / label
               destination.mkdir()
-              metadata = {'head': head, 'production_baseline': os.environ['STREAM_BASE_PRODUCTION'],
+              # Prior temporary stores and compiler output can leave host writeback
+              # pending. Settle it equally before each timed source/control trial;
+              # keep benchmark fixtures and the stress sampling profile unchanged.
+              preparation_started = time.monotonic()
+              if not label.startswith('build-'):
+                  os.sync()
+              preparation_seconds = time.monotonic() - preparation_started
+              io_pressure = Path('/proc/pressure/io')
+              metadata = {'host_sync_seconds': preparation_seconds,
+                          'host_io_pressure_before': io_pressure.read_text() if io_pressure.exists() else None,
+                          'head': head, 'production_baseline': os.environ['STREAM_BASE_PRODUCTION'],
                           'command': command, 'cwd': str(source),
                           'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat()}
               with (destination / 'run.log').open('w') as log:
                   result = subprocess.run(command, cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT)
               metadata['exit_code'] = result.returncode
               metadata['finished_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+              metadata['host_io_pressure_after'] = io_pressure.read_text() if io_pressure.exists() else None
               (destination / 'capture.json').write_text(json.dumps(metadata, indent=2))
               if result.returncode:
                   raise RuntimeError('Failed benchmark: ' + str(destination))

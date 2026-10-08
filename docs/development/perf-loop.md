@@ -35,6 +35,8 @@ most 105%; and hot-resource append with 100,000 prior events must remain within
 Pair individual disk-size rows directly across source versions. The Stream
 qualification workflow also requires an unchanged-binary maximum-event control
 to stay within 5% for throughput and p95; retain failed comparisons.
+Flush pending measurement-host I/O before each trial and record preparation
+and I/O pressure separately from unchanged benchmark samples.
 
 ## Selection Rules
 
