@@ -323,8 +323,8 @@ dependencies = [
 
 [[package]]
 name = "cntryl-midge"
-version = "0.3.2"
-source = "git+https://github.com/cntryl/midge?rev=b8a2b680cfa2f100ee04b2ab50e4b4c2218536fb#b8a2b680cfa2f100ee04b2ab50e4b4c2218536fb"
+version = "0.3.3"
+source = "git+https://github.com/cntryl/midge?rev=d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b#d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b"
 dependencies = [
  "arc-swap",
  "base64 0.23.1",
@@ -2873,7 +2873,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
