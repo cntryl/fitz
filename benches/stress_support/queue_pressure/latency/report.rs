@@ -14,6 +14,8 @@ pub(super) struct PairTiming {
     pub reserve_ns: u128,
     pub ack_ns: u128,
     pub pause_ns: u128,
+    pub worker_pause_ns: u128,
+    pub handoff_ns: u128,
     pub overshoot_ns: u128,
     pub cycle_ns: u128,
 }

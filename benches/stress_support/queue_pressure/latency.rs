@@ -250,6 +250,7 @@ async fn drain_paced(
             .await
             .map_err(BenchFailure::transport)?;
         let pause = permitted.duration_since(acknowledged_at);
+        let worker_wake = pacer.last_worker_wake().map_err(BenchFailure::transport)?;
         if let Some(current) = report.current_reserved.as_mut() {
             current.pause_completed = true;
         }
@@ -259,6 +260,8 @@ async fn drain_paced(
             reserve_ns,
             ack_ns,
             pause_ns: pause.as_nanos(),
+            worker_pause_ns: worker_wake.duration_since(acknowledged_at).as_nanos(),
+            handoff_ns: permitted.duration_since(worker_wake).as_nanos(),
             overshoot_ns: pause.saturating_sub(PAUSE).as_nanos(),
             cycle_ns: cycle.elapsed().as_nanos(),
         });

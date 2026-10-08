@@ -70,8 +70,11 @@ async fn consumer(
                     () = cancel.notified() => break,
                 };
                 let pause = permitted.duration_since(acknowledged_at);
+                let worker_wake = pacer.last_worker_wake().map_err(BenchFailure::transport)?;
                 let mut shared = shared.lock().map_err(BenchFailure::transport)?;
                 shared.consumer_timing.pause.record(pause);
+                shared.consumer_timing.worker_pause.record(worker_wake.duration_since(acknowledged_at));
+                shared.consumer_timing.handoff.record(permitted.duration_since(worker_wake));
                 shared.consumer_timing.overshoot.record(pause.saturating_sub(delay));
                 shared.consumer_timing.cycle.record(cycle.elapsed());
                 continue;

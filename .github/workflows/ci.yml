@@ -53,6 +53,9 @@ jobs:
       - name: Queue diagnostic artifact regressions
         run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts --test queue_pressure_accounting --test queue_pacing
 
+      - name: Queue pressure acceptance regressions
+        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20

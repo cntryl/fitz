@@ -8,12 +8,13 @@ pub(super) const IMPLEMENTATION: &str = "dedicated_sleep_worker_capacity_one_mon
 
 struct Request {
     deadline: Instant,
-    permit: oneshot::Sender<()>,
+    permit: oneshot::Sender<Instant>,
 }
 
 pub(super) struct Pacer {
     requests: Option<Sender<Request>>,
-    pending: Option<oneshot::Receiver<()>>,
+    pending: Option<oneshot::Receiver<Instant>>,
+    worker_wake: Option<Instant>,
     worker: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -23,6 +24,7 @@ impl Pacer {
         Self {
             requests: Some(requests),
             pending: None,
+            worker_wake: None,
             worker: Some(tokio::task::spawn_blocking(move || work(&receiver))),
         }
     }
@@ -49,13 +51,20 @@ impl Pacer {
         // Retain the outstanding receiver if this future is cancelled. A later
         // wait cannot enqueue another request before cleanup.
         self.pending = Some(receiver);
-        self.pending
+        let worker_wake = self
+            .pending
             .as_mut()
             .ok_or("missing pacing receiver")?
             .await
             .map_err(|error| error.to_string())?;
+        self.worker_wake = Some(worker_wake);
         self.pending = None;
         Ok(Instant::now())
+    }
+
+    pub(super) fn last_worker_wake(&self) -> Result<Instant, String> {
+        self.worker_wake
+            .ok_or_else(|| "pacing worker has not produced a permit".into())
     }
 
     pub(super) async fn shutdown(&mut self) -> Result<(), String> {
@@ -81,7 +90,7 @@ fn work(requests: &Receiver<Request>) {
         loop {
             let remaining = request.deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                let _ = request.permit.send(());
+                let _ = request.permit.send(Instant::now());
                 break;
             }
             // A timed receive sleeps without busy waiting. Disconnection is

@@ -13,9 +13,12 @@ async fn should_enforce_minimum_pause_before_a_reserve_permit() {
     let minimum = Duration::from_millis(5);
     // Act
     let permitted = pacer.wait_after(acknowledged, minimum).await.unwrap();
+    let worker_wake = pacer.last_worker_wake().unwrap();
     pacer.shutdown().await.unwrap();
     // Assert
     assert!(permitted.duration_since(acknowledged) >= minimum);
+    assert!(worker_wake.duration_since(acknowledged) >= minimum);
+    assert!(permitted >= worker_wake);
 }
 
 #[tokio::test]
