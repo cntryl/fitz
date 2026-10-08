@@ -1,0 +1,169 @@
+name: Stream Performance
+
+on:
+  pull_request:
+    paths:
+      - src/domains/stream/**
+      - benches/tier4_stream*
+      - .github/workflows/stream-perf.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stream-perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Same-host Stream comparison
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FITZ_LOG_LEVEL: "off"
+      OTEL_ENABLED: false
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stream-perf
+      - name: Prepare identical fixtures on the baseline
+        shell: bash
+        run: |
+          if [[ -z "$BASE_SHA" ]]; then
+            BASE_SHA=$(git merge-base HEAD origin/develop)
+          fi
+          baseline="$RUNNER_TEMP/fitz-stream-baseline"
+          git worktree add --detach "$baseline" "$BASE_SHA"
+          git diff --binary "$BASE_SHA" HEAD -- Cargo.toml benches > "$RUNNER_TEMP/stream-fixtures.patch"
+          git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
+          git -C "$baseline" add Cargo.toml benches
+          git -C "$baseline" -c user.name=Stream-qualification -c user.email=stream-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Stream benchmark fixtures'
+          test -z "$(git -C "$baseline" diff --name-only "$BASE_SHA" -- src)"
+          echo "STREAM_BASELINE=$baseline" >> "$GITHUB_ENV"
+          echo "STREAM_BASE_PRODUCTION=$BASE_SHA" >> "$GITHUB_ENV"
+      - name: Measure and compare unchanged default workloads
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import csv, datetime, hashlib, json, os, shutil, statistics, subprocess
+          from pathlib import Path
+          root = Path.cwd()
+          output = root / 'target' / 'stream-qualification'
+          output.mkdir(parents=True)
+          sources = {'before': Path(os.environ['STREAM_BASELINE']), 'after': root}
+          env = dict(os.environ, CARGO_TARGET_DIR=str(root / 'target'))
+          groups = [('tier4_stream_gate', None),
+                    ('tier4_stream_shapes', 'should_replay_'),
+                    ('tier4_stream_compacted', None),
+                    ('tier4_stream_shapes', 'should_characterize_disk_sync_write'),
+                    ('tier4_stream_shapes', 'should_characterize_hot_resource_append_after_100000_events')]
+          binaries = {}
+          def execute(phase, target, pattern, label, command):
+              source = sources[phase]
+              assert not subprocess.check_output(['git', 'status', '--porcelain'], cwd=source, text=True)
+              head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source, text=True).strip()
+              destination = output / label
+              destination.mkdir()
+              metadata = {'head': head, 'production_baseline': os.environ['STREAM_BASE_PRODUCTION'],
+                          'command': command, 'cwd': str(source),
+                          'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+              with (destination / 'run.log').open('w') as log:
+                  result = subprocess.run(command, cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT)
+              metadata['exit_code'] = result.returncode
+              metadata['finished_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+              (destination / 'capture.json').write_text(json.dumps(metadata, indent=2))
+              if result.returncode:
+                  raise RuntimeError('Failed benchmark: ' + str(destination))
+              if label.startswith('build-'):
+                  artifact = source / 'target' / 'stress' / target.replace('_', '-') / 'latest.json'
+                  shutil.copy2(artifact, destination / 'initial.json')
+                  return
+              run = json.loads(next((destination / 'stress').glob('*/latest.json')).read_text())
+              assert run['environment']['git_commit'] == head
+              profile = run['environment']['profile_config']
+              assert (profile['profile'], profile['warmup_samples'], profile['measured_samples'], profile['sample_duration']) == ('default', 1, 5, 500000000)
+              assert all(row['correctness']['passed'] for row in run['summaries'])
+              metadata['binary_sha256'] = hashlib.sha256(Path(command[0]).read_bytes()).hexdigest()
+              (destination / 'capture.json').write_text(json.dumps(metadata, indent=2))
+          # Actual benchmark runs build each binary; preserve those diagnostic captures.
+          # Both heads finish compiling before any alternating acceptance measurement.
+          for phase in ('before', 'after'):
+              for target in dict.fromkeys(target for target, _ in groups):
+                  pattern = 'should_replay_' if target == 'tier4_stream_shapes' else None
+                  command = ['cargo', 'bench', '--locked', '--features', 'benchkit', '--bench', target, '--']
+                  if pattern:
+                      command += ['--workload', pattern]
+                  execute(phase, target, pattern, 'build-' + phase + '-' + target, command)
+                  executable = next(p for p in (root / 'target' / 'release' / 'deps').glob(target + '-*') if p.is_file() and os.access(p, os.X_OK))
+                  archive = output / 'binaries' / phase
+                  archive.mkdir(parents=True, exist_ok=True)
+                  binaries[(phase, target)] = archive / executable.name
+                  shutil.copy2(executable, binaries[(phase, target)])
+          summaries = {'before': {}, 'after': {}}
+          for group_index, (target, pattern) in enumerate(groups):
+              for iteration in range(1, 4):
+                  for phase in (('before', 'after') if iteration % 2 else ('after', 'before')):
+                      label = f'pair-{group_index}-{iteration}-{phase}'
+                      command = [str(binaries[(phase, target)]), '--bench', '--output-dir', str(output / label / 'stress')]
+                      if pattern:
+                          command += ['--workload', pattern]
+                      print(label + ' ' + target + ' ' + str(pattern), flush=True)
+                      execute(phase, target, pattern, label, command)
+                      run = json.loads(next((output / label / 'stress').glob('*/latest.json')).read_text())
+                      for row in run['summaries']:
+                          summaries[phase].setdefault(row['name'], []).append(row)
+          records = []
+          for name, before in sorted(summaries['before'].items()):
+              if name.endswith('_latency'):
+                  continue
+              after = summaries['after'][name]
+              assert len(before) == len(after) == 3
+              value = lambda rows: statistics.median(row['stats']['mean'] for row in rows)
+              bt, at = value(before), value(after)
+              bp, ap = value(summaries['before'][name + '_latency']), value(summaries['after'][name + '_latency'])
+              records.append({'name': name, 'before_ops_s': bt, 'after_ops_s': at,
+                              'throughput_ratio': at / bt, 'before_p95_us': bp / 1000,
+                              'after_p95_us': ap / 1000, 'p95_ratio': ap / bp,
+                              'before_quality': ','.join(row['quality'] for row in before),
+                              'after_quality': ','.join(row['quality'] for row in after)})
+          with (output / 'comparison.csv').open('w') as file:
+              writer = csv.DictWriter(file, fieldnames=records[0].keys())
+              writer.writeheader()
+              writer.writerows(records)
+          rows = {row['name']: row for row in records}
+          checks = {row['name']: row['throughput_ratio'] >= .90 and row['p95_ratio'] <= 1.10
+                    for row in records if row['name'].startswith('memory_')}
+          maximum = rows['disk_sync_write_max_event']
+          checks['maximum_valid_event'] = maximum['throughput_ratio'] >= .95 and maximum['p95_ratio'] <= 1.05
+          hot, empty = rows['hot_resource_append_depth_100000'], rows['disk_sync_write_64b']
+          checks['100k_vs_empty'] = hot['after_ops_s'] >= .90 * empty['after_ops_s'] and hot['after_p95_us'] <= 1.10 * empty['after_p95_us']
+          (output / 'budgets.json').write_text(json.dumps(checks, indent=2))
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as file:
+              file.write('Three-run medians, default profile, one runner; p95 uses the median run mean of per-sample p95.\n\n')
+              file.write('| Row | Throughput ratio | p95 ratio |\n|---|---:|---:|\n')
+              for row in records:
+                  file.write(f"| {row['name']} | {row['throughput_ratio']:.3f} | {row['p95_ratio']:.3f} |\n")
+              file.write('\nBudget checks: ' + json.dumps(checks) + '\n')
+          assert len(records) == 32 and len(checks) == 8
+          assert all(checks.values()), checks
+          PY
+      - name: Upload immutable comparisons and raw evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stream-performance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            target/stream-qualification/**/capture.json
+            target/stream-qualification/**/run.log
+            target/stream-qualification/**/initial.json
+            target/stream-qualification/**/stress/**
+            target/stream-qualification/comparison.csv
+            target/stream-qualification/budgets.json
+          if-no-files-found: error
+          retention-days: 14
