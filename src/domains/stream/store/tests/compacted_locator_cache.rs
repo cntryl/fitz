@@ -56,8 +56,12 @@ fn should_reuse_compacted_global_fragment_buffers_for_stale_locator_hints() {
     assert_eq!(first.resource_offset, 31);
     assert_eq!(second.resource_offset, 32);
     assert_eq!(
-        cache.get(&31).unwrap().1.records[0].body.as_ptr(),
-        cache.get(&32).unwrap().1.records[0].body.as_ptr(),
+        cache.parent_hints.get(&31).unwrap().1.records[0]
+            .body
+            .as_ptr(),
+        cache.parent_hints.get(&32).unwrap().1.records[0]
+            .body
+            .as_ptr(),
         "stale hints must share the decoded compacted fragment"
     );
 }
@@ -112,10 +116,80 @@ fn should_keep_uncompacted_global_parent_fragments_distinct() {
     // Assert
     assert_eq!(first.body.as_ref(), 31_u64.to_le_bytes());
     assert_eq!(second.body.as_ref(), 32_u64.to_le_bytes());
-    assert_eq!(cache.get(&31).unwrap().0, 31);
-    assert_eq!(cache.get(&32).unwrap().0, 32);
+    assert_eq!(cache.parent_hints.get(&31).unwrap().0, 31);
+    assert_eq!(cache.parent_hints.get(&32).unwrap().0, 32);
     assert_ne!(
-        cache.get(&31).unwrap().1.records[0].body.as_ptr(),
-        cache.get(&32).unwrap().1.records[0].body.as_ptr()
+        cache.parent_hints.get(&31).unwrap().1.records[0]
+            .body
+            .as_ptr(),
+        cache.parent_hints.get(&32).unwrap().1.records[0]
+            .body
+            .as_ptr()
     );
+}
+
+fn add_short_direct_bucket_parent(store: &StreamStore) {
+    let first = {
+        let txn = store
+            .db
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+            .unwrap();
+        load_global_locator_record(&txn, 0, 0, &mut GlobalFragmentCache::new()).unwrap()
+    };
+    let mut writer = store
+        .db
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+        .unwrap();
+    writer
+        .put(
+            encode_compact_global_page_key(0),
+            CompactGlobalPageValue {
+                records: vec![first],
+            }
+            .encode(),
+            None,
+        )
+        .unwrap();
+    writer.commit(cntryl_midge::WriteOptions::sync()).unwrap();
+}
+
+#[test]
+fn should_reject_short_direct_bucket_parent_after_caching_merged_fragment() {
+    // Arrange
+    let store = command_history(true);
+    add_short_direct_bucket_parent(&store);
+    let txn = store
+        .db
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+        .unwrap();
+    let mut cache = GlobalFragmentCache::new();
+    load_global_locator_record(&txn, 31, 31, &mut cache).expect("warm merged parent");
+
+    // Act
+    let result = load_global_locator_record(&txn, 32, 0, &mut cache);
+
+    // Assert
+    let error = result.expect_err("a decoded bucket must not substitute for a short direct parent");
+    assert!(error.contains("outside parent fragment"));
+}
+
+#[test]
+fn should_keep_checked_direct_parent_when_merged_bucket_is_loaded_later() {
+    // Arrange
+    let store = command_history(true);
+    add_short_direct_bucket_parent(&store);
+    let txn = store
+        .db
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+        .unwrap();
+    let mut cache = GlobalFragmentCache::new();
+    load_global_locator_record(&txn, 0, 0, &mut cache).expect("check direct parent");
+    load_global_locator_record(&txn, 31, 31, &mut cache).expect("warm merged parent");
+
+    // Act
+    let result = load_global_locator_record(&txn, 32, 0, &mut cache);
+
+    // Assert
+    let error = result.expect_err("loading a bucket must not overwrite a checked direct parent");
+    assert!(error.contains("outside parent fragment"));
 }
