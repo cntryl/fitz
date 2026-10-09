@@ -40,7 +40,7 @@ base64 = "0.23.1"
 brotli = "9"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-cntryl-midge = { version = "0.3.2", git = "https://github.com/cntryl/midge", rev = "b8a2b680cfa2f100ee04b2ab50e4b4c2218536fb" }
+cntryl-midge = { version = "0.3.3", git = "https://github.com/cntryl/midge", rev = "d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b" }
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"
 flate2 = "1"
@@ -358,6 +358,12 @@ path = "benches/tier4_stream_mixed.rs"
 name = "tier4_stream_shapes"
 harness = false
 path = "benches/tier4_stream_shapes.rs"
+
+[[bench]]
+name = "tier4_stream_compacted"
+harness = false
+path = "benches/tier4_stream_compacted.rs"
+required-features = ["benchkit"]
 
 # Tier 5: Full TCP concurrency/saturation sweeps.
 [[bench]]

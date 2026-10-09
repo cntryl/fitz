@@ -1,0 +1,77 @@
+name: Stream Performance
+
+on:
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - src/domains/stream/**
+      - benches/tier4_stream*
+      - .github/workflows/stream-perf.yml
+      - .github/stream_performance.py
+      - .github/tests/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stream-perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Same-host Stream comparison
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FITZ_LOG_LEVEL: "off"
+      OTEL_ENABLED: false
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Install verified Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Test measurement acceptance logic
+        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stream-perf
+      - name: Prepare identical fixtures on the baseline
+        shell: bash
+        run: |
+          if [[ -z "$BASE_SHA" ]]; then
+            BASE_SHA=$(git merge-base HEAD origin/develop)
+          fi
+          baseline="$RUNNER_TEMP/fitz-stream-baseline"
+          git worktree add --detach "$baseline" "$BASE_SHA"
+          git diff --binary "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/stream-fixtures.patch"
+          git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
+          git -C "$baseline" add Cargo.toml Cargo.lock benches
+          git -C "$baseline" -c user.name=Stream-qualification -c user.email=stream-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Stream benchmark fixtures'
+          test -z "$(git -C "$baseline" diff --name-only "$BASE_SHA" -- src)"
+          echo "STREAM_BASELINE=$baseline" >> "$GITHUB_ENV"
+          echo "STREAM_BASE_PRODUCTION=$BASE_SHA" >> "$GITHUB_ENV"
+          echo "STREAM_OUTPUT=$RUNNER_TEMP/stream-qualification" >> "$GITHUB_ENV"
+      - name: Measure and compare unchanged default workloads
+        shell: bash
+        run: |
+          python3 .github/stream_performance.py
+      - name: Upload immutable comparisons and raw evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stream-performance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ env.STREAM_OUTPUT }}/**/capture.json
+            ${{ env.STREAM_OUTPUT }}/**/run.log
+            ${{ env.STREAM_OUTPUT }}/**/initial.json
+            ${{ env.STREAM_OUTPUT }}/**/stress/**
+            ${{ env.STREAM_OUTPUT }}/**/*.csv
+            ${{ env.STREAM_OUTPUT }}/**/*.json
+          if-no-files-found: error
+          retention-days: 14

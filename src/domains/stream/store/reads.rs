@@ -239,10 +239,9 @@ impl StreamStore {
                     continue;
                 };
                 let route = realm_posting_route(realm, &record);
-                let discriminator = Self::load_optional_discriminator(
-                    &txn,
-                    &crate::domains::stream::storage::encode_realm_discriminator_key(realm, offset),
-                )?;
+                let discriminator = Self::load_filtered_discriminator(&txn, filter, || {
+                    crate::domains::stream::storage::encode_realm_discriminator_key(realm, offset)
+                })?;
                 // Charge the cost of the item this record actually becomes:
                 // a filter-excluded record is only ever a cheap `Filtered`
                 // marker, never its full Event encoding.
@@ -366,10 +365,9 @@ impl StreamStore {
                     "stream://{}/{}/{}",
                     record.realm, record.area, record.resource
                 ));
-                let discriminator = Self::load_optional_discriminator(
-                    &txn,
-                    &super::encode_global_discriminator_key(offset),
-                )?;
+                let discriminator = Self::load_filtered_discriminator(&txn, filter, || {
+                    super::encode_global_discriminator_key(offset)
+                })?;
                 let matches_filter = Self::record_matches_filter(filter, discriminator.as_deref());
                 let record_bytes = stream_read_item_wire_bytes(
                     matches_filter,
@@ -467,19 +465,18 @@ impl StreamStore {
                     last_examined = offset;
                     continue;
                 }
-                resolve_blob_payload(&txn, &mut record.body, &mut record.metadata)?;
                 if items.len() >= item_limit {
                     has_more = true;
                     break 'pages;
                 }
+                resolve_blob_payload(&txn, &mut record.body, &mut record.metadata)?;
                 let route = crate::runtime::routing::Route::new(format!(
                     "stream://{}/{}/{}",
                     record.realm, record.area, record.resource
                 ));
-                let discriminator = Self::load_optional_discriminator(
-                    &txn,
-                    &super::encode_global_discriminator_key(offset),
-                )?;
+                let discriminator = Self::load_filtered_discriminator(&txn, filter, || {
+                    super::encode_global_discriminator_key(offset)
+                })?;
                 let matches_filter = Self::record_matches_filter(filter, discriminator.as_deref());
                 let record_bytes = stream_read_item_wire_bytes(
                     matches_filter,

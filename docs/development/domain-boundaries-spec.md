@@ -326,6 +326,14 @@ Stream guarantees:
 - monotonic committed offsets and watermarks
 - committed history is readable after restart
 
+Replay validates decoded fragments and checks blob integrity for examined
+records, including records excluded by a discriminator filter. It does not
+fetch blob payloads before the requested offset, after the item limit, or
+beyond the visible watermark. Applying the byte limit can require hydrating
+the next record to determine its wire cost. Unfiltered reads do not load
+discriminator sidecars. Compacted parent fragments may be shared within a read;
+this must preserve locator identity and direct-fragment corruption checks.
+
 Stream does NOT guarantee:
 
 - queue-style reservation or acknowledgement
