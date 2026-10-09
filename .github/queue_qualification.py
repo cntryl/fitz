@@ -21,6 +21,9 @@ def validate(report, head, backlog):
     assert len(report["stages"]) == 1
     stage = report["stages"][0]
     assert stage["drained"] and stage["empty_verified"] and stage["cleanup_failure"] is None
+    assert stage["termination"] in (
+        "configured_window", "backlog_safety_guard", "accounting_safety_guard", "broker_enqueue_rejection"
+    ), "Unqualified pressure-stage termination"
     # Preserve the original contract: the generator limit qualifies a completed
     # active window. Safety-guard drains qualify only their accepted message
     # envelope; their missed arrivals remain explicit, not a rate/capacity pass.

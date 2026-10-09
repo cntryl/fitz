@@ -76,6 +76,13 @@ class QueueQualificationTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             queue.validate(report, "head", 10000)
 
+    def test_should_reject_the_harness_missed_offered_rate_termination(self):
+        report = self.report()
+        report["stages"][0].update(termination="offered_rate_not_met", configured_window_completed=False,
+                                   offered=10103, harness_missed=102)
+        with self.assertRaises(AssertionError):
+            queue.validate(report, "head", 10000)
+
 
 if __name__ == "__main__":
     unittest.main()
