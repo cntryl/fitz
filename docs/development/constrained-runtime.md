@@ -52,3 +52,50 @@ hint could hide an existing Stream epoch key after SST publication. Fitz pins
 the immutable upstream fix from Midge PR 775 until a registry release contains
 it. The Stream concurrency guard remains enforced. A focused actor regression
 also checks Stream writes after Fast Queue forces automatic SST publication.
+
+## S3 WAL retention and crash recovery
+
+CI also runs three process-level campaigns against the same native runtime image
+at 0.25 CPU / 512MiB / no additional swap. A digest-pinned Sqrzl container and
+the external driver run outside the broker's resource limit. Fitz uses its native
+S3-compatible provider with explicit strict Queue and cloud durability. Provider
+failure fails the campaign; these tests never silently skip.
+
+The retention campaign runs four enqueue/ACK cycles of 4,096 deterministic 16KiB
+messages, totaling 256MiB of accepted payload. It uses the ordinary automatic
+memtable and maintenance settings. Within 120 seconds of the final ACK, the
+all catalog segments captured during the first cycle must retire, SST objects
+must exist, and both
+catalog-authorized WAL and actual remote WAL objects must total at most 128MiB.
+Every accepted message ID and payload is verified before ACK, and each cycle
+ends with an empty queue. This measures a fixed resource/workload envelope;
+it does not assert that every possible database has a universal WAL size cap.
+
+Two separate restart campaigns first enqueue 4,096 strict 16KiB messages and
+require at least 32MiB of catalog-authorized WAL to remain. Each then sends
+SIGKILL, verifies exit 137 without an OOM kill, and either restarts with the same
+cache or removes the container and its anonymous data volume before creating a
+replacement with a fresh cache. Strict `/healthz` must report ready within 180
+seconds, including the configured 59-second crashed-writer lease. All accepted
+IDs and exact payloads must recover, be ACKed and leave the queue empty. The
+seven-domain smoke probe must also pass after recovery. Each whole campaign
+has a fixed 1,200-second deadline.
+
+Reports retain the supplied source SHA, resolved runtime image ID, provider
+digest, actual Docker resource limits, authoritative WAL catalog and remote
+object inventories, readiness timings, container lifecycle, broker logs and
+Docker memory samples. The driver requires Docker and AWS CLI v2. Run the
+ignored `s3::` tests in `constrained_runtime` with one test thread; `ci.yml`
+contains the complete disposable provider setup and required environment.
+
+These campaigns qualify native S3 protocol behavior against an emulator. They
+do not qualify production AWS latency, an unmeasured historic backlog, or reuse
+of a Fitz 0.1.0 storage prefix. Fitz 0.1.0 resolved Midge 0.1.1; current develop
+pins Midge 0.3.3 revision `d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b`.
+Its streaming recovery checkpoints, exact delete/range-tombstone retirement,
+budgeted replay coverage and indexed SST candidate selection address concrete
+historical retention/recovery mechanisms. Residual recovery cost remains
+tracked in [Midge #754](https://github.com/cntryl/midge/issues/754), and the final
+published dependency and Fitz stable release remain gated by
+[Fitz #416](https://github.com/cntryl/fitz/issues/416). Follow the
+[migration guide](../operations/migration-guide.md) before any production cutover.
