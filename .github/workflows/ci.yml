@@ -104,11 +104,12 @@ jobs:
             runner: ubuntu-24.04-arm
             cache_scope: linux-arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 100
     env:
       RUSTUP_TOOLCHAIN: "1.99.0"
       RUST_LOG: "off"
       FITZ_TEST_IMAGE: fitz-ci:${{ github.event.pull_request.head.sha || github.sha }}
+      FITZ_S3_PROVIDER_IMAGE: ghcr.io/sqrzl/sqrzl-emulator@sha256:bb5bf54895fcb3b9730665b48e0f7b602791c61c3d18e5e7a060a4dce5c90964
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -216,6 +217,59 @@ jobs:
       - name: Remove constrained test container
         if: always()
         run: docker rm --force --volumes fitz-resource-ci || true
+
+      - name: Start isolated S3 qualification provider
+        run: |
+          aws --version
+          docker network create fitz-s3-ci
+          docker run --detach --name fitz-s3-provider --network fitz-s3-ci \
+            --publish 127.0.0.1:9000:9000 --publish 127.0.0.1:9001:9001 \
+            --env SQRZL_ACCESS_KEY_ID=admin --env SQRZL_SECRET_ACCESS_KEY=easy-peasy \
+            "$FITZ_S3_PROVIDER_IMAGE"
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors \
+            http://127.0.0.1:9001/healthz
+
+      - name: Qualify S3 WAL retention and crash recovery at the resource floor
+        timeout-minutes: 65
+        env:
+          FITZ_S3_TEST_ENDPOINT: http://127.0.0.1:9000
+          FITZ_S3_NETWORK: fitz-s3-ci
+          FITZ_S3_REPORT_DIR: target/fitz-stress/s3-recovery
+          FITZ_RESOURCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p target/fitz-stress/s3-recovery
+          cargo test --locked --test constrained_runtime s3:: \
+            -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee target/fitz-stress/s3-recovery/campaign.log
+
+      - name: Retain S3 qualification evidence
+        if: always()
+        run: |
+          mkdir -p target/fitz-stress/s3-recovery
+          docker inspect fitz-s3-provider > target/fitz-stress/s3-recovery/provider.json || true
+          docker logs fitz-s3-provider > target/fitz-stress/s3-recovery/provider.log 2>&1 || true
+          for broker in $(docker ps --all --quiet --filter label=fitz-s3-qualification=true); do
+            docker inspect "$broker" > "target/fitz-stress/s3-recovery/failed-${broker}.json" || true
+            docker logs "$broker" > "target/fitz-stress/s3-recovery/failed-${broker}.log" 2>&1 || true
+            docker cp "$broker:/data" "target/fitz-stress/s3-recovery/failed-${broker}-cache" || true
+          done
+
+      - name: Upload S3 WAL and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-recovery-${{ matrix.cache_scope }}
+          path: target/fitz-stress/s3-recovery
+          if-no-files-found: error
+
+      - name: Remove disposable S3 qualification resources
+        if: always()
+        run: |
+          for broker in $(docker ps --all --quiet --filter label=fitz-s3-qualification=true); do
+            docker rm --force --volumes "$broker" || true
+          done
+          docker rm --force --volumes fitz-s3-provider || true
+          docker network rm fitz-s3-ci || true
 
       - name: Show container logs on failure
         if: failure()
