@@ -55,7 +55,7 @@ also checks Stream writes after Fast Queue forces automatic SST publication.
 
 ## S3 WAL retention and crash recovery
 
-CI also runs three process-level campaigns against the same native runtime image
+CI also runs four process-level campaigns against the same native runtime image
 at 0.25 CPU / 512MiB / no additional swap. A digest-pinned Sqrzl container and
 the external driver run outside the broker's resource limit. Fitz uses its native
 S3-compatible provider with explicit strict Queue and cloud durability. Provider
@@ -64,7 +64,7 @@ failure fails the campaign; these tests never silently skip.
 The retention campaign runs four enqueue/ACK cycles of 4,096 deterministic 16KiB
 messages, totaling 256MiB of accepted payload. It uses the ordinary automatic
 memtable and maintenance settings. Within 120 seconds of the final ACK, the
-all catalog segments captured during the first cycle must retire, SST objects
+catalog segments captured during the first cycle must retire, SST objects
 must exist, and both
 catalog-authorized WAL and actual remote WAL objects must total at most 128MiB.
 Every accepted message ID and payload is verified before ACK, and each cycle
@@ -81,11 +81,22 @@ IDs and exact payloads must recover, be ACKed and leave the queue empty. The
 seven-domain smoke probe must also pass after recovery. Each whole campaign
 has a fixed 1,200-second deadline.
 
+The large-WAL campaign constructs a separate catalog-authorized 640MiB backlog
+with the pinned Midge frame/record codecs, then opens the ordinary Fitz image
+with a completely empty cache. This backlog exceeds the broker's entire hard
+memory limit. Readiness has the same 180-second deadline, and 40,960 exact KV
+values must be readable through Fitz afterward. Fixture construction runs
+outside the resource cap and occurs with no active writer. It qualifies large
+WAL recovery; the two Queue campaigns separately prove preservation of writes
+acknowledged through Fitz. Only the external driver enables the
+`recovery-qualification` feature; the production image uses its normal features.
+
 Reports retain the supplied source SHA, resolved runtime image ID, provider
 digest, actual Docker resource limits, authoritative WAL catalog and remote
 object inventories, readiness timings, container lifecycle, broker logs and
 Docker memory samples. The driver requires Docker and AWS CLI v2. Run the
-ignored `s3::` tests in `constrained_runtime` with one test thread; `ci.yml`
+ignored `s3::` tests in `constrained_runtime` with
+`--features recovery-qualification` and one test thread; `ci.yml`
 contains the complete disposable provider setup and required environment.
 
 These campaigns qualify native S3 protocol behavior against an emulator. They

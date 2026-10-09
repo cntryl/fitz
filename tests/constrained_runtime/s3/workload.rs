@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 
 const ROUTE: &str = "queue://test/s3/backlog";
 
-fn body(index: u32) -> Vec<u8> {
+pub(super) fn body(index: u32) -> Vec<u8> {
     let mut state = u64::from(index) + 1;
     let mut value = vec![0; 16 * 1024];
     for byte in &mut value {
