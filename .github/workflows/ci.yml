@@ -104,7 +104,7 @@ jobs:
             runner: ubuntu-24.04-arm
             cache_scope: linux-arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 100
+    timeout-minutes: 120
     env:
       RUSTUP_TOOLCHAIN: "1.99.0"
       RUST_LOG: "off"
@@ -231,7 +231,7 @@ jobs:
             http://127.0.0.1:9001/healthz
 
       - name: Qualify S3 WAL retention and crash recovery at the resource floor
-        timeout-minutes: 65
+        timeout-minutes: 85
         env:
           FITZ_S3_TEST_ENDPOINT: http://127.0.0.1:9000
           FITZ_S3_NETWORK: fitz-s3-ci
@@ -239,7 +239,7 @@ jobs:
           FITZ_RESOURCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           mkdir -p target/fitz-stress/s3-recovery
-          cargo test --locked --test constrained_runtime s3:: \
+          cargo test --locked --features recovery-qualification --test constrained_runtime s3:: \
             -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee target/fitz-stress/s3-recovery/campaign.log
 

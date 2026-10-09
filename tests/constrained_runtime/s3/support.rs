@@ -36,6 +36,50 @@ pub(super) struct Campaign {
 }
 
 impl Campaign {
+    #[cfg(feature = "recovery-qualification")]
+    pub fn location(&self) -> cntryl_midge::CloudStorageLocation {
+        cntryl_midge::CloudStorageLocation::new(
+            cntryl_midge::CloudProviderConfig::s3_compatible_static(
+                &self.bucket,
+                &self.endpoint,
+                "admin",
+                "easy-peasy",
+            ),
+            self.prefix.clone(),
+        )
+    }
+
+    #[cfg(feature = "recovery-qualification")]
+    pub fn download_object(&self, key: &str) -> Vec<u8> {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        self.aws(&[
+            "s3api",
+            "get-object",
+            "--bucket",
+            &self.bucket,
+            "--key",
+            &format!("{}{key}", self.prefix),
+            file.path().to_str().unwrap(),
+        ]);
+        std::fs::read(file.path()).unwrap()
+    }
+
+    #[cfg(feature = "recovery-qualification")]
+    pub fn upload_object(&self, key: &str, bytes: &[u8]) {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), bytes).unwrap();
+        self.aws(&[
+            "s3api",
+            "put-object",
+            "--bucket",
+            &self.bucket,
+            "--key",
+            &format!("{}{key}", self.prefix),
+            "--body",
+            file.path().to_str().unwrap(),
+        ]);
+    }
+
     pub fn new(phase: &str) -> Self {
         let endpoint = std::env::var("FITZ_S3_TEST_ENDPOINT").expect("loopback Sqrzl endpoint");
         assert!(
@@ -144,7 +188,13 @@ impl Campaign {
                 snapshot.sst_objects += 1;
             }
         }
-        println!("S3 {phase}: {snapshot:?}");
+        println!(
+            "S3 {phase}: catalog_bytes={}, remote_wal_bytes={}, WAL objects={}, SSTs={}",
+            snapshot.catalog_bytes,
+            snapshot.remote_wal_bytes,
+            snapshot.remote_wal_objects,
+            snapshot.sst_objects
+        );
         snapshot
     }
 
@@ -169,6 +219,7 @@ pub(super) struct Broker {
     directory: PathBuf,
     sample: usize,
     stats: Option<Child>,
+    removed: bool,
 }
 
 impl Broker {
@@ -239,6 +290,7 @@ impl Broker {
             directory: campaign.directory.clone(),
             sample: 0,
             stats: None,
+            removed: false,
         };
         super::super::inspect_container(&broker.name);
         broker.sample_memory();
@@ -310,7 +362,9 @@ impl Broker {
                     let value: Value = response.json().await.unwrap();
                     if value["status"] == "ready" {
                         self.capture();
-                        return started.elapsed().as_secs_f64();
+                        let seconds = started.elapsed().as_secs_f64();
+                        println!("S3 {} ready in {seconds:.3}s", self.name);
+                        return seconds;
                     }
                 }
             }
@@ -353,11 +407,30 @@ impl Broker {
         self.capture();
         self.stop_sampler();
         command("docker", &["rm", "--force", "--volumes", &self.name]);
+        self.removed = true;
     }
 }
 
 impl Drop for Broker {
     fn drop(&mut self) {
         self.stop_sampler();
+        if !self.removed {
+            // Retain failed stores, but stop their writers so later isolated
+            // campaigns do not compete with abandoned maintenance workloads.
+            for (action, extension) in [("inspect", "json"), ("logs", "log")] {
+                if let Ok(result) = Command::new("docker").args([action, &self.name]).output() {
+                    let mut bytes = result.stdout;
+                    bytes.extend(result.stderr);
+                    let _ = std::fs::write(
+                        self.directory
+                            .join(format!("{}-failed-{action}.{extension}", self.name)),
+                        bytes,
+                    );
+                }
+            }
+            let _ = Command::new("docker")
+                .args(["kill", "--signal", "KILL", &self.name])
+                .output();
+        }
     }
 }

@@ -27,6 +27,8 @@ bench-no-snapshot = []
 benchkit = []
 # Opt in to long-running saturation and endurance benchmark targets.
 stress-soak = []
+# Expose pinned Midge fixture codecs only to the external recovery driver.
+recovery-qualification = ["cntryl-midge/internal-testing"]
 
 [profile.release]
 lto = true
@@ -85,6 +87,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 rmcp = { version = "=3.5.0", default-features = false, features = ["client", "server", "transport-child-process", "transport-io", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
 
 [dev-dependencies]
+crc32c = "0.6"
 cntryl-stress = "0.5.1"
 jsonschema = { version = "0.58.4", default-features = false }
 proptest = "1"

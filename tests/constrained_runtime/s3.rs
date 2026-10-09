@@ -1,4 +1,7 @@
 //! Native S3 process qualification; provider and driver are outside the broker cap.
+#[cfg(feature = "recovery-qualification")]
+#[path = "s3/fixture.rs"]
+mod fixture;
 #[path = "s3/support.rs"]
 mod support;
 #[path = "s3/workload.rs"]
@@ -36,6 +39,7 @@ async fn recovery(cold: bool) -> serde_json::Value {
         broker.restart();
     }
     let ready_seconds = broker.ready().await;
+    let restart_to_ready_seconds = restart_started.elapsed().as_secs_f64();
     workload::drain(broker.address(), accepted).await;
     super::smoke(broker.address(), &format!("recovered-{}", campaign.id)).await;
     let after = super::inspect_container(&broker.name);
@@ -72,7 +76,8 @@ async fn recovery(cold: bool) -> serde_json::Value {
     let report = serde_json::json!({
         "cold_cache": cold, "accepted_and_verified_acked": RECORDS,
         "remaining": 0, "ready_seconds": ready_seconds,
-        "restart_seconds": restart_started.elapsed().as_secs_f64(),
+        "restart_to_ready_seconds": restart_to_ready_seconds,
+        "restart_and_verify_seconds": restart_started.elapsed().as_secs_f64(),
         "before": before, "after": after, "backlog": backlog, "recovered": recovered,
     });
     campaign.report(&report);
