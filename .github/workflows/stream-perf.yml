@@ -9,7 +9,7 @@ on:
       - benches/tier4_stream*
       - .github/workflows/stream-perf.yml
       - .github/stream_performance.py
-      - .github/tests/**
+      - .github/tests/test_stream_performance.py
   workflow_dispatch:
 
 permissions:
@@ -34,14 +34,28 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - name: Install verified Rust toolchain
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Test measurement acceptance logic
         run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+      - name: Determine whether Stream comparison inputs changed
+        id: comparison
+        shell: bash
+        run: |
+          compare=true
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]] &&
+            git diff --quiet "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock src/domains/stream 'benches/tier4_stream*'; then
+            compare=false
+            echo 'Stream comparison not applicable: runtime, dependency and benchmark inputs are unchanged. Measurement acceptance tests passed.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "needed=$compare" >> "$GITHUB_OUTPUT"
+      - name: Install verified Rust toolchain
+        if: steps.comparison.outputs.needed == 'true'
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - uses: Swatinem/rust-cache@v2
+        if: steps.comparison.outputs.needed == 'true'
         with:
           shared-key: stream-perf
       - name: Prepare identical fixtures on the baseline
+        if: steps.comparison.outputs.needed == 'true'
         shell: bash
         run: |
           if [[ -z "$BASE_SHA" ]]; then
@@ -58,11 +72,12 @@ jobs:
           echo "STREAM_BASE_PRODUCTION=$BASE_SHA" >> "$GITHUB_ENV"
           echo "STREAM_OUTPUT=$RUNNER_TEMP/stream-qualification" >> "$GITHUB_ENV"
       - name: Measure and compare unchanged default workloads
+        if: steps.comparison.outputs.needed == 'true'
         shell: bash
         run: |
           python3 .github/stream_performance.py
       - name: Upload immutable comparisons and raw evidence
-        if: always()
+        if: always() && steps.comparison.outputs.needed == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: stream-performance-${{ github.event.pull_request.head.sha || github.sha }}
