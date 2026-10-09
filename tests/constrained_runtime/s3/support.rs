@@ -249,6 +249,10 @@ impl Broker {
         self.tcp
     }
 
+    pub fn endpoint(&self) -> String {
+        self.http.clone()
+    }
+
     fn capture(&mut self) {
         let suffix = self.sample;
         self.sample += 1;

@@ -225,6 +225,7 @@ jobs:
           docker run --detach --name fitz-s3-provider --network fitz-s3-ci \
             --publish 127.0.0.1:9000:9000 --publish 127.0.0.1:9001:9001 \
             --env SQRZL_ACCESS_KEY_ID=admin --env SQRZL_SECRET_ACCESS_KEY=easy-peasy \
+            --env SQRZL_BLOBS_PATH=/app/blobs \
             "$FITZ_S3_PROVIDER_IMAGE"
           curl --fail --retry 30 --retry-delay 1 --retry-all-errors \
             http://127.0.0.1:9001/healthz
@@ -248,6 +249,9 @@ jobs:
           mkdir -p target/fitz-stress/s3-recovery
           docker inspect fitz-s3-provider > target/fitz-stress/s3-recovery/provider.json || true
           docker logs fitz-s3-provider > target/fitz-stress/s3-recovery/provider.log 2>&1 || true
+          if [ "${{ job.status }}" != "success" ]; then
+            docker cp fitz-s3-provider:/app/blobs target/fitz-stress/s3-recovery/failed-provider-store || true
+          fi
           for broker in $(docker ps --all --quiet --filter label=fitz-s3-qualification=true); do
             docker inspect "$broker" > "target/fitz-stress/s3-recovery/failed-${broker}.json" || true
             docker logs "$broker" > "target/fitz-stress/s3-recovery/failed-${broker}.log" 2>&1 || true

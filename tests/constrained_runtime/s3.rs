@@ -4,6 +4,10 @@ mod support;
 #[path = "s3/workload.rs"]
 mod workload;
 
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 use support::{Broker, Campaign, Snapshot};
 
@@ -115,6 +119,8 @@ async fn retention() -> serde_json::Value {
     let before = super::inspect_container(&broker.name);
     let mut samples: Vec<Snapshot> = Vec::new();
     let mut original = Vec::new();
+    let finished = Arc::new(AtomicBool::new(false));
+    let monitor = tokio::spawn(super::monitor_health(broker.endpoint(), finished.clone()));
     for round in 0..4 {
         let accepted = workload::enqueue(broker.address(), RECORDS, round * RECORDS).await;
         let snapshot = campaign.snapshot(&format!("round-{round}-enqueued"));
@@ -146,12 +152,16 @@ async fn retention() -> serde_json::Value {
         tokio::time::sleep(Duration::from_secs(2)).await;
     };
     super::smoke(broker.address(), &format!("retained-{}", campaign.id)).await;
+    finished.store(true, Ordering::Release);
+    let (health_samples, maximum_health_millis) = monitor.await.unwrap();
+    assert!(health_samples > 0);
     let after = super::inspect_container(&broker.name);
     let report = serde_json::json!({
         "accepted_and_verified_acked": u64::from(RECORDS) * 4,
         "payload_bytes_written": u64::from(RECORDS) * 4 * 16 * 1024,
         "remaining": 0, "wal_limit_bytes": WAL_LIMIT,
         "original_segments": original, "samples": samples, "final": final_snapshot,
+        "health_samples": health_samples, "maximum_health_millis": maximum_health_millis,
         "before": before, "after": after,
     });
     campaign.report(&report);
