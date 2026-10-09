@@ -6,11 +6,54 @@ consumer. It supplements the existing closed-loop lifecycle sweeps. It does not
 change Queue behavior or qualify restart durability.
 
 Stage reports include Midge snapshots before load, at drain start, and after the
-consumer settles, plus benchmark-only cumulative ACK admission/commit timings.
+consumer settles, plus benchmark-only cumulative ACK admission, commit,
+preparation, dispatch waiting and reply routing timings, and RESERVE hydration,
+dispatch waiting and reply routing timings. Reply routing ends at the session
+inbox, before transport encoding and socket delivery. Client RTTs include those
+remaining costs. Phase totals overlap client RTTs; do not sum them together or
+treat storage counters as a unique causal attribution.
 The drain-start query consumes the existing drain deadline; no target is extended.
 See the [diagnostic interpretation rules](benchmarks.md) for query errors, timing
 scope, and counter deltas. Missing snapshots remain unknown pressure, and these
 observations do not establish a cause from stall transition gauges alone.
+
+Both Queue harnesses use one dedicated sleeping pacing worker with a
+capacity-one handoff. After a validated ACK, a monotonic deadline at least the
+requested pause later must pass before the next RESERVE. A cancelled wait keeps
+its outstanding slot until cleanup; dropping the harness disconnects and wakes
+the worker, and normal cleanup awaits its exit without blocking broker runtime
+threads. Empty/rejected RESERVE backoff remains separate from ACK pacing.
+
+Artifacts label this implementation `corrected_pacing`, preserve the requested
+pause, and record observed pause, overshoot, RESERVE RTT, ACK RTT and complete
+validated cycle time. Worker wake and async handoff timings distinguish sleep
+overshoot from consumer scheduling delay. Pressure timing uses bounded aggregate
+distributions and totals, with load-stop and drain-start checkpoints. Storage deltas cover the
+existing three snapshots. Missing snapshots or counter resets produce unknown
+values, never zero cost. The drain-start snapshot consumes the same 600-second
+deadline, and post-drain observation does not extend it. Failed ACKs remain
+terminal; no diagnostic permits mutation retry or bypasses admission.
+
+Apply the identical pacing harness and diagnostic instrumentation to both
+comparison sources. Preserve older coarse-timer failures as historical evidence.
+A passing safety-guard diagnostic with `configured_window_completed=false`
+does not qualify the full configured active window, and ending below the intended
+message envelope does not qualify that envelope. The large-drain qualification
+and quarter-core/512 MiB survival/recovery qualification remain distinct gates.
+
+The manual Tier 5 workflow's `queue_pressure` input selects matched 10k, 25k,
+and 100k campaigns on one Linux host. Both sources use the same corrected
+harness, locked dependency, and the initial benchmark-only instrumentation;
+later production optimizations are never copied onto the baseline. Actual
+diagnostic build campaigns finish before timing. The runner retains every failed
+capture and requires the full intended message count, reconciled known outcomes,
+verified ACKs, the 5 ms observed minimum, empty verification, recovery and cleanup
+for all six captures. It reports finite drain qualification separately from a
+completed 120-second active window and constrained-resource survival.
+Generator misses remain visible when a safety guard stops load. The existing 1%
+generator limit applies to completed active windows; a guard drain qualifies its
+verified accepted-message envelope only. It does not qualify the requested
+arrival rate or the broker's capacity, regardless of drain success.
 
 ## Workload
 

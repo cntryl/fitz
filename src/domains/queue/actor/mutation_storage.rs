@@ -17,8 +17,11 @@ impl QueueActor {
         budget: Duration,
         mut prepare: impl FnMut(&mut QueueTransaction) -> Result<(), String>,
     ) -> Result<(), String> {
-        let mut txn = self.begin_mutation_transaction()?;
-        prepare(&mut txn)?;
+        let txn = super::ack_timing::measure(true, super::ack_timing::Phase::Preparation, || {
+            let mut txn = self.begin_mutation_transaction()?;
+            prepare(&mut txn)?;
+            Ok::<_, String>(txn)
+        })?;
         self.commit_prepared_with_admission_budget(txn, QueueCommit::Ack, budget, prepare)
     }
 
@@ -61,8 +64,15 @@ impl QueueActor {
                     // The actor owns this queue's mutation plan. Midge rejected it
                     // before WAL submission, so restaging cannot duplicate the write.
                     // Admission is checked again within the original wait budget.
-                    txn = self.begin_mutation_transaction()?;
-                    prepare(&mut txn)?;
+                    txn = super::ack_timing::measure(
+                        matches!(commit, QueueCommit::Ack),
+                        super::ack_timing::Phase::Preparation,
+                        || {
+                            let mut txn = self.begin_mutation_transaction()?;
+                            prepare(&mut txn)?;
+                            Ok::<_, String>(txn)
+                        },
+                    )?;
                 }
                 Err(error) => return Err(error.to_string()),
             }

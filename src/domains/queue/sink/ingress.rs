@@ -25,6 +25,20 @@ impl QueueFamilyState {
         let route_family = *envelope.destination().family();
         let request_started = self.record_request_start();
 
+        #[cfg(feature = "benchkit")]
+        if let Some(queued_at) = envelope.queued_at() {
+            use crate::domains::queue::actor::ack_timing::{observe, Phase};
+            match &request.frame {
+                Ok(QueueClientFrame::Op(crate::domains::queue::protocol::QueueMessage::Ack {
+                    ..
+                })) => observe(Phase::AckDispatchWaiting, queued_at.elapsed()),
+                Ok(QueueClientFrame::Op(
+                    crate::domains::queue::protocol::QueueMessage::Receive { .. },
+                )) => observe(Phase::ReserveDispatchWaiting, queued_at.elapsed()),
+                _ => {}
+            }
+        }
+
         if meta.route_family != route_family
             || envelope
                 .source()

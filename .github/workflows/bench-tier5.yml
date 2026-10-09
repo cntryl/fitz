@@ -2,6 +2,11 @@ name: Benchmark Tier 5
 
 on:
   workflow_dispatch:
+    inputs:
+      queue_pressure:
+        description: Run matched 10k, 25k and 100k Queue drains instead of the seven one-hour sweeps
+        type: boolean
+        default: false
   schedule:
     - cron: "0 6 * * 1"
 
@@ -14,6 +19,7 @@ concurrency:
 
 jobs:
   bench:
+    if: ${{ !inputs.queue_pressure }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -61,4 +67,60 @@ jobs:
             target/stress/**
             target/fitz-stress/**
           if-no-files-found: warn
+          retention-days: 90
+
+  queue-pressure:
+    if: ${{ inputs.queue_pressure }}
+    name: Matched Queue drain qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      FITZ_LOG_LEVEL: "off"
+      RUST_LOG: "off"
+      OTEL_ENABLED: "false"
+      STRESS_PROFILE: smoke
+      STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
+      STRESS_TIMEOUT_SECS: "1000"
+      # Immutable initial instrumentation only. Do not copy later production
+      # optimizations onto the comparison baseline.
+      QUEUE_TIMING_COMMIT: c99b54ef50ab93b778a072219c12b15f19f7b9f7
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install verified Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Test drain acceptance logic
+        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: queue-pressure
+      - name: Prepare identical pacing and diagnostics on the baseline
+        shell: bash
+        run: |
+          base=$(git merge-base HEAD origin/develop)
+          baseline="$RUNNER_TEMP/fitz-queue-baseline"
+          git worktree add --detach "$baseline" "$base"
+          git diff --binary "$base" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/queue-fixtures.patch"
+          git diff --binary "$base" "$QUEUE_TIMING_COMMIT" -- src/domains/queue > "$RUNNER_TEMP/queue-timing.patch"
+          git -C "$baseline" apply "$RUNNER_TEMP/queue-fixtures.patch"
+          git -C "$baseline" apply "$RUNNER_TEMP/queue-timing.patch"
+          git -C "$baseline" add Cargo.toml Cargo.lock benches src/domains/queue
+          git -C "$baseline" -c user.name=Queue-qualification -c user.email=queue-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Queue pacing and diagnostic instrumentation'
+          echo "QUEUE_BASELINE=$baseline" >> "$GITHUB_ENV"
+          echo "QUEUE_BASE_PRODUCTION=$base" >> "$GITHUB_ENV"
+          echo "QUEUE_OUTPUT=$RUNNER_TEMP/queue-qualification" >> "$GITHUB_ENV"
+      - name: Compile both sources then run all six matched campaigns
+        run: python3 .github/queue_qualification.py
+      - name: Upload complete and failed evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: queue-pressure-${{ github.sha }}
+          path: |
+            ${{ env.QUEUE_OUTPUT }}/**/*.json
+            ${{ env.QUEUE_OUTPUT }}/**/run.log
+            ${{ env.QUEUE_OUTPUT }}/**/stress/**
+          if-no-files-found: error
           retention-days: 90

@@ -113,6 +113,12 @@ impl QueueDomain {
         } else {
             crate::runtime::FamilyActorLane::Normal
         };
+        #[cfg(feature = "benchkit")]
+        let envelope = {
+            let mut envelope = envelope;
+            envelope.mark_queued(Instant::now());
+            envelope
+        };
         let command = QueueDomainCommand::Deliver(envelope, reply_tx, admission);
         self.family_runtime
             .try_enqueue(family, lane, command)

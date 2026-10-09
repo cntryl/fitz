@@ -21,6 +21,8 @@ impl QueueFamilyState {
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::queue::QueueResponse,
     ) -> bool {
+        #[cfg(feature = "benchkit")]
+        let started = Instant::now();
         if request_envelope.source().is_none() || !request_envelope.try_claim_reply() {
             tracing::debug!(
                 domain = "queue",
@@ -82,6 +84,17 @@ impl QueueFamilyState {
             } else {
                 false
             };
+        }
+        #[cfg(feature = "benchkit")]
+        {
+            use crate::domains::queue::actor::ack_timing::{observe, Phase};
+            use crate::protocol::queue_codec::msg_type;
+            // Reply cloning/routing ends at the session inbox, before socket encoding.
+            match meta.message_type {
+                msg_type::RESERVE => observe(Phase::ReserveReplyDelivery, started.elapsed()),
+                msg_type::COMPLETE => observe(Phase::AckReplyDelivery, started.elapsed()),
+                _ => {}
+            }
         }
         delivered
     }

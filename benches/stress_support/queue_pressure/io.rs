@@ -7,7 +7,7 @@ use fitz::protocol::error_codes::queue::ERR_QUEUE_FULL;
 use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::testkit::TestClient;
 use std::future::Future;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(super) const ROUTE: &str = "queue://stress-bench/work/offered-pressure";
 
@@ -55,7 +55,22 @@ pub(super) enum Delivery {
 }
 
 pub(super) async fn consume(client: &mut TestClient) -> Result<Delivery, BenchFailure> {
-    match reserve(client).await? {
+    consume_observed(client, |_, _| Ok(())).await
+}
+
+pub(super) enum ConsumerOperation {
+    Reserve,
+    Ack,
+}
+
+pub(super) async fn consume_observed(
+    client: &mut TestClient,
+    mut observe: impl FnMut(ConsumerOperation, Duration) -> Result<(), BenchFailure>,
+) -> Result<Delivery, BenchFailure> {
+    let started = Instant::now();
+    let reserved = reserve(client).await;
+    observe(ConsumerOperation::Reserve, started.elapsed())?;
+    match reserved? {
         Reservation::Empty => Ok(Delivery::Empty),
         Reservation::Rejected => Ok(Delivery::Rejected),
         Reservation::Message {
@@ -63,7 +78,10 @@ pub(super) async fn consume(client: &mut TestClient) -> Result<Delivery, BenchFa
             id,
             token,
         } => {
-            acknowledge(client, id, token).await?;
+            let started = Instant::now();
+            let acknowledged = acknowledge(client, id, token).await;
+            observe(ConsumerOperation::Ack, started.elapsed())?;
+            acknowledged?;
             Ok(Delivery::Acknowledged { sequence, id })
         }
     }

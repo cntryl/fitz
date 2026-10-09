@@ -4,7 +4,9 @@ mod config;
 mod io;
 mod latency;
 mod ledger;
+mod pacing;
 mod report;
+mod timing;
 
 use super::fixture::{BrokerFixture, StorageDirectory, StorageProfile};
 use super::types::BenchFailure;
@@ -34,6 +36,8 @@ fn configure(ctx: &mut StressContext, report: &Report) {
     ctx.parameter("storage_profile", "local_disk");
     ctx.metadata("durability_scope", report.durability_scope);
     ctx.metadata("target_class", "stress_characterization");
+    ctx.metadata("pacing_implementation", pacing::IMPLEMENTATION);
+    ctx.metadata("comparison_label", "corrected_pacing");
 }
 
 fn execute(ctx: &mut StressContext) -> Result<(), BenchFailure> {

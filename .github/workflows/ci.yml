@@ -41,7 +41,7 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Stream measurement acceptance regressions
+      - name: Benchmark measurement acceptance regressions
         run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
 
       - name: Pedantic lint
@@ -54,7 +54,7 @@ jobs:
         run: cargo test --locked --workspace
 
       - name: Queue diagnostic artifact regressions
-        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts
+        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts --test queue_pressure_accounting --test queue_pacing
 
   frontend:
     runs-on: ubuntu-latest
