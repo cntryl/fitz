@@ -788,7 +788,7 @@ fn collect_filtered_read_page_items<
     R,
     I,
     FLoadDiscriminator,
-    FRecordBytes,
+    FHydrateAndMeasure,
     FUpdateCursor,
     FFilteredItem,
     FEventItem,
@@ -796,7 +796,7 @@ fn collect_filtered_read_page_items<
     records: I,
     state: &mut ReadPageState<'_>,
     mut load_discriminator: FLoadDiscriminator,
-    mut record_bytes: FRecordBytes,
+    mut hydrate_and_measure: FHydrateAndMeasure,
     mut update_cursor: FUpdateCursor,
     mut filtered_item: FFilteredItem,
     mut event_item: FEventItem,
@@ -804,16 +804,16 @@ fn collect_filtered_read_page_items<
 where
     I: IntoIterator<Item = (u64, R)>,
     FLoadDiscriminator: FnMut(u64, &R) -> Result<Option<String>, String>,
-    // Returns the wire cost of the item this record becomes, given whether
-    // it passed the read filter.
-    FRecordBytes: FnMut(&R, bool) -> usize,
+    // Hydrates an examined record and returns its wire cost, including
+    // validation when the record becomes a filter-excluded marker.
+    FHydrateAndMeasure: FnMut(&mut R, bool) -> Result<usize, String>,
     FUpdateCursor: FnMut(&mut ReadCursorState, u64, &R),
     FFilteredItem: FnMut(u64, &R) -> StreamReadItem,
     FEventItem: FnMut(u64, R) -> StreamReadItem,
 {
     let mut stop_scan = false;
 
-    for (offset, record) in records {
+    for (offset, mut record) in records {
         if offset < state.from_offset {
             continue;
         }
@@ -843,7 +843,9 @@ where
         // that had nothing oversized to deliver in the first place.
         let matches_filter =
             StreamStore::record_matches_filter(state.filter, discriminator.as_deref());
-        let item_bytes = record_bytes(&record, matches_filter);
+        // Offset, visibility, and item-limit checks precede payload hydration.
+        // The byte budget needs the hydrated size of the next examined item.
+        let item_bytes = hydrate_and_measure(&mut record, matches_filter)?;
         match charge_wire_budget(
             offset,
             item_bytes,

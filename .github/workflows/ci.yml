@@ -41,6 +41,9 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      - name: Stream measurement acceptance regressions
+        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+
       - name: Pedantic lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 

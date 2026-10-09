@@ -359,6 +359,12 @@ name = "tier4_stream_shapes"
 harness = false
 path = "benches/tier4_stream_shapes.rs"
 
+[[bench]]
+name = "tier4_stream_compacted"
+harness = false
+path = "benches/tier4_stream_compacted.rs"
+required-features = ["benchkit"]
+
 # Tier 5: Full TCP concurrency/saturation sweeps.
 [[bench]]
 name = "tier5_saturation"
