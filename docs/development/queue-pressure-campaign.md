@@ -74,6 +74,9 @@ empty, recover and clean up. Guard-stopped finite captures retain missed arrival
 and do not establish a full window or arrival-rate qualification. A harness
 `offered_rate_not_met` termination always fails. All twelve captures must pass;
 the lower full-window rates never substitute for the original 100k drain.
+The manual job has a five-hour total budget for two build diagnostics and all
+twelve captures plus compilation and evidence upload. Each measured capture
+keeps its 120-second stage, 600-second drain and 1,000-second harness guard.
 
 ## Workload
 
@@ -179,6 +182,17 @@ The existing single-sample smoke defaults apply. Larger duration/rate settings
 may require increasing `STRESS_TIMEOUT_SECS`; a hard timeout is still a failed
 campaign. This row is opt-in and does not extend the seven-domain scheduled
 workflow matrix.
+
+The manual matched workflow compares the dispatched candidate against its
+`queue_baseline` input, which can be a commit, tag or branch. Left empty, it
+uses the merge base with `origin/develop`, which suits a feature branch. A
+dispatch on `develop` has no distinct merge base, so set `queue_baseline` to the
+develop commit before the change under test. The baseline receives the
+candidate's `Cargo.toml`, `Cargo.lock` and `benches`. A baseline that predates
+the benchmark-only Queue diagnostics (develop commit `1e3b18dd`) also receives
+that commit's own `src/domains/queue` diff and nothing later. The job fails
+before compiling if the prepared baseline and candidate have identical `src/`
+trees.
 
 Raw stage and partial evidence is atomically written under
 `target/fitz-stress/queue-pressure/`. Reports record scheduled, missed, sent,
