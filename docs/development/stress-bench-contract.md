@@ -63,8 +63,13 @@ This document defines the contract for Tier 2 through Tier 6 benchmarks using th
   are diagnostic and do not qualify the default hour.
 - Tier 5 divides one total active budget across 1/2/4/8/16/32/64-lane stages.
   Explicit capacity may end a Tier 5 stage early, with the boundary, actual
-  elapsed work, and successful recovery recorded. Tier 6 sustains eight lanes
-  until the full configured active batch-time budget is accumulated after setup.
+  elapsed work, and successful recovery recorded. That early stop passes only
+  after the stage accumulates at least 30 seconds of active batch time (or its
+  whole budget, if shorter) and every active lane completes at least 10
+  validated domain cycles; an earlier capacity stop fails the stage. Every lane
+  must still complete a validated cycle, as in any other stage. Tier 6 sustains
+  eight lanes until the full configured active batch-time budget is accumulated
+  after setup.
 - Exclude all separate verification from the configured active time, including
   periodic checks. Record its duration as `verification_elapsed_ns`, the active
   batch time as `elapsed_ns`, and wall time as `wall_elapsed_ns`. Record actual
