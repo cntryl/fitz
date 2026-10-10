@@ -24,6 +24,7 @@ pub(crate) const CANONICAL_ROUTE: &str = "queue://tier4/work/main";
 const RESPONSE_TIMEOUT_MS: u64 = 5_000;
 const SESSION_ID: u64 = 1;
 
+#[allow(clippy::too_many_arguments)] // Shared row declarations stay readable at call sites.
 pub(crate) fn dimensions(
     scenario: &'static str,
     storage_profile: StorageProfile,
