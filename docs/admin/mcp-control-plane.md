@@ -197,7 +197,12 @@ The audit file is opened without following a symlink, restricted to mode 0600
 on Unix, and capped at 16 MiB. Each preview, intent, and outcome record is
 synced to disk. If the mandatory audit append fails, Fitz does not start the
 command. A full file fails closed; rotate or archive it while MCP mutations are
-disabled. Denials also require a durable audit record.
+disabled. Denials for a principal that holds the tool's action capability
+(`mutate` for the Queue tools; the full runtime-drain authority below for the
+drain tools) also require a durable audit record. Calls from principals without
+that capability are rejected before argument parsing and are recorded only in
+the bounded in-memory MCP audit and denial metric, so they cannot fill the
+audit file.
 
 Queue dead-letter replay and purge require an explicit provisioned family,
 Queue route WRITE permission, and matching principal family authority. Replay

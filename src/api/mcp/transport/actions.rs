@@ -195,12 +195,15 @@ impl McpActionState {
             .ok()
             .map(PathBuf::from)
             .ok_or("FITZ_MCP_ACTION_AUDIT_FILE is required when MCP mutations are enabled")?;
-        let audit = Arc::new(McpActionAuditSink::open(audit_path)?);
-        Ok(Some(Self {
+        Self::open(&runtime_target, audit_path).map(Some)
+    }
+
+    pub(super) fn open(runtime_target: &str, audit_path: PathBuf) -> Result<Self, String> {
+        Ok(Self {
             runtime_target: runtime_target.into(),
-            audit,
+            audit: Arc::new(McpActionAuditSink::open(audit_path)?),
             previews: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-        }))
+        })
     }
 
     pub(super) fn tool_definitions(
@@ -261,6 +264,29 @@ impl McpActionState {
             name,
             PREVIEW_DRAIN_TOOL | CONFIRM_DRAIN_TOOL | PREVIEW_QUEUE_TOOL | CONFIRM_QUEUE_TOOL
         )
+    }
+
+    /// Argument-free gate run before parsing, admission or any durable write.
+    /// Callers without the tool's action capability get only a counted in-memory
+    /// denial, so they cannot fill the bounded durable audit file. Every later
+    /// preview, confirmation and dispatch authority check still runs.
+    pub(super) fn require_action_capability(
+        tool_name: &str,
+        context: &McpExecutionContext,
+        policy: &McpCapabilityPolicy,
+    ) -> Result<(), String> {
+        let capable = match tool_name {
+            PREVIEW_DRAIN_TOOL | CONFIRM_DRAIN_TOOL => Self::authorized_runtime(context, policy),
+            PREVIEW_QUEUE_TOOL | CONFIRM_QUEUE_TOOL => {
+                context.principal.is_some() && policy.allows(McpCapabilityClass::Mutate)
+            }
+            _ => false,
+        };
+        if capable {
+            return Ok(());
+        }
+        context.record_action_audit(tool_name, "capability_denied", McpAuditDecision::Denied);
+        Err("MCP action request was denied".into())
     }
 
     pub(super) fn preview_runtime_drain(
