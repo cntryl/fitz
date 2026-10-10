@@ -300,8 +300,8 @@ fn should_encode_get_result_not_found() {
 }
 
 #[test]
-fn should_parse_commit_with_sync_durability() {
-    // Arrange - Per CLIENT_SPEC, durability byte: 0=buffered, 1=sync
+fn should_parse_commit_with_sync_persistence() {
+    // Arrange
     let route = "kv://acme/kv/users";
     let mut payload = Vec::new();
     payload.put_u64(1);
@@ -327,8 +327,8 @@ fn should_parse_commit_with_sync_durability() {
 }
 
 #[test]
-fn should_parse_commit_with_buffered_durability() {
-    // Arrange - Per CLIENT_SPEC, durability byte: 0=buffered, 1=sync
+fn should_parse_commit_with_buffered_persistence() {
+    // Arrange
     let route = "kv://acme/kv/users";
     let mut payload = Vec::new();
     payload.put_u64(1);
@@ -387,13 +387,12 @@ fn should_reject_begin_with_too_few_route_segments() {
     payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1); // ReadWrite
-    payload.put_u8(0); // buffered
 
     // Act
     let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
 
     // Assert
-    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("realm/area/resource"));
 }
 
 #[test]
