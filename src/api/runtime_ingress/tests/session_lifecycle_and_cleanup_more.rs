@@ -426,9 +426,7 @@ async fn should_cleanup_real_queue_inflight_on_close() {
         store,
         router.clone(),
         admin_read_model.clone(),
-        crate::domains::WritePolicy::Buffered,
-        crate::utils::idempotency::default_dedup_store(),
-    ));
+        crate::utils::idempotency::default_dedup_store(),));
 
     let sender_mailbox = Arc::new(Mailbox::new(8));
     let worker_mailbox = Arc::new(Mailbox::new(8));

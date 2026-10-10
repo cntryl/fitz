@@ -8,11 +8,9 @@ use tracing::info;
 
 mod config;
 
-pub(crate) use config::warn_defaulted_fast_queue_policy;
 pub(crate) use config::LocalListenerExposure;
 pub use config::{
-    BootConfig, CloudDurabilityMode, CloudStorageConfig, QueueWritePolicy, QueueWritePolicySource,
-    StorageMemtableConfig, StorageMode,
+    BootConfig, CloudDurabilityMode, CloudStorageConfig, StorageMemtableConfig, StorageMode,
 };
 
 pub type BootResult<T> = Result<T, Box<dyn std::error::Error>>;

@@ -51,12 +51,7 @@ pub(super) fn should_create_queue_domain_sink() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model);
 
     // Assert
     assert!(sink.is_active());
@@ -81,8 +76,6 @@ pub(super) fn should_create_fast_queue_sink_with_explicit_background_cloud_recov
         Arc::clone(&store),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
-        crate::domains::WritePolicy::CloudAsync,
         crate::utils::idempotency::default_dedup_store(),
     );
 
@@ -103,13 +96,8 @@ pub(super) fn should_mark_fast_queue_family_dirty_given_successful_send() {
     let router = Arc::new(Router::new());
     router.register(sender_address.clone(), sender_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    )
-    .with_fast_flush_interval(Some(Duration::from_millis(100)));
+    let sink = new_queue_domain_sink(store, router, admin_read_model)
+        .with_fast_flush_interval(Some(Duration::from_millis(100)));
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -142,13 +130,8 @@ pub(super) fn should_clear_dirty_fast_queue_family_after_flush_window() {
     let router = Arc::new(Router::new());
     router.register(sender_address.clone(), sender_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    )
-    .with_fast_flush_interval(Some(Duration::from_millis(100)));
+    let sink = new_queue_domain_sink(store, router, admin_read_model)
+        .with_fast_flush_interval(Some(Duration::from_millis(100)));
 
     sink.deliver(Envelope::from_route(
         sender_address,
@@ -178,13 +161,8 @@ pub(super) fn should_drop_dirty_fast_queue_family_when_flush_cannot_find_cf() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    )
-    .with_fast_flush_interval(Some(Duration::from_millis(100)));
+    let sink = new_queue_domain_sink(store, router, admin_read_model)
+        .with_fast_flush_interval(Some(Duration::from_millis(100)));
     sink.insert_dirty_fast_flush_family_for_tests(99);
 
     // Act
@@ -207,12 +185,7 @@ pub(super) fn should_reject_send_given_malformed_queue_route() {
     let router = Arc::new(Router::new());
     router.register(sender_address.clone(), sender_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let queue_sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::BestEffort,
-    );
+    let queue_sink = new_queue_domain_sink(store, router, admin_read_model.clone());
 
     // Act
     queue_sink
@@ -259,12 +232,7 @@ pub(super) fn should_reject_receive_given_malformed_queue_route() {
     let router = Arc::new(Router::new());
     router.register(client_address.clone(), client_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::BestEffort,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model.clone());
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -310,12 +278,7 @@ pub(super) fn should_reject_extend_given_malformed_queue_route() {
     let router = Arc::new(Router::new());
     router.register(client_address.clone(), client_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::BestEffort,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model.clone());
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -361,12 +324,7 @@ pub(super) fn should_reject_ack_given_malformed_queue_route() {
     let router = Arc::new(Router::new());
     router.register(client_address.clone(), client_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::BestEffort,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model.clone());
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -410,7 +368,6 @@ pub(super) fn should_notify_queue_watch_given_queue_send_when_queue_transitions_
         store.clone(),
         router.clone(),
         admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
     ));
     let family = RouteFamily::new(1);
     let receiver_addr = RouteAddress::new(family, Route::new("inbox://session/1"));

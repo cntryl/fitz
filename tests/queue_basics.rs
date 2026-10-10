@@ -299,7 +299,7 @@ fn should_extend_valid_inflight() {
 }
 
 #[test]
-fn should_recover_queue_delayed_message_given_restart_under_strict_policy() {
+fn should_redeliver_queue_message_after_inflight_expiry() {
     // Arrange
     let mut harness = QueueProtocolHarness::new("redelivery");
     harness.send(b"payload");
@@ -319,7 +319,7 @@ fn should_recover_queue_delayed_message_given_restart_under_strict_policy() {
 }
 
 #[test]
-fn should_allow_fast_policy_loss_given_unflushed_recent_enqueue() {
+fn should_recover_queue_actor_state_from_existing_engine() {
     // Arrange
     let mut harness = QueueProtocolHarness::new("restart");
     harness.send(b"durable");

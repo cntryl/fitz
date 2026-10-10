@@ -96,8 +96,9 @@ impl QueueActor {
     }
 
     pub(super) fn rewrite_index_from_memory(&mut self, next_id: u64) -> Result<(), String> {
-        self.persistence.recovery.replace_index(
-            &super::recovery_store::QueueIndexRebuild {
+        self.persistence
+            .recovery
+            .replace_index(&super::recovery_store::QueueIndexRebuild {
                 meta: super::IndexMetaSnapshot {
                     next_id,
                     ready_count: Self::usize_to_u64(self.persisted_ready_count),
@@ -107,9 +108,7 @@ impl QueueActor {
                 ready: &self.persisted_ready_shards,
                 delayed: &self.persisted_delayed,
                 dlq: &self.persisted_dlq,
-            },
-            self.persistence.write_policy(),
-        )?;
+            })?;
         self.index_meta_written = true;
         Ok(())
     }

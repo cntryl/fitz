@@ -367,20 +367,16 @@ KV does NOT guarantee:
 
 Queue guarantees:
 
-- durable backlog according to the selected write policy
-- at-least-once delivery semantics
+- best-effort persistence of backlog, independently of local or cloud durability settings
+- at-least-once delivery of retained work; crash loss can remove accepted work or resurrect ACKed work
 - exclusive live reservation per active inflight token
-- retry and redelivery after lease expiry
+- retry and redelivery after inflight expiry
 - optional dead-letter transition when retry policy is exhausted
-- `FITZ_QUEUE_WRITE_POLICY=fast` may lose accepted recent queue mutations before the `FITZ_QUEUE_LOSS_WINDOW_MS` background persistence window closes
-- local-disk fast queues append mutations to an unsynced WAL and synchronize it
-  on the configured background timer; an individual ENQUEUE or ACK response does
-  not wait for that sync. SST publication follows storage maintenance pressure,
-  rather than being forced by each timer tick. Cloud-backed and memory fast
-  queues retain their existing flush path; memory storage remains non-durable.
-- fast-policy startup durably discards incomplete split message remnants from that
-  loss window and rebuilds the affected queue indexes; buffered and strict
-  policies fail closed on the same incomplete authoritative state
+- Queue mutations skip WAL and are flushed in the background; the
+  `FITZ_QUEUE_LOSS_WINDOW_MS` interval is a target, not a durability deadline
+- incomplete split message remnants are discarded on startup with best-effort
+  writes and affected indexes are rebuilt; other malformed authoritative state
+  fails closed. Repair can repeat after another crash
 
 Queue does NOT guarantee:
 
@@ -388,6 +384,7 @@ Queue does NOT guarantee:
 - strict global FIFO under competing consumers
 - durable continuation of live lease ownership after restart
 - stream-style immutable replay
+- continuity of unpersisted message ID reservations across crashes
 - live request-response semantics
 
 ### RPC

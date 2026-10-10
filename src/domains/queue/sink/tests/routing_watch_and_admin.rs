@@ -118,13 +118,11 @@ pub(super) fn new_queue_domain_sink(
     store: Arc<cntryl_midge::Engine>,
     router: Arc<Router>,
     admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    queue_write_policy: crate::domains::WritePolicy,
 ) -> QueueDomain {
     QueueDomain::new(
         store,
         router,
         admin_read_model,
-        queue_write_policy,
         crate::utils::idempotency::default_dedup_store(),
     )
 }
@@ -226,12 +224,7 @@ impl QueueWatchHarness {
         router.register(sender_address.clone(), sender_mailbox.clone());
         router.register(worker_address.clone(), worker_mailbox.clone());
         let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-        let sink = new_queue_domain_sink(
-            store,
-            router,
-            admin_read_model,
-            crate::domains::WritePolicy::BestEffort,
-        );
+        let sink = new_queue_domain_sink(store, router, admin_read_model);
 
         Self {
             family,

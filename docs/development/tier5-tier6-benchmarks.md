@@ -51,7 +51,7 @@ run that ends early is not a completed one-hour endurance run.
 
 | Domain | Measured work and verification | Boundary of the claim |
 | --- | --- | --- |
-| Queue | Enqueue, reserve, validate delivery, and complete acknowledged work. | Fast write policy and acknowledgements within the running process; this workload does not qualify strict restart durability. |
+| Queue | Enqueue, reserve, validate delivery, and complete acknowledged work. | Best-effort persistence and acknowledgements within the running process; this workload does not qualify crash durability. |
 | KV | Mutate and verify values using a bounded key ring. | Current authoritative values and transaction responses; key cardinality does not grow with elapsed time. |
 | Stream | Read and replay a finite, prebuilt history, validating event identity, order, and payload. | History is finite; the workload does not mutate retention or accumulate an endless sequence of commits. |
 | Schedule | Create, list, and cancel definitions, validating the definition lifecycle. | Definition churn; this workload does not claim that schedules were forced due or that fires were delivered. |

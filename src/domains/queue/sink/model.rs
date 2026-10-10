@@ -76,8 +76,6 @@ pub(super) struct QueueFamilyState {
     pub(super) delivery_service_us: ServiceEstimateUs,
     /// Fitz storage facade over the current Midge engine.
     pub(super) store: crate::domains::queue::actor::recovery_store::QueueStore,
-    /// Commit policy for queue persistence on this runtime.
-    pub(super) queue_write_policy: crate::domains::WritePolicy,
     /// Deduplication store shared by warm actors created through this sink.
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     pub(super) actor_registry: QueueActorRegistry,
@@ -175,7 +173,7 @@ pub(crate) struct QueueDomain {
 #[derive(Clone)]
 pub(super) struct QueueDomainConfig {
     pub(super) store: crate::domains::queue::actor::recovery_store::QueueStore,
-    pub(super) queue_write_policy: crate::domains::WritePolicy,
+
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     pub(super) router: Arc<Router>,
     pub(super) projection: Arc<QueueAdminProjection>,

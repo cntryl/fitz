@@ -26,12 +26,7 @@ fn delayed_queue_with_clock(
         crate::domains::queue::QueueResponse::Sent { .. }
     ));
     let read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        read_model.clone(),
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, router, read_model.clone());
     sink.install_actor_for_tests(key, actor);
     (sink, read_model, clock)
 }
@@ -91,7 +86,6 @@ fn should_not_evict_idle_queue_actor_during_queue_admin_refresh() {
         store,
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     sink.install_actor_for_tests(key, actor);
     sink.force_actor_idle_for_tests(family, queue_route);
@@ -129,12 +123,7 @@ fn should_not_expire_inflight_message_during_queue_admin_refresh() {
         crate::domains::queue::QueueResponse::Received { ref messages } if messages.len() == 1
     ));
     let read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        Arc::new(Router::new()),
-        read_model.clone(),
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, Arc::new(Router::new()), read_model.clone());
     sink.install_actor_for_tests(key, actor);
     sink.inspect_family_for_tests(family, QueueFamilyState::mark_admin_snapshot_dirty);
     clock.advance(Duration::from_secs(2));

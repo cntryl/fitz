@@ -75,7 +75,7 @@ impl QueueActor {
             None,
         )
         .map_err(|e| format!("Failed to update queue index meta for message {id}: {e:?}"))?;
-        txn.commit(self.persistence.write_options())
+        txn.commit()
             .map_err(|e| format!("Failed to commit replay tx for message {id}: {e:?}"))?;
 
         self.remove_persisted_dlq(id);
@@ -142,7 +142,7 @@ impl QueueActor {
             None,
         )
         .map_err(|e| format!("Failed to update queue index meta for message {id}: {e:?}"))?;
-        txn.commit(self.persistence.write_options())
+        txn.commit()
             .map_err(|e| format!("Failed to commit purge tx for message {id}: {e:?}"))?;
 
         self.remove_persisted_dlq(id);
@@ -239,7 +239,7 @@ impl QueueActor {
             return false;
         }
 
-        if let Err(error) = txn.commit(self.persistence.write_options()) {
+        if let Err(error) = txn.commit() {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),

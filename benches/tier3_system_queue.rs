@@ -231,14 +231,13 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         resource: "queue".to_string(),
     };
     let store = create_write_heavy_bench_store();
-    let mut actor = QueueActor::with_clock_and_write_policy(
+    let mut actor = QueueActor::with_clock(
         RouteFamily::new(1),
         queue_key,
         store,
         Box::new(clock.clone()),
         Some(3),
         fitz::utils::idempotency::default_dedup_store(),
-        fitz::domains::WritePolicy::BestEffort,
     );
     let payload = Bytes::from_static(b"mixed workload message");
 

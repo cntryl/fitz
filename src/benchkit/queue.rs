@@ -31,13 +31,12 @@ pub fn create_bench_queue_actor(
     };
 
     let store = create_bench_store();
-    QueueActor::new_with_write_policy(
+    QueueActor::new(
         family,
         queue_key,
         store,
         max_attempts,
         crate::utils::idempotency::default_dedup_store(),
-        crate::domains::WritePolicy::BestEffort,
     )
 }
 

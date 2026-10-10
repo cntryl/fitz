@@ -21,12 +21,12 @@ fn local_engine_with_ttl(path: &std::path::Path, ttl: Duration) -> Arc<cntryl_mi
 }
 
 #[test]
-fn should_sync_local_fast_queue_without_publishing_an_sst() {
+fn should_keep_local_queue_writes_out_of_wal() {
     // Arrange
     let directory = tempfile::tempdir().unwrap();
     let engine = local_engine(directory.path());
     let family = engine.create_column_family("queue").unwrap();
-    let store = QueueStore::new(engine.clone()).with_local_fast_wal(true);
+    let store = QueueStore::new(engine.clone());
     let initial = engine
         .metrics()
         .get_runtime_metrics_with_timeout(Duration::from_secs(2))
@@ -40,27 +40,17 @@ fn should_sync_local_fast_queue_without_publishing_an_sst() {
     write
         .put(b"ready".to_vec(), b"body".to_vec(), None)
         .unwrap();
-    write
-        .commit(crate::domains::WritePolicy::BestEffort)
-        .unwrap();
-    let before = engine
-        .metrics()
-        .get_runtime_metrics_with_timeout(Duration::from_secs(2))
-        .unwrap();
 
     // Act
-    let flushed = store.flush_family(family.id()).unwrap();
+    write.commit().unwrap();
+
+    // Assert
     let after = engine
         .metrics()
         .get_runtime_metrics_with_timeout(Duration::from_secs(2))
         .unwrap();
-
-    // Assert
-    assert!(flushed);
-    assert!(before.wal_append_count > initial.wal_append_count);
-    assert_eq!(after.sst_count, 0);
-    assert_eq!(after.flush_publish_count, before.flush_publish_count);
-    assert!(after.wal_fsync_count > before.wal_fsync_count);
+    assert_eq!(after.wal_append_count, initial.wal_append_count);
+    assert_eq!(after.wal_fsync_count, initial.wal_fsync_count);
     drop(store);
     crate::testkit::midge::shutdown_test_engine(engine);
 }
@@ -103,7 +93,7 @@ fn should_preserve_fast_queue_backlog_and_ack_after_process_exit() {
         serde_json::from_slice(&std::fs::read(directory.path().join("receipt.json")).unwrap())
             .unwrap();
     // The child's 30-second deadline precedes the first renewal at 40 seconds.
-    // This isolates WAL recovery from exiting during a lease-file mutation.
+    // This isolates persisted SST recovery from a lease-file mutation.
     let deadline = Instant::now() + Duration::from_secs(130);
     let engine = loop {
         let options = cntryl_midge::OpenOptions::local(directory.path().join("db"))
@@ -119,21 +109,23 @@ fn should_preserve_fast_queue_backlog_and_ack_after_process_exit() {
             Err(error) => panic!("reopen after child exit failed: {error}"),
         }
     };
-    let store = QueueStore::new(engine.clone()).with_local_fast_wal(true);
+    let store = QueueStore::new(engine.clone());
 
     // Act
-    let mut recovered = QueueActor::new_with_write_policy(
+    let mut recovered = QueueActor::new(
         RouteFamily::new(1),
         queue_key(),
         store,
         None,
         crate::utils::idempotency::default_dedup_store(),
-        crate::domains::WritePolicy::BestEffort,
     );
     let delivery = recovered.handle_receive_for_session(2, 30, Some(10));
 
     // Assert
-    assert_eq!(published, 0, "child exited with WAL-only state");
+    assert!(
+        published > 0,
+        "child persisted Queue state through an SST flush"
+    );
     let QueueResponse::Received { messages } = delivery else {
         panic!("missing recovered backlog")
     };
@@ -154,14 +146,13 @@ fn should_write_fast_queue_child_without_shutdown() {
     let directory = std::path::PathBuf::from(directory);
     let engine = local_engine_with_ttl(&directory.join("db"), Duration::from_secs(120));
     engine.create_column_family("queue").unwrap();
-    let store = QueueStore::new(engine.clone()).with_local_fast_wal(true);
-    let mut actor = QueueActor::new_with_write_policy(
+    let store = QueueStore::new(engine.clone());
+    let mut actor = QueueActor::new(
         RouteFamily::new(1),
         queue_key(),
         store.clone(),
         None,
         crate::utils::idempotency::default_dedup_store(),
-        crate::domains::WritePolicy::BestEffort,
     );
     let QueueResponse::Sent { id: acked } = actor.handle_send(Bytes::from_static(b"acked"), None)
     else {
@@ -199,12 +190,12 @@ fn should_write_fast_queue_child_without_shutdown() {
 }
 
 #[test]
-fn should_keep_sst_flushing_when_local_fast_wal_is_disabled() {
+fn should_persist_best_effort_queue_state_through_background_flush() {
     // Arrange
     let directory = tempfile::tempdir().unwrap();
     let engine = local_engine(directory.path());
     let family = engine.create_column_family("queue").unwrap();
-    let store = QueueStore::new(engine.clone()).with_local_fast_wal(false);
+    let store = QueueStore::new(engine.clone());
     let mut write = store
         .begin(
             family.id(),
@@ -214,9 +205,7 @@ fn should_keep_sst_flushing_when_local_fast_wal_is_disabled() {
     write
         .put(b"ready".to_vec(), b"body".to_vec(), None)
         .unwrap();
-    write
-        .commit(crate::domains::WritePolicy::BestEffort)
-        .unwrap();
+    write.commit().unwrap();
 
     // Act
     let flushed = store.flush_family(family.id()).unwrap();

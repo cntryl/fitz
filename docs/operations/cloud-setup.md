@@ -113,22 +113,25 @@ cloud-compatible commits: buffered intent uses asynchronous cloud durability,
 while sync intent follows `FITZ_STORAGE_CLOUD_DURABILITY`. Notice, RPC, and
 Lease remain live or ephemeral as defined by their domain contracts.
 
-Queue has a separate hot-path policy:
+Queue persistence is always best effort, independently of
+`FITZ_STORAGE_CLOUD_DURABILITY`. Queue mutations skip the WAL and return after
+local acceptance; they do not wait for local sync or provider acknowledgement.
+`FITZ_QUEUE_WRITE_POLICY` is no longer a policy selector. Remove it from new
+configurations; the legacy value `fast` is accepted, while `buffered` and
+`strict` are rejected at startup rather than silently downgraded.
 
-- `FITZ_QUEUE_WRITE_POLICY=fast`: default; skips WAL for queue mutations and flushes dirty queue storage in the background.
-- `FITZ_QUEUE_WRITE_POLICY=buffered`: uses buffered WAL locally; in cloud mode it completes at Midge's local cloud commit barrier while provider upload continues asynchronously.
-- `FITZ_QUEUE_WRITE_POLICY=strict`: waits for local sync writes; in cloud mode it also waits for provider acknowledgement.
-
-`FITZ_QUEUE_LOSS_WINDOW_MS` defaults to `100` and controls the target flush interval for fast queue writes. In fast mode, accepted recent queue sends, completes, dead-letter replays, and dead-letter purges can be lost if the process or host crashes before the background flush completes.
+`FITZ_QUEUE_LOSS_WINDOW_MS` defaults to `100` and sets the target background
+flush interval. It is not a durability deadline. Accepted enqueues, ACKs,
+dead-letter transitions, replays, and purges can be lost on a crash before
+persistence completes. Lost ACKs can cause redelivery. Producers must be able
+to regenerate work, and consumers must tolerate duplicates.
 A failed background flush is retried on the next interval and counted in
-`fitz_queue_fast_flush_failures_total`. A sustained non-zero rate means
-accepted Queue writes are outliving the loss window without reaching disk, so
-alert on it; readiness is not withdrawn for flush failures.
-If that loss leaves only one side of a split queue record, startup discards the
-incomplete remnant with a sync write (or provider-acknowledged write in strict
-cloud mode), invalidates that queue's derived indexes for authoritative rebuild,
-logs the discarded message ID, and continues. Buffered and strict queue
-policies continue to fail startup on the same incomplete authoritative state.
+`fitz_queue_fast_flush_failures_total`; readiness is not withdrawn for flush
+failures. Cloud recovery also depends on completed provider publication.
+If a crash leaves only one side of a split Queue record, startup discards the
+incomplete remnant with a best-effort mutation, invalidates its derived indexes,
+logs the discarded message ID, and continues. Other malformed authoritative
+state still fails startup. Repair may repeat after another crash.
 
 ## Operations Checklist
 

@@ -118,7 +118,6 @@ fn should_release_reserved_message_when_receive_response_cannot_be_delivered() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     sink.deliver(queue_send_envelope(family, route))
         .expect("seed queue message");
@@ -170,7 +169,6 @@ fn should_wake_fifo_long_poll_reserve_when_matching_message_is_enqueued() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
 
     sink.deliver(Envelope::from_route(
@@ -312,7 +310,6 @@ fn should_preserve_legacy_wire_shape_given_concrete_queue_reserve() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     sink.deliver(Envelope::from_route(
         sender_address,
@@ -374,7 +371,6 @@ fn should_retain_queue_identity_when_dead_letter_actor_is_evicted() {
         store,
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     sink.install_actor_for_tests(key.clone(), actor);
 
@@ -395,12 +391,7 @@ fn should_route_queue_delivery_through_family_actor() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model);
     let envelope = queue_send_envelope(family, queue_route);
     let actors_were_empty = sink.actors_are_empty_for_tests();
 
@@ -431,7 +422,6 @@ fn should_reserve_concrete_items_given_wildcards_in_unknown_queue_segments() {
         store,
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for (route, body) in [
         ("queue://acme/cats/cat", b"acme".as_slice()),
@@ -527,7 +517,6 @@ fn should_stop_wildcard_reserve_after_wire_budget_exhaustion() {
         store,
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for (key, actor) in keys.iter().cloned().zip([first, blocked, untouched]) {
         sink.install_actor_for_tests(key, actor);
@@ -574,7 +563,6 @@ fn should_surface_startup_inventory_failure_to_wildcard_reserve() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     sink.set_inventory_error_for_tests("inventory scan failed");
 
@@ -618,7 +606,6 @@ fn should_discover_durable_queue_routes_given_wildcard_reserve_after_sink_restar
         store.clone(),
         first_router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Sync,
     );
     first_sink
         .deliver(Envelope::from_route(
@@ -645,7 +632,6 @@ fn should_discover_durable_queue_routes_given_wildcard_reserve_after_sink_restar
         store,
         second_router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Sync,
     );
 
     // Act
@@ -688,7 +674,6 @@ fn should_reject_wildcard_reserve_above_maximum_batch_size() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     sink.deliver(Envelope::from_route(
         sender_address,
@@ -756,7 +741,6 @@ fn should_keep_each_correlation_when_a_parked_reserve_is_answered_after_a_later_
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     let parked_correlation = std::num::NonZeroU64::new(111);
     let immediate_correlation = std::num::NonZeroU64::new(222);

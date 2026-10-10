@@ -230,20 +230,13 @@ impl QueueActor {
 
     pub(super) fn commit_transaction(
         txn: super::recovery_store::QueueTransaction,
-        write_options: crate::domains::WritePolicy,
         commit: QueueCommit,
     ) -> Result<(), super::recovery_store::QueueStoreError> {
-        Self::commit_transaction_with_pressure_wait(
-            txn,
-            write_options,
-            commit,
-            std::time::Duration::from_secs(30),
-        )
+        Self::commit_transaction_with_pressure_wait(txn, commit, std::time::Duration::from_secs(30))
     }
 
     pub(super) fn commit_transaction_with_pressure_wait(
         txn: super::recovery_store::QueueTransaction,
-        write_options: crate::domains::WritePolicy,
         commit: QueueCommit,
         timeout: std::time::Duration,
     ) -> Result<(), super::recovery_store::QueueStoreError> {
@@ -271,11 +264,7 @@ impl QueueActor {
             }
         }
 
-        txn.commit_with_pressure_wait_timed(
-            write_options,
-            timeout,
-            matches!(commit, QueueCommit::Ack),
-        )
+        txn.commit_with_pressure_wait_timed(timeout, matches!(commit, QueueCommit::Ack))
     }
 
     #[cfg(test)]

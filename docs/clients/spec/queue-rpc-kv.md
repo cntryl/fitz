@@ -273,7 +273,7 @@ Every operation includes route:
 - **FIFO-ish**: Generally delivered in enqueue order; leasing can cause out-of-order
 - **Visibility Timeout**: Reserved messages are invisible to other consumers until expiry
 - **Token Binding**: Complete/Extend require both message_id and inflight_token
-- **Durability Split**: Queue data survives restart according to `FITZ_QUEUE_WRITE_POLICY`; the default fast policy can lose accepted recent mutations before the flush window closes. Live inflight reservations and inflight tokens do not survive restart.
+- **Persistence**: Queue persistence is always best effort. Accepted enqueues, ACKs, and other mutations can be lost before background persistence completes; lost ACKs can cause redelivery. The flush interval is a target, not a durability deadline. Live inflight reservations and tokens do not survive restart. Unpersisted ID reservations can also be lost, so an ID accepted before a crash can be reused afterward.
 
 ##### Opaque Server-Generated IDs
 

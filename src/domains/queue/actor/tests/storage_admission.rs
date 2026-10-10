@@ -1,5 +1,4 @@
 use crate::domains::queue::actor::recovery_store::{QueueStore, QueueTransactionMode};
-use crate::domains::WritePolicy;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -52,7 +51,7 @@ fn should_wait_for_queue_storage_pressure_to_clear_before_committing() {
     let commit = std::thread::spawn(move || {
         started_tx.send(()).expect("report commit start");
         result_tx
-            .send(transaction.commit(WritePolicy::BestEffort))
+            .send(transaction.commit())
             .expect("report commit result");
     });
     started_rx
@@ -113,8 +112,7 @@ fn should_leave_queue_storage_unchanged_when_pressure_wait_expires() {
         .expect("stage Queue work");
 
     // Act
-    let result =
-        transaction.commit_with_pressure_wait(WritePolicy::BestEffort, Duration::from_millis(20));
+    let result = transaction.commit_with_pressure_wait(Duration::from_millis(20));
 
     // Assert
     assert!(result
@@ -137,7 +135,7 @@ fn should_commit_read_only_queue_work_without_waiting_for_storage_pressure() {
         .expect("read-only Queue transaction");
 
     // Act
-    let result = transaction.commit_with_pressure_wait(WritePolicy::BestEffort, Duration::ZERO);
+    let result = transaction.commit_with_pressure_wait(Duration::ZERO);
 
     // Assert
     assert!(result.is_ok(), "read-only commit failed: {result:?}");

@@ -267,8 +267,6 @@ impl Broker {
                 "--env",
                 "FITZ_STORAGE_CACHE_PATH=/data",
                 "--env",
-                "FITZ_QUEUE_WRITE_POLICY=strict",
-                "--env",
                 "FITZ_STORAGE_CLOUD_DURABILITY=strict",
                 "--env",
                 "FITZ_STORAGE_LEASE_TTL_SECS=59",
@@ -383,6 +381,24 @@ impl Broker {
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+    }
+
+    pub fn checkpoint(&mut self) {
+        // Explicit fixture preparation, not an enqueue durability guarantee.
+        self.capture();
+        command(
+            "docker",
+            &["stop", "--signal", "SIGINT", "--timeout", "60", &self.name],
+        );
+        self.stop_sampler();
+        let state: Vec<Value> =
+            serde_json::from_slice(&command("docker", &["inspect", &self.name])).unwrap();
+        assert_eq!(
+            state[0]["State"]["ExitCode"], 0,
+            "checkpoint must finish orderly storage shutdown"
+        );
+        assert_eq!(state[0]["State"]["OOMKilled"], false);
+        self.capture();
     }
 
     pub fn crash(&mut self) {

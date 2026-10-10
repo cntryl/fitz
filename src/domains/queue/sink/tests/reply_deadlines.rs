@@ -40,7 +40,6 @@ fn should_wait_for_admitted_queue_client_work_beyond_the_control_reply_budget() 
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     ));
     let release = block_family(&sink);
     let envelope = Envelope::from_route(
@@ -90,7 +89,6 @@ fn should_keep_the_short_queue_control_reply_deadline() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     );
     let release = block_family(&sink);
     let cleanup = Envelope::new(

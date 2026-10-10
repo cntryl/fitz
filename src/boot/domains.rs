@@ -529,20 +529,11 @@ impl DomainAdminPorts {
     }
 }
 
-pub(crate) fn queue_fast_local_wal(config: &crate::boot::runtime::BootConfig) -> bool {
-    matches!(
-        &config.storage_mode,
-        crate::boot::runtime::StorageMode::LocalDisk { .. }
-    ) && config.queue_write_policy() == crate::domains::WritePolicy::BestEffort
-}
-
 pub(crate) struct DomainSetupOptions {
     pub(crate) route_families: Vec<u32>,
     pub(crate) schedule_write_policy: crate::domains::WritePolicy,
-    pub(crate) queue_write_policy: crate::domains::WritePolicy,
-    pub(crate) queue_recovery_write_policy: crate::domains::WritePolicy,
+
     pub(crate) queue_fast_flush_interval: Option<std::time::Duration>,
-    pub(crate) queue_fast_local_wal: bool,
     pub(crate) request_sync_write_policy: crate::domains::WritePolicy,
     pub(crate) request_buffered_write_policy: crate::domains::WritePolicy,
     pub(crate) rpc_request_timeout: Option<std::time::Duration>,
@@ -636,12 +627,9 @@ pub(crate) fn setup(
 
     let queue_sink = Arc::new(
         QueueDomain::try_new_with_storage(
-            crate::domains::queue::actor::recovery_store::QueueStore::from(storage.clone())
-                .with_local_fast_wal(options.queue_fast_local_wal),
+            crate::domains::queue::actor::recovery_store::QueueStore::from(storage.clone()),
             router.clone(),
             admin_read_model.clone(),
-            options.queue_write_policy,
-            options.queue_recovery_write_policy,
             crate::utils::idempotency::default_dedup_store(),
         )?
         .with_fast_flush_interval(options.queue_fast_flush_interval)

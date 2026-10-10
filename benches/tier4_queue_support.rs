@@ -24,29 +24,6 @@ pub(crate) const CANONICAL_ROUTE: &str = "queue://tier4/work/main";
 const RESPONSE_TIMEOUT_MS: u64 = 5_000;
 const SESSION_ID: u64 = 1;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum QueueWriteMode {
-    Sync,
-    Buffered,
-}
-
-impl QueueWriteMode {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Sync => "sync",
-            Self::Buffered => "buffered",
-        }
-    }
-
-    fn policy(self) -> fitz::domains::WritePolicy {
-        match self {
-            Self::Sync => fitz::domains::WritePolicy::Sync,
-            Self::Buffered => fitz::domains::WritePolicy::Buffered,
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)] // Shared row declarations stay readable at call sites.
 pub(crate) fn dimensions(
     scenario: &'static str,
     storage_profile: StorageProfile,
@@ -83,7 +60,7 @@ struct QueueActorFixture {
 }
 
 impl QueueActorFixture {
-    fn new(storage: StorageProfile, write_mode: QueueWriteMode) -> Self {
+    fn new(storage: StorageProfile) -> Self {
         let (store, temp_dir) = match storage {
             StorageProfile::Memory => (create_write_heavy_bench_store(), None),
             StorageProfile::LocalDisk => {
@@ -98,13 +75,12 @@ impl QueueActorFixture {
             area: "work".to_string(),
             resource: "main".to_string(),
         };
-        let actor = QueueActor::new_with_write_policy(
+        let actor = QueueActor::new(
             family,
             key,
             store,
             None,
             fitz::utils::idempotency::default_dedup_store(),
-            write_mode.policy(),
         );
         Self {
             actor,
@@ -142,11 +118,10 @@ fn complete_direct_lifecycle(actor: &mut QueueActor, payload: &Bytes, session_id
 pub(crate) fn measure_direct_lifecycle(
     ctx: &mut StressContext,
     dimensions: Tier4Dimensions<'static>,
-    write_mode: QueueWriteMode,
     measurement: &'static str,
 ) {
     tag_dimensions(ctx, &dimensions);
-    let mut fixture = QueueActorFixture::new(dimensions.storage_profile, write_mode);
+    let mut fixture = QueueActorFixture::new(dimensions.storage_profile);
     let payload = Bytes::from(vec![0x51; dimensions.payload_size]);
     complete_direct_lifecycle(&mut fixture.actor, &payload, SESSION_ID);
 
@@ -165,9 +140,9 @@ struct EncodedLifecycleState {
 }
 
 impl EncodedLifecycleState {
-    fn new(storage: StorageProfile, write_mode: QueueWriteMode, payload_size: usize) -> Self {
+    fn new(storage: StorageProfile, payload_size: usize) -> Self {
         Self {
-            fixture: QueueActorFixture::new(storage, write_mode),
+            fixture: QueueActorFixture::new(storage),
             enqueue_frame: build_queue_enqueue(CANONICAL_ROUTE, &vec![0x52; payload_size]),
             reserve_frame: build_queue_dequeue(CANONICAL_ROUTE),
             complete_frame: MutableQueueCompleteFrame::new(CANONICAL_ROUTE),
@@ -211,15 +186,10 @@ impl EncodedLifecycleState {
 pub(crate) fn measure_encoded_lifecycle(
     ctx: &mut StressContext,
     dimensions: Tier4Dimensions<'static>,
-    write_mode: QueueWriteMode,
     measurement: &'static str,
 ) {
     tag_dimensions(ctx, &dimensions);
-    let mut state = EncodedLifecycleState::new(
-        dimensions.storage_profile,
-        write_mode,
-        dimensions.payload_size,
-    );
+    let mut state = EncodedLifecycleState::new(dimensions.storage_profile, dimensions.payload_size);
     state.complete();
 
     measure_operations(ctx, measurement, 1, |latencies| {
