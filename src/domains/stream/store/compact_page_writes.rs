@@ -136,22 +136,6 @@ impl StreamStore {
         Ok(actual == expected)
     }
 
-    fn ensure_current_writer_epoch(
-        &self,
-        family: u64,
-        expected: u64,
-        epoch_key: &[u8],
-    ) -> Result<(), PromotionWriteFailure> {
-        if self
-            .verify_current_writer_epoch(family, expected, epoch_key)
-            .map_err(PromotionWriteFailure::Other)?
-        {
-            Ok(())
-        } else {
-            Err(PromotionWriteFailure::WriterFenced)
-        }
-    }
-
     pub(super) fn build_global_page_records(
         params: &CommitPromotionFrontierBatchParams<'_>,
         created_at: u64,
@@ -686,7 +670,11 @@ impl StreamStore {
             self.advance_family_writer_epoch(params.family)
                 .map_err(PromotionWriteFailure::Other)?;
         }
-        self.ensure_current_writer_epoch(params.family, params.writer_epoch, &epoch_key)?;
+        // The assertion validates the frozen epoch and rejects any later
+        // epoch change at Midge's serialized commit boundary. A separate
+        // read-only transaction here cannot close that race and duplicates
+        // the point read on every healthy append. Recheck only after conflict
+        // to distinguish writer fencing from a broad-scope conflict.
 
         self.reserve_broad_scope_ranges(&mut txn, params, plan)?;
 
