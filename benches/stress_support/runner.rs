@@ -1,4 +1,5 @@
 use crate::stress_support::artifacts::{memory_sample, Artifacts, CleanupFailure, Phase};
+use crate::stress_support::capacity_boundary;
 use crate::stress_support::durable::DurableDriver;
 use crate::stress_support::ephemeral::EphemeralDriver;
 use crate::stress_support::fixture::{BrokerFixture, StorageDirectory, StorageProfile};
@@ -413,6 +414,17 @@ fn verify_phase(drivers: &mut [Driver], report: &mut Phase) -> Result<(), BenchF
     result
 }
 
+fn qualify_capacity_boundary(report: &mut Phase, budget: Duration) -> Result<(), BenchFailure> {
+    let active = elapsed_duration(report.elapsed_ns);
+    if let Some(reason) = capacity_boundary::shortfall(active, budget, &report.lane_completions) {
+        let error = BenchFailure::verification(reason);
+        record_failure(report, &error);
+        return Err(error);
+    }
+    report.capacity_boundary = true;
+    Ok(())
+}
+
 fn run_phase_loop(
     artifacts: &mut Artifacts,
     drivers: &mut [Driver],
@@ -430,8 +442,7 @@ fn run_phase_loop(
         let observed = runtime.block_on(batch(drivers, sequences, &remaining, progress));
         apply_batch(report, observed)?;
         if settings.allow_capacity_boundary && !report.capacity_rejections.is_empty() {
-            report.capacity_boundary = true;
-            break;
+            return qualify_capacity_boundary(report, settings.duration);
         }
         check_lane_progress(report, settings.progress_timeout)?;
         if report.elapsed_ns.saturating_sub(last_verification_ns) >= VERIFY_INTERVAL.as_nanos() {
@@ -456,7 +467,7 @@ fn finish_phase_verification(
     drivers: &mut [Driver],
     report: &mut Phase,
 ) -> Result<(), BenchFailure> {
-    if !report.capacity_boundary && report.lane_completions.contains(&0) {
+    if report.lane_completions.contains(&0) {
         let error =
             BenchFailure::verification("at least one lane completed no validated domain cycles");
         record_failure(report, &error);
