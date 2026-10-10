@@ -132,17 +132,28 @@ impl RpcFamilyRuntime<'_> {
         &mut self,
         cancellation: &RpcWorkerCancellation,
     ) -> bool {
-        let worker_id = self
-            .core
-            .state
-            .pending
-            .pending_for_key(&super::state_model::RpcCorrelationKey {
-                family: cancellation.family,
-                correlation_id: cancellation.correlation_id,
-            })
-            .expect("canceled invocation remains tracked")
-            .dispatch_info
-            .worker_correlation_id;
+        let Some(pending) =
+            self.core
+                .state
+                .pending
+                .pending_for_key(&super::state_model::RpcCorrelationKey {
+                    family: cancellation.family,
+                    correlation_id: cancellation.correlation_id,
+                })
+        else {
+            // Session cleanup already released this call, for example when a
+            // timeout sweep's queued redispatch found the worker disconnected
+            // before the sweep forwarded its collected cancellations.
+            tracing::debug!(
+                domain = "rpc",
+                family = cancellation.family.id(),
+                correlation_id = %cancellation.correlation_id,
+                worker_session_id = cancellation.worker_session_id,
+                "RPC cancellation skipped for call already released by cleanup"
+            );
+            return false;
+        };
+        let worker_id = pending.dispatch_info.worker_correlation_id;
         let bytes = crate::protocol::rpc_codec::encode_worker_cancel_tlv_frame(
             &worker_id,
             cancellation.reason,
