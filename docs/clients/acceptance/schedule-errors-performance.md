@@ -365,7 +365,7 @@ Error codes follow the format `XXYY` where:
 
 On the wire, 7001–7008 appear only on LIST (702). CREATE, CANCEL, SUBSCRIBE,
 UNSUBSCRIBE, CREATE_BATCH, and LIST_V2 domain errors are uncoded; see Error
-Envelopes in `docs/clients/spec/lease-schedule.md`. 7009–7011 are raised by the
+Envelopes in `docs/clients/spec/schedule.md`. 7009–7011 are raised by the
 broker before dispatch and are coded on every Schedule message type.
 
 ### Error Handling Guidelines
