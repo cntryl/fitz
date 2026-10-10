@@ -35,7 +35,7 @@ most 105%; and hot-resource append with 100,000 prior events must remain within
 
 The Stream performance workflow isolates each of the eight transport workloads
 in its own process capture. Memory replay therefore never follows disk writes
-within a capture. All 32 workloads, fixtures, and the default sampling profile
+within a capture. Timed comparisons require all 32 workloads, fixtures, and the default sampling profile
 remain required. Each workload has three alternating baseline/candidate pairs.
 The maximum-event write and WebSocket exact-replay workloads also have three
 alternating same-binary control pairs; both throughput and p95 ratios must lie
@@ -49,6 +49,15 @@ controls. Preserve raw quality labels, semantic checks, source SHAs, executable
 hashes, locked resolution, and untimed CPU/I/O snapshots. Retain failures and
 leave qualification open when controls remain unstable; additional exploratory
 runs do not replace the declared pair.
+
+Dependency comparisons with unchanged benchmark fixtures retain the baseline's
+original Cargo manifest and lockfile. Both libraries and every benchmark must
+have fresh compiler artifacts from the expected source paths. If the compiler's
+release source inputs match and all benchmark executables are byte-identical,
+the workflow records `binary_equivalent` with provenance and takes no timing
+samples. This records artifact equivalence, not a new measured performance
+result. Any different executable requires both full timing runs and all existing
+budgets and controls. Reused binaries for changed compiled source remain an error.
 Pair individual disk-size rows directly across source versions. The Stream
 qualification workflow also requires an unchanged-binary maximum-event control
 to stay within 5% for throughput and p95; retain failed comparisons.
