@@ -24,13 +24,19 @@ async fn recovery(cold: bool) -> serde_json::Value {
     let mut broker = Broker::start(&campaign);
     broker.ready().await;
     let accepted = workload::enqueue(broker.address(), RECORDS, 0).await;
+    let before = super::inspect_container(&broker.name);
+    let crash_started = Instant::now();
+    broker.crash();
+    // Measure the actual crash state: healthy SST publication may have retired
+    // much of the WAL already. The separate 640 MiB fixture qualifies WAL size.
     let backlog = campaign.snapshot("acknowledged-backlog");
     assert!(
-        backlog.catalog_bytes >= 32 * MIB,
-        "need a real WAL replay backlog: {backlog:?}"
+        backlog.catalog_bytes > 0
+            && backlog.remote_wal_bytes > 0
+            && backlog.remote_wal_objects > 0
+            && !backlog.segment_ids.is_empty(),
+        "need catalog-authorized WAL and published objects at the crash: {backlog:?}"
     );
-    let before = super::inspect_container(&broker.name);
-    broker.crash();
     let restart_started = Instant::now();
     if cold {
         broker.remove();
@@ -38,7 +44,8 @@ async fn recovery(cold: bool) -> serde_json::Value {
     } else {
         broker.restart();
     }
-    let ready_seconds = broker.ready().await;
+    let ready_seconds = broker.ready_since(crash_started).await;
+    let crash_to_ready_seconds = crash_started.elapsed().as_secs_f64();
     let restart_to_ready_seconds = restart_started.elapsed().as_secs_f64();
     workload::drain(broker.address(), accepted).await;
     super::smoke(broker.address(), &format!("recovered-{}", campaign.id)).await;
@@ -75,7 +82,8 @@ async fn recovery(cold: bool) -> serde_json::Value {
     let recovered = campaign.snapshot("recovered");
     let report = serde_json::json!({
         "cold_cache": cold, "accepted_and_verified_acked": RECORDS,
-        "remaining": 0, "ready_seconds": ready_seconds,
+        "remaining": 0, "accepted_payload_bytes": u64::from(RECORDS) * 16 * 1024,
+        "ready_seconds": ready_seconds, "crash_to_ready_seconds": crash_to_ready_seconds,
         "restart_to_ready_seconds": restart_to_ready_seconds,
         "restart_and_verify_seconds": restart_started.elapsed().as_secs_f64(),
         "before": before, "after": after, "backlog": backlog, "recovered": recovered,
