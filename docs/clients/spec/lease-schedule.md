@@ -818,7 +818,10 @@ Response (error):
   for each entry and returns the same plain success/error envelope as CREATE.
 - `LIST_V2` (707) encodes `[optional string continuation][optional u64 limit]`
   and returns its versioned cursor page. It exists for broker compatibility;
-  portable clients use canonical offset/limit LIST (702).
+  portable clients use canonical offset/limit LIST (702). A continuation
+  cursor resumes after the route it names, even if that schedule has since
+  been cancelled. An empty, foreign-family, or otherwise unrecognised cursor
+  is not an error; it returns the first page.
 
 #### Cron Syntax (Broker-Enforced)
 
