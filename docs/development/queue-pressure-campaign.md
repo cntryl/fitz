@@ -36,9 +36,10 @@ terminal; no diagnostic permits mutation retry or bypasses admission.
 
 Apply the identical pacing harness and diagnostic instrumentation to both
 comparison sources. Preserve older coarse-timer failures as historical evidence.
-Only a completed configured window qualifies: a safety-guard or broker-rejection
-stop with `configured_window_completed=false` is a diagnostic and fails
-qualification. The large-drain qualification and quarter-core/512 MiB
+Only a completed configured window qualifies full-window survival: a safety-guard
+or broker-rejection stop with `configured_window_completed=false` fails that gate.
+The unchanged finite accepted-message drain remains a separate required gate.
+The large-drain qualification and quarter-core/512 MiB
 survival/recovery qualification remain distinct gates.
 
 The manual Tier 5 workflow's `queue_pressure` input selects matched 10k, 25k,
@@ -46,13 +47,13 @@ and 100k campaigns on one Linux host. Both sources use the same corrected
 harness, locked dependency, and the initial benchmark-only instrumentation;
 later production optimizations are never copied onto the baseline. Actual
 diagnostic build campaigns finish before timing. The runner retains every failed
-capture. Each of the six captures must end with `configured_window` after the
+capture. Each of the six full-window captures must end with `configured_window` after the
 full 120-second active window, miss at most 1% of offered arrivals, accept at
 least 99% of the window's scheduled arrivals, reconcile known outcomes, verify
 every ACK, observe the 5 ms minimum pause, drain within 600 seconds, and pass
 empty verification, recovery and cleanup. Guard-stopped captures still appear in
 the step summary with their termination and missed arrivals, but they fail the
-job.
+full-window gate.
 
 Each capture's backlog guard (10k, 25k or 100k) fixes its offered rate at 80%
 of the guard spread over the window: 66, 166 and 666 arrivals per second, or
@@ -63,6 +64,16 @@ the three rates sit below, near and well above its capacity. The 100k capture
 leaves at most 79,920 messages to drain, about 430 seconds at that rate, inside
 the 600-second deadline. The earlier fixed 16,000 per second rate tripped every
 guard within seconds and never completed a window.
+
+Six additional captures retain #404's unchanged finite-drain envelope: 16,000
+arrivals per second, 120-second configured stages, 256 producers, the same 10k,
+25k and 100k outstanding-work guards, 500,000 attempt cap, 5 ms post-ACK pause,
+and 600-second drain deadline. Each must accept at least its guard's message
+count, verify every ID/payload and ACK, reconcile all known outcomes, finish
+empty, recover and clean up. Guard-stopped finite captures retain missed arrivals
+and do not establish a full window or arrival-rate qualification. A harness
+`offered_rate_not_met` termination always fails. All twelve captures must pass;
+the lower full-window rates never substitute for the original 100k drain.
 
 ## Workload
 

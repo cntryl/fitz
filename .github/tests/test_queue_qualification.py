@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("queue_qualification", Path(__file__).parents[1] / "queue_qualification.py")
 queue = importlib.util.module_from_spec(spec)
@@ -99,6 +101,77 @@ class QueueQualificationTests(unittest.TestCase):
                                    offered=7920, harness_missed=80)
         with self.assertRaises(AssertionError):
             queue.validate(report, "head", 10000)
+
+    def test_should_preserve_the_original_finite_drain_config_and_message_envelope(self):
+        report = self.report()
+        report["config"]["rates"] = [16000]
+        stage = report["stages"][0]
+        stage.update(termination="backlog_safety_guard", configured_window_completed=False,
+                     offered=30000, harness_missed=19999)
+        stage["accounting"].update(sent=10001, accepted=10001, acknowledged=10001)
+        for timing in stage["consumer_timing"].values():
+            timing["distribution"]["count"] = 10001
+        queue.validate(report, "head", 10000, finite=True)
+        with self.assertRaises(AssertionError):
+            queue.validate(report, "head", 10000)
+        stage["accounting"].update(sent=9999, accepted=9999, acknowledged=9999)
+        for timing in stage["consumer_timing"].values():
+            timing["distribution"]["count"] = 9999
+        with self.assertRaises(AssertionError):
+            queue.validate(report, "head", 10000, finite=True)
+
+    def test_should_reject_weaker_finite_drain_load_and_missed_rate_termination(self):
+        report = self.report()
+        report["config"]["rates"] = [16000]
+        stage = report["stages"][0]
+        stage["accounting"].update(sent=10000, accepted=10000, acknowledged=10000)
+        for timing in stage["consumer_timing"].values():
+            timing["distribution"]["count"] = 10000
+        stage.update(termination="offered_rate_not_met", configured_window_completed=False)
+        with self.assertRaises(AssertionError):
+            queue.validate(report, "head", 10000, finite=True)
+        stage["termination"] = "backlog_safety_guard"
+        for key, value in (("rates", [666]), ("drain_seconds", 601), ("consumer_delay_ms", 4)):
+            original = report["config"][key]
+            report["config"][key] = value
+            with self.assertRaises(AssertionError):
+                queue.validate(report, "head", 10000, finite=True)
+            report["config"][key] = original
+
+    def test_should_require_both_finite_and_full_window_captures_for_every_envelope(self):
+        campaign = queue.Campaign.__new__(queue.Campaign)
+        campaign.heads = dict(before="before", after="after")
+        campaign.binaries = dict(before=Path("before"), after=Path("after"))
+        captures = []
+
+        def capture(phase, backlog, label, command, *, finite=False):
+            captures.append((phase, backlog, finite))
+            return dict(status="drain_passed", termination="configured_window",
+                        configured_window_completed=True, harness_miss_fraction=0)
+
+        campaign.capture = capture
+        with TemporaryDirectory() as directory:
+            campaign.output = Path(directory)
+            with patch.dict(queue.os.environ, GITHUB_STEP_SUMMARY=str(Path(directory) / "summary")):
+                campaign.measure()
+        self.assertEqual(set(captures), {(phase, backlog, finite) for phase in ("before", "after")
+                                        for backlog in (10000, 25000, 100000) for finite in (False, True)})
+        self.assertEqual(len(captures), 12)
+
+    def test_should_fail_when_either_required_capture_scope_fails(self):
+        campaign = queue.Campaign.__new__(queue.Campaign)
+        campaign.heads = dict(before="before", after="after")
+        campaign.binaries = dict(before=Path("before"), after=Path("after"))
+        for failed_scope in (False, True):
+            def capture(phase, backlog, label, command, *, finite=False):
+                return dict(status="failed" if finite == failed_scope else "drain_passed")
+
+            campaign.capture = capture
+            with TemporaryDirectory() as directory:
+                campaign.output = Path(directory)
+                with patch.dict(queue.os.environ, GITHUB_STEP_SUMMARY=str(Path(directory) / "summary")):
+                    with self.assertRaises(AssertionError):
+                        campaign.measure()
 
 
 if __name__ == "__main__":
