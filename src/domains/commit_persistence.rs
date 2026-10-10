@@ -2,9 +2,9 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommitPersistence {
-    /// Return after a buffered local commit or a CloudAsync commit.
+    /// Return after a buffered local commit or a `CloudAsync` commit.
     Buffered,
-    /// Wait for a synced local WAL or acknowledged CloudStrict commit.
+    /// Wait for a synced local WAL or acknowledged `CloudStrict` commit.
     Sync,
 }
 

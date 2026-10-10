@@ -370,7 +370,7 @@ tx.commit(Durability.Sync)
 # Context manager pattern (Python)
 with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
     tx.put(b"key", b"value")
-    tx.commit(Durability.Sync)  # Or auto-commit on __exit__
+    tx.commit(Durability.Sync)  # Unfinished work rolls back on __exit__
 ```
 
 **Wire Protocol (what actually happens under the hood):**
