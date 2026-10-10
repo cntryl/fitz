@@ -240,10 +240,12 @@ impl QueueTransaction {
         &self,
     ) -> Result<impl Iterator<Item = Result<(Bytes, Bytes), QueueStoreError>> + '_, QueueStoreError>
     {
-        self.inner
-            .scan(&cntryl_midge::Query::new())
-            .map(|rows| rows.map(|row| row.map_err(QueueStoreError::from_midge)))
-            .map_err(QueueStoreError::from_midge)
+        crate::storage::domain_scan::scan_domain_rows(
+            &self.inner,
+            crate::utils::storage_key::DomainKeyspace::Queue,
+        )
+        .map(|rows| rows.map(|row| row.map_err(QueueStoreError::from_midge)))
+        .map_err(QueueStoreError::from_midge)
     }
 
     fn scan_prefix(&self, prefix: Bytes) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {

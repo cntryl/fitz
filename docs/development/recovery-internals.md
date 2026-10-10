@@ -16,6 +16,13 @@ Recovery behavior is designed to preserve committed durability state and reject 
 4. Register storage-backed domains and synchronously validate or preload durable domain state before marking domains ready. Queue validates persisted queue state for existing families; fast policy durably removes incomplete split message remnants and invalidates their derived queue indexes before continuing. Schedule preloads persisted schedule families and pending fire claims. KV and Stream attach storage-backed sinks. Notice, RPC, and Lease intentionally start with empty live state.
 5. Start the TCP listener, mark startup complete, and return `200` from `/healthz` or `/readyz` only when storage, auth configuration, durable domain initialization, startup completion, and traffic acceptance are all true.
 
+Domain startup scans stream their rows rather than collecting a whole shared
+column family. Recognized foreign realm/domain key ranges are skipped with a
+range seek, so a large KV payload history does not have to be materialized by
+Queue, Stream or Schedule initialization. Owned rows retain the same decoding
+and validation. Unrecognized keys and binary-leading legacy keys remain visible
+to validators; non-ASCII realm prefixes conservatively retain the full scan.
+
 `/targetz` is intentionally weaker than data-plane readiness. It can return `200` once the HTTP listener is usable and the process is not draining, even while storage or domain preload is still pending. It is only for a separate orchestration path; a customer-facing ALB target group must use `/healthz`. WebSocket upgrades and TCP sessions still reject data-plane traffic until the strict readiness gate passes.
 
 Schedule preload waits for the actor-owned preload result within the
