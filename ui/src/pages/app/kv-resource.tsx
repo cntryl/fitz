@@ -6,7 +6,7 @@ import { Button, Block } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainFacts from "@/components/shared/domain-facts";
 import RowsRequestPrompt from "@/components/shared/rows-request-prompt";
-import { hasRowsRequest } from "@/shared/navigation/rows-request";
+import { hasRowsRequest, revealSectionHref } from "@/shared/navigation/rows-request";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
@@ -81,6 +81,7 @@ export default function KvResourcePage() {
       rowsHref(scope, {
         limit: nextLimit,
         startsWith: startsWithDraft(),
+        transactions: transactionsRequested,
       }),
     );
   }
@@ -278,7 +279,7 @@ export default function KvResourcePage() {
         <Show when={concreteFamily !== null && !rowsRequested}>
           <RowsRequestPrompt
             description="Committed rows load only when requested."
-            href={rowsHref(scope, { limit, startsWith })}
+            href={rowsHref(scope, { limit, startsWith, transactions: transactionsRequested })}
             label="Load rows"
           />
         </Show>
@@ -290,6 +291,7 @@ export default function KvResourcePage() {
             limit={limit}
             scope={scope}
             startsWith={startsWith}
+            transactions={transactionsRequested}
           />
         </Show>
 
@@ -299,7 +301,7 @@ export default function KvResourcePage() {
           ) : (
             <RowsRequestPrompt
               description="Inspect transaction mode, age, and queued operations."
-              href={`${domainResourceHref("kv", scope)}?transactions=1`}
+              href={revealSectionHref(domainResourceHref("kv", scope), route.query, "transactions")}
               label="Inspect active transactions"
             />
           )}

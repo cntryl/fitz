@@ -54,6 +54,7 @@ export function rowsHref(
     cursorTrail?: readonly string[];
     limit: number;
     startsWith: string;
+    transactions?: boolean;
   },
 ) {
   const query = rowsRequestQuery();
@@ -64,6 +65,7 @@ export function rowsHref(
     query.append("cursorTrail", trailCursor);
   }
   if (params.limit !== DEFAULT_ROWS_LIMIT) query.set("limit", params.limit.toString());
+  if (params.transactions) query.set("transactions", "1");
 
   return `${domainResourceHref("kv", scope)}?${query.toString()}`;
 }
@@ -74,6 +76,7 @@ export interface KvRowsSectionProps {
   limit: number;
   scope: KvResourceScope;
   startsWith: string;
+  transactions: boolean;
 }
 
 /**
@@ -86,6 +89,7 @@ export function KvRowsSection({
   limit,
   scope,
   startsWith,
+  transactions,
 }: KvRowsSectionProps) {
   const rowsQuery = createKvRowsQuery(scope, { cursor, limit, startsWith });
   const rows = rowsQuery.data?.items ?? [];
@@ -171,7 +175,10 @@ export function KvRowsSection({
 
       <Block direction="row" gap="xs" wrap={true}>
         <Show when={cursor !== null}>
-          <Link class="page-action-link" href={rowsHref(scope, { limit, startsWith })}>
+          <Link
+            class="page-action-link"
+            href={rowsHref(scope, { limit, startsWith, transactions })}
+          >
             First page
           </Link>
           <Link
@@ -181,6 +188,7 @@ export function KvRowsSection({
               cursorTrail: previousCursorTrail,
               limit,
               startsWith,
+              transactions,
             })}
           >
             Previous page
@@ -194,6 +202,7 @@ export function KvRowsSection({
                 cursorTrail: [...cursorTrail, cursor ?? ""],
                 limit,
                 startsWith,
+                transactions,
               })}
             >
               Next page
