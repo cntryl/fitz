@@ -192,7 +192,7 @@ rejection of an unknown mode; CREATE errors carry no numeric code on the wire
 
 **REQ-ERGON-004 (T1)** KV operations MUST be expressed through a transaction object, not free functions that accept a raw tx_id. The lifecycle is: `client.KV().Begin(ctx, route) → Transaction`, then `tx.Get(ctx, key)`, `tx.Put(...)`, `tx.Commit(ctx, fitz.KVDurabilitySync)`, `tx.Rollback(ctx)`.
 
-**REQ-ERGON-005 (T1)** Stream write operations MUST be expressed through a session object: `client.Stream().Begin(ctx, route) → StreamSession`, then `session.Append(ctx, expectedOffset, body)`, `session.Commit(ctx, fitz.KVDurabilitySync)`, `session.Rollback(ctx)`.
+**REQ-ERGON-005 (T1)** Stream write operations MUST be expressed through a session object: `client.Stream().Begin(ctx, route) → StreamSession`, then `session.Append(ctx, expectedOffset, body)`, `session.Commit(ctx, fitz.StreamWriteModeSync)`, `session.Rollback(ctx)`.
 
 **REQ-ERGON-006 (T1)** Subscriptions MUST be expressed through a subscription object with a discoverable `Unsubscribe` method. The user MUST NOT be required to track a raw subscription_id.
 
@@ -204,7 +204,7 @@ rejection of an unknown mode; CREATE errors carry no numeric code on the wire
 
 **REQ-ERGON-009 (T1)** The token/auth source MUST be expressed as a callable (function or interface), not a static string, so token refresh can be implemented by the caller without rebuilding the client.
 
-**REQ-ERGON-010 (T1)** Durability MUST be explicit: KV transactions and Stream commits MUST require the caller to choose `Buffered` or `Sync`. Clients MUST NOT hide durability behind an implicit default.
+**REQ-ERGON-010 (T1)** Persistence MUST be explicit at COMMIT: both KV transactions and Stream sessions MUST require the caller to choose `Buffered` or `Sync` when committing. KV BEGIN MUST NOT accept or retain a persistence choice. Clients MUST NOT hide durability behind an implicit default.
 
 ### T2 — Developer Convenience
 
