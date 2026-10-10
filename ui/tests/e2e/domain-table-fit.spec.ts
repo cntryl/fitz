@@ -90,9 +90,10 @@ async function mockLongIdentifierRows(page: Page) {
   });
 }
 
-async function expectTableFits(page: Page, sectionId: string) {
+async function expectTableFits(page: Page, sectionId: string, longText: string) {
   const wrap = page.locator(`[aria-labelledby="${sectionId}"] .domain-table-wrap`);
   await expect(wrap.locator('[data-slot="table"]')).toBeVisible();
+  await expect(wrap).toContainText(longText);
 
   const fit = await wrap.evaluate((node) => ({
     clientWidth: node.clientWidth,
@@ -118,7 +119,7 @@ for (const viewport of viewports) {
 
       await page.goto("/admin/1/lease/default/default/primary");
 
-      await expectTableFits(page, "lease-ownership-rows");
+      await expectTableFits(page, "lease-ownership-rows", longSession);
     });
 
     test("fit the KV active transactions table", async ({ page }) => {
@@ -127,7 +128,7 @@ for (const viewport of viewports) {
 
       await page.goto("/admin/1/kv/default/default/primary?transactions=1");
 
-      await expectTableFits(page, "kv-active-transactions");
+      await expectTableFits(page, "kv-active-transactions", "9007199254740991");
     });
 
     test("fit the RPC live call evidence table", async ({ page }) => {
@@ -136,7 +137,7 @@ for (const viewport of viewports) {
 
       await page.goto("/admin/1/rpc/default/default/primary/GetStatus");
 
-      await expectTableFits(page, "rpc-live-call-evidence");
+      await expectTableFits(page, "rpc-live-call-evidence", longCorrelation);
     });
   });
 }
