@@ -9,6 +9,7 @@ use tracing::{debug, info, warn};
 
 mod backoff;
 mod contention;
+const STORAGE_STARTUP_ADMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 const STORAGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 const STORAGE_SHUTDOWN_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 const STORAGE_SHUTDOWN_RETRY_DELAY: Duration = Duration::from_millis(50);
@@ -66,6 +67,37 @@ pub(crate) async fn init_with_shutdown(
 fn ensure_column_families(engine: &cntryl_midge::Engine, route_families: &[u32]) -> BootResult<()> {
     for family in route_families {
         ensure_route_family(engine, crate::runtime::routing::RouteFamily::new(*family))?;
+    }
+    Ok(())
+}
+
+fn ensure_startup_write_admission(
+    engine: &cntryl_midge::Engine,
+    timeout: Duration,
+) -> BootResult<()> {
+    let deadline = Instant::now() + timeout;
+    for family in engine
+        .list_column_families()?
+        .into_iter()
+        .filter(|cf| cf.id() != 0)
+    {
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(format!(
+                    "Storage startup write admission timed out for column family {} after {timeout:?}",
+                    family.id()
+                ).into());
+            }
+            // Replay can fill L0 before domain layout writes. Wait for admission
+            // without retrying mutations or bypassing Midge's pressure guard.
+            // Bounded slices also recheck relief that did not wake a waiter.
+            if engine
+                .wait_for_write_stall_clear(family.id(), remaining.min(Duration::from_secs(1)))?
+            {
+                break;
+            }
+        }
     }
     Ok(())
 }
@@ -217,7 +249,9 @@ async fn open_and_provision(
     route_families: Vec<u32>,
 ) -> BootResult<OpenAttempt> {
     tokio::task::spawn_blocking(move || match cntryl_midge::Engine::open(open_options) {
-        Ok(engine) => match ensure_column_families(&engine, &route_families) {
+        Ok(engine) => match ensure_column_families(&engine, &route_families).and_then(|()| {
+            ensure_startup_write_admission(&engine, STORAGE_STARTUP_ADMISSION_TIMEOUT)
+        }) {
             Ok(()) => OpenAttempt::Ready(engine),
             Err(error) => OpenAttempt::ProvisionFailed {
                 engine,
