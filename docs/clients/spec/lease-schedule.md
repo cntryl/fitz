@@ -702,6 +702,12 @@ record so existing clients keep decoding unchanged.
   are uncoded: `[u8 1][u32 BE error_len][error_msg]`. On these operations an
   invalid cron, an unknown delivery mode, an invalid subscription pattern, and
   either subscription registration limit are distinguished only by `error_msg`.
+  The SUBSCRIBE (703) limit messages are exact and stable:
+  - `wildcard subscription limit exceeded (128 per session)` when the session
+    already holds 128 wildcard registrations.
+  - `total subscription limit exceeded (1024 per session)` when the session
+    already holds 1,024 registrations of any kind. This check runs first, so
+    it also applies to a wildcard SUBSCRIBE at the total cap.
 - Errors the Schedule domain returns for LIST (702) are coded:
   `[u8 1][u32 BE error_code][u32 BE error_len][error_msg]`.
 - Errors the broker raises before the request reaches the Schedule domain are
@@ -1016,7 +1022,8 @@ Response (status=1):
 - Wildcards must occupy complete segments. Patterns that cannot match a concrete
   four-segment Schedule route are rejected with an uncoded error.
 - A session may retain at most 1,024 Schedule registrations total and 128
-  wildcard registrations; overflow is rejected with an uncoded error.
+  wildcard registrations; overflow is rejected with an uncoded error whose
+  exact `error_msg` is listed under Error Envelopes.
 - Matching never crosses `RouteFamily` boundaries; overlapping registrations
   remain distinct.
 - When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with
