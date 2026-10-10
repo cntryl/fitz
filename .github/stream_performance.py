@@ -37,6 +37,17 @@ def order(iteration, first, second):
     return (first, second) if iteration % 2 else (second, first)
 
 
+def measurement_groups():
+    # History scaling compares two candidate shapes, so keep their captures
+    # adjacent rather than allowing unrelated disk-size trials between them.
+    empty = ("tier4_stream_shapes", "should_characterize_disk_sync_write_64b")
+    hot = ("tier4_stream_shapes", "should_characterize_hot_resource_append_after_100000_events")
+    indexed = list(enumerate(GROUPS))
+    history = next(item for item in indexed if item[1] == hot)
+    return [(item, history) if item[1] == empty else (item,)
+            for item in indexed if item[1] != hot]
+
+
 def mean_median(rows):
     assert len(rows) == 3, "Every row requires three captures"
     return statistics.median(row["stats"]["mean"] for row in rows)
@@ -134,6 +145,7 @@ class Campaign:
         provenance["production_baseline"] = os.environ["STREAM_BASE_PRODUCTION"]
         provenance["rustc"] = subprocess.check_output(["rustc", "-Vv"], text=True)
         provenance["planned_runs"] = ["qualification", "confirmation"]
+        provenance["measurement_groups"] = measurement_groups()
         save(self.output / "provenance.json", provenance)
         for phase, source in self.sources.items():
             # Cargo freshness can alias packages across worktree paths. Rebuild Fitz
@@ -202,21 +214,26 @@ class Campaign:
 
     def measure(self, run_name):
         summaries = {"before": {}, "after": {}}
-        controls = {}
-        for group_index, (target, pattern) in enumerate(GROUPS):
-            control_rows = {"left": [], "right": []}
-            matching = [(name, row) for name, (ct, cp, row) in CONTROLS.items() if (target, pattern) == (ct, cp)]
+        control_rows = {name: {"left": [], "right": []} for name in CONTROLS}
+        for group in measurement_groups():
             for iteration in range(1, 4):
-                for phase in order(iteration, "before", "after"):
-                    rows = self.capture(run_name, phase, target, pattern, f"pair-{group_index}-{iteration}-{phase}")
-                    for row in rows:
-                        summaries[phase].setdefault(row["name"], []).append(row)
-                if matching:
-                    for side in order(iteration, "left", "right"):
-                        control_rows[side].extend(self.capture(run_name, "before", target, pattern, f"control-{matching[0][0]}-{iteration}-{side}"))
-            if matching:
-                name, row = matching[0]
-                controls[name] = control_result(control_rows, row, sha256(self.binaries[("before", target)]))
+                # Alternate the history/empty order as well as source order.
+                ordered = group if iteration % 2 else tuple(reversed(group))
+                for group_index, (target, pattern) in ordered:
+                    matching = [(name, row) for name, (ct, cp, row) in CONTROLS.items()
+                                if (target, pattern) == (ct, cp)]
+                    for phase in order(iteration, "before", "after"):
+                        rows = self.capture(run_name, phase, target, pattern, f"pair-{group_index}-{iteration}-{phase}")
+                        for row in rows:
+                            summaries[phase].setdefault(row["name"], []).append(row)
+                    if matching:
+                        for side in order(iteration, "left", "right"):
+                            control_rows[matching[0][0]][side].extend(self.capture(
+                                run_name, "before", target, pattern,
+                                f"control-{matching[0][0]}-{iteration}-{side}"))
+        controls = {name: control_result(control_rows[name], row,
+                                         sha256(self.binaries[("before", target)]))
+                    for name, (target, _, row) in CONTROLS.items()}
         records, checks = compare(summaries)
         destination = self.output / run_name
         with (destination / "comparison.csv").open("w") as file:

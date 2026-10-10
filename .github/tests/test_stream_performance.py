@@ -1,6 +1,9 @@
 import importlib.util
 from pathlib import Path
 import re
+import tempfile
+from collections import Counter
+from unittest.mock import patch
 import unittest
 
 spec = importlib.util.spec_from_file_location(
@@ -49,6 +52,45 @@ class StreamPerformanceTests(unittest.TestCase):
     def test_should_reject_missing_control_captures(self):
         with self.assertRaises(AssertionError):
             perf.control_result({"left": [], "right": []}, "row", "hash")
+
+    def test_should_pair_history_and_empty_within_each_measurement_iteration(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = object.__new__(perf.Campaign)
+            campaign.output = Path(directory)
+            (campaign.output / "qualification").mkdir()
+            campaign.heads = {phase: phase for phase in ("before", "after")}
+            campaign.binaries = {(phase, target): Path(directory) / "binary"
+                                 for phase in campaign.heads for target, _ in perf.GROUPS}
+
+            def capture(run_name, phase, target, pattern, label):
+                calls.append((phase, target, pattern, label))
+                name = next((row for ct, cp, row in perf.CONTROLS.values()
+                             if (ct, cp) == (target, pattern)), "row")
+                return [{"name": name + suffix, "stats": {"mean": 100}, "quality": "noisy"}
+                        for suffix in ("", "_latency")]
+
+            records = [{"name": "row", "throughput_ratio": 1, "p95_ratio": 1}]
+            with patch.object(campaign, "capture", side_effect=capture), \
+                    patch.object(perf, "compare", return_value=(records, {"budget": True})), \
+                    patch.object(perf, "sha256", return_value="binary"), \
+                    patch.dict(perf.os.environ, {"GITHUB_STEP_SUMMARY": directory + "/summary"}):
+                self.assertEqual(campaign.measure("qualification"), "passed")
+
+        pairs = [call for call in calls if call[3].startswith("pair-")]
+        self.assertEqual(Counter((phase, target, pattern) for phase, target, pattern, _ in pairs),
+                         Counter({(phase, target, pattern): 3 for phase in campaign.heads
+                                  for target, pattern in perf.GROUPS}))
+        empty = "should_characterize_disk_sync_write_64b"
+        hot = "should_characterize_hot_resource_append_after_100000_events"
+        for iteration in (1, 2, 3):
+            selected = [index for index, (_, _, pattern, label) in enumerate(calls)
+                        if pattern in (empty, hot) and label.split("-")[2] == str(iteration)]
+            self.assertEqual(len(selected), 4)
+            self.assertEqual(max(selected) - min(selected), 3,
+                             "History scaling must compare adjacent trials before unrelated disk workloads")
+            first_pattern = calls[min(selected)][2]
+            self.assertEqual(first_pattern, empty if iteration % 2 else hot)
 
     def test_should_preserve_every_original_budget(self):
         names = [pattern.removeprefix("should_measure_") for target, pattern in perf.GROUPS if target == "tier4_stream_gate"]

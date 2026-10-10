@@ -37,6 +37,9 @@ The Stream performance workflow isolates each of the eight transport workloads
 in its own process capture. Memory replay therefore never follows disk writes
 within a capture. All 32 workloads, fixtures, and the default sampling profile
 remain required. Each workload has three alternating baseline/candidate pairs.
+Empty-resource and 100,000-event append captures are adjacent within each
+iteration, with their order alternating. Their scaling budget therefore compares
+nearby trials without intervening disk-size workloads.
 The maximum-event write and WebSocket exact-replay workloads also have three
 alternating same-binary control pairs; both throughput and p95 ratios must lie
 within 0.95–1.05. An unstable control labels the entire run
