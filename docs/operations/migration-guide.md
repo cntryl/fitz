@@ -2,9 +2,23 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## Midge 0.3.2 to 0.3.3
+
+Fitz now embeds `cntryl-midge` 0.3.3, pinned to git rev
+`d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b` because 0.3.3 is not yet tagged or
+published. Relative to 0.3.2, Midge FORMAT 4, SST V4, cloud control formats,
+and Fitz row encodings are unchanged, so no logical export/import is required.
+Use the same stop, preserve, and qualify-a-copy procedure as the 0.3.1 to 0.3.2
+update below.
+
+0.3.3 fixes a false absence on point and bounded prefix reads after SST
+publication when a duplicate SST successor boundary spans many retained
+versions; Stream epoch reads under Fast Queue pressure could observe it.
+Rollback to a 0.3.2 broker can read the same format but restores that defect.
+
 ## Midge 0.3.1 to 0.3.2
 
-Fitz now embeds `cntryl-midge` 0.3.2. Relative to 0.3.1, Midge FORMAT 4,
+Relative to 0.3.1, Midge FORMAT 4,
 SST V4, cloud control formats, and Fitz row encodings are unchanged. This
 dependency update requires no logical export/import for an otherwise compatible
 Fitz store. Stop writes, complete broker shutdown, preserve a verified database
@@ -192,7 +206,7 @@ RESERVE form must decode each returned item as
 or COMPLETE. Stream READ now prefixes every event, filtered marker, and filtered
 range with `concrete_route`; mixed broker/client versions cannot decode Stream
 responses. The byte-exact response layouts are defined in
-[the Queue wire contract](../clients/spec/queue-rpc-kv.md) and
+[the Queue wire contract](../clients/spec/queue-rpc.md) and
 [the Stream wire contract](../clients/spec/notice-stream.md).
 
 Existing Stream stores require an offline event export/replay into a fresh

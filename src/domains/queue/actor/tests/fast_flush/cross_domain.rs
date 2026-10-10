@@ -16,7 +16,7 @@ fn should_keep_stream_usable_after_fast_queue_sst_publication() {
         )
         .unwrap(),
     );
-    engine.create_column_family("family").unwrap();
+    let family = engine.create_column_family("family").unwrap();
     let stream = StreamStore::new(engine.clone());
     let events = vec![EventPayload {
         body: Bytes::from_static(b"probe"),
@@ -54,18 +54,15 @@ fn should_keep_stream_usable_after_fast_queue_sst_publication() {
         }
     }
     store.flush_family(1).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let metrics = engine
-            .metrics()
-            .get_runtime_metrics_with_timeout(Duration::from_secs(2))
-            .unwrap();
-        if metrics.sst_count > 0 {
-            break;
-        }
-        assert!(Instant::now() < deadline, "pressure must publish an SST");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // Complete SST publication before probing the Stream write path.
+    engine.flush_cf(&family).unwrap();
+    assert!(std::fs::read_dir(directory.path().join("sst"))
+        .unwrap()
+        .any(|entry| entry
+            .unwrap()
+            .path()
+            .extension()
+            .is_some_and(|suffix| suffix == "sst")));
 
     // Act
     let result = stream.commit_records(CommitRecordsParams {

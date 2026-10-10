@@ -164,14 +164,12 @@ impl ScheduleActor {
             .unwrap_or(MAX_LIMIT)
             .clamp(1, MAX_LIMIT);
         let family_prefix = format!("schedule-list-v1:{}:", self.family.as_u64());
+        // An empty, foreign-family, or unprefixed cursor lists from the first
+        // page, as LIST_V2 always has; only a cursor naming a route in this
+        // family continues after that route (even if it was since deleted).
         let cursor_route = cursor
-            .map(|value| {
-                value
-                    .strip_prefix(&family_prefix)
-                    .filter(|route| !route.is_empty())
-                    .ok_or_else(|| "invalid schedule list cursor".to_string())
-            })
-            .transpose()?;
+            .and_then(|value| value.strip_prefix(&family_prefix))
+            .filter(|route| !route.is_empty());
         let mut ordered: Vec<_> = if let Some(route) = cursor_route {
             self.list_entries_by_route
                 .range((Excluded(route.to_string()), std::ops::Bound::Unbounded))
