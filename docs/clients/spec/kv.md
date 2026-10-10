@@ -280,22 +280,24 @@ Response (error):
 - If ReadWrite transaction begins while another active: ERR_ISOLATION_CONFLICT
 - If ReadOnly transaction begins during ReadWrite: blocks until commit/rollback
 
-##### Durability Modes
+##### Commit Persistence
 
-Only `0` and `1` are valid durability values. Other values are rejected.
+Every COMMIT must explicitly include `persistence=0` (Buffered) or
+`persistence=1` (Sync). Missing, unknown, or trailing values are rejected.
+BEGIN has no persistence selector.
 
-**Sync (durability=1):**
+**Sync (`persistence=1`):**
 
-- Commits are flushed to durable storage (WAL fsync) before returning
-- Survives broker crash/restart
-- Higher latency, stronger crash durability at the configured storage layer
+- Local storage waits for the WAL fsync before returning.
+- Cloud storage waits for the CloudStrict acknowledgement before returning,
+  including when background cloud durability is configured.
+- The configured storage layer determines the resulting recovery guarantees.
 
-**Buffered (durability=0):**
+**Buffered (`persistence=0`):**
 
-- Commits written to memory buffer, background flush to storage
-- Lower latency, best-effort durability
-- May lose recent commits on broker crash (up to flush interval)
-- Use for caching or when throughput > durability
+- Local storage uses a buffered WAL commit; cloud storage uses CloudAsync.
+- Background persistence can reduce latency, but recent commits may be lost
+  on a crash. A configured flush interval does not bound that loss window.
 
 ##### SCAN Semantics
 
