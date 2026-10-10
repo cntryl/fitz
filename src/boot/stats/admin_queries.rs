@@ -42,6 +42,14 @@ impl Runtime {
         }
     }
 
+    /// Refresh every lazily projected domain once, without copying a snapshot.
+    pub(crate) fn refresh_admin_snapshots(&self) {
+        let domains = self.domain_admins.read().clone();
+        if let Some(domains) = domains {
+            domains.refresh_admin_snapshots();
+        }
+    }
+
     /// Refresh dirty domain projections, then copy one bounded family-selected
     /// snapshot, so admin reads reflect mutations without a prior list call.
     pub(crate) fn refreshed_admin_snapshot(
@@ -49,10 +57,7 @@ impl Runtime {
         family: Option<u64>,
         limit: usize,
     ) -> crate::control::admin::read_model::AdminSnapshot {
-        let domains = self.domain_admins.read().clone();
-        if let Some(domains) = domains {
-            domains.refresh_admin_snapshots();
-        }
+        self.refresh_admin_snapshots();
         self.admin_read_model.bounded_snapshot(family, limit)
     }
 
