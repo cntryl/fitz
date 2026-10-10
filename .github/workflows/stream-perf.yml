@@ -2,10 +2,22 @@ name: Stream Performance
 
 on:
   pull_request:
+    # Comparison inputs: keep this list identical to the in-job skip pathspecs.
     paths:
       - Cargo.toml
       - Cargo.lock
       - src/domains/stream/**
+      - src/domains/subscription_state.rs
+      - src/storage/**
+      - src/storage.rs
+      - src/snapshot/**
+      - src/snapshot.rs
+      - src/runtime/**
+      - src/dispatch/**
+      - src/session/**
+      - src/protocol/**
+      - src/api/**
+      - src/benchkit/**
       - benches/tier4_stream*
       - .github/workflows/stream-perf.yml
       - .github/stream_performance.py
@@ -42,7 +54,9 @@ jobs:
         run: |
           compare=true
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]] &&
-            git diff --quiet "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock src/domains/stream 'benches/tier4_stream*'; then
+            git diff --quiet "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock src/domains/stream src/domains/subscription_state.rs \
+              src/storage src/storage.rs src/snapshot src/snapshot.rs src/runtime src/dispatch src/session src/protocol \
+              src/api src/benchkit 'benches/tier4_stream*'; then
             compare=false
             echo 'Stream comparison not applicable: runtime, dependency and benchmark inputs are unchanged. Measurement acceptance tests passed.' >> "$GITHUB_STEP_SUMMARY"
           fi

@@ -79,5 +79,37 @@ class StreamPerformanceTests(unittest.TestCase):
             summaries["after"][key] = original
 
 
+WORKFLOW = Path(__file__).parents[1] / "workflows/stream-perf.yml"
+# Files that only rerun the acceptance tests; they are not comparison inputs.
+TRIGGER_ONLY = {
+    ".github/workflows/stream-perf.yml",
+    ".github/stream_performance.py",
+    ".github/tests/test_stream_performance.py",
+}
+
+
+def comparison_paths():
+    text = WORKFLOW.read_text()
+    block = re.search(r"\n    paths:\n((?:      - .+\n)+)", text).group(1)
+    triggers = {line.split("- ", 1)[1].removesuffix("/**") for line in block.splitlines()}
+    skip = re.search(r'git diff --quiet "\$BASE_SHA" HEAD -- (.+?);', text, re.S).group(1)
+    return triggers - TRIGGER_ONLY, {spec.strip("'") for spec in skip.split() if spec != "\\"}
+
+
+class StreamPerformanceWorkflowTests(unittest.TestCase):
+    def test_should_keep_the_path_filter_and_in_job_skip_identical(self):
+        triggers, skip = comparison_paths()
+        self.assertEqual(triggers, skip)
+
+    def test_should_compare_when_shared_stream_dependencies_change(self):
+        triggers, skip = comparison_paths()
+        shared = {
+            "src/api", "src/dispatch", "src/runtime", "src/session",
+            "src/snapshot", "src/snapshot.rs", "src/storage", "src/storage.rs",
+        }
+        self.assertLessEqual(shared, triggers)
+        self.assertLessEqual(shared, skip)
+
+
 if __name__ == "__main__":
     unittest.main()
