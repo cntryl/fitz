@@ -206,6 +206,27 @@ consumer delay, storage, producer pool and stage duration. For generator or
 safety boundaries, change the limiting harness dimension explicitly and record
 that change; do not label it a broker failure.
 
+## Matched before/after comparison
+
+After all twelve captures, the workflow compares each matched 10k, 25k and 100k
+pair separately within the full-window and finite-envelope scopes. All six
+pairs must pass. The workflow fails when an after capture regresses beyond the same-host limits in
+[the performance loop](perf-loop.md):
+
+| Metric | Report source | Limit for after |
+| --- | --- | --- |
+| Accepted throughput | `accounting.accepted` / `active_elapsed_ns` | At least 90% of before |
+| Drain time | `drain_elapsed_ns` | At most 110% of before, or before plus 1 second |
+| ACK p99 | `consumer_timing.ack.distribution` | At most 110% of before |
+| Cycle p99 | `consumer_timing.cycle.distribution` | At most 110% of before |
+
+The 1-second drain allowance stops near-empty drains, which finish within a few
+10-millisecond drain polls, from failing on jitter. The p99 values are power-of-two
+histogram bucket upper bounds, so any move to a higher bucket fails. Each pair
+is a single sample: a failure is a regression signal to reproduce, not a
+measured regression size. The comparison is written to the step summary and to
+`comparison.json`. A pair with a failed capture or missing metrics is not compared and fails.
+
 ## Initial local evidence
 
 On clean source `6ba0677abb1a27a406d9de9f0c6bbc6750f1db9e`, an optimized local
