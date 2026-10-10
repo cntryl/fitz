@@ -316,7 +316,7 @@ impl QueueActor {
         )
         .map_err(|error| format!("Failed to write diverted queue header for {id}: {error:?}"))?;
         self.write_index_mutation_plan(&mut txn, id, index_plan, Some(dead_lettered_at_ms))?;
-        txn.commit(self.persistence.write_options())
+        txn.commit()
             .map_err(|error| format!("Failed to commit ready diversion for {id}: {error:?}"))?;
 
         let popped = self.pop_ready();

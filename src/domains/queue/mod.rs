@@ -7,7 +7,7 @@
 //! - **At-least-once delivery**: Messages may be delivered multiple times
 //! - **Minimal fairness**: Messages distributed fairly among consumers (not strict FIFO)
 //! - **Atomic batch operations**: All-or-nothing for ID allocation + message writes
-//! - **Configurable durability**: Fast queue writes trade a small crash-loss window for low latency
+//! - **Best-effort persistence**: Accepted mutations can be lost before background persistence completes
 //!
 //! # Competing Consumer Model
 //!
@@ -32,11 +32,11 @@
 //!
 //! - **Not strict FIFO**: Multiple competing consumers naturally break FIFO ordering.
 //!   Messages are delivered in ready-queue order, but reserve order is non-deterministic.
-//! - **Policy-scoped durability**: Uses atomic batch operations (ID allocation + writes commit together).
-//!   Success responses are returned after the configured queue write policy accepts the mutation.
-//!   The default fast policy skips WAL on the hot path and flushes dirty queue column families
+//! - **Best-effort persistence**: Uses atomic batch operations (ID allocation + writes commit together).
+//!   Success responses are returned after local acceptance, independently of storage durability settings.
+//!   Queue skips WAL on the hot path and flushes dirty queue column families
 //!   in the background, so accepted recent mutations can be lost on process or host crash before
-//!   the configured loss window elapses.
+//!   background persistence completes. The flush interval is a target, not a durability deadline.
 //! - **Automatic redelivery**: Inflight expiration automatically returns messages (ephemeral inflight state).
 //!   Crashes automatically trigger redelivery (inflight state not persisted).
 //! - **Fair distribution**: Reserve operations pop from front of ready queue (simple FIFO internally).
@@ -48,8 +48,8 @@
 //! # Intent vs Events
 //!
 //! Queues represent **intent** (work to be done), not events of record.
-//! - Queue state durability follows `FITZ_QUEUE_WRITE_POLICY`
-//! - The default `fast` policy accepts a bounded recent-data-loss window
+//! - Queue persistence is always best effort
+//! - Accepted enqueues and ACKs can be lost; lost ACKs can cause redelivery
 //! - Producers can regenerate lost work items
 //! - Inflight entries and inflight tokens remain broker-local, in-memory coordination state
 //!
@@ -60,7 +60,7 @@
 //! - **Microsecond latency**: In-memory reserve/complete with persistent backing
 //! - **Token-based operations**: Random tokens prevent accidental duplicate operations
 //! - **Dead Letter Queue (DLQ)**: Optional `max_attempts` threshold for failed messages
-//! - **Recovery**: Flushed or WAL-backed state restored after restart (messages + delayed visibility)
+//! - **Recovery**: Persisted state restored after restart (messages + delayed visibility)
 //!
 //! # Route Format
 //!
@@ -96,12 +96,13 @@
 //! Batch enqueue operations are atomic:
 //! - ID allocation happens INSIDE Midge transaction
 //! - All message writes + `next_id` update in SINGLE transaction
-//! - If crash before commit: no IDs lost or duplicated
-//! - Prevents ID collisions across restarts
+//! - A successful mutation makes ID allocation and rows visible together
+//! - Recovery avoids IDs already represented by persisted reservation metadata
+//! - A crash can lose recent ID reservations and allow unpersisted IDs to be reused
 //!
 //! # Recovery Guarantee (V-003 Fix)
 //!
-//! Process restart fully recovers queue state:
+//! Process restart recovers the state that completed persistence:
 //! - All persisted messages recovered from storage
 //! - Delayed messages have correct visibility windows (using absolute `epoch_ms`)
 //! - In-flight messages automatically redelivered (inflight state is ephemeral)
@@ -119,11 +120,11 @@
 //! When creating a `QueueActor` with `max_attempts: Some(n)`:
 //! - Each inflight expiration increments `attempts`
 //! - When `attempts >= max_attempts`:
-//!   - Message transitions into durable DLQ state
+//!   - Message transitions into best-effort persisted DLQ state
 //!   - Header and body remain in storage with DLQ metadata
 //!   - Log message emitted: `DLQ: queue={...} message_id={...} attempts={...}`
 //!   - Message is NOT re-enqueued
-//! - `QueueActor` retains DLQ rows durably and keeps them out of reserve/redelivery
+//! - `QueueActor` retains DLQ rows with best-effort persistence and keeps them out of reserve/redelivery
 //! - Higher-level admin, replay, and purge surfaces build on top of this retained state
 //!
 //! When `max_attempts: None` (default):

@@ -52,7 +52,6 @@ impl QueueActor {
         loop {
             match Self::commit_transaction_with_pressure_wait(
                 txn,
-                self.persistence.write_options(),
                 commit,
                 deadline.saturating_duration_since(Instant::now()),
             ) {

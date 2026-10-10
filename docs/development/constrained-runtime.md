@@ -58,32 +58,33 @@ also checks Stream writes after Fast Queue forces automatic SST publication.
 CI also runs four process-level campaigns against the same native runtime image
 at 0.25 CPU / 512MiB / no additional swap. A digest-pinned Sqrzl container and
 the external driver run outside the broker's resource limit. Fitz uses its native
-S3-compatible provider with explicit strict Queue and cloud durability. Provider
+S3-compatible provider with best-effort Queue persistence and strict durability
+for KV and other durable-domain writes. Provider
 failure fails the campaign; these tests never silently skip.
 
-The retention campaign runs four enqueue/ACK cycles of 4,096 deterministic 16KiB
+The retention campaign first publishes a strict KV WAL seed, then runs four enqueue/ACK cycles of 4,096 deterministic 16KiB
 messages, totaling 256MiB of accepted payload. It uses the ordinary automatic
 memtable and maintenance settings. Within 120 seconds of the final ACK, the
-catalog segments captured during the first cycle must retire, SST objects
+catalog segments captured before Queue churn must retire, SST objects
 must exist, and both
 catalog-authorized WAL and actual remote WAL objects must total at most 128MiB.
 Every accepted message ID and payload is verified before ACK, and each cycle
 ends with an empty queue. This measures a fixed resource/workload envelope;
 it does not assert that every possible database has a universal WAL size cap.
 
-Two separate restart campaigns first enqueue 4,096 strict 16KiB messages,
-then send SIGKILL and verify exit 137 without an OOM kill. The frozen crash
-state must contain nonempty catalog-authorized WAL and published WAL objects.
-The full 64MiB accepted backlog is split across WAL and SST according to normal
-retirement; healthy SST publication must not fail recovery by shrinking the WAL
-below an arbitrary minimum. The separate 640MiB fixture qualifies WAL-volume
-pressure.
+Two separate restart campaigns enqueue 4,096 best-effort 16KiB messages,
+allow a quiet background flush interval, finish orderly storage shutdown, restart, then send
+SIGKILL and verify exit 137 without an OOM kill. The frozen crash state must
+contain published SST objects. These tests recover a persisted 64MiB fixture;
+an enqueue response or orderly shutdown alone does not promise crash survival. The fixture preparation is
+included in the unchanged 1,200-second whole-case limit. The separate 640MiB
+KV fixture qualifies WAL-volume pressure.
 
 Each campaign either restarts with the same cache or removes the container and
 its anonymous data volume before creating a replacement with a fresh cache.
 Strict `/healthz` must report ready within 180 seconds measured from the crash
 attempt, including evidence capture, cache lifecycle, container startup and the
-configured 59-second crashed-writer lease. All accepted IDs and exact payloads
+configured 59-second crashed-writer lease. All checkpointed IDs and exact payloads
 must recover, be ACKed and leave the queue empty. The seven-domain smoke probe
 must also pass after recovery. Each whole campaign has a fixed 1,200-second
 deadline.
@@ -94,8 +95,8 @@ with a completely empty cache. This backlog exceeds the broker's entire hard
 memory limit. Readiness has the same 180-second deadline, and 40,960 exact KV
 values must be readable through Fitz afterward. Fixture construction runs
 outside the resource cap and occurs with no active writer. It qualifies large
-WAL recovery; the two Queue campaigns separately prove preservation of writes
-acknowledged through Fitz. Only the external driver enables the
+WAL recovery; the two Queue campaigns separately prove recovery of explicitly
+checkpointed Queue state. They do not qualify durability of unflushed Queue acceptance. Only the external driver enables the
 `recovery-qualification` feature; the production image uses its normal features.
 
 Startup validation and inventory consume storage rows incrementally so Queue,

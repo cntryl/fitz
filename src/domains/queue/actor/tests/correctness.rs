@@ -19,14 +19,13 @@ fn should_reject_queue_actor_family_mismatch() {
     };
 
     // Act
-    let result = QueueActor::try_with_clock_and_write_policy(
+    let result = QueueActor::try_with_clock(
         RouteFamily::new(2),
         queue_key,
         store,
         Box::new(crate::runtime::clock::SystemClock),
         None,
         crate::utils::idempotency::default_dedup_store(),
-        crate::domains::WritePolicy::Buffered,
     );
 
     // Assert

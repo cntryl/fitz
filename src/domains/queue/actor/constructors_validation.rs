@@ -19,7 +19,10 @@ impl QueueActor {
     pub(in crate::domains::queue::actor) const BODY_CACHE_LIMIT_BYTES: usize = 16 * 1024 * 1024;
     pub(in crate::domains::queue::actor) const BODY_CACHE_FIFO_SLACK_MULTIPLIER: usize = 2;
 
-    /// Create a new queue actor using buffered commits for durable stores.
+    /// Construct a Queue actor with best-effort persistence.
+    ///
+    /// # Panics
+    /// Panics when persisted queue state cannot be recovered.
     pub fn new(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -27,63 +30,35 @@ impl QueueActor {
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        Self::new_with_write_policy(
-            family,
-            queue_key,
-            store,
-            max_attempts,
-            dedup_store,
-            crate::domains::WritePolicy::Buffered,
-        )
+        Self::try_new(family, queue_key, store, max_attempts, dedup_store)
+            .expect("recover queue actor from store")
     }
 
-    /// Create a new queue actor with explicit commit policy selection.
+    /// Construct a Queue actor with best-effort persistence.
     ///
-    /// # Panics
-    ///
-    /// Panics when persisted queue state cannot be recovered.
-    pub fn new_with_write_policy(
-        family: RouteFamily,
-        queue_key: QueueKey,
-        store: impl Into<super::recovery_store::QueueStore>,
-        max_attempts: Option<u32>,
-        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-        commit_write_policy: crate::domains::WritePolicy,
-    ) -> Self {
-        Self::try_new_with_write_policy(
-            family,
-            queue_key,
-            store,
-            max_attempts,
-            dedup_store,
-            commit_write_policy,
-        )
-        .expect("recover queue actor from store")
-    }
-
     /// # Errors
-    ///
     /// Returns an error when persisted queue state cannot be recovered.
-    pub fn try_new_with_write_policy(
+    pub fn try_new(
         family: RouteFamily,
         queue_key: QueueKey,
         store: impl Into<super::recovery_store::QueueStore>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-        commit_write_policy: crate::domains::WritePolicy,
     ) -> Result<Self, String> {
-        Self::try_with_clock_and_write_policy(
+        Self::try_with_clock(
             family,
             queue_key,
             store,
             Box::new(SystemClock),
             max_attempts,
             dedup_store,
-            commit_write_policy,
         )
     }
 
-    /// Create a new queue actor with a custom clock (for testing) using buffered commits.
+    /// Construct a Queue actor with best-effort persistence.
+    ///
+    /// # Panics
+    /// Panics when persisted queue state cannot be recovered.
     pub fn with_clock(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -92,54 +67,21 @@ impl QueueActor {
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        Self::with_clock_and_write_policy(
-            family,
-            queue_key,
-            store,
-            clock,
-            max_attempts,
-            dedup_store,
-            crate::domains::WritePolicy::Buffered,
-        )
+        Self::try_with_clock(family, queue_key, store, clock, max_attempts, dedup_store)
+            .expect("recover queue actor from store")
     }
 
-    /// Create a new queue actor with a custom clock and explicit commit policy.
+    /// Construct a Queue actor with best-effort persistence.
     ///
-    /// # Panics
-    ///
-    /// Panics when persisted queue state cannot be recovered.
-    pub fn with_clock_and_write_policy(
-        family: RouteFamily,
-        queue_key: QueueKey,
-        store: impl Into<super::recovery_store::QueueStore>,
-        clock: Box<dyn Clock>,
-        max_attempts: Option<u32>,
-        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-        commit_write_policy: crate::domains::WritePolicy,
-    ) -> Self {
-        Self::try_with_clock_and_write_policy(
-            family,
-            queue_key,
-            store,
-            clock,
-            max_attempts,
-            dedup_store,
-            commit_write_policy,
-        )
-        .expect("recover queue actor from store")
-    }
-
     /// # Errors
-    ///
     /// Returns an error when persisted queue state cannot be recovered.
-    pub fn try_with_clock_and_write_policy(
+    pub fn try_with_clock(
         family: RouteFamily,
         queue_key: QueueKey,
         store: impl Into<super::recovery_store::QueueStore>,
         clock: Box<dyn Clock>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-        commit_write_policy: crate::domains::WritePolicy,
     ) -> Result<Self, String> {
         if family != queue_key.family {
             return Err(format!(
@@ -152,11 +94,7 @@ impl QueueActor {
         let now = Instant::now();
 
         let mut actor = Self {
-            persistence: super::recovery_store::QueuePersistence::new(
-                store,
-                &queue_key,
-                commit_write_policy,
-            ),
+            persistence: super::recovery_store::QueuePersistence::new(store, &queue_key),
             queue_key,
             next_id: 1,
             next_ready_seq: 1,

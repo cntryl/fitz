@@ -380,8 +380,7 @@ impl TestServer {
             },
             storage_lease_ttl_seconds: 30,
             storage_lease_ttl_error: None,
-            queue_write_policy: crate::boot::runtime::QueueWritePolicy::Fast,
-            queue_write_policy_source: crate::boot::runtime::QueueWritePolicySource::Explicit,
+            queue_write_policy_error: None,
             queue_loss_window_ms: 100,
             queue_loss_window_error: None,
             kv_idle_transaction_ttl_seconds: 300,
@@ -411,7 +410,6 @@ impl TestServer {
 
         // Step 3: Register domain actors
         let schedule_write_policy = boot_config.schedule_write_policy();
-        let queue_write_policy = boot_config.queue_write_policy();
         let domains = crate::boot::domains::setup(
             &router,
             &store,
@@ -419,10 +417,9 @@ impl TestServer {
             &crate::boot::domains::DomainSetupOptions {
                 route_families: boot_config.route_families.clone(),
                 schedule_write_policy,
-                queue_write_policy,
-                queue_recovery_write_policy: boot_config.request_sync_write_policy(),
+
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
-                queue_fast_local_wal: crate::boot::domains::queue_fast_local_wal(&boot_config),
+
                 request_sync_write_policy: boot_config.request_sync_write_policy(),
                 request_buffered_write_policy: boot_config.request_buffered_write_policy(),
                 rpc_request_timeout,

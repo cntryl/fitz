@@ -29,7 +29,7 @@ impl QueueFamilyState {
             route_family: family,
             delivery_service_us: config.delivery_service_us[&family.id()].clone(),
             store: config.store.clone(),
-            queue_write_policy: config.queue_write_policy,
+
             dedup_store: config.dedup_store.clone(),
             actor_registry: QueueActorRegistry::default(),
             reservation_book: ReservationBook::new(
@@ -68,11 +68,6 @@ impl QueueFamilyState {
 impl QueueDomain {
     /// Constructs a queue sink over a raw Midge engine after preparing persisted queue state.
     ///
-    /// The recovery write policy is explicit because startup reconciliation can write before the
-    /// sink starts handling queue traffic. Cloud-backed engines must receive a cloud-compatible
-    /// recovery policy such as [`crate::domains::WritePolicy::CloudAsync`] or
-    /// [`crate::domains::WritePolicy::CloudStrict`].
-    ///
     /// # Errors
     ///
     /// Returns an error when persisted queue state is invalid or cannot be reconciled.
@@ -82,40 +77,26 @@ impl QueueDomain {
         store: impl Into<crate::domains::queue::actor::recovery_store::QueueStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
-        recovery_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
-        Self::try_new_with_storage(
-            store,
-            router,
-            admin_read_model,
-            queue_write_policy,
-            recovery_write_policy,
-            dedup_store,
-        )
+        Self::try_new_with_storage(store, router, admin_read_model, dedup_store)
     }
 
     pub(crate) fn try_new_with_storage(
         store: impl Into<crate::domains::queue::actor::recovery_store::QueueStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
-        recovery_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
         let store = store.into();
         crate::domains::queue::QueueActor::prepare_persisted_state_for_existing_families(
             store.clone(),
-            queue_write_policy,
-            recovery_write_policy,
         )?;
         let known_queue_keys = QueueFamilyState::inventory_existing_queue_keys(&store)?;
         Ok(Self::new_with_storage_and_inventory(
             store,
             router,
             admin_read_model,
-            queue_write_policy,
             dedup_store,
             known_queue_keys,
             None,
@@ -127,23 +108,15 @@ impl QueueDomain {
         store: impl Into<crate::domains::queue::actor::recovery_store::QueueStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        Self::new_with_storage(
-            store,
-            router,
-            admin_read_model,
-            queue_write_policy,
-            dedup_store,
-        )
+        Self::new_with_storage(store, router, admin_read_model, dedup_store)
     }
 
     pub(crate) fn new_with_storage(
         store: impl Into<crate::domains::queue::actor::recovery_store::QueueStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
         let store = store.into();
@@ -163,7 +136,6 @@ impl QueueDomain {
             store,
             router,
             admin_read_model,
-            queue_write_policy,
             dedup_store,
             known_queue_keys,
             inventory_error,
@@ -175,7 +147,6 @@ impl QueueDomain {
         store: crate::domains::queue::actor::recovery_store::QueueStore,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
         known_queue_keys: HashSet<crate::domains::queue::QueueKey>,
         inventory_error: Option<String>,
@@ -210,7 +181,7 @@ impl QueueDomain {
         );
         let config = QueueDomainConfig {
             store,
-            queue_write_policy,
+
             dedup_store,
             router,
             projection,
@@ -297,9 +268,7 @@ impl QueueDomain {
         self.config.fast_flush_client = None;
         drop(self.fast_flush_worker.take());
         self.config.fast_flush_interval = interval;
-        if interval.is_some()
-            && self.config.queue_write_policy == crate::domains::WritePolicy::BestEffort
-        {
+        if interval.is_some() {
             let (worker, client) =
                 super::fast_flush::FastFlushWorker::spawn(self.config.store.clone())
                     .expect("spawn Queue fast flush worker");

@@ -59,12 +59,8 @@ fn should_reconcile_missing_queue_body_for_fast_policy_during_preflight() {
     put_queue_validation_row(store.as_ref(), &index_meta_suffix, vec![1]);
 
     // Act
-    QueueActor::prepare_persisted_state_for_existing_families(
-        store.clone(),
-        crate::domains::WritePolicy::BestEffort,
-        crate::domains::WritePolicy::Sync,
-    )
-    .expect("fast queue preflight should reconcile a missing body");
+    QueueActor::prepare_persisted_state_for_existing_families(store.clone())
+        .expect("fast queue preflight should reconcile a missing body");
 
     // Assert
     assert!(read_queue_validation_row(store.as_ref(), &header_suffix).is_none());
@@ -84,12 +80,8 @@ fn should_reconcile_orphan_queue_body_for_fast_policy_during_preflight() {
     put_queue_validation_row(store.as_ref(), &ready_index_suffix, vec![1]);
 
     // Act
-    QueueActor::prepare_persisted_state_for_existing_families(
-        store.clone(),
-        crate::domains::WritePolicy::BestEffort,
-        crate::domains::WritePolicy::Sync,
-    )
-    .expect("fast queue preflight should reconcile an orphan body");
+    QueueActor::prepare_persisted_state_for_existing_families(store.clone())
+        .expect("fast queue preflight should reconcile an orphan body");
 
     // Assert
     assert!(read_queue_validation_row(store.as_ref(), &body_suffix).is_none());
@@ -135,11 +127,7 @@ fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
     }
 
     // Act
-    let result = QueueActor::prepare_persisted_state_for_existing_families(
-        store.clone(),
-        crate::domains::WritePolicy::BestEffort,
-        crate::domains::WritePolicy::CloudAsync,
-    );
+    let result = QueueActor::prepare_persisted_state_for_existing_families(store.clone());
 
     // Assert
     assert!(
@@ -152,44 +140,7 @@ fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
 }
 
 #[test]
-fn should_reject_partial_queue_rows_for_buffered_plus_strict_policies() {
-    // Arrange
-    let policies = [
-        crate::domains::WritePolicy::Buffered,
-        crate::domains::WritePolicy::Sync,
-        crate::domains::WritePolicy::CloudStrict,
-    ];
-
-    // Act
-    let errors = policies.map(|policy| {
-        let store = create_test_engine_with_cfs(vec![1]);
-        let header_suffix = authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_HEADER, Some(1));
-        put_queue_validation_row(
-            store.as_ref(),
-            &header_suffix,
-            QueueActor::encode_record_header(&QueueRecord::ready(
-                Bytes::from_static(b"payload"),
-                1,
-                1,
-                1_700_000_000_000,
-            )),
-        );
-        QueueActor::prepare_persisted_state_for_existing_families(
-            store.clone(),
-            policy,
-            crate::domains::WritePolicy::Sync,
-        )
-        .expect_err("durable queue policies should reject a missing body")
-    });
-
-    // Assert
-    assert!(errors
-        .into_iter()
-        .all(|error| error.contains("missing body for split header")));
-}
-
-#[test]
-fn should_require_durable_write_policy_for_fast_queue_reconciliation() {
+fn should_reconcile_partial_queue_state_with_best_effort_persistence() {
     // Arrange
     let store = create_test_engine_with_cfs(vec![1]);
     let header_suffix = authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_HEADER, Some(1));
@@ -205,17 +156,11 @@ fn should_require_durable_write_policy_for_fast_queue_reconciliation() {
     );
 
     // Act
-    let result = QueueActor::prepare_persisted_state_for_existing_families(
-        store.clone(),
-        crate::domains::WritePolicy::BestEffort,
-        crate::domains::WritePolicy::Buffered,
-    );
+    let result = QueueActor::prepare_persisted_state_for_existing_families(store.clone());
 
     // Assert
-    assert!(result
-        .expect_err("fast queue reconciliation must use a durable write")
-        .contains("durable recovery write policy required"));
-    assert!(read_queue_validation_row(store.as_ref(), &header_suffix).is_some());
+    result.expect("best-effort startup repair should succeed");
+    assert!(read_queue_validation_row(store.as_ref(), &header_suffix).is_none());
 }
 
 #[test]
@@ -236,12 +181,8 @@ fn should_leave_complete_split_queue_records_untouched() {
     put_queue_validation_row(store.as_ref(), &split_body_suffix, split_body.clone());
 
     // Act
-    QueueActor::prepare_persisted_state_for_existing_families(
-        store.clone(),
-        crate::domains::WritePolicy::BestEffort,
-        crate::domains::WritePolicy::Sync,
-    )
-    .expect("complete queue records should pass fast preflight");
+    QueueActor::prepare_persisted_state_for_existing_families(store.clone())
+        .expect("complete queue records should pass fast preflight");
 
     // Assert
     assert_eq!(
@@ -283,7 +224,7 @@ fn should_preserve_queue_realm_isolation_given_split_record_recovery() {
 }
 
 #[test]
-fn should_persist_fast_queue_reconciliation_across_restart() {
+fn should_recover_queue_reconciliation_after_explicit_flush() {
     // Arrange
     let temp_dir = tempfile::tempdir().expect("create queue recovery temp dir");
     let store = cntryl_midge::Engine::open(
@@ -309,12 +250,11 @@ fn should_persist_fast_queue_reconciliation_across_restart() {
             1_700_000_000_000,
         )),
     );
-    QueueActor::prepare_persisted_state_for_existing_families(
-        store.clone(),
-        crate::domains::WritePolicy::BestEffort,
-        crate::domains::WritePolicy::Sync,
-    )
-    .expect("reconcile fast queue state before restart");
+    QueueActor::prepare_persisted_state_for_existing_families(store.clone())
+        .expect("reconcile best-effort queue state before restart");
+    store
+        .flush_cf(&family)
+        .expect("explicitly persist the repaired fixture");
     crate::testkit::midge::shutdown_test_engine(store);
 
     // Act
@@ -329,7 +269,7 @@ fn should_persist_fast_queue_reconciliation_across_restart() {
     let result = QueueActor::validate_persisted_state_for_existing_families(reopened.clone());
 
     // Assert
-    result.expect("durable reconciliation should survive restart");
+    result.expect("explicitly flushed reconciliation should survive restart");
     assert!(
         read_queue_validation_row_for_realm(reopened.as_ref(), "test", &header_suffix).is_none()
     );

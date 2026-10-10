@@ -22,7 +22,7 @@
 - Keep `src/session/`, `src/runtime/`, `src/protocol/`, and `src/domains/` synchronous.
 - Sessions are ephemeral. Disconnect creates a new session.
 - Do not imply durability, replay, exactly-once delivery, recovery, or ownership continuity unless storage and docs explicitly support it.
-- Preserve the domain meanings: Notice = live ephemeral fanout, Stream = durable history/replay, KV = current authoritative state, Queue = durable work delivery, RPC = live request/response, Lease = ephemeral ownership coordination, Schedule = durable timing intent.
+- Preserve the domain meanings: Notice = live ephemeral fanout, Stream = durable history/replay, KV = current authoritative state, Queue = work delivery with best-effort persistence, RPC = live request/response, Lease = ephemeral ownership coordination, Schedule = durable timing intent.
 - If semantics change, update the relevant docs in the same change.
 
 ## Realm vs RouteFamily

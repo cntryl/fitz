@@ -14,10 +14,9 @@ fn domain_setup_options() -> DomainSetupOptions {
     DomainSetupOptions {
         route_families: vec![1, 2, 3, 4, 5, 6, 7],
         schedule_write_policy: crate::domains::WritePolicy::BestEffort,
-        queue_write_policy: crate::domains::WritePolicy::BestEffort,
-        queue_recovery_write_policy: crate::domains::WritePolicy::Sync,
+
         queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
-        queue_fast_local_wal: true,
+
         request_sync_write_policy: crate::domains::WritePolicy::Sync,
         request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
         rpc_request_timeout: None,
@@ -33,10 +32,9 @@ fn cloud_domain_setup_options(
     DomainSetupOptions {
         route_families: vec![1],
         schedule_write_policy: durable_write_policy,
-        queue_write_policy: durable_write_policy,
-        queue_recovery_write_policy: durable_write_policy,
+
         queue_fast_flush_interval: None,
-        queue_fast_local_wal: false,
+
         request_sync_write_policy: durable_write_policy,
         request_buffered_write_policy: crate::domains::WritePolicy::CloudAsync,
         rpc_request_timeout: None,
@@ -297,65 +295,4 @@ fn should_reject_new_work_after_domain_actor_panic() {
             crate::runtime::router::DeliveryError::ActorStopped
         ))
     ));
-}
-
-#[test]
-fn should_enable_periodic_wal_sync_for_local_fast_queue() {
-    // Arrange
-    let mut config = crate::boot::runtime::BootConfig::new().with_storage_mode(
-        crate::boot::runtime::StorageMode::LocalDisk {
-            db_path: "unused-local-test".into(),
-        },
-    );
-    config.queue_write_policy = crate::boot::runtime::QueueWritePolicy::Fast;
-    // Act
-    let enabled = queue_fast_local_wal(&config);
-    // Assert
-    assert!(enabled);
-}
-
-#[test]
-fn should_keep_cloud_fast_queue_on_sst_flushing() {
-    // Arrange
-    let cloud = crate::boot::runtime::CloudStorageConfig {
-        provider_name: "aws-s3".into(),
-        provider_config: cntryl_midge::AwsS3Config::new("unused-bucket", "us-east-1").into(),
-        prefix: None,
-        local_cache_path: "unused-cache".into(),
-    };
-    let mut config = crate::boot::runtime::BootConfig::new().with_storage_mode(
-        crate::boot::runtime::StorageMode::CloudBacked(Box::new(cloud)),
-    );
-    config.queue_write_policy = crate::boot::runtime::QueueWritePolicy::Fast;
-    // Act
-    let enabled = queue_fast_local_wal(&config);
-    // Assert
-    assert!(!enabled);
-}
-
-#[test]
-fn should_keep_memory_fast_queue_on_existing_flush_path() {
-    // Arrange
-    let mut config = crate::boot::runtime::BootConfig::new()
-        .with_storage_mode(crate::boot::runtime::StorageMode::Memory);
-    config.queue_write_policy = crate::boot::runtime::QueueWritePolicy::Fast;
-    // Act
-    let enabled = queue_fast_local_wal(&config);
-    // Assert
-    assert!(!enabled);
-}
-
-#[test]
-fn should_keep_strict_local_queue_off_fast_wal_path() {
-    // Arrange
-    let mut config = crate::boot::runtime::BootConfig::new().with_storage_mode(
-        crate::boot::runtime::StorageMode::LocalDisk {
-            db_path: "unused-local-test".into(),
-        },
-    );
-    config.queue_write_policy = crate::boot::runtime::QueueWritePolicy::Strict;
-    // Act
-    let enabled = queue_fast_local_wal(&config);
-    // Assert
-    assert!(!enabled);
 }
