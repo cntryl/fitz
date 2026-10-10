@@ -139,7 +139,7 @@ async fn should_not_durably_audit_action_calls_from_principal_without_action_cap
 }
 
 #[tokio::test]
-async fn should_durably_audit_denied_action_from_principal_with_action_capability() {
+async fn should_not_durably_audit_malformed_preview_from_mutate_only_principal() {
     // Arrange
     let directory = tempfile::tempdir().expect("temporary audit directory");
     let policy = McpCapabilityPolicy::from_classes([McpCapabilityClass::Mutate]);
@@ -157,13 +157,13 @@ async fn should_durably_audit_denied_action_from_principal_with_action_capabilit
 
     // Assert
     assert_eq!(result.unwrap_err(), "MCP action request was denied");
-    let audit = std::fs::read_to_string(directory.path().join("actions.jsonl"))
-        .expect("durable action audit");
-    let records = audit
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0]["principal"], "operator-a");
-    assert_eq!(records[0]["phase"], "missing_arguments");
+    let audit_bytes = std::fs::metadata(directory.path().join("actions.jsonl"))
+        .expect("audit file")
+        .len();
+    assert_eq!(audit_bytes, 0);
+    assert!(server
+        .context
+        .audit_records()
+        .iter()
+        .any(|record| record.result_summary == "missing_arguments"));
 }
