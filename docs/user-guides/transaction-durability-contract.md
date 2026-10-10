@@ -17,3 +17,10 @@ not durability confirmations. See [durability.md](durability.md).
 3. Handle retry behavior according to [troubleshooting.md](troubleshooting.md).
 
 For implementation detail see [development/storage-invariants.md](../development/storage-invariants.md).
+
+
+KV BEGIN selects scope and transaction mode without persistence state. KV and
+Stream COMMIT each require explicit Buffered or Sync persistence. Local commits
+map to Buffered/Sync and cloud commits to CloudAsync/CloudStrict, independently
+of background cloud configuration. The success response follows the selected
+storage commit boundary. No implicit or missing choice is accepted on the wire.

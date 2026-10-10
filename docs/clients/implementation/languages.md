@@ -230,9 +230,9 @@ async def main():
         await client.connect(jwt="your-token")
         
         # KV transaction
-        async with await client.kv.begin("kv://prod/users", durability="Sync") as tx:
+        async with await client.kv.begin("kv://prod/users") as tx:
             await tx.put("user:123", b"alice")
-            await tx.commit()  # Auto-commit on context exit
+            await tx.commit(Durability.Sync)  # Auto-commit on context exit
 
 asyncio.run(main())
 ```
@@ -251,10 +251,8 @@ class Transaction:
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if not self._committed and exc_type is None:
-            await self.commit()  # Auto-commit on success
-        elif exc_type is not None:
-            await self.rollback()  # Auto-rollback on exception
+        if not self._committed:
+            await self.rollback()  # Scope exit never chooses persistence
     
     async def put(self, key: str, value: bytes):
         req = PutRequest(
@@ -265,8 +263,10 @@ class Transaction:
         )
         await self.client._send_request(MessageType.PUT, req)
     
-    async def commit(self):
-        await self.client._send_request(MessageType.COMMIT, CommitRequest(self.tx_id))
+    async def commit(self, persistence):
+        await self.client._send_request(
+            MessageType.COMMIT, CommitRequest(self.tx_id, self.route, persistence)
+        )
         self._committed = True
 ```
 

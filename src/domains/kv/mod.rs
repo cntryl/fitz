@@ -66,7 +66,6 @@ pub(crate) mod admin {
 }
 mod store;
 mod watch_registry;
-pub(crate) mod write_policy;
 
 pub(crate) use actor::KvActor;
 pub use protocol::{

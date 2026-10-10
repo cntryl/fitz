@@ -131,12 +131,12 @@ Portia's stale-append and pending-batch assertions before release.
 
 ## Rust embedding API: write policies and delivery errors
 
-`KvMessage::Begin::write_options` takes `fitz::domains::WritePolicy` so the
+`KvMessage::Commit::persistence` takes `fitz::domains::CommitPersistence` so the
 domain message does not expose the storage engine's option type. Construct the
 Fitz policy directly:
 
 ```rust,ignore
-write_options: fitz::domains::WritePolicy::Buffered,
+persistence: fitz::domains::CommitPersistence::Buffered,
 ```
 
 Broker configuration carries Fitz `WritePolicy` values into crate-private
@@ -427,3 +427,28 @@ unpersisted IDs can be reused after a crash. Producers must regenerate missing
 work and consumers must tolerate duplicates. `FITZ_QUEUE_LOSS_WINDOW_MS` sets a
 target flush interval, not a durability deadline. Strict cloud durability for
 other domains does not change Queue acceptance.
+
+
+## Breaking change: explicit KV and Stream COMMIT persistence
+
+KV BEGIN now contains `[u32 route_len][route][u8 mode]` only. Remove its old
+persistence byte. KV COMMIT now requires
+`[u64 tx_id][u32 route_len][route][u8 persistence]`. Stream COMMIT keeps
+`[u64 session_id][u8 persistence]`. In both domains, `0` is Buffered and `1` is
+Sync; missing, invalid, or trailing fields are rejected. Update broker and SDKs
+together; old KV frames are unsupported.
+
+BEGIN creates scope and transaction/isolation state without choosing persistence.
+Call COMMIT with an explicit Buffered or Sync choice for each transaction. Do not
+silently commit a context-managed transaction on scope exit; explicitly commit
+inside the scope, or roll back unfinished work. Local choices map to Buffered/Sync;
+cloud choices map to CloudAsync/CloudStrict. `FITZ_STORAGE_CLOUD_DURABILITY`
+continues to select Schedule's server-owned policy and cannot downgrade a KV or
+Stream Sync commit. Queue persistence remains always best effort.
+
+Server implementation: [Fitz #471](https://github.com/cntryl/fitz/issues/471).
+Coordinated SDK updates: [.NET #54](https://github.com/cntryl/fitz-dotnet/issues/54),
+[TypeScript #52](https://github.com/cntryl/fitz-ts/issues/52),
+[Go #29](https://github.com/cntryl/fitz-go/issues/29),
+[Rust #31](https://github.com/cntryl/fitz-rs/issues/31),
+[Python #17](https://github.com/cntryl/fitz-py/issues/17).

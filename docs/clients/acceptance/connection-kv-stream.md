@@ -84,7 +84,7 @@
 **Given:** Authenticated session with `kv://**#write` permission  
 **When:**
 
-1. Client sends `Begin(read_write, buffered)`
+1. Client sends `Begin(read_write)`
 2. Server responds with `tx_id`
 3. Client sends `Put(tx_id, key, value)`
 4. Client sends `Commit(tx_id)`

@@ -16,6 +16,7 @@ mod subscriptions;
 #[cfg(test)]
 mod test_support;
 mod transactions;
+#[cfg(test)]
 mod write_policy;
 
 pub(crate) use admin::{

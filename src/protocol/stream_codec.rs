@@ -294,12 +294,7 @@ fn parse_append(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
 /// Wire format: `[u64 session_id][u8 mode]` where mode: 0=Buffered, 1=Sync
 fn parse_commit(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
     let session_id = dec.get_u64()?;
-    let mode_byte = dec.get_u8()?;
-    let mode = match mode_byte {
-        0 => StreamWriteMode::Buffered,
-        1 => StreamWriteMode::Sync,
-        _ => return Err(format!("Invalid write mode: {mode_byte}")),
-    };
+    let mode = StreamWriteMode::decode(dec.get_u8()?)?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -478,6 +473,69 @@ mod tests {
     use bytes::Bytes;
 
     const ROUTE_BYTES: &[u8] = b"\0\0\0\x0estream://r/a/x";
+
+    #[test]
+    fn should_parse_both_explicit_commit_persistence_choices() {
+        // Arrange
+        let choices = [(0, StreamWriteMode::Buffered), (1, StreamWriteMode::Sync)];
+
+        // Act
+        let decoded = choices.map(|(wire, expected)| {
+            let mut payload = 7_u64.to_be_bytes().to_vec();
+            payload.push(wire);
+            (parse_commit(&mut PayloadDecoder::new(&payload)), expected)
+        });
+
+        // Assert
+        for (result, expected) in decoded {
+            assert!(
+                matches!(result, Ok(StreamMessage::Commit { session_id: 7, mode }) if mode == expected)
+            );
+        }
+    }
+
+    #[test]
+    fn should_reject_commit_without_explicit_persistence() {
+        // Arrange
+        let payload = 7_u64.to_be_bytes();
+
+        // Act
+        let result = parse_commit(&mut PayloadDecoder::new(&payload));
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_invalid_commit_persistence() {
+        // Arrange
+        let invalid_choices = 2..=u8::MAX;
+
+        // Act
+        let rejected = invalid_choices
+            .map(|wire| {
+                let mut payload = 7_u64.to_be_bytes().to_vec();
+                payload.push(wire);
+                parse_commit(&mut PayloadDecoder::new(&payload)).is_err()
+            })
+            .all(|rejected| rejected);
+
+        // Assert
+        assert!(rejected);
+    }
+
+    #[test]
+    fn should_reject_commit_with_trailing_fields() {
+        // Arrange
+        let mut payload = 7_u64.to_be_bytes().to_vec();
+        payload.extend_from_slice(&[1, 0]);
+
+        // Act
+        let result = parse_commit(&mut PayloadDecoder::new(&payload));
+
+        // Assert
+        assert!(result.is_err());
+    }
 
     fn context(message_type: u16, payload: &[u8]) -> FrameContext {
         FrameContext::new(
