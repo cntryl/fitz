@@ -318,7 +318,7 @@ Notice does NOT guarantee:
 Stream guarantees:
 
 - ordered append within a resource
-- durable committed history according to the selected write mode
+- durable committed history according to the explicit Buffered or Sync choice on COMMIT
 - exact resource replay suitable for rebuilding client-owned aggregate state or projections
 - replay from client-supplied offsets
 - wildcard area and realm reads gated by committed watermarks
@@ -350,7 +350,8 @@ Stream does NOT guarantee:
 KV guarantees:
 
 - transaction correctness inside one resource scope
-- committed current-state persistence according to the selected write policy
+- committed current-state persistence according to the explicit Buffered or Sync choice on COMMIT
+- BEGIN selects scope and transaction mode without choosing persistence
 - rollback discards uncommitted mutations
 - stale or invalid transaction handles do not mutate committed state
 - RouteFamily isolation for committed values
