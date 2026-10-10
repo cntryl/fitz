@@ -192,7 +192,7 @@ RESERVE form must decode each returned item as
 or COMPLETE. Stream READ now prefixes every event, filtered marker, and filtered
 range with `concrete_route`; mixed broker/client versions cannot decode Stream
 responses. The byte-exact response layouts are defined in
-[the Queue wire contract](../clients/spec/queue-rpc-kv.md) and
+[the Queue wire contract](../clients/spec/queue-rpc.md) and
 [the Stream wire contract](../clients/spec/notice-stream.md).
 
 Existing Stream stores require an offline event export/replay into a fresh
