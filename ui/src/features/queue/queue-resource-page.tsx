@@ -21,7 +21,11 @@ import {
 } from "@/features/queue/queue-resource-panels";
 import { describeQueueState, formatQueueScope } from "@/features/queue/queue-resource-presenters";
 import { domainResourceHref } from "@/shared/navigation/domains";
-import { hasRowsRequest, rowsRequestQuery } from "@/shared/navigation/rows-request";
+import {
+  hasRowsRequest,
+  revealSectionHref,
+  ROWS_REQUEST_PARAM,
+} from "@/shared/navigation/rows-request";
 
 function QueueResourceTimelineView({ resourceRef }: { resourceRef: QueueResourceRef }) {
   const timelineQuery = createQueueResourceTimelineQuery(resourceRef);
@@ -57,6 +61,7 @@ export default function QueueResourcePage() {
   const timelineRequested = route.query.get("timeline") === "1";
   const resourceQuery = createQueueResourceQuery(resourceRef);
   const scopeLabel = formatQueueScope(resourceRef);
+  const resourcePath = domainResourceHref("queue", resourceRef);
 
   const detail = resourceQuery.data;
   const refreshing = resourceQuery.refreshing;
@@ -113,7 +118,7 @@ export default function QueueResourcePage() {
         <Show when={!messagesRequested}>
           <RowsRequestPrompt
             description="Load message rows to inspect live reservations or review dead-letter details."
-            href={`${domainResourceHref("queue", resourceRef)}?${rowsRequestQuery().toString()}`}
+            href={revealSectionHref(resourcePath, route.query, ROWS_REQUEST_PARAM)}
             label="Inspect messages"
           />
         </Show>
@@ -128,7 +133,7 @@ export default function QueueResourcePage() {
         <Show when={!timelineRequested}>
           <RowsRequestPrompt
             description="Load transition evidence for this queue."
-            href={`${domainResourceHref("queue", resourceRef)}?timeline=1`}
+            href={revealSectionHref(resourcePath, route.query, "timeline")}
             label="Inspect transitions"
           />
         </Show>
