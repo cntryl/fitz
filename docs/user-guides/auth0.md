@@ -120,4 +120,5 @@ startup.
 - Audience mismatch: make sure the application requests an access token for the Fitz API Identifier, not only an ID token or `/userinfo` token.
 - Issuer mismatch: make sure `FITZ_JWT_JWKS_MAP` uses the exact issuer string from the token `iss` claim.
 - CONNECT closes after token validation: check that `org_id` exists in `FITZ_ROUTE_FAMILY_MAP` and maps to a family in `FITZ_ROUTE_FAMILIES`.
+- CONNECT fails even though most permissions look right: one malformed permission rejects the whole claim. Look for empty route segments such as `kv://#read`, a trailing `/` before `#`, or `//`.
 - Permission denied after CONNECT succeeds: check that the permission route includes the requested route realm and access level.
