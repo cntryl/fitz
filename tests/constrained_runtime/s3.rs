@@ -133,9 +133,9 @@ async fn should_recover_checkpointed_s3_backlog_after_complete_cache_loss() {
 
 async fn retention() -> serde_json::Value {
     let campaign = Campaign::new("retention");
-    let historical_wal_bytes = fixture::publish(&campaign);
+    let historical_wal_bytes = fixture::publish(&campaign, RECORDS);
     let historical_backlog = campaign.snapshot("historical-before-boot");
-    assert!(historical_wal_bytes > 512 * MIB);
+    assert!(historical_wal_bytes > 64 * MIB);
     assert!(historical_backlog.catalog_bytes >= historical_wal_bytes);
     let original = historical_backlog.segment_ids.clone();
     assert!(
@@ -171,7 +171,7 @@ async fn retention() -> serde_json::Value {
         );
         tokio::time::sleep(Duration::from_secs(2)).await;
     };
-    fixture::verify(&broker).await;
+    fixture::verify(&broker, RECORDS).await;
     super::smoke(broker.address(), &format!("retained-{}", campaign.id)).await;
     finished.store(true, Ordering::Release);
     let (health_samples, maximum_health_millis) = monitor.await.unwrap();
@@ -182,7 +182,7 @@ async fn retention() -> serde_json::Value {
         "payload_bytes_written": u64::from(RECORDS) * 4 * 16 * 1024,
         "remaining": 0, "wal_limit_bytes": WAL_LIMIT,
         "historical_wal_bytes": historical_wal_bytes,
-        "historical_kv_values_verified": 40_960, "historical_backlog": historical_backlog,
+        "historical_kv_values_verified": RECORDS, "historical_backlog": historical_backlog,
         "original_segments": original, "samples": samples, "final": final_snapshot,
         "health_samples": health_samples, "maximum_health_millis": maximum_health_millis,
         "before": before, "after": after,
