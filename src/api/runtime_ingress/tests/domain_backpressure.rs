@@ -1,8 +1,8 @@
 use super::*;
 use crate::api::runtime_ingress::domain_frame_dispatcher::DomainFrameDispatcher;
 
-#[path = "domain_backpressure_stream.rs"]
-mod stream;
+#[path = "domain_backpressure_blocking.rs"]
+mod blocking;
 
 struct AlwaysBackpressuredSink;
 

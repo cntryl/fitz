@@ -16,9 +16,9 @@ const DOMAIN_DISPATCH_BACKPRESSURE_POLICY: DomainDispatchBackpressurePolicy =
         retry_delay: Duration::from_micros(50),
     };
 
-/// Bound Stream blocking-task admission while commands wait behind synchronous
-/// storage commits. Tokio's blocking-pool limit can vary by runtime.
-pub(super) const STREAM_DISPATCH_CONCURRENCY: usize = 64;
+/// Bound blocking-task admission separately for Queue and Stream, whose sinks
+/// wait for synchronous actor replies. Tokio's blocking-pool limit can vary.
+pub(super) const BLOCKING_DOMAIN_DISPATCH_CONCURRENCY: usize = 64;
 
 #[derive(Clone, Copy)]
 struct DomainDispatchBackpressurePolicy {
@@ -83,6 +83,7 @@ pub(super) struct DomainFrameDispatcher {
     pub(super) registry: super::session_registry::SessionRegistry,
     pub(super) auth_required: bool,
     pub(super) stream_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(super) queue_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl RuntimeIngress {
@@ -570,19 +571,21 @@ impl DomainFrameDispatcher {
         domain: DispatchDomain,
         envelope: crate::runtime::Envelope,
     ) -> Result<(), crate::runtime::router::RouteError> {
-        if domain != DispatchDomain::Stream {
-            return router.route_to_domain(domain.as_str(), envelope);
-        }
+        let permits = match domain {
+            DispatchDomain::Stream => &self.stream_dispatch_permits,
+            DispatchDomain::Queue => &self.queue_dispatch_permits,
+            _ => return router.route_to_domain(domain.as_str(), envelope),
+        };
 
         let destination = envelope.destination().clone();
-        let permit = match self.stream_dispatch_permits.clone().try_acquire_owned() {
+        let permit = match permits.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(tokio::sync::TryAcquireError::NoPermits) => {
                 return Err(crate::runtime::router::RouteError::DeliveryFailed(
                     destination,
                     crate::runtime::DeliveryError::MailboxFull {
-                        capacity: STREAM_DISPATCH_CONCURRENCY,
-                        current_len: STREAM_DISPATCH_CONCURRENCY,
+                        capacity: BLOCKING_DOMAIN_DISPATCH_CONCURRENCY,
+                        current_len: BLOCKING_DOMAIN_DISPATCH_CONCURRENCY,
                     },
                 ));
             }
@@ -610,8 +613,9 @@ impl DomainFrameDispatcher {
             Ok(result) => result,
             Err(error) => {
                 warn!(
+                    domain = domain.as_str(),
                     error = %error,
-                    "Ingress: Stream dispatch blocking task failed after handoff"
+                    "Ingress: blocking dispatch task failed after handoff"
                 );
                 // Handoff may have enqueued the command; this must not become
                 // a retryable pre-enqueue rejection.
