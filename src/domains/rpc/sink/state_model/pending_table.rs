@@ -3,6 +3,7 @@ use super::{
     RpcCancellationAckDisposition, RpcCancellationDisposition, RpcCorrelationKey, RpcFastMap,
     RpcPendingCleanupResult, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
     RpcQueuedRequest, RpcRegistrationId, RpcWorkerCancellation,
+    RPC_MAX_CANCELLATION_GRACE_DEFERRAL,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -161,9 +162,9 @@ impl RpcPendingTable {
         {
             return RpcCancellationAckDisposition::Rejected;
         }
-        RpcCancellationAckDisposition::Acknowledged(
+        RpcCancellationAckDisposition::Acknowledged(Box::new(
             self.remove(&key).expect("acknowledged pending request"),
-        )
+        ))
     }
 
     pub(in crate::domains::rpc::sink) fn mark_close_requested(
@@ -210,7 +211,9 @@ impl RpcPendingTable {
 
     /// Pushes an expired grace back by the time the worker's frame loop spent
     /// busy since the grace was last credited, so the grace only runs while the
-    /// loop is free to read the cleanup ACK. Returns whether it was deferred.
+    /// loop is free to read the cleanup ACK. Total deferral per cancellation is
+    /// capped at `RPC_MAX_CANCELLATION_GRACE_DEFERRAL`; once the cap is reached
+    /// this returns `false` and the worker is closed. Returns whether it was deferred.
     pub(in crate::domains::rpc::sink) fn defer_grace_for_busy_frame_loop(
         &mut self,
         key: RpcCorrelationKey,
@@ -222,11 +225,14 @@ impl RpcPendingTable {
         let (Some(busy_time), Some(baseline)) = (busy_time, pending.grace_busy_baseline) else {
             return false;
         };
-        let unpaid = busy_time.saturating_sub(baseline);
+        let remaining_ceiling =
+            RPC_MAX_CANCELLATION_GRACE_DEFERRAL.saturating_sub(pending.grace_deferred);
+        let unpaid = busy_time.saturating_sub(baseline).min(remaining_ceiling);
         if unpaid.is_zero() {
             return false;
         }
         pending.grace_busy_baseline = Some(busy_time);
+        pending.grace_deferred += unpaid;
         pending.expires_at += unpaid;
         let expires_at = pending.expires_at;
         self.expirations

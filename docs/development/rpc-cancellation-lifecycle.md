@@ -129,6 +129,12 @@ nominal grace by its own traffic is not closed for that; a worker that stays
 free and never acknowledges is closed once the grace of free loop time has
 elapsed. Busy time is read from the live session inbox at the timeout sweep, so
 the deadline can be deferred repeatedly while one long frame stays in progress.
+Total deferral per cancellation is capped at 60 seconds
+(`RPC_MAX_CANCELLATION_GRACE_DEFERRAL`), the longest legitimate frame hold,
+which is the Stream client storage reply budget. A worker is therefore closed
+no later than the nominal grace expiry plus 60 seconds, even if its frame loop
+never frees up or it never acknowledges. The ceiling is fixed and does not
+change with `FITZ_RPC_CANCELLATION_GRACE_MS`.
 If a supporting worker has not acknowledged cleanup by expiry, the
 broker requests transport-level session close. Credit remains reserved until
 actual session cleanup removes that worker's pending calls. Failed close

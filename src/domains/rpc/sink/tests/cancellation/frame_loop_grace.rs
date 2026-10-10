@@ -70,6 +70,10 @@ impl CancelledCall {
         *self.worker.busy_time.lock() += busy;
     }
 
+    fn keep_frame_loop_busy_until(&self, elapsed: Duration) {
+        *self.worker.busy_time.lock() = elapsed;
+    }
+
     fn sweep_after(&self, elapsed: Duration) {
         self.sink
             .expire_timed_out_requests_at(self.cancelled_at + elapsed);
@@ -105,6 +109,26 @@ fn should_not_close_worker_whose_frame_loop_was_held_past_grace_before_ack() {
     // Assert
     assert_eq!(call.close_reasons(), [] as [&str; 0]);
     assert_eq!(call.sink.pending_request_count(), 0);
+}
+
+#[test]
+fn should_close_worker_whose_frame_loop_stays_busy_past_grace_ceiling() {
+    // Arrange
+    let call = CancelledCall::start();
+    let mut closed_at = None;
+
+    // Act
+    for second in 1..=70 {
+        let elapsed = Duration::from_secs(second);
+        call.keep_frame_loop_busy_until(elapsed);
+        call.sweep_after(elapsed);
+        if closed_at.is_none() && !call.close_reasons().is_empty() {
+            closed_at = Some(elapsed);
+        }
+    }
+
+    // Assert
+    assert_eq!(closed_at, Some(GRACE + RPC_MAX_CANCELLATION_GRACE_DEFERRAL));
 }
 
 #[test]

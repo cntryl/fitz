@@ -17,6 +17,9 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
     pub(in crate::domains::rpc::sink) close_requested: bool,
     /// Worker frame-loop busy time already credited to the cancellation grace.
     pub(in crate::domains::rpc::sink) grace_busy_baseline: Option<std::time::Duration>,
+    /// Total busy time credited to the cancellation grace, capped by
+    /// `RPC_MAX_CANCELLATION_GRACE_DEFERRAL` for this cancellation.
+    pub(in crate::domains::rpc::sink) grace_deferred: std::time::Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -78,6 +81,7 @@ impl RpcPendingRequest {
             cancelled: false,
             close_requested: false,
             grace_busy_baseline: None,
+            grace_deferred: std::time::Duration::ZERO,
         }
     }
 
@@ -227,7 +231,8 @@ pub(in crate::domains::rpc::sink) enum RpcCancellationDisposition {
 }
 
 pub(in crate::domains::rpc::sink) enum RpcCancellationAckDisposition {
-    Acknowledged(RpcPendingRequest),
+    /// Boxed so the grace accounting fields do not inflate every disposition.
+    Acknowledged(Box<RpcPendingRequest>),
     Rejected,
 }
 
