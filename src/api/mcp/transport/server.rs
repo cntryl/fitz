@@ -165,6 +165,7 @@ impl McpServer {
         let Some(actions) = &self.actions else {
             return Err("MCP mutations are disabled".into());
         };
+        McpActionState::require_action_capability(tool_name, &context, &self.policy)?;
         let request_target = arguments
             .as_ref()
             .and_then(|value| value.get("challenge_id"))

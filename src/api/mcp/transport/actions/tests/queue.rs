@@ -84,8 +84,7 @@ fn should_deny_queue_dead_letter_preview_from_another_family() {
     assert!(result.is_err());
     assert!(actions.previews.lock().is_empty());
     let audit = std::fs::read_to_string(directory.path().join("actions.jsonl")).unwrap();
-    assert!(audit.contains("authority_denied"));
-    assert!(!audit.contains("queue://operations/jobs/dispatch"));
+    assert_eq!(audit, "");
 }
 
 #[test]
@@ -184,4 +183,98 @@ fn should_not_reuse_confirmation_when_queue_state_cannot_be_revalidated() {
     assert!(retry.is_err());
     let audit = std::fs::read_to_string(directory.path().join("actions.jsonl")).unwrap();
     assert!(audit.contains("\"phase\":\"state_revalidation_failed\""));
+}
+
+#[test]
+fn should_not_durably_audit_purge_denials_from_mutate_only_principal() {
+    // Arrange
+    let directory = tempfile::tempdir().unwrap();
+    let actions = action_state(directory.path());
+    let read_model = AdminReadModel::new();
+    read_model.replace_queue_dead_letters(vec![dead_letter(41, 7)]);
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), read_model);
+    let context = context(
+        "queue-operator",
+        AdminRouteFamilyAccess::Explicit(vec!["41".into()]),
+    );
+    let policy = McpCapabilityPolicy::from_classes([McpCapabilityClass::Mutate]);
+    let audit_path = directory.path().join("actions.jsonl");
+    let before = std::fs::metadata(&audit_path).unwrap().len();
+
+    // Act
+    for _ in 0..25 {
+        let result = actions.preview_queue_dead_letter(
+            Some(queue_arguments(41, "purge")),
+            &context,
+            &policy,
+            [9; 32],
+            &runtime,
+        );
+        assert!(result.is_err());
+    }
+
+    // Assert
+    assert_eq!(std::fs::metadata(&audit_path).unwrap().len(), before);
+}
+
+#[test]
+fn should_not_durably_audit_bogus_confirmations_from_mutate_only_principal() {
+    // Arrange
+    let directory = tempfile::tempdir().unwrap();
+    let actions = action_state(directory.path());
+    let runtime = runtime();
+    let context = context(
+        "queue-operator",
+        AdminRouteFamilyAccess::Explicit(vec!["41".into()]),
+    );
+    let policy = McpCapabilityPolicy::from_classes([McpCapabilityClass::Mutate]);
+    let audit_path = directory.path().join("actions.jsonl");
+    let before = std::fs::metadata(&audit_path).unwrap().len();
+    let arguments = serde_json::json!({
+        "challenge_id": Uuid::new_v4().to_string(),
+        "target": "route_family=41;queue://operations/jobs/dispatch;message_id=7",
+        "confirmation": "PURGE route_family=41;queue://operations/jobs/dispatch;message_id=7",
+    });
+
+    // Act
+    for _ in 0..25 {
+        let result = actions.consume_confirmation(
+            CONFIRM_QUEUE_TOOL,
+            Some(arguments.clone()),
+            &context,
+            &policy,
+            [9; 32],
+            &runtime,
+        );
+        assert!(result.is_err());
+    }
+
+    // Assert
+    assert_eq!(std::fs::metadata(&audit_path).unwrap().len(), before);
+}
+
+#[test]
+fn should_durably_audit_denial_for_fully_authorized_principal() {
+    // Arrange
+    let directory = tempfile::tempdir().unwrap();
+    let actions = action_state(directory.path());
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), AdminReadModel::new());
+    let context = context(
+        "queue-operator",
+        AdminRouteFamilyAccess::Explicit(vec!["41".into()]),
+    );
+
+    // Act
+    let result = actions.preview_queue_dead_letter(
+        Some(queue_arguments(41, "replay")),
+        &context,
+        &privileged_policy(),
+        [9; 32],
+        &runtime,
+    );
+
+    // Assert
+    assert!(result.is_err());
+    let audit = std::fs::read_to_string(directory.path().join("actions.jsonl")).unwrap();
+    assert!(audit.contains("dead_letter_not_found"));
 }
