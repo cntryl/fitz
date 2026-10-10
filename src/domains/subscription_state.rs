@@ -511,4 +511,20 @@ mod tests {
         // Assert
         assert_eq!(result, Some(RegistrationLimit::Wildcard));
     }
+
+    #[test]
+    fn should_report_total_limit_before_wildcard_limit_when_both_are_reached() {
+        // Arrange
+        let wildcard = Pattern::new("schedule://acme/jobs/*/run");
+
+        // Act
+        let result = registration_limit_for_counts(
+            MAX_TOTAL_REGISTRATIONS_PER_SESSION,
+            &wildcard,
+            MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+        );
+
+        // Assert
+        assert_eq!(result, Some(RegistrationLimit::Total));
+    }
 }
