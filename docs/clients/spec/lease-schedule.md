@@ -820,8 +820,9 @@ Response (error):
   and returns its versioned cursor page. It exists for broker compatibility;
   portable clients use canonical offset/limit LIST (702). A continuation
   cursor resumes after the route it names, even if that schedule has since
-  been cancelled. An empty, foreign-family, or otherwise unrecognised cursor
-  is not an error; it returns the first page.
+  been cancelled. A cursor that lacks this family's `schedule-list-v1:<family>:`
+  prefix, or has nothing after it (including an empty cursor), is not an
+  error; it returns the first page.
 
 #### Cron Syntax (Broker-Enforced)
 
