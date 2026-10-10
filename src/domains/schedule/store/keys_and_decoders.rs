@@ -190,8 +190,7 @@ impl ScheduleStore {
         tx: &cntryl_midge::Transaction,
         suffix_prefix: &[u8],
     ) -> Result<ScheduleRows, String> {
-        let scan = tx
-            .scan(&cntryl_midge::Query::new())
+        let scan = crate::storage::domain_scan::scan_domain_rows(tx, DomainKeyspace::Schedule)
             .map_err(|e| format!("scan schedule rows failed: {e:?}"))?;
         let mut rows = Vec::new();
         for row in scan {
