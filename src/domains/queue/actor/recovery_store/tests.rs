@@ -253,6 +253,7 @@ fn should_fail_reservation_recovery_when_persisted_row_cannot_be_read() {
     let error = QueueStoreError {
         message: "injected reservation read failure".to_string(),
         midge_error: None,
+        admission_stalled: false,
     };
 
     // Act
@@ -409,4 +410,59 @@ fn should_decode_header_rows_only_as_consumed() {
     let rows = first.expect("an unread malformed row must not fail an earlier valid row");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, MessageId::new(1));
+}
+
+/// Fills family 1's L0 slots with compaction disabled until Midge itself
+/// rejects a commit, then returns that rejection unmodified.
+fn real_midge_l0_rejection() -> QueueStoreError {
+    let directory = tempfile::tempdir().expect("create Midge directory");
+    let engine = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::local(directory.path())
+                .background_compaction(false)
+                .build()
+                .expect("build Midge options"),
+        )
+        .expect("open Midge engine"),
+    );
+    let family = engine
+        .create_column_family("cf_1")
+        .expect("create column family 1");
+    let store = QueueStore::new(engine.clone());
+    let mut rejection = None;
+    for round in 0_u32..64 {
+        let mut txn = store
+            .begin(family.id(), QueueTransactionMode::ReadWrite)
+            .expect("begin queue transaction");
+        txn.put(round.to_be_bytes().to_vec(), b"value".to_vec(), None)
+            .expect("stage queue row");
+        if let Err(error) = txn
+            .inner
+            .commit(cntryl_midge::WriteOptions::sync())
+            .map_err(QueueStoreError::from_midge)
+        {
+            rejection = Some(error);
+            break;
+        }
+        engine.flush_cf(&family).expect("publish one L0 file");
+    }
+    drop(store);
+    crate::testkit::midge::shutdown_test_engine(engine);
+    rejection.expect("Midge rejects a write once every L0 slot is used")
+}
+
+#[test]
+fn should_classify_real_midge_l0_rejection_as_retryable_admission() {
+    // Arrange
+    let rejection = real_midge_l0_rejection();
+
+    // Act
+    let retryable = rejection.is_l0_admission_rejection(1);
+
+    // Assert
+    assert!(
+        retryable,
+        "Midge L0 rejection no longer matches Queue retry detection: {rejection}"
+    );
+    assert!(!rejection.is_l0_admission_rejection(2));
 }

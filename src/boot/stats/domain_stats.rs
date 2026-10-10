@@ -193,6 +193,16 @@ impl Runtime {
     }
 
     #[must_use]
+    pub fn queue_l0_admission_retries_total(&self) -> u64 {
+        metric_counter(crate::domains::queue::metrics::METRIC_L0_ADMISSION_RETRIES_TOTAL)
+    }
+
+    #[must_use]
+    pub fn queue_admission_budget_exhausted_total(&self) -> u64 {
+        metric_counter(crate::domains::queue::metrics::METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL)
+    }
+
+    #[must_use]
     pub fn queue_redeliveries_total(&self) -> u64 {
         metric_counter("fitz_queue_redeliveries_total")
     }

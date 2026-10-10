@@ -311,3 +311,44 @@ fn should_bound_repeated_ack_admission_rejections_to_one_budget() {
     // If admission expired before the injected rejection, discard the test hook.
     QueueStore::clear_commit_error_for_tests();
 }
+
+#[test]
+fn should_count_l0_admission_retry_given_rejection_before_commit() {
+    // Arrange
+    let mut actor = actor();
+    let metric = crate::domains::queue::metrics::METRIC_L0_ADMISSION_RETRIES_TOTAL;
+    let before = crate::observability::metrics().counter_get(metric);
+    QueueStore::fail_next_commit_for_tests(cntryl_midge::MidgeError::WriteStall(
+        "column family 1 has no free L0 slot (15/14)".into(),
+    ));
+
+    // Act
+    let response = actor.handle_send(Bytes::from_static(b"work"), None);
+
+    // Assert
+    assert!(matches!(response, QueueResponse::Sent { .. }));
+    assert!(crate::observability::metrics().counter_get(metric) > before);
+}
+
+#[test]
+fn should_count_admission_budget_exhaustion_given_l0_rejections_past_deadline() {
+    // Arrange
+    let mut actor = actor();
+    let (id, _) = send_and_reserve_single_message(&mut actor, "work");
+    let metric = crate::domains::queue::metrics::METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL;
+    let before = crate::observability::metrics().counter_get(metric);
+
+    // Act
+    let result = actor.commit_ack_with_admission_budget(Duration::from_millis(30), |txn| {
+        QueueStore::fail_next_commit_for_tests(cntryl_midge::MidgeError::WriteStall(
+            "column family 1 has no free L0 slot (15/14)".into(),
+        ));
+        txn.delete(actor.cached_header_key(id))
+            .map_err(|error| error.to_string())
+    });
+    QueueStore::clear_commit_error_for_tests();
+
+    // Assert
+    assert!(result.is_err());
+    assert!(crate::observability::metrics().counter_get(metric) > before);
+}
