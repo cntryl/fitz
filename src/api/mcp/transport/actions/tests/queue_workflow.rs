@@ -149,7 +149,7 @@ fn should_purge_real_queue_dead_letter_through_confirmed_shared_admin_command() 
 }
 
 #[test]
-fn should_recheck_real_dead_letter_state_before_dispatch_when_preview_projection_is_stale() {
+fn should_recheck_actor_dead_letter_state_at_dispatch_after_purge() {
     // Arrange
     let directory = tempfile::tempdir().unwrap();
     let actions = action_state(directory.path());
