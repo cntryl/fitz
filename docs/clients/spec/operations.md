@@ -59,7 +59,7 @@ changes its ownership.
 - Multiple transactions to different resources MAY be parallel
 - Watches are session-scoped and MUST be re-established after reconnect
 - Watches accept exact routes or patterns capable of matching a three-segment KV route
-- `Notify` is emitted only after a successful `Commit` that applied one or more mutations
+- `Notify` is emitted only after a successful `Commit` that applied one or more mutations, or after an operator KV snapshot restore replaces the resource
 
 ---
 

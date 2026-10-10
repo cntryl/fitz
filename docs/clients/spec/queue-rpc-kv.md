@@ -825,6 +825,7 @@ Response (error):
 
 `NOTIFY` is server-to-client only. The broker emits it after a successful
 `COMMIT` when the committed transaction changed at least one key in a watched
+resource, and after an operator KV snapshot restore replaces a watched
 resource. `route` is always the exact concrete resource route, even when the
 registration was a wildcard pattern.
 

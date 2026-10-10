@@ -50,6 +50,8 @@ impl KvFamilyRuntime<'_> {
             resources.insert(resource.route.clone(), resource.entries.clone());
         }
 
+        self.reject_restore_of_locked_resources(family, resources.keys())?;
+
         let column_family = KvActor::resolve_column_family(family)?;
         let mut completed = Vec::new();
         for (route, entries) in resources {
@@ -58,7 +60,10 @@ impl KvFamilyRuntime<'_> {
             };
             let prefix = KvActor::realm_resource_prefix(realm, area, name);
             let record_count = u64::try_from(entries.len()).unwrap_or(u64::MAX);
-            let keys_to_delete = existing_keys.get(&route).into_iter().flatten();
+            let keys_to_delete = existing_keys.get(&route).map_or(&[][..], Vec::as_slice);
+            let mutation_count = u64::try_from(keys_to_delete.len())
+                .unwrap_or(u64::MAX)
+                .saturating_add(record_count);
             let mut tx = self
                 .core
                 .store
@@ -96,9 +101,52 @@ impl KvFamilyRuntime<'_> {
             tx.commit(self.core.sync_write_policy).map_err(|error| {
                 format!("restore failed after resources {completed:?}: {error}")
             })?;
+            if mutation_count > 0 {
+                self.route_kv_notification(
+                    &KvResourceLockKey::new(family.as_u64(), realm, area, name),
+                    mutation_count,
+                );
+            }
             completed.push(route);
         }
         Ok(completed)
+    }
+
+    /// Rejects a restore before any mutation while an open read-write
+    /// transaction holds the lock on one of the target resources.
+    ///
+    /// Every target is checked before any idle lock is expired. A restore that
+    /// is rejected on a later resource therefore leaves earlier idle
+    /// transactions alive. Once no target is actively locked, idle locks are
+    /// expired like a read-write `BEGIN`. The family actor runs the restore to
+    /// completion, so no lock can be taken mid-restore.
+    fn reject_restore_of_locked_resources<'a>(
+        &mut self,
+        family: crate::runtime::routing::RouteFamily,
+        routes: impl Iterator<Item = &'a String>,
+    ) -> Result<(), String> {
+        let mut lock_keys = Vec::new();
+        for route in routes {
+            let Some((realm, area, name)) = parse_kv_resource_route(route) else {
+                return Err(format!("invalid KV resource route in snapshot: {route}"));
+            };
+            let lock_key = KvResourceLockKey::new(family.as_u64(), realm, area, name);
+            let active = self
+                .core
+                .resource_locks
+                .get(&lock_key)
+                .is_some_and(|owner| !owner.is_idle(self.core.idle_transaction_ttl));
+            if active {
+                return Err(format!(
+                    "restore rejected: KV resource {route} is locked by an open transaction"
+                ));
+            }
+            lock_keys.push(lock_key);
+        }
+        for lock_key in &lock_keys {
+            self.expire_resource_lock_if_idle(lock_key);
+        }
+        Ok(())
     }
 
     pub(super) fn admin_snapshot_committed_resources(
