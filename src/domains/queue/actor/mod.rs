@@ -55,7 +55,7 @@ const MAX_DUE_ITEMS_PER_PASS: usize = 32;
 pub(super) const QUEUE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
 // Client storage operations use Midge's default runtime response budget.
 // Admission and control-plane waits retain the short latency budget above.
-pub(super) const QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
+pub(super) use super::QUEUE_CLIENT_REPLY_TIMEOUT as QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT;
 
 use bytes::Bytes;
 use lexkey::LexKey;

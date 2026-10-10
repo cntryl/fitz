@@ -146,6 +146,10 @@
 //!
 //! Queue operations are dispatched via RPC or WebSocket messages.
 
+/// Existing Queue client reply budget, shared by transport handoff and actor waiting.
+pub(crate) const QUEUE_CLIENT_REPLY_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(60);
+
 pub(crate) mod actor;
 pub mod core;
 pub mod events;

@@ -96,6 +96,16 @@ impl QueueDomain {
         // never be rationed by client load. See `admit_client_delivery`.
         let is_control_plane =
             high_priority || crate::runtime::session_cleanup_id(&envelope).is_some();
+        let client_deadline = envelope.deadline();
+        if !is_control_plane && client_deadline.is_some_and(|deadline| deadline <= Instant::now()) {
+            return Err(super::model::classify_admission_failure(
+                DeliveryError::MailboxFull {
+                    capacity: 1,
+                    current_len: 1,
+                },
+                self.family_runtime.is_family_running(family),
+            ));
+        }
         let admission = if is_control_plane {
             None
         } else {
@@ -127,7 +137,11 @@ impl QueueDomain {
         let reply_timeout = if is_control_plane {
             QUEUE_ACTOR_REPLY_TIMEOUT
         } else {
-            QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT
+            client_deadline.map_or(QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT, |deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT)
+            })
         };
         reply_rx
             .recv_timeout(reply_timeout)

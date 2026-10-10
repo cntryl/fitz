@@ -1,18 +1,15 @@
 use super::domain_frame_dispatcher::{DomainFrameDispatcher, BLOCKING_DOMAIN_DISPATCH_CONCURRENCY};
 use super::DispatchDomain;
-use std::time::{Duration, Instant};
+use crate::domains::queue::QUEUE_CLIENT_REPLY_TIMEOUT;
+use std::time::Instant;
 use tracing::warn;
-
-// Match Queue's one-second admission latency target; waiting here cannot
-// accumulate an unbounded transport backlog ahead of the synchronous sink.
-const QUEUE_HANDOFF_WAIT_BUDGET: Duration = Duration::from_secs(1);
 
 impl DomainFrameDispatcher {
     pub(super) async fn route_client_domain(
         &self,
         router: &crate::runtime::Router,
         domain: DispatchDomain,
-        envelope: crate::runtime::Envelope,
+        mut envelope: crate::runtime::Envelope,
         started_at: Instant,
     ) -> Result<(), crate::runtime::router::RouteError> {
         let permits = match domain {
@@ -47,8 +44,13 @@ impl DomainFrameDispatcher {
                 .entry(destination.family().id())
                 .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
                 .clone();
-            let deadline = tokio::time::Instant::from_std(started_at + QUEUE_HANDOFF_WAIT_BUDGET);
-            match tokio::time::timeout_at(deadline, family_lock.lock_owned()).await {
+            let deadline = envelope
+                .deadline()
+                .map_or(started_at + QUEUE_CLIENT_REPLY_TIMEOUT, |deadline| {
+                    deadline.min(started_at + QUEUE_CLIENT_REPLY_TIMEOUT)
+                });
+            envelope = envelope.with_deadline(deadline);
+            match tokio::time::timeout_at(deadline.into(), family_lock.lock_owned()).await {
                 Ok(guard) => Some(guard),
                 Err(_) => {
                     return Err(crate::runtime::router::RouteError::DeliveryFailed(

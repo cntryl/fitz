@@ -141,7 +141,7 @@ fn should_reject_expired_queue_handoff_before_enqueue() {
     let _active_handoff = rt.block_on(family_lock.lock_owned());
     let destination = RouteAddress::new(RouteFamily::new(1), Route::new("queue://in"));
     let started_at = Instant::now()
-        .checked_sub(QUEUE_HANDOFF_WAIT_BUDGET)
+        .checked_sub(QUEUE_CLIENT_REPLY_TIMEOUT)
         .unwrap();
 
     // Act
@@ -163,5 +163,105 @@ fn should_reject_expired_queue_handoff_before_enqueue() {
     assert!(
         entered_rx.try_recv().is_err(),
         "expired handoff reached the sink"
+    );
+}
+
+#[test]
+fn should_keep_queue_handoff_within_the_existing_client_reply_budget() {
+    // Arrange
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(2);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(2);
+    let router = Arc::new(Router::new());
+    router.register_domain_pattern(
+        "queue",
+        Arc::new(BlockingSink {
+            entered: entered_tx,
+            release: release_rx,
+        }),
+    );
+    let ingress = Arc::new(super::super::RuntimeIngress::new(false).with_router(router.clone()));
+    let dispatch = || {
+        let ingress = ingress.clone();
+        let router = router.clone();
+        rt.spawn(async move {
+            ingress
+                .dispatcher
+                .route_client_domain(
+                    &router,
+                    DispatchDomain::Queue,
+                    Envelope::new(
+                        RouteAddress::new(RouteFamily::new(1), Route::new("queue://in")),
+                        (),
+                    ),
+                    Instant::now(),
+                )
+                .await
+        })
+    };
+    let first = dispatch();
+    entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let mut second = dispatch();
+
+    // Act
+    let early =
+        rt.block_on(async { tokio::time::timeout(Duration::from_millis(1200), &mut second).await });
+    let returned_early = early.is_ok();
+    release_tx.send(()).unwrap();
+    let second_result = match early {
+        Ok(result) => result,
+        Err(_) => {
+            entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            release_tx.send(()).unwrap();
+            rt.block_on(second)
+        }
+    };
+    rt.block_on(first).unwrap().unwrap();
+
+    // Assert
+    assert!(
+        !returned_early,
+        "transport added a one-second Queue rejection deadline"
+    );
+    assert!(second_result.unwrap().is_ok());
+}
+
+struct DeadlineSink(crossbeam_channel::Sender<Option<Instant>>);
+
+impl MailboxSink for DeadlineSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.0.send(envelope.deadline()).unwrap();
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[test]
+fn should_pass_original_queue_reply_deadline_through_handoff() {
+    // Arrange
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (deadline_tx, deadline_rx) = crossbeam_channel::bounded(1);
+    let router = Arc::new(Router::new());
+    router.register_domain_pattern("queue", Arc::new(DeadlineSink(deadline_tx)));
+    let ingress = super::super::RuntimeIngress::new(false).with_router(router.clone());
+    let started_at = Instant::now().checked_sub(Duration::from_secs(5)).unwrap();
+    let destination = RouteAddress::new(RouteFamily::new(1), Route::new("queue://in"));
+
+    // Act
+    let result = rt.block_on(ingress.dispatcher.route_client_domain(
+        &router,
+        DispatchDomain::Queue,
+        Envelope::new(destination, ()),
+        started_at,
+    ));
+
+    // Assert
+    assert!(result.is_ok());
+    assert_eq!(
+        deadline_rx.recv().unwrap(),
+        Some(started_at + QUEUE_CLIENT_REPLY_TIMEOUT)
     );
 }
