@@ -27,10 +27,14 @@ configured duration is the **total active budget across the seven stages**. A
 3,600-second sweep allocates approximately 514 seconds to each level; it does
 not allocate one hour to every level. An explicit capacity rejection may end an
 individual Tier 5 stage early; record that boundary and the actual elapsed work,
-then require a successful recovery probe. Report each level separately so a higher
-load's rejections or latency cannot disappear in a whole-sweep average. A sweep
-that never observes capacity pressure establishes scaling within its tested
-range; the target name does not prove the broker's saturation boundary was reached.
+then require a successful recovery probe. The boundary passes only after the
+stage's minimum active work (see the
+[stress contract](stress-bench-contract.md#tier-5-and-tier-6-rules-owned-active-windows));
+a rejection in the first batches fails the stage instead of ending it early.
+Report each level separately so a higher load's rejections or latency cannot
+disappear in a whole-sweep average. A sweep that never observes capacity
+pressure establishes scaling within its tested range; the target name does not
+prove the broker's saturation boundary was reached.
 
 Tier 5 prepares all 64 lane drivers before the baseline and retains them through
 the sweep; each level changes the number actively stepping, not the prepared
