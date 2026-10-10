@@ -509,16 +509,14 @@ mod tests {
     #[test]
     fn should_reject_invalid_commit_persistence() {
         // Arrange
-        let invalid_choices = 2..=u8::MAX;
+        let mut invalid_choices = 2..=u8::MAX;
 
         // Act
-        let rejected = invalid_choices
-            .map(|wire| {
-                let mut payload = 7_u64.to_be_bytes().to_vec();
-                payload.push(wire);
-                parse_commit(&mut PayloadDecoder::new(&payload)).is_err()
-            })
-            .all(|rejected| rejected);
+        let rejected = invalid_choices.all(|wire| {
+            let mut payload = 7_u64.to_be_bytes().to_vec();
+            payload.push(wire);
+            parse_commit(&mut PayloadDecoder::new(&payload)).is_err()
+        });
 
         // Assert
         assert!(rejected);

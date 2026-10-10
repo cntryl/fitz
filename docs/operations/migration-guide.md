@@ -428,7 +428,6 @@ work and consumers must tolerate duplicates. `FITZ_QUEUE_LOSS_WINDOW_MS` sets a
 target flush interval, not a durability deadline. Strict cloud durability for
 other domains does not change Queue acceptance.
 
-
 ## Breaking change: explicit KV and Stream COMMIT persistence
 
 KV BEGIN now contains `[u32 route_len][route][u8 mode]` only. Remove its old
