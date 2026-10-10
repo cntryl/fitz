@@ -544,7 +544,6 @@ impl StreamStore {
                     admission
                         .wait(&self.db)
                         .map_err(PromotionCommitFailure::Retryable)?;
-                    continue;
                 }
                 Err(PromotionTransactionFailure::WriteConflict) => {
                     let epoch_key = encode_family_writer_epoch_key();
