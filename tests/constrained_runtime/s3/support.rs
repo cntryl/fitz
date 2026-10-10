@@ -220,6 +220,7 @@ pub(super) struct Broker {
     sample: usize,
     stats: Option<Child>,
     removed: bool,
+    readiness_started: Instant,
 }
 
 impl Broker {
@@ -227,6 +228,7 @@ impl Broker {
         let name = format!("fitz-s3-{}-{}", campaign.id, uuid::Uuid::new_v4());
         let image = std::env::var("FITZ_TEST_IMAGE").expect("exact source runtime image");
         let network = std::env::var("FITZ_S3_NETWORK").expect("isolated provider network");
+        let readiness_started = Instant::now();
         command(
             "docker",
             &[
@@ -291,6 +293,7 @@ impl Broker {
             sample: 0,
             stats: None,
             removed: false,
+            readiness_started,
         };
         super::super::inspect_container(&broker.name);
         broker.sample_memory();
@@ -351,26 +354,29 @@ impl Broker {
     }
 
     pub async fn ready(&mut self) -> f64 {
-        let started = Instant::now();
+        let started = self.readiness_started;
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
             .unwrap();
         loop {
+            let mut ready = false;
             if let Ok(response) = client.get(format!("{}/healthz", self.http)).send().await {
                 if response.status().is_success() {
                     let value: Value = response.json().await.unwrap();
-                    if value["status"] == "ready" {
-                        self.capture();
-                        let seconds = started.elapsed().as_secs_f64();
-                        println!("S3 {} ready in {seconds:.3}s", self.name);
-                        return seconds;
-                    }
+                    ready = value["status"] == "ready";
                 }
             }
-            if started.elapsed() >= Duration::from_secs(180) {
+            let elapsed = started.elapsed();
+            if elapsed >= Duration::from_secs(180) {
                 self.capture();
-                panic!("strict readiness exceeded 180 seconds, including lease expiry");
+                panic!("strict readiness exceeded 180 seconds, including startup and lease expiry");
+            }
+            if ready {
+                let seconds = elapsed.as_secs_f64();
+                self.capture();
+                println!("S3 {} ready in {seconds:.3}s", self.name);
+                return seconds;
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -388,6 +394,7 @@ impl Broker {
     }
 
     pub fn restart(&mut self) {
+        self.readiness_started = Instant::now();
         command("docker", &["start", &self.name]);
         self.http = format!(
             "http://{}",
