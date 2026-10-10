@@ -83,6 +83,47 @@ class QueueQualificationTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             queue.validate(report, "head", 10000)
 
+    def stage(self, drain_ns=300_000_000_000, ack_bin=20, cycle_bin=23):
+        def histogram(index):
+            bins = [0] * 65
+            bins[index] = 100
+            return {"bins": bins, "count": 100, "max_ns": 1 << index}
+        return {"accounting": {"accepted": 60000}, "active_elapsed_ns": 120_000_000_000,
+                "drain_elapsed_ns": drain_ns,
+                "consumer_timing": {"ack": {"distribution": histogram(ack_bin)},
+                                    "cycle": {"distribution": histogram(cycle_bin)}}}
+
+    def test_should_extract_throughput_drain_time_and_p99_upper_bounds(self):
+        metrics = queue.metrics(self.stage())
+        self.assertEqual(metrics, {"accepted_per_second": 500.0, "drain_seconds": 300.0,
+                                   "ack_p99_ns": 1 << 20, "cycle_p99_ns": 1 << 23})
+
+    def test_should_pass_an_after_capture_equal_to_its_before_capture(self):
+        rows = queue.compare(queue.metrics(self.stage()), queue.metrics(self.stage()))
+        self.assertEqual([row["metric"] for row in rows],
+                         ["accepted_per_second", "drain_seconds", "ack_p99_ns", "cycle_p99_ns"])
+        self.assertTrue(all(row["passed"] for row in rows))
+
+    def test_should_fail_each_metric_when_after_regresses_beyond_its_ratio(self):
+        before = queue.metrics(self.stage())
+        for metric, value in (("accepted_per_second", 449.0), ("drain_seconds", 331.0),
+                              ("ack_p99_ns", 1 << 21), ("cycle_p99_ns", 1 << 24)):
+            after = dict(before, **{metric: value})
+            rows = {row["metric"]: row["passed"] for row in queue.compare(before, after)}
+            self.assertEqual([name for name, passed in rows.items() if not passed], [metric])
+
+    def test_should_pass_regressions_within_the_perf_loop_ratios(self):
+        before = queue.metrics(self.stage())
+        after = dict(before, accepted_per_second=450.0, drain_seconds=330.0)
+        self.assertTrue(all(row["passed"] for row in queue.compare(before, after)))
+
+    def test_should_tolerate_one_second_of_jitter_on_a_near_empty_drain(self):
+        before = queue.metrics(self.stage(drain_ns=20_000_000))
+        rows = {row["metric"]: row["passed"] for row in queue.compare(before, dict(before, drain_seconds=1.02))}
+        self.assertTrue(rows["drain_seconds"])
+        rows = {row["metric"]: row["passed"] for row in queue.compare(before, dict(before, drain_seconds=1.03))}
+        self.assertFalse(rows["drain_seconds"])
+
 
 if __name__ == "__main__":
     unittest.main()
