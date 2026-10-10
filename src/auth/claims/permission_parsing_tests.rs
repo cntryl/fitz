@@ -68,3 +68,36 @@ fn should_reject_permission_with_empty_path_segments() {
     // Assert
     assert!(results.iter().all(Result::is_err));
 }
+
+#[test]
+fn should_reject_whole_permission_claim_given_one_empty_segment_grant() {
+    // Arrange
+    use base64::Engine;
+    let payload = serde_json::json!({
+        "iss": "https://idp.example/",
+        "aud": "fitz-broker",
+        "sub": "user:42",
+        "exp": 9_999_999_999_u64,
+        "tid": "acme-prod",
+        "permissions": [
+            "notice://prod/orders/**#read",
+            "kv://#read",
+            "queue://prod/orders/**#write"
+        ],
+        "scope": "notice.read"
+    });
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+    let raw = crate::auth::parse_jwt_noverify(&format!("{{}}.{b64}.sig")).expect("parse jwt");
+
+    // Act
+    let result = raw.normalize(
+        &["https://idp.example/"],
+        &["fitz-broker"],
+        0,
+        &crate::auth::AuthClaimsConfig::default(),
+    );
+
+    // Assert
+    let error = result.expect_err("one malformed grant must reject the whole claim");
+    assert!(error.contains("kv://#read"), "unexpected error: {error}");
+}
