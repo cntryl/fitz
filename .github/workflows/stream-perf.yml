@@ -63,14 +63,22 @@ jobs:
           fi
           baseline="$RUNNER_TEMP/fitz-stream-baseline"
           git worktree add --detach "$baseline" "$BASE_SHA"
-          git diff --binary "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/stream-fixtures.patch"
-          # A Stream-only change has no fixture diff, and git apply rejects empty input.
-          if [[ -s "$RUNNER_TEMP/stream-fixtures.patch" ]]; then
-            git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
+          comparison_kind=source
+          if git diff --quiet "$BASE_SHA" HEAD -- benches &&
+            ! git diff --quiet "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock; then
+            # Preserve the original production dependencies when fixtures match.
+            comparison_kind=dependencies
+          else
+            git diff --binary "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/stream-fixtures.patch"
+            # A Stream-only change has no fixture diff; git apply rejects empty input.
+            if [[ -s "$RUNNER_TEMP/stream-fixtures.patch" ]]; then
+              git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
+            fi
           fi
           git -C "$baseline" add Cargo.toml Cargo.lock benches
           git -C "$baseline" -c user.name=Stream-qualification -c user.email=stream-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Stream benchmark fixtures'
           test -z "$(git -C "$baseline" diff --name-only "$BASE_SHA" -- src)"
+          echo "STREAM_COMPARISON_KIND=$comparison_kind" >> "$GITHUB_ENV"
           echo "STREAM_BASELINE=$baseline" >> "$GITHUB_ENV"
           echo "STREAM_BASE_PRODUCTION=$BASE_SHA" >> "$GITHUB_ENV"
           echo "STREAM_OUTPUT=$RUNNER_TEMP/stream-qualification" >> "$GITHUB_ENV"
