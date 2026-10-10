@@ -19,6 +19,7 @@ on:
       - src/api/**
       - src/benchkit/**
       - benches/tier4_stream*
+      - benches/tier4_support.rs
       - .github/workflows/stream-perf.yml
       - .github/stream_performance.py
       - .github/tests/test_stream_performance.py
@@ -56,7 +57,7 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]] &&
             git diff --quiet "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock src/domains/stream src/domains/subscription_state.rs \
               src/storage src/storage.rs src/snapshot src/snapshot.rs src/runtime src/dispatch src/session src/protocol \
-              src/api src/benchkit 'benches/tier4_stream*'; then
+              src/api src/benchkit 'benches/tier4_stream*' benches/tier4_support.rs; then
             compare=false
             echo 'Stream comparison not applicable: runtime, dependency and benchmark inputs are unchanged. Measurement acceptance tests passed.' >> "$GITHUB_STEP_SUMMARY"
           fi
