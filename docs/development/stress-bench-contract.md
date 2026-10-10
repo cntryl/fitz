@@ -68,7 +68,8 @@ This document defines the contract for Tier 2 through Tier 6 benchmarks using th
   whole budget, if shorter) and every active lane completes at least 10
   validated domain cycles; an earlier capacity stop fails the stage. Every lane
   must still complete a validated cycle, as in any other stage. Tier 6 sustains
-  eight lanes until the full configured active batch-time budget is accumulated after setup.
+  eight lanes until the full configured active batch-time budget is accumulated
+  after setup.
 - Exclude all separate verification from the configured active time, including
   periodic checks. Record its duration as `verification_elapsed_ns`, the active
   batch time as `elapsed_ns`, and wall time as `wall_elapsed_ns`. Record actual
