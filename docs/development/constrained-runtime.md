@@ -62,7 +62,7 @@ S3-compatible provider with best-effort Queue persistence and strict durability
 for KV and other durable-domain writes. Provider
 failure fails the campaign; these tests never silently skip.
 
-The retention campaign prepares the same catalog-authorized 640MiB historical KV
+The retention campaign prepares a catalog-authorized 64MiB historical KV
 WAL fixture before boot, then runs four enqueue/ACK cycles of 4,096 deterministic
 16KiB messages, totaling 256MiB of accepted Queue payload. It uses the ordinary automatic
 memtable and maintenance settings. Within 120 seconds of the final ACK, the
@@ -70,7 +70,7 @@ catalog segments captured before boot must retire, SST objects
 must exist, and both
 catalog-authorized WAL and actual remote WAL objects must total at most 128MiB.
 Every accepted message ID and payload is verified before ACK, each cycle ends
-with an empty queue, and all 40,960 historical KV values are verified after
+with an empty queue, and all 4,096 historical KV values are verified after
 retirement to reject premature deletion. This measures a fixed resource/workload envelope;
 it does not assert that every possible database has a universal WAL size cap.
 
