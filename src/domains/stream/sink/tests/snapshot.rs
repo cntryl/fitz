@@ -550,3 +550,24 @@ fn should_capture_in_bounded_reads_given_expired_records_still_present() {
         "capture stepped through expired records: {reads} reads"
     );
 }
+
+#[test]
+fn should_capture_every_record_given_history_longer_than_one_read() {
+    // Arrange
+    let store = crate::domains::stream::store::StreamStore::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+    );
+    let count = u64::try_from(crate::domains::stream::MAX_READ_ITEMS).expect("read limit") + 5;
+    commit_numbered_events(&store, count);
+
+    // Act
+    let (records, reads) = capture_orders_counting_reads(&store);
+
+    // Assert
+    assert_eq!(u64::try_from(records.len()).expect("record count"), count);
+    assert_eq!(
+        records.last().map(|record| record.body.clone()),
+        Some((count - 1).to_be_bytes().to_vec())
+    );
+    assert!(reads >= 2);
+}
