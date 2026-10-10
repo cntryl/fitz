@@ -4,6 +4,7 @@
 ## KV
 - Actor owner: `KvDomain` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each provisioned family creates and serially owns its KV session state, locks, watches, cleanup guards, and admin projection updates.
 - Persistence: committed values are durable according to the selected write policy; open transactions and watcher state are ephemeral.
+- Storage pressure: mutating transactions wait for family write admission for at most 30 seconds before submission, retaining the original Midge transaction and frozen snapshot. Read-only and empty commits do not wait. A submitted commit is never replayed; rejection or an unknown outcome remains terminal. The selected persistence policy is unchanged.
 - Cleanup: disconnect cleanup is enqueued on the KV family control lane, which rolls back live transactions, releases session-owned locks, and drops subscriptions without implying transaction recovery.
 - `RouteFamily`/`realm`: committed rows stay partitioned by exact `RouteFamily`; `realm` remains an opaque route label and is never inferred from the family.
 - Admin path: passive transaction views flow through the family-published `AdminReadModel`; exact live counts and committed value/inventory reads use family-targeted command/reply queries behind the KV admin facade.

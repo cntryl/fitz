@@ -6,6 +6,11 @@ use std::sync::Arc;
 use super::{KvError, TxMode};
 use crate::domains::WritePolicy;
 
+mod write_admission;
+
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone)]
 pub(crate) struct KvStore {
     engine: crate::storage::FitzStorageEngine,
@@ -13,6 +18,9 @@ pub(crate) struct KvStore {
 
 pub(crate) struct KvTransaction {
     inner: cntryl_midge::Transaction,
+    engine: crate::storage::FitzStorageEngine,
+    family: u32,
+    has_mutations: bool,
 }
 
 impl KvStore {
@@ -29,7 +37,12 @@ impl KvStore {
         };
         self.engine
             .begin_tx(column_family, mode)
-            .map(|inner| KvTransaction { inner })
+            .map(|inner| KvTransaction {
+                inner,
+                engine: self.engine.clone(),
+                family: column_family,
+                has_mutations: false,
+            })
             .map_err(|error| Self::map_error(&error))
     }
 
@@ -90,19 +103,25 @@ impl KvTransaction {
     pub(crate) fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), KvError> {
         self.inner
             .put(key, value, None)
-            .map_err(|error| KvStore::map_error(&error))
+            .map_err(|error| KvStore::map_error(&error))?;
+        self.has_mutations = true;
+        Ok(())
     }
 
     pub(crate) fn delete(&mut self, key: Vec<u8>) -> Result<(), KvError> {
         self.inner
             .delete(key)
-            .map_err(|error| KvStore::map_error(&error))
+            .map_err(|error| KvStore::map_error(&error))?;
+        self.has_mutations = true;
+        Ok(())
     }
 
     pub(crate) fn delete_range(&mut self, start: Vec<u8>, end: Vec<u8>) -> Result<(), KvError> {
         self.inner
             .delete_range(start, end)
-            .map_err(|error| KvStore::map_error(&error))
+            .map_err(|error| KvStore::map_error(&error))?;
+        self.has_mutations = true;
+        Ok(())
     }
 
     pub(crate) fn scan(
@@ -137,6 +156,9 @@ impl KvTransaction {
     }
 
     pub(crate) fn commit(self, policy: WritePolicy) -> Result<(), KvError> {
+        if self.has_mutations {
+            self.wait_for_write_admission()?;
+        }
         self.inner
             .commit(policy.into())
             .map_err(|error| KvStore::map_error(&error))
