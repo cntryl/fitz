@@ -1,7 +1,7 @@
 //! Family-serialized Stream snapshot capture.
 
 use super::model::{StreamFamilyRuntime, StreamFamilyState, WatermarkCommit};
-use crate::domains::stream::protocol::StreamReadItem;
+use crate::domains::stream::protocol::{ReadCursor, StreamReadItem};
 use crate::domains::stream::store::ReadResourceParams;
 use crate::snapshot::{
     SnapshotArtifact, SnapshotDomain, SnapshotSelector, SnapshotStreamRecord,
@@ -32,42 +32,18 @@ impl StreamFamilyState {
             if !selector.matches(SnapshotDomain::Stream, self.family, &route) {
                 continue;
             }
-            let mut records = Vec::new();
-            let mut from_offset = 0_u64;
-            while from_offset < resource.next_offset {
-                let params = ReadResourceParams {
-                    family: self.family.as_u64(),
-                    realm: &resource.realm,
-                    area: &resource.area,
-                    resource: &resource.resource,
-                    from_offset,
-                    limit: resource.next_offset.saturating_sub(from_offset),
-                    max_bytes: None,
-                };
-                let (items, cursor) = self.stream_store.read_resource(&params)?;
-                for item in items {
-                    let StreamReadItem::Event(record) = item else {
-                        return Err(format!(
-                            "Stream snapshot read returned a filtered marker for {route}"
-                        ));
-                    };
-                    if record.resource_offset >= resource.next_offset {
-                        continue;
-                    }
-                    records.push(SnapshotStreamRecord {
-                        body: record.body.to_vec(),
-                        metadata: record.metadata.map(|value| value.to_vec()),
-                    });
-                }
-                let next = cursor
-                    .last_resource_offset
-                    .checked_add(1)
-                    .ok_or_else(|| format!("Stream snapshot offset overflow for {route}"))?;
-                if next <= from_offset {
-                    return Err(format!("Stream snapshot read made no progress for {route}"));
-                }
-                from_offset = next;
-            }
+            let records =
+                capture_resource_records(&route, resource.next_offset, |from_offset, limit| {
+                    self.stream_store.read_resource(&ReadResourceParams {
+                        family: self.family.as_u64(),
+                        realm: &resource.realm,
+                        area: &resource.area,
+                        resource: &resource.resource,
+                        from_offset,
+                        limit,
+                        max_bytes: None,
+                    })
+                })?;
             resources.insert(
                 route.clone(),
                 SnapshotStreamResource {
@@ -89,6 +65,50 @@ impl StreamFamilyState {
         }
         SnapshotArtifact::from_stream_resources(selector, resources.into_values().collect())
     }
+}
+
+/// Collects one resource's readable records below `next_offset`.
+///
+/// `read_from(from_offset, limit)` performs one bounded resource read.
+pub(super) fn capture_resource_records(
+    route: &str,
+    next_offset: u64,
+    mut read_from: impl FnMut(u64, u64) -> Result<(Vec<StreamReadItem>, ReadCursor), String>,
+) -> Result<Vec<SnapshotStreamRecord>, String> {
+    let mut records = Vec::new();
+    let mut from_offset = 0_u64;
+    while from_offset < next_offset {
+        let (items, cursor) = read_from(from_offset, next_offset.saturating_sub(from_offset))?;
+        for item in items {
+            let StreamReadItem::Event(record) = item else {
+                return Err(format!(
+                    "Stream snapshot read returned a filtered marker for {route}"
+                ));
+            };
+            if record.resource_offset >= next_offset {
+                continue;
+            }
+            records.push(SnapshotStreamRecord {
+                body: record.body.to_vec(),
+                metadata: record.metadata.map(|value| value.to_vec()),
+            });
+        }
+        // A read reports no more only after scanning every remaining page, so
+        // a removed tail below `next_offset` ends capture instead of stepping
+        // one empty read per missing offset.
+        if !cursor.has_more {
+            break;
+        }
+        let next = cursor
+            .last_resource_offset
+            .checked_add(1)
+            .ok_or_else(|| format!("Stream snapshot offset overflow for {route}"))?;
+        if next <= from_offset {
+            return Err(format!("Stream snapshot read made no progress for {route}"));
+        }
+        from_offset = next;
+    }
+    Ok(records)
 }
 
 impl StreamFamilyRuntime {

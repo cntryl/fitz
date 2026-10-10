@@ -434,3 +434,119 @@ fn should_capture_a_consistent_prefix_while_stream_writes_continue() {
         60
     );
 }
+
+struct FixedEpochClock(std::sync::atomic::AtomicU64);
+
+impl crate::runtime::clock::Clock for FixedEpochClock {
+    fn now_instant(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+fn commit_numbered_events(store: &crate::domains::stream::store::StreamStore, count: u64) {
+    let events = (0..count)
+        .map(|offset| crate::domains::stream::store::EventPayload {
+            body: Bytes::copy_from_slice(&offset.to_be_bytes()),
+            metadata: None,
+            discriminator: None,
+        })
+        .collect::<Vec<_>>();
+    store
+        .commit_records(crate::domains::stream::store::CommitRecordsParams {
+            family: 1,
+            realm: "acme",
+            area: "jobs",
+            resource: "orders",
+            expected_resource_next_offset: 0,
+            events: &events,
+            ingest_metadata: None,
+            mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
+        })
+        .expect("commit numbered Stream events");
+}
+
+fn capture_orders_counting_reads(
+    store: &crate::domains::stream::store::StreamStore,
+) -> (Vec<crate::snapshot::SnapshotStreamRecord>, usize) {
+    let next_offset = store
+        .get_next_resource_offset(1, "acme", "jobs", "orders")
+        .expect("load resource next offset");
+    let mut reads = 0_usize;
+    let records = super::super::snapshot::capture_resource_records(
+        "stream://acme/jobs/orders",
+        next_offset,
+        |from_offset, limit| {
+            reads += 1;
+            store.read_resource(&crate::domains::stream::store::ReadResourceParams {
+                family: 1,
+                realm: "acme",
+                area: "jobs",
+                resource: "orders",
+                from_offset,
+                limit,
+                max_bytes: None,
+            })
+        },
+    )
+    .expect("capture resource records");
+    (records, reads)
+}
+
+#[test]
+fn should_capture_in_bounded_reads_given_removed_tail_far_below_next_offset() {
+    // Arrange
+    let store = crate::domains::stream::store::StreamStore::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+    );
+    commit_numbered_events(&store, 64 * 33);
+    for page_start in (1..33).map(|page| page * 64) {
+        store
+            .delete_compact_resource_page_for_tests(1, "acme", "jobs", "orders", page_start)
+            .expect("remove tail page");
+    }
+
+    // Act
+    let (records, reads) = capture_orders_counting_reads(&store);
+
+    // Assert
+    let bodies = records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect::<Vec<_>>();
+    let expected = (0..64_u64)
+        .map(|offset| offset.to_be_bytes().to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(bodies, expected);
+    assert!(
+        reads <= 2,
+        "capture stepped through the removed tail: {reads} reads"
+    );
+}
+
+#[test]
+fn should_capture_in_bounded_reads_given_expired_records_still_present() {
+    // Arrange
+    let clock = Arc::new(FixedEpochClock(std::sync::atomic::AtomicU64::new(1_000)));
+    let store = crate::domains::stream::store::StreamStore::with_config(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        crate::domains::stream::store::BatchLimits::default(),
+        crate::domains::stream::store::StreamTTL::with_seconds(10),
+    )
+    .with_clock_for_tests(clock.clone());
+    commit_numbered_events(&store, 64 * 33);
+    clock.0.store(60_000, std::sync::atomic::Ordering::Release);
+
+    // Act
+    let (records, reads) = capture_orders_counting_reads(&store);
+
+    // Assert
+    assert_eq!(records, []);
+    assert!(
+        reads <= 2,
+        "capture stepped through expired records: {reads} reads"
+    );
+}
