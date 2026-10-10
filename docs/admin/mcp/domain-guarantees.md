@@ -9,7 +9,7 @@ guarantees beyond the owning domain.
 | Notice | Live, ephemeral fanout. |
 | Stream | Durable history and replay. |
 | KV | Current authoritative state. |
-| Queue | Durable work delivery. |
+| Queue | Work delivery with best-effort persistence; accepted work and ACKs can be lost before persistence completes. |
 | RPC | Live request and response. |
 | Lease | Ephemeral ownership coordination. |
 | Schedule | Durable timing intent. |
