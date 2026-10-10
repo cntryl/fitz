@@ -30,7 +30,7 @@ jobs:
       RUSTUP_TOOLCHAIN: "1.99.0"
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
@@ -50,7 +50,7 @@ jobs:
       - name: Install verified Rust toolchain
         if: steps.comparison.outputs.needed == 'true'
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.comparison.outputs.needed == 'true'
         with:
           shared-key: stream-perf
@@ -64,7 +64,10 @@ jobs:
           baseline="$RUNNER_TEMP/fitz-stream-baseline"
           git worktree add --detach "$baseline" "$BASE_SHA"
           git diff --binary "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/stream-fixtures.patch"
-          git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
+          # A Stream-only change has no fixture diff, and git apply rejects empty input.
+          if [[ -s "$RUNNER_TEMP/stream-fixtures.patch" ]]; then
+            git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
+          fi
           git -C "$baseline" add Cargo.toml Cargo.lock benches
           git -C "$baseline" -c user.name=Stream-qualification -c user.email=stream-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Stream benchmark fixtures'
           test -z "$(git -C "$baseline" diff --name-only "$BASE_SHA" -- src)"
@@ -78,7 +81,7 @@ jobs:
           python3 .github/stream_performance.py
       - name: Upload immutable comparisons and raw evidence
         if: always() && steps.comparison.outputs.needed == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: stream-performance-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
