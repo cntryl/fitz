@@ -1,4 +1,5 @@
 mod auth_session_setup;
+mod blocking_domain_dispatch;
 mod builder_and_sessions;
 mod dispatch_policy;
 mod domain_error_answers;
