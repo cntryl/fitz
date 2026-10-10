@@ -558,7 +558,7 @@ pub struct QueueActor {
     /// Queue identity
     queue_key: QueueKey,
 
-    /// Queue persistence adapter, including engine-specific policy conversion.
+    /// Queue persistence adapter; every write is best effort.
     persistence: recovery_store::QueuePersistence,
 
     /// Next message ID to allocate (monotonic counter)

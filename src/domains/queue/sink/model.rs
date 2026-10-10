@@ -204,7 +204,7 @@ const QUEUE_ADMISSION_ASSUMED_SERVICE_US: u64 = 5_000;
 ///
 /// Queued concurrency adds no throughput: the actor serves deliveries one at a
 /// time, so admitting `n` requests commits the tail caller to `n x
-/// service_time`. At 20ms per synchronous commit, a fixed 64-deep window needs
+/// service_time`. At 20ms per delivery, a fixed 64-deep window needs
 /// 1.28s and exceeds the one-second admission latency target.
 ///
 /// The window is derived from observed service time instead, so the admitted
