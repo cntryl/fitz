@@ -309,6 +309,7 @@ mod tests {
                 crate::runtime::routing::Route::new("lease://acme/locks/resource"),
             ),
             correlation: None,
+            received_at: std::time::Instant::now(),
         }
     }
 

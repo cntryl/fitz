@@ -77,6 +77,9 @@ pub(crate) struct DomainEnvelopeBuildRequest {
     pub(crate) destination: RouteAddress,
     /// Correlation the client attached to this frame, if any.
     pub(crate) correlation: Option<std::num::NonZeroU64>,
+    /// Monotonic time ingress received the frame. Retries reuse it so
+    /// redelivery never renews a request deadline.
+    pub(crate) received_at: std::time::Instant,
 }
 
 fn frame_context(request: &DomainEnvelopeBuildRequest) -> crate::protocol::FrameContext {
@@ -246,6 +249,7 @@ fn build_rpc_envelope(
         source,
         destination,
         payload,
+        received_at,
         ..
     } = request;
     let parsed = crate::protocol::rpc_codec::parse_request(ctx, &ctx.payload, route_family);
@@ -254,7 +258,7 @@ fn build_rpc_envelope(
         destination,
         crate::domains::rpc::protocol::RpcClientRequestIngress {
             request: crate::domains::rpc::RpcClientRequest::new_with_payload(meta, parsed, payload),
-            received_at: std::time::Instant::now(),
+            received_at,
         },
     )
 }
@@ -434,6 +438,7 @@ mod tests {
                 crate::runtime::routing::Route::new("kv://acme/app/users"),
             ),
             correlation,
+            received_at: std::time::Instant::now(),
         }
     }
 
