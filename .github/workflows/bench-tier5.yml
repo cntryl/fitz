@@ -7,6 +7,10 @@ on:
         description: Run matched 10k, 25k and 100k Queue drains instead of the seven one-hour sweeps
         type: boolean
         default: false
+      queue_baseline:
+        description: Queue drain baseline commit, tag or branch. Empty uses the merge base with origin/develop, so a develop dispatch must set it
+        type: string
+        default: ""
   schedule:
     - cron: "0 6 * * 1"
 
@@ -82,9 +86,11 @@ jobs:
       STRESS_PROFILE: smoke
       STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
       STRESS_TIMEOUT_SECS: "1000"
-      # Immutable initial instrumentation only. Do not copy later production
-      # optimizations onto the comparison baseline.
-      QUEUE_TIMING_COMMIT: c99b54ef50ab93b778a072219c12b15f19f7b9f7
+      QUEUE_BASELINE_REF: ${{ inputs.queue_baseline }}
+      # Develop commit (#417) that added the benchmark-only Queue diagnostics.
+      # A baseline that predates it receives only that commit's own
+      # src/domains/queue diff, never later production optimizations.
+      QUEUE_TIMING_COMMIT: 1e3b18dd05a342f52b1fe57418f753f1dfa7a725
     steps:
       - uses: actions/checkout@v7
         with:
@@ -99,15 +105,32 @@ jobs:
       - name: Prepare identical pacing and diagnostics on the baseline
         shell: bash
         run: |
-          base=$(git merge-base HEAD origin/develop)
+          set -euo pipefail
+          if [ -n "${QUEUE_BASELINE_REF:-}" ]; then
+            base=$(git rev-parse --verify --quiet "$QUEUE_BASELINE_REF^{commit}" ||
+              git rev-parse --verify --quiet "origin/$QUEUE_BASELINE_REF^{commit}") || {
+              echo "::error::queue_baseline '$QUEUE_BASELINE_REF' does not resolve to a fetched commit"
+              exit 1
+            }
+          else
+            base=$(git merge-base HEAD origin/develop)
+          fi
           baseline="$RUNNER_TEMP/fitz-queue-baseline"
           git worktree add --detach "$baseline" "$base"
           git diff --binary "$base" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/queue-fixtures.patch"
-          git diff --binary "$base" "$QUEUE_TIMING_COMMIT" -- src/domains/queue > "$RUNNER_TEMP/queue-timing.patch"
-          git -C "$baseline" apply "$RUNNER_TEMP/queue-fixtures.patch"
-          git -C "$baseline" apply "$RUNNER_TEMP/queue-timing.patch"
+          if [ -s "$RUNNER_TEMP/queue-fixtures.patch" ]; then
+            git -C "$baseline" apply "$RUNNER_TEMP/queue-fixtures.patch"
+          fi
+          if ! git merge-base --is-ancestor "$QUEUE_TIMING_COMMIT" "$base"; then
+            git diff --binary "$QUEUE_TIMING_COMMIT^" "$QUEUE_TIMING_COMMIT" -- src/domains/queue > "$RUNNER_TEMP/queue-timing.patch"
+            git -C "$baseline" apply "$RUNNER_TEMP/queue-timing.patch"
+          fi
           git -C "$baseline" add Cargo.toml Cargo.lock benches src/domains/queue
           git -C "$baseline" -c user.name=Queue-qualification -c user.email=queue-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Queue pacing and diagnostic instrumentation'
+          if [ "$(git -C "$baseline" rev-parse HEAD:src)" = "$(git rev-parse HEAD:src)" ]; then
+            echo "::error::Queue baseline $base and candidate $(git rev-parse HEAD) build identical src/ trees, so there is nothing to compare. Dispatch with a distinct queue_baseline (for example the develop commit before the change under test)."
+            exit 1
+          fi
           echo "QUEUE_BASELINE=$baseline" >> "$GITHUB_ENV"
           echo "QUEUE_BASE_PRODUCTION=$base" >> "$GITHUB_ENV"
           echo "QUEUE_OUTPUT=$RUNNER_TEMP/queue-qualification" >> "$GITHUB_ENV"

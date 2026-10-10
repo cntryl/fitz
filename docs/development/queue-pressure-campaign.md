@@ -160,6 +160,17 @@ may require increasing `STRESS_TIMEOUT_SECS`; a hard timeout is still a failed
 campaign. This row is opt-in and does not extend the seven-domain scheduled
 workflow matrix.
 
+The manual matched workflow compares the dispatched candidate against its
+`queue_baseline` input, which can be a commit, tag or branch. Left empty, it
+uses the merge base with `origin/develop`, which suits a feature branch. A
+dispatch on `develop` has no distinct merge base, so set `queue_baseline` to the
+develop commit before the change under test. The baseline receives the
+candidate's `Cargo.toml`, `Cargo.lock` and `benches`. A baseline that predates
+the benchmark-only Queue diagnostics (develop commit `1e3b18dd`) also receives
+that commit's own `src/domains/queue` diff and nothing later. The job fails
+before compiling if the prepared baseline and candidate have identical `src/`
+trees.
+
 Raw stage and partial evidence is atomically written under
 `target/fitz-stress/queue-pressure/`. Reports record scheduled, missed, sent,
 accepted, rejected and ACKed counts; consumer admission rejections; known
