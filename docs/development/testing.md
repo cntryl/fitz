@@ -2,6 +2,16 @@
 
 These guidelines define how Fitz tests are written and reviewed.
 
+System tests, harnesses, performance checks, and repository regression guards
+are Rust tests invoked directly through Cargo. Do not introduce Python,
+JavaScript, or standalone shell test scripts, including inline equivalents in
+workflows. Existing UI application and build tooling are scoped to `ui/`.
+
+`cargo test --locked --test workflow_qualification` verifies the repository
+policy and the performance-test decision rules. The same target contains
+explicitly ignored full Stream and Queue tests; CI opts into the relevant
+test with `--exact --ignored --nocapture` after preparing its baseline.
+
 ## Test Organization
 
 Use Rust's normal split between unit and integration tests.

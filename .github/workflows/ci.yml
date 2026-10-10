@@ -42,7 +42,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Benchmark measurement acceptance regressions
-        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+        run: cargo test --locked --test workflow_qualification
 
       - name: Pedantic lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic

@@ -53,6 +53,7 @@ Right:
 - Optimize for simplicity. Complexity, DRY, and clarity are mandatory design constraints.
 - Avoid adding async constructs to core Rust code outside transport (`.await`, `tokio::spawn`, `tokio::sync`, async locks).
 - Do not create a top-level `scripts/` directory or repo-owned standalone shell scripts. Put automation in Rust tests or tools, package scripts, or explicit workflow steps.
+- System tests, regression guards, benchmark checks, and test harnesses must be Rust, invoked directly through Cargo. Do not add Python, JavaScript, or other scripting-language test tooling, script files, or inline test programs in workflows. The existing UI application and its build tooling stay in `ui/`.
 - When editing UI tooling, prefer ESM and `.js` over `.mjs` for repo-owned files.
 - When `public/openapi.yml` or the UI client changes, regenerate adapters with `npm run gen:adapters` from `ui/`.
 
