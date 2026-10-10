@@ -231,7 +231,7 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
   **Notes:**
 - Fitz notices are **best-effort, non-durable signals**. Clients **MUST NOT** assume guaranteed delivery, ordering across reconnects, or replay after disconnect.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
-- **Usage constraint:** Notices **MUST NOT** be used for workflow coordination, acknowledgement, or durability guarantees; use RPC or Queue for those needs.
+- **Usage constraint:** Notices **MUST NOT** be used for acknowledgement or durability guarantees. Use Queue for reservation and redelivery with best-effort persistence, RPC for live request/response, and Stream for committed durable history.
 
 ## RPC Domain
 

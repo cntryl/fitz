@@ -154,7 +154,7 @@ does not bound transaction staging or Midge's separate commit response wait.
 Unknown outcomes, conflicts, and other storage errors remain terminal; the
 client must not blindly repeat the operation.
 
-This uses the existing fast Queue write policy. Accepted/ACKed work is checked
+This uses Queue's unconditional best-effort persistence. Accepted/ACKed work is checked
 inside the running broker process. There is no broker restart, crash recovery,
 strict durability, cloud qualification, or exactly-once claim.
 

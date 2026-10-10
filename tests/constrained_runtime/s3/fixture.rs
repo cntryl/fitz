@@ -27,7 +27,7 @@ fn scoped_key(index: u32) -> Vec<u8> {
     key
 }
 
-fn publish(campaign: &Campaign) -> u64 {
+pub(super) fn publish(campaign: &Campaign) -> u64 {
     let cache = tempfile::tempdir().unwrap();
     let options = OpenOptions::cloud(cache.path(), campaign.location())
         .memory_budget(MemoryBudget::Bytes(256 * 1024 * 1024))
@@ -104,7 +104,7 @@ fn publish(campaign: &Campaign) -> u64 {
     actual_bytes
 }
 
-async fn verify(broker: &Broker) {
+pub(super) async fn verify(broker: &Broker) {
     let mut workers = tokio::task::JoinSet::new();
     for worker in 0..16 {
         let address = broker.address();

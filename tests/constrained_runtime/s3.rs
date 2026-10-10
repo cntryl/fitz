@@ -133,16 +133,19 @@ async fn should_recover_checkpointed_s3_backlog_after_complete_cache_loss() {
 
 async fn retention() -> serde_json::Value {
     let campaign = Campaign::new("retention");
+    let historical_wal_bytes = fixture::publish(&campaign);
+    let historical_backlog = campaign.snapshot("historical-before-boot");
+    assert!(historical_wal_bytes > 512 * MIB);
+    assert!(historical_backlog.catalog_bytes >= historical_wal_bytes);
+    let original = historical_backlog.segment_ids.clone();
+    assert!(
+        !original.is_empty(),
+        "qualification must exercise historical published WAL"
+    );
     let mut broker = Broker::start(&campaign);
     broker.ready().await;
     let before = super::inspect_container(&broker.name);
     let mut samples: Vec<Snapshot> = Vec::new();
-    workload::seed_wal(broker.address()).await;
-    let original = campaign.snapshot("before-queue-churn").segment_ids;
-    assert!(
-        !original.is_empty(),
-        "qualification must exercise published WAL"
-    );
     let finished = Arc::new(AtomicBool::new(false));
     let monitor = tokio::spawn(super::monitor_health(broker.endpoint(), finished.clone()));
     for round in 0..4 {
@@ -168,6 +171,7 @@ async fn retention() -> serde_json::Value {
         );
         tokio::time::sleep(Duration::from_secs(2)).await;
     };
+    fixture::verify(&broker).await;
     super::smoke(broker.address(), &format!("retained-{}", campaign.id)).await;
     finished.store(true, Ordering::Release);
     let (health_samples, maximum_health_millis) = monitor.await.unwrap();
@@ -177,6 +181,8 @@ async fn retention() -> serde_json::Value {
         "accepted_and_verified_acked": u64::from(RECORDS) * 4,
         "payload_bytes_written": u64::from(RECORDS) * 4 * 16 * 1024,
         "remaining": 0, "wal_limit_bytes": WAL_LIMIT,
+        "historical_wal_bytes": historical_wal_bytes,
+        "historical_kv_values_verified": 40_960, "historical_backlog": historical_backlog,
         "original_segments": original, "samples": samples, "final": final_snapshot,
         "health_samples": health_samples, "maximum_health_millis": maximum_health_millis,
         "before": before, "after": after,

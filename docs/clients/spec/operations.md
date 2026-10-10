@@ -65,7 +65,7 @@ changes its ownership.
 
 ### Queue Domain (Message Queue)
 
-**Purpose:** Durable FIFO message queue with leasing.
+**Purpose:** FIFO message queue with leasing and best-effort persistence.
 
 **Canonical Operations:**
 
@@ -643,7 +643,7 @@ When a single operation generates multiple responses:
 
 **Session-Bound Handle Behavior:**
 - Open KV transactions and Stream append sessions are invalidated; clients must begin fresh handles after reconnect.
-- Queue item handles reserved before disconnect are invalid; clients must reserve again. Durable queue messages may redeliver according to queue policy.
+- Queue item handles reserved before disconnect are invalid; clients must reserve again. Persisted queue messages may redeliver; unpersisted enqueues, ACKs, and ID reservations can be lost in a crash.
 - Lease handles acquired before disconnect are invalid; clients must reacquire if ownership is still required.
 - Pending RPC calls fail with a connection/interruption error instead of stalling or silently replaying.
 - Stream subscriptions are live wake signals only. Replay resumes through explicit `READ` calls from client-owned offsets.
