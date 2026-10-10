@@ -25,6 +25,7 @@
 - Admin path: admin reads use `Runtime::notice_list_subscriptions()` and `Runtime::notice_list_routes()` backed by the passive `AdminReadModel`.
 
 ## Stream
+- Storage pressure: global offset allocation, data promotion and global watermark writes retain their direct commit fast path. After a proven pre-WAL L0 rejection they wait for Midge admission within one 30-second budget per storage operation. Only the pinned family-specific pre-WAL L0 rejection permits rebuilding a transaction and retrying within that original budget. No client data commit with an indeterminate outcome is retried, and the selected persistence policy is retained on every attempt. These synchronous waits remain behind the transport blocking dispatch boundary.
 - Actor owner: `StreamDomain` owns a `FamilyActorPoolRuntime`; every provisioned route family creates its `StreamFamilyState` on the owning worker, and both client and control commands execute serially through that family. Resource, area, and realm sequencing state is held directly by that family while committed history and recovery remain `StreamStore` authoritative.
 - Current runtime boundary: `StreamDomain` is the crate-private delivery adapter for client Stream frames and family-targeted control/admin commands.
 - Reply deadline: normal client commands wait up to four seconds for the family actor so queued synchronous disk commits can finish; control and admin commands retain a one-second wait. A deadline after admission reports an indeterminate outcome and does not authorize an automatic COMMIT retry.

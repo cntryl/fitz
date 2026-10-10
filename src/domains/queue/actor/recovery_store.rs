@@ -55,8 +55,9 @@ impl QueueStoreError {
     }
 
     pub(super) fn is_l0_admission_rejection(&self, family: u32) -> bool {
-        matches!(&self.midge_error, Some(cntryl_midge::MidgeError::WriteStall(detail))
-            if detail.starts_with(&format!("column family {family} has no free L0 slot (")))
+        self.midge_error.as_ref().is_some_and(|error| {
+            crate::storage::write_admission::is_l0_admission_rejection(error, family)
+        })
     }
 }
 
