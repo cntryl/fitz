@@ -27,10 +27,12 @@ pub(crate) fn registration_limit_for_counts(
     pattern: &Pattern,
     current_wildcard_count: usize,
 ) -> Option<RegistrationLimit> {
-    if current_total_count >= MAX_TOTAL_REGISTRATIONS_PER_SESSION {
-        Some(RegistrationLimit::Total)
-    } else if wildcard_registration_limit_reached(pattern, current_wildcard_count) {
+    // The wildcard limit predates the total cap; reporting it first keeps the
+    // original wildcard error for every wildcard request that reaches it.
+    if wildcard_registration_limit_reached(pattern, current_wildcard_count) {
         Some(RegistrationLimit::Wildcard)
+    } else if current_total_count >= MAX_TOTAL_REGISTRATIONS_PER_SESSION {
+        Some(RegistrationLimit::Total)
     } else {
         None
     }
@@ -513,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn should_report_total_limit_before_wildcard_limit_when_both_are_reached() {
+    fn should_report_wildcard_limit_before_total_limit_when_both_are_reached() {
         // Arrange
         let wildcard = Pattern::new("schedule://acme/jobs/*/run");
 
@@ -525,6 +527,6 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(result, Some(RegistrationLimit::Total));
+        assert_eq!(result, Some(RegistrationLimit::Wildcard));
     }
 }

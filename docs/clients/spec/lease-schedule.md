@@ -703,11 +703,13 @@ record so existing clients keep decoding unchanged.
   invalid cron, an unknown delivery mode, an invalid subscription pattern, and
   either subscription registration limit are distinguished only by `error_msg`.
   The SUBSCRIBE (703) limit messages are exact and stable:
-  - `wildcard subscription limit exceeded (128 per session)` when the session
-    already holds 128 wildcard registrations.
+  - `wildcard subscription limit exceeded (128 per session)` when a wildcard
+    SUBSCRIBE finds the session already holding 128 wildcard registrations.
+    This check runs first, so a wildcard SUBSCRIBE that reaches both limits
+    still receives this message.
   - `total subscription limit exceeded (1024 per session)` when the session
-    already holds 1,024 registrations of any kind. This check runs first, so
-    it also applies to a wildcard SUBSCRIBE at the total cap.
+    already holds 1,024 registrations of any kind and the wildcard limit does
+    not apply.
 - Errors the Schedule domain returns for LIST (702) are coded:
   `[u8 1][u32 BE error_code][u32 BE error_len][error_msg]`.
 - Errors the broker raises before the request reaches the Schedule domain are
