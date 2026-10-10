@@ -43,7 +43,6 @@ fn begin(actor: &mut KvActor) -> u64 {
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope(),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     }) else {
         panic!("state model begin must succeed");
     };
@@ -164,7 +163,7 @@ proptest! {
                 }
                 Operation::Commit if active_tx.is_some() => {
                     let tx_id = active_tx.take().expect("checked active transaction");
-                    let response = actor.handle(KvMessage::Commit { tx_id, scope: scope() });
+                    let response = actor.handle(KvMessage::Commit { tx_id, scope: scope() , persistence: crate::domains::CommitPersistence::Buffered,});
                     prop_assert!(
                         matches!(response, KvResponse::CommitOk),
                         "expected commit response"

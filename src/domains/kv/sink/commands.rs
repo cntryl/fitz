@@ -23,10 +23,10 @@ pub(super) enum KvDomainCommand {
         )>,
     ),
     #[cfg(test)]
-    /// Ask the family worker to apply its configured BEGIN write policy.
-    ApplyWriteOptions(
-        crate::domains::kv::KvMessage,
-        crossbeam_channel::Sender<crate::domains::kv::KvMessage>,
+    /// Ask the family worker to resolve explicit COMMIT persistence.
+    ResolveCommitPersistence(
+        crate::domains::CommitPersistence,
+        crossbeam_channel::Sender<crate::domains::WritePolicy>,
     ),
     PanicForFailpoint,
     #[cfg(test)]

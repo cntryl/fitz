@@ -621,7 +621,6 @@ pub(crate) fn seed_committed_kv_values(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Buffered,
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),
@@ -639,7 +638,11 @@ pub(crate) fn seed_committed_kv_values(
         }
     }
 
-    match actor.handle(KvMessage::Commit { tx_id, scope }) {
+    match actor.handle(KvMessage::Commit {
+        tx_id,
+        scope,
+        persistence: fitz::domains::CommitPersistence::Buffered,
+    }) {
         KvResponse::CommitOk => {}
         other => panic!("Expected CommitOk response, found {other:?}"),
     }
@@ -660,7 +663,6 @@ pub(crate) fn delete_committed_kv_range(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Buffered,
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),
@@ -676,7 +678,11 @@ pub(crate) fn delete_committed_kv_range(
         other => panic!("Expected DeleteRangeOk response, found {other:?}"),
     }
 
-    match actor.handle(KvMessage::Commit { tx_id, scope }) {
+    match actor.handle(KvMessage::Commit {
+        tx_id,
+        scope,
+        persistence: fitz::domains::CommitPersistence::Buffered,
+    }) {
         KvResponse::CommitOk => {}
         other => panic!("Expected CommitOk response, found {other:?}"),
     }

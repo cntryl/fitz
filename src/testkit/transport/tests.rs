@@ -151,7 +151,6 @@ async fn should_keep_authenticated_websocket_open_beyond_connect_deadline() {
     );
     payload.extend_from_slice(route.as_bytes());
     payload.push(1);
-    payload.push(0);
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(100, &payload);
 

@@ -321,12 +321,17 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 }
 
 fn parse_commit(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per `CLIENT_SPEC`: [u64 tx_id][u32 route_len][route]
+    // Wire format: [u64 tx_id][u32 route_len][route][u8 persistence]
     let mut decoder = PayloadDecoder::new(payload);
     let tx_id = decoder.get_u64()?;
     let scope = parse_scope(route_family, decoder.get_string_ref()?)?;
+    let persistence = crate::domains::CommitPersistence::decode(decoder.get_u8()?)?;
     ensure_complete(&decoder, "COMMIT")?;
-    Ok(KvMessage::Commit { tx_id, scope })
+    Ok(KvMessage::Commit {
+        tx_id,
+        scope,
+        persistence,
+    })
 }
 
 fn parse_rollback(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
@@ -343,11 +348,10 @@ fn parse_rollback(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage
 struct BeginFields<'a> {
     route: &'a str,
     mode: TxMode,
-    write_options: crate::domains::WritePolicy,
 }
 
 fn decode_begin(payload: &[u8]) -> Result<BeginFields<'_>, String> {
-    // Wire format per `CLIENT_SPEC`: [u32 route_len][route][u8 mode][u8 durability]
+    // Wire format: [u32 route_len][route][u8 transaction mode]
     let mut decoder = PayloadDecoder::new(payload);
     let route = decoder.get_string_ref()?;
     let mode = match decoder.get_u8()? {
@@ -356,15 +360,9 @@ fn decode_begin(payload: &[u8]) -> Result<BeginFields<'_>, String> {
         _ => return Err("Invalid transaction mode".to_string()),
     };
 
-    // Read durability (u8): 0=buffered, 1=sync (per `CLIENT_SPEC`)
-    let write_options = crate::domains::kv::write_policy::decode_wire_policy(decoder.get_u8()?)?;
     ensure_complete(&decoder, "BEGIN")?;
 
-    Ok(BeginFields {
-        route,
-        mode,
-        write_options,
-    })
+    Ok(BeginFields { route, mode })
 }
 
 /// Decode the transaction mode a BEGIN payload requests.
@@ -372,7 +370,7 @@ fn decode_begin(payload: &[u8]) -> Result<BeginFields<'_>, String> {
 /// # Errors
 ///
 /// Returns an error for any payload the KV domain rejects as a malformed
-/// BEGIN: truncated fields, an unknown mode or durability, or trailing data.
+/// BEGIN: truncated fields, an unknown mode, or trailing data.
 pub fn begin_mode(payload: &[u8]) -> Result<TxMode, String> {
     decode_begin(payload).map(|begin| begin.mode)
 }
@@ -382,7 +380,6 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     Ok(KvMessage::Begin {
         scope: parse_scope(route_family, begin.route)?,
         mode: begin.mode,
-        write_options: begin.write_options,
     })
 }
 

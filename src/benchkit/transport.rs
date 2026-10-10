@@ -39,13 +39,12 @@ pub fn extract_single_tlv_field(frame: &[u8]) -> (u16, Bytes) {
 
 /// Build KV BEGIN frame (`msg_type` 100)
 #[must_use]
-pub fn build_kv_begin(route: &str, mode: u8, durability: u8) -> Vec<u8> {
+pub fn build_kv_begin(route: &str, mode: u8) -> Vec<u8> {
     let mut payload = Vec::new();
-    // [u32 BE route_len][route][u8 mode][u8 durability]
+    // [u32 BE route_len][route][u8 mode]
     payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
     payload.push(mode);
-    payload.push(durability);
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(100, &payload);
@@ -72,12 +71,13 @@ pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8
 
 /// Build KV COMMIT frame (`msg_type` 101)
 #[must_use]
-pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
+pub fn build_kv_commit(tx_id: u64, route: &str, persistence: u8) -> Vec<u8> {
     let mut payload = Vec::new();
-    // [u64 BE tx_id][u32 BE route_len][route]
+    // [u64 BE tx_id][u32 BE route_len][route][u8 persistence]
     payload.extend_from_slice(&tx_id.to_be_bytes());
     payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
+    payload.push(persistence);
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(101, &payload);

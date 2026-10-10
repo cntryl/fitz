@@ -517,22 +517,14 @@ impl BootConfig {
 
     #[must_use]
     pub fn request_sync_write_policy(&self) -> crate::domains::WritePolicy {
-        match (&self.storage_mode, &self.cloud_durability) {
-            (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
-                crate::domains::WritePolicy::CloudStrict
-            }
-            (StorageMode::CloudBacked(_), _) => crate::domains::WritePolicy::CloudAsync,
-            _ => crate::domains::WritePolicy::Sync,
-        }
+        crate::domains::CommitPersistence::Sync
+            .storage_policy(matches!(self.storage_mode, StorageMode::CloudBacked(_)))
     }
 
     #[must_use]
     pub fn request_buffered_write_policy(&self) -> crate::domains::WritePolicy {
-        if matches!(self.storage_mode, StorageMode::CloudBacked(_)) {
-            crate::domains::WritePolicy::CloudAsync
-        } else {
-            crate::domains::WritePolicy::Buffered
-        }
+        crate::domains::CommitPersistence::Buffered
+            .storage_policy(matches!(self.storage_mode, StorageMode::CloudBacked(_)))
     }
 
     #[must_use]

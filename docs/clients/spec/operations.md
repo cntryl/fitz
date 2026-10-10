@@ -413,8 +413,8 @@ Transactions are **explicit and domain-specific**. Clients MUST NOT provide impl
 Clients MUST expose explicit methods for supported domains:
 | Domain | API | Required |
 | -------- | ----------------------------------------- | -------- |
-| KV | `begin()`, `commit()`, `rollback()` | YES |
-| Stream | `begin()`, `commit()`, `rollback()` | YES |
+| KV | `begin()`, `commit(persistence)`, `rollback()` | YES |
+| Stream | `begin()`, `commit(persistence)`, `rollback()` | YES |
 | Queue | N/A (message-oriented, not transactional) | — |
 | Notice | N/A (fire-and-forget) | — |
 | RPC | N/A (request-scoped) | — |
@@ -438,14 +438,14 @@ Clients MUST:
 
 ```rust
 // ✅ CORRECT - explicit transaction lifecycle
-let tx_id = client.begin(KvBeginRequest { route, mode, durability })?;
+let tx_id = client.begin(KvBeginRequest { route, mode })?;
 client.put(KvPutRequest { tx_id, key, value })?;
 client.get(KvGetRequest { tx_id, key })?;
 client.commit(KvCommitRequest { tx_id })?;
 
 // ✅ CORRECT - multiple concurrent transactions to different resources
-let tx1 = client.begin(KvBeginRequest { route: "kv://prod/app/users", mode, durability })?;
-let tx2 = client.begin(KvBeginRequest { route: "kv://prod/app/posts", mode, durability })?;
+let tx1 = client.begin(KvBeginRequest { route: "kv://prod/app/users", mode })?;
+let tx2 = client.begin(KvBeginRequest { route: "kv://prod/app/posts", mode })?;
 // Both tx1 and tx2 active simultaneously
 client.put(KvPutRequest { tx_id: tx1, key, value })?;
 client.put(KvPutRequest { tx_id: tx2, key, value })?;
@@ -453,7 +453,7 @@ client.commit(KvCommitRequest { tx_id: tx1 })?;
 client.commit(KvCommitRequest { tx_id: tx2 })?;
 
 // ❌ WRONG - parallel operations on SAME transaction
-let tx = client.begin(KvBeginRequest { route, mode, durability })?;
+let tx = client.begin(KvBeginRequest { route, mode })?;
 // DO NOT DO THIS:
 // futures::join_all(vec![
 //   client.put(KvPutRequest { tx_id: tx, key: "k1", value: "v1" }),

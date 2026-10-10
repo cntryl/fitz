@@ -544,9 +544,16 @@ impl StreamDomainStorage {
         sync: crate::domains::WritePolicy,
         buffered: crate::domains::WritePolicy,
     ) -> Arc<StreamStore> {
+        let cloud = sync.is_cloud() || buffered.is_cloud();
         Arc::new(
-            StreamStore::with_storage_layout(self.engine, layout)
-                .with_write_options(sync.into(), buffered.into()),
+            StreamStore::with_storage_layout(self.engine, layout).with_write_options(
+                crate::domains::CommitPersistence::Sync
+                    .storage_policy(cloud)
+                    .into(),
+                crate::domains::CommitPersistence::Buffered
+                    .storage_policy(cloud)
+                    .into(),
+            ),
         )
     }
 }

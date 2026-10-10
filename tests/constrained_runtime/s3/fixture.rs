@@ -110,8 +110,7 @@ pub(super) async fn verify(broker: &Broker) {
         let address = broker.address();
         workers.spawn(async move {
             let mut client = super::super::connect(address).await;
-            let started =
-                super::super::request(&mut client, &build_kv_begin(ROUTE, 0, 1), 100).await;
+            let started = super::super::request(&mut client, &build_kv_begin(ROUTE, 0), 100).await;
             let id = parse_kv_tx_id(&started).unwrap();
             let mut verified = 0;
             for index in (worker..RECORDS).step_by(16) {

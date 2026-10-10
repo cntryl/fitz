@@ -2,6 +2,41 @@ use super::*;
 
 #[test]
 #[serial]
+fn should_require_commit_persistence_without_background_cloud_downgrade() {
+    with_storage_env(
+        &[
+            ("FITZ_STORAGE_MODE", "cloud"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
+            ("FITZ_STORAGE_CLOUD_DURABILITY", "background"),
+        ],
+        || {
+            // Arrange
+            let config = BootConfig::new();
+
+            // Act
+            let policies = [
+                config.request_buffered_write_policy(),
+                config.request_sync_write_policy(),
+            ];
+
+            // Assert
+            assert_eq!(
+                policies,
+                [
+                    crate::domains::WritePolicy::CloudAsync,
+                    crate::domains::WritePolicy::CloudStrict,
+                ]
+            );
+            assert_eq!(
+                config.queue_write_policy(),
+                crate::domains::WritePolicy::BestEffort
+            );
+        },
+    );
+}
+
+#[test]
+#[serial]
 fn should_default_storage_lease_ttl_to_thirty_seconds() {
     with_storage_env(&[], || {
         // Arrange
@@ -191,7 +226,7 @@ fn should_accept_background_cloud_durability() {
             );
             assert_eq!(
                 config.request_sync_write_policy(),
-                crate::domains::WritePolicy::CloudAsync
+                crate::domains::WritePolicy::CloudStrict
             );
             assert_eq!(
                 config.request_buffered_write_policy(),

@@ -59,7 +59,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
             session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -89,7 +89,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
             session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, kv_route),
+            encode_kv_commit(tx_id, kv_route, 0),
             family,
         ),
     ))
@@ -111,127 +111,59 @@ fn should_record_kv_latency_samples_by_operation_kind() {
 }
 
 #[test]
-fn should_map_sync_begin_to_cloud_strict_given_strict_cloud_sync_policy() {
+fn should_resolve_explicit_commit_persistence_for_local_storage() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
-    let router = Arc::new(Router::new());
-    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomain::new(store, router, admin_read_model)
-        .with_sync_write_policy(crate::domains::WritePolicy::CloudStrict);
-    let message = crate::domains::kv::KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "acme".to_string(),
-            "app".to_string(),
-            "users".to_string(),
-        ),
-        mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Sync,
-    };
+    let sink = KvDomain::new(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let choices = [
+        crate::domains::CommitPersistence::Buffered,
+        crate::domains::CommitPersistence::Sync,
+    ];
 
     // Act
-    let mapped = sink.apply_write_options(message);
+    let resolved = choices.map(|choice| sink.resolve_commit_persistence(choice));
 
     // Assert
-    match mapped {
-        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert_eq!(write_options, crate::domains::WritePolicy::CloudStrict);
-        }
-        _ => panic!("expected KV begin message"),
-    }
+    assert_eq!(
+        resolved,
+        [
+            Some(crate::domains::WritePolicy::Buffered),
+            Some(crate::domains::WritePolicy::Sync)
+        ]
+    );
 }
 
 #[test]
-fn should_map_buffered_begin_to_cloud_async_given_cloud_storage() {
+fn should_resolve_explicit_commit_persistence_for_background_cloud_storage() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
-    let router = Arc::new(Router::new());
-    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomain::new(store, router, admin_read_model).with_write_policies(
-        crate::domains::WritePolicy::CloudStrict,
+    let sink = KvDomain::new(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    )
+    .with_write_policies(
+        crate::domains::WritePolicy::CloudAsync,
         crate::domains::WritePolicy::CloudAsync,
     );
-    let message = crate::domains::kv::KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "acme".to_string(),
-            "app".to_string(),
-            "users".to_string(),
-        ),
-        mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
-    };
+    let choices = [
+        crate::domains::CommitPersistence::Buffered,
+        crate::domains::CommitPersistence::Sync,
+    ];
 
     // Act
-    let mapped = sink.apply_write_options(message);
+    let resolved = choices.map(|choice| sink.resolve_commit_persistence(choice));
 
     // Assert
-    match mapped {
-        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert_eq!(write_options, crate::domains::WritePolicy::CloudAsync);
-        }
-        _ => panic!("expected KV begin message"),
-    }
-}
-
-#[test]
-fn should_derive_cloud_async_buffered_policy_given_strict_cloud_sync_builder() {
-    // Arrange
-    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
-    let router = Arc::new(Router::new());
-    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomain::new(store, router, admin_read_model)
-        .with_sync_write_policy(crate::domains::WritePolicy::CloudStrict);
-    let message = crate::domains::kv::KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "acme".to_string(),
-            "app".to_string(),
-            "users".to_string(),
-        ),
-        mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
-    };
-
-    // Act
-    let mapped = sink.apply_write_options(message);
-
-    // Assert
-    match mapped {
-        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert_eq!(write_options, crate::domains::WritePolicy::CloudAsync);
-        }
-        _ => panic!("expected KV begin message"),
-    }
-}
-
-#[test]
-fn should_derive_cloud_async_buffered_policy_given_background_cloud_sync_builder() {
-    // Arrange
-    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
-    let router = Arc::new(Router::new());
-    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomain::new(store, router, admin_read_model)
-        .with_sync_write_policy(crate::domains::WritePolicy::CloudAsync);
-    let message = crate::domains::kv::KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "acme".to_string(),
-            "app".to_string(),
-            "users".to_string(),
-        ),
-        mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
-    };
-
-    // Act
-    let mapped = sink.apply_write_options(message);
-
-    // Assert
-    match mapped {
-        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert_eq!(write_options, crate::domains::WritePolicy::CloudAsync);
-        }
-        _ => panic!("expected KV begin message"),
-    }
+    assert_eq!(
+        resolved,
+        [
+            Some(crate::domains::WritePolicy::CloudAsync),
+            Some(crate::domains::WritePolicy::CloudStrict)
+        ]
+    );
 }

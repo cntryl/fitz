@@ -77,7 +77,6 @@ fn encode_kv_begin(route: &str) -> Bytes {
     payload.put_u32(usize_to_u32_saturating(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1);
-    payload.put_u8(0);
     Bytes::from(payload)
 }
 

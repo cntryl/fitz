@@ -3,6 +3,64 @@ use crate::dispatch::wire::kv::{KvError, KvMessage, KvResponse};
 use crate::runtime::routing::RouteFamily;
 use bytes::{BufMut, Bytes};
 
+#[test]
+fn should_require_commit_persistence_instead_of_begin_persistence() {
+    // Arrange
+    let mut begin = Vec::new();
+    put_route(&mut begin, "kv://acme/kv/users");
+    begin.push(1);
+
+    // Act
+    let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &begin);
+
+    // Assert
+    assert!(matches!(result, Ok(KvMessage::Begin { .. })), "{result:?}");
+}
+
+#[test]
+fn should_require_commit_persistence_by_rejecting_legacy_begin_bytes() {
+    // Arrange
+    let mut begin = Vec::new();
+    put_route(&mut begin, "kv://acme/kv/users");
+    begin.extend_from_slice(&[1, 0]);
+
+    // Act
+    let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &begin);
+
+    // Assert
+    assert!(result.is_err(), "legacy persistence field was accepted");
+}
+
+#[test]
+fn should_require_commit_persistence_with_both_explicit_choices() {
+    // Arrange
+    let mut commit = 1_u64.to_be_bytes().to_vec();
+    put_route(&mut commit, "kv://acme/kv/users");
+
+    // Act
+    let results = [0, 1].map(|choice| {
+        let mut payload = commit.clone();
+        payload.push(choice);
+        parse_request(msg_type::COMMIT, RouteFamily::new(1), &payload)
+    });
+
+    // Assert
+    assert!(results.iter().all(Result::is_ok), "{results:?}");
+}
+
+#[test]
+fn should_require_commit_persistence_when_the_choice_is_missing() {
+    // Arrange
+    let mut commit = 1_u64.to_be_bytes().to_vec();
+    put_route(&mut commit, "kv://acme/kv/users");
+
+    // Act
+    let result = parse_request(msg_type::COMMIT, RouteFamily::new(1), &commit);
+
+    // Assert
+    assert!(result.is_err(), "implicit commit persistence was accepted");
+}
+
 fn len_to_u32(len: usize) -> u32 {
     u32::try_from(len).expect("test payload length should fit in u32")
 }
@@ -16,7 +74,7 @@ fn canonical_operation_payloads() -> Vec<(u16, Vec<u8>)> {
     let route = "kv://acme/kv/users";
     let mut begin = Vec::new();
     put_route(&mut begin, route);
-    begin.extend_from_slice(&[1, 0]);
+    begin.push(1);
 
     let mut transaction_only = Vec::new();
     transaction_only.put_u64(1);
@@ -39,7 +97,11 @@ fn canonical_operation_payloads() -> Vec<(u16, Vec<u8>)> {
 
     vec![
         (msg_type::BEGIN, begin),
-        (msg_type::COMMIT, transaction_only.clone()),
+        (msg_type::COMMIT, {
+            let mut commit = transaction_only.clone();
+            commit.push(0);
+            commit
+        }),
         (msg_type::ROLLBACK, transaction_only),
         (msg_type::GET, keyed.clone()),
         (msg_type::PUT, key_value.clone()),
@@ -51,14 +113,13 @@ fn canonical_operation_payloads() -> Vec<(u16, Vec<u8>)> {
 }
 
 #[test]
-fn should_parse_begin_read_write_buffered() {
+fn should_parse_begin_read_write() {
     // Arrange
     let route = "kv://acme/kv/users";
     let mut payload = Vec::new();
     payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1); // ReadWrite
-    payload.put_u8(0); // buffered (per CLIENT_SPEC: 0=buffered, 1=sync)
 
     // Act
     let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
@@ -239,75 +300,74 @@ fn should_encode_get_result_not_found() {
 }
 
 #[test]
-fn should_parse_begin_with_sync_durability() {
+fn should_parse_commit_with_sync_durability() {
     // Arrange - Per CLIENT_SPEC, durability byte: 0=buffered, 1=sync
     let route = "kv://acme/kv/users";
     let mut payload = Vec::new();
+    payload.put_u64(1);
     payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
-    payload.put_u8(1); // ReadWrite
     payload.put_u8(1); // sync durability (per CLIENT_SPEC: 1=sync)
 
     // Act
-    let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
+    let result = parse_request(msg_type::COMMIT, RouteFamily::new(1), &payload);
 
     // Assert
     match result {
-        Ok(KvMessage::Begin { write_options, .. }) => {
+        Ok(KvMessage::Commit { persistence, .. }) => {
             // Verify that durability byte 1 maps to sync
             assert_eq!(
-                write_options,
-                crate::domains::WritePolicy::Sync,
+                persistence,
+                crate::domains::CommitPersistence::Sync,
                 "Durability byte 1 should map to sync"
             );
         }
-        _ => panic!("Expected KvMessage::Begin with sync write options"),
+        _ => panic!("Expected KvMessage::Commit with sync write options"),
     }
 }
 
 #[test]
-fn should_parse_begin_with_buffered_durability() {
+fn should_parse_commit_with_buffered_durability() {
     // Arrange - Per CLIENT_SPEC, durability byte: 0=buffered, 1=sync
     let route = "kv://acme/kv/users";
     let mut payload = Vec::new();
+    payload.put_u64(1);
     payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
-    payload.put_u8(1); // ReadWrite
     payload.put_u8(0); // buffered durability (per CLIENT_SPEC: 0=buffered)
 
     // Act
-    let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
+    let result = parse_request(msg_type::COMMIT, RouteFamily::new(1), &payload);
 
     // Assert
     match result {
-        Ok(KvMessage::Begin { write_options, .. }) => {
+        Ok(KvMessage::Commit { persistence, .. }) => {
             // Verify that durability byte 0 maps to buffered
             assert_eq!(
-                write_options,
-                crate::domains::WritePolicy::Buffered,
+                persistence,
+                crate::domains::CommitPersistence::Buffered,
                 "Durability byte 0 should map to buffered"
             );
         }
-        _ => panic!("Expected KvMessage::Begin with buffered write options"),
+        _ => panic!("Expected KvMessage::Commit with buffered write options"),
     }
 }
 
 #[test]
-fn should_reject_begin_with_invalid_durability() {
+fn should_reject_commit_with_invalid_persistence() {
     // Arrange
     let route = "kv://acme/kv/users";
     let mut base_payload = Vec::new();
+    base_payload.put_u64(1);
     base_payload.put_u32(len_to_u32(route.len()));
     base_payload.put_slice(route.as_bytes());
-    base_payload.put_u8(1); // ReadWrite
 
     // Act
-    let results = [2_u8, 255_u8]
-        .into_iter()
+    let results = (2_u8..=255)
         .map(|durability| {
             let mut payload = base_payload.clone();
             payload.put_u8(durability);
-            parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload)
+            parse_request(msg_type::COMMIT, RouteFamily::new(1), &payload)
         })
         .collect::<Vec<_>>();
 
@@ -316,7 +376,7 @@ fn should_reject_begin_with_invalid_durability() {
     assert!(results.iter().all(|result| result
         .as_ref()
         .unwrap_err()
-        .contains("Invalid durability mode")));
+        .contains("Invalid commit persistence")));
 }
 
 #[test]
@@ -344,7 +404,6 @@ fn should_reject_begin_given_nested_resource_path() {
     payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1);
-    payload.put_u8(0);
 
     // Act
     let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
@@ -401,7 +460,7 @@ fn should_preserve_kv_request_response_notification_and_error_golden_bytes() {
     // Arrange
     let request = [
         0, 0, 0, 15, b'k', b'v', b':', b'/', b'/', b'a', b'c', b'm', b'e', b'/', b'a', b'/', b'r',
-        b'e', b's', 1, 0,
+        b'e', b's', 1,
     ];
 
     // Act

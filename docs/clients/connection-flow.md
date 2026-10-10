@@ -135,7 +135,7 @@ Response handling:
 
 ```python
 tx.put(b"user:123", b"alice")
-tx.commit()
+tx.commit(Durability.Sync)
 ```
 
 The transaction object may store route and transaction identifiers internally so the

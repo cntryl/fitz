@@ -17,6 +17,10 @@ pub enum WritePolicy {
 }
 
 impl WritePolicy {
+    pub(crate) const fn is_cloud(self) -> bool {
+        matches!(self, Self::CloudAsync | Self::CloudStrict)
+    }
+
     /// The weaker policy used for best-effort bookkeeping written alongside
     /// data committed under `self`: cloud policies keep cloud persistence
     /// asynchronously, local policies buffer the WAL.

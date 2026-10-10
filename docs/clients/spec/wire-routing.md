@@ -165,25 +165,26 @@ Total frame size: 2 (type) + 2 (length) + 24 (payload) = 28 bytes
 
 **Example 3: KV BEGIN (MessageType=100)**
 
-Wire format specification:
+BEGIN selects scope and transaction mode only:
 ```
 [u32 BE]  route_len
 [bytes]   route
 [u8]      mode (0=ReadOnly, 1=ReadWrite)
-[u8]      durability (0=Buffered, 1=Sync; other values invalid)
 ```
 
-Actual bytes on wire:
+For `kv://prod/app/users` (19 UTF-8 bytes), the TLV frame is:
 ```
-[0x00 0x64]                              (MessageType=100, KV BEGIN)
-[0x00 0x1F]                              (Length=31 bytes)
-  [0x00 0x00 0x00 0x15]                  (route_len=21)
-  [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]  (route="kv://prod/app/users", 21 bytes)
-  [0x01]                                 (mode=1, ReadWrite)
-  [0x01]                                 (durability=1, Sync)
+[0x64]                                   (MessageType=100, unsigned LEB128)
+[0x18]                                   (Length=24 bytes, unsigned LEB128)
+  [0x00 0x00 0x00 0x13]                   (route_len=19)
+  [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]
+  [0x01]                                 (ReadWrite)
+```
 
-Total frame size: 2 (type) + 2 (length) + 31 (payload) = 35 bytes
-```
+Total frame size: 1 (type) + 1 (length) + 24 (payload) = 26 bytes.
+KV COMMIT requires `[u64 tx_id][u32 route_len][route][u8 persistence]`.
+Stream COMMIT requires `[u64 session_id][u8 persistence]`. Both use
+`0=Buffered` and `1=Sync`; omitted, invalid, or trailing fields are rejected.
 
 **Example 4: RPC REQUEST (MessageType=302)**
 
@@ -277,14 +278,12 @@ def decode_kv_message(message_type, payload):
         offset += route_len
         mode = payload[offset]
         offset += 1
-        durability = payload[offset]
-        offset += 1
         if mode not in (0, 1):
             raise ProtocolError("Invalid transaction mode")
-        if durability not in (0, 1):
-            raise ProtocolError("Invalid durability mode")
         
-        return KvBegin(route=route, mode=mode, durability=durability)
+        if offset != len(payload):
+            raise ProtocolError("Trailing BEGIN data")
+        return KvBegin(route=route, mode=mode)
     
     elif message_type == 104:  # PUT
         tx_id = read_u64_be(payload[offset:offset+8])

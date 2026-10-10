@@ -152,8 +152,8 @@ fn should_map_rpc_authorization_policies() {
 fn should_map_kv_authorization_policies() {
     // Arrange
     let route = "kv://acme/app/users";
-    let read_only_frame = crate::benchkit::build_kv_begin(route, 0, 0);
-    let read_write_frame = crate::benchkit::build_kv_begin(route, 1, 0);
+    let read_only_frame = crate::benchkit::build_kv_begin(route, 0);
+    let read_write_frame = crate::benchkit::build_kv_begin(route, 1);
     let (_, read_only_payload) = crate::benchkit::extract_single_tlv_field(&read_only_frame);
     let (_, read_write_payload) = crate::benchkit::extract_single_tlv_field(&read_write_frame);
 
@@ -320,7 +320,7 @@ fn should_apply_depth_aware_registration_authorization_to_every_fixed_depth_doma
 #[test]
 fn should_canonicalize_domain_identity_routes_for_authorization() {
     // Arrange
-    let kv_begin = crate::benchkit::build_kv_begin("kv://acme/app/users/extra", 0, 0);
+    let kv_begin = crate::benchkit::build_kv_begin("kv://acme/app/users/extra", 0);
     let (_, kv_payload) = crate::benchkit::extract_single_tlv_field(&kv_begin);
     let queue_payload = encode_queue_send("queue://acme/app/jobs/process", b"job");
     let lease_payload = encode_lease_subscribe("lease://acme/locks/db");
@@ -708,7 +708,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
     ingress.on_open(session).await.unwrap();
 
     // Act
-    let read_only_begin = crate::benchkit::build_kv_begin(route, 0, 0);
+    let read_only_begin = crate::benchkit::build_kv_begin(route, 0);
     let (_, read_only_payload) = crate::benchkit::extract_single_tlv_field(&read_only_begin);
     let read_only_decision = ingress
         .on_frame(
@@ -721,7 +721,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
         .await;
     let read_only_frame = receive_frame(&domain_mailbox, "kv read-only begin dispatch");
 
-    let read_write_begin = crate::benchkit::build_kv_begin(route, 1, 0);
+    let read_write_begin = crate::benchkit::build_kv_begin(route, 1);
     let (_, read_write_payload) = crate::benchkit::extract_single_tlv_field(&read_write_begin);
     let read_write_decision = ingress
         .on_frame(
@@ -747,7 +747,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
         .await;
     let put_dispatch = receive_frame(&domain_mailbox, "kv put dispatch");
 
-    let commit_frame = crate::benchkit::build_kv_commit(7, route);
+    let commit_frame = crate::benchkit::build_kv_commit(7, route, 0);
     let (_, commit_payload) = crate::benchkit::extract_single_tlv_field(&commit_frame);
     let commit_decision = ingress
         .on_frame(
@@ -813,7 +813,7 @@ async fn should_require_exact_kv_realm_area_and_resource_at_ingress() {
     ingress.on_open(session).await.unwrap();
 
     // Act
-    let exact_begin = crate::benchkit::build_kv_begin(exact_route, 1, 0);
+    let exact_begin = crate::benchkit::build_kv_begin(exact_route, 1);
     let (_, exact_payload) = crate::benchkit::extract_single_tlv_field(&exact_begin);
     let exact_decision = ingress
         .on_frame(
@@ -833,7 +833,7 @@ async fn should_require_exact_kv_realm_area_and_resource_at_ingress() {
     ];
     let mut denial_codes = Vec::new();
     for route in mismatched_routes {
-        let begin = crate::benchkit::build_kv_begin(route, 1, 0);
+        let begin = crate::benchkit::build_kv_begin(route, 1);
         let (_, payload) = crate::benchkit::extract_single_tlv_field(&begin);
         let decision = ingress
             .on_frame(

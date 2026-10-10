@@ -5,7 +5,7 @@
 //! - Resource (table) isolation
 //! - Explicit `RouteFamily` → `ColumnFamily` mapping
 
-use crate::domains::WritePolicy;
+use crate::domains::CommitPersistence;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
@@ -47,11 +47,14 @@ pub enum KvMessage {
     Begin {
         scope: KvResourceScope,
         mode: TxMode,
-        write_options: WritePolicy,
     },
 
-    /// Commit a transaction by ID
-    Commit { tx_id: u64, scope: KvResourceScope },
+    /// Commit using an explicit Buffered or Sync persistence choice.
+    Commit {
+        tx_id: u64,
+        scope: KvResourceScope,
+        persistence: CommitPersistence,
+    },
 
     /// Rollback a transaction by ID
     Rollback { tx_id: u64, scope: KvResourceScope },
