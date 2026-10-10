@@ -76,7 +76,8 @@ require at least 32MiB of catalog-authorized WAL to remain. Each then sends
 SIGKILL, verifies exit 137 without an OOM kill, and either restarts with the same
 cache or removes the container and its anonymous data volume before creating a
 replacement with a fresh cache. Strict `/healthz` must report ready within 180
-seconds, including the configured 59-second crashed-writer lease. All accepted
+seconds measured from the Docker start attempt, including container startup
+and the configured 59-second crashed-writer lease. All accepted
 IDs and exact payloads must recover, be ACKed and leave the queue empty. The
 seven-domain smoke probe must also pass after recovery. Each whole campaign
 has a fixed 1,200-second deadline.
