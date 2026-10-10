@@ -426,3 +426,114 @@ fn should_capture_atomic_commits_without_partial_rows_during_concurrent_writes()
         .expect("capture committed KV rows");
     assert_eq!(final_artifact.record_count(), 3);
 }
+
+fn single_key_artifact(family: RouteFamily, route: &str) -> crate::snapshot::SnapshotArtifact {
+    let selector =
+        crate::snapshot::SnapshotSelector::new(crate::snapshot::SnapshotDomain::Kv, family, route)
+            .expect("valid exact-resource selector");
+    crate::snapshot::SnapshotArtifact::from_kv_resource(
+        &selector,
+        route,
+        vec![crate::snapshot::SnapshotKvEntry {
+            key: b"key".to_vec(),
+            value: b"restored".to_vec(),
+        }],
+    )
+    .expect("valid snapshot artifact")
+}
+
+#[test]
+fn should_reject_kv_restore_while_open_transaction_locks_target_resource() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let kv_route = "kv://acme/jobs/orders";
+    let writer_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let writer_mailbox = Arc::new(Mailbox::new(16));
+    let router = Arc::new(Router::new());
+    router.register(writer_address.clone(), writer_mailbox.clone());
+    let sink = KvDomain::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    sink.deliver(Envelope::from_route(
+        writer_address,
+        RouteAddress::new(family, Route::new(kv_route)),
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin read-write KV transaction");
+    let _ = receive_frame(&writer_mailbox, "begin ack envelope");
+    let artifact = single_key_artifact(family, kv_route);
+
+    // Act
+    let result = sink.restore_kv_snapshot(&artifact.to_bytes().expect("encode snapshot"));
+    let value = sink
+        .admin_get_committed_value(family, "acme", "jobs", "orders", b"key")
+        .expect("read destination value");
+
+    // Assert
+    let error = result.expect_err("restore must reject a locked resource");
+    assert!(
+        error.contains("locked by an open transaction") && error.contains(kv_route),
+        "unexpected restore error: {error}"
+    );
+    assert_eq!(value, None);
+}
+
+#[test]
+fn should_notify_kv_subscriber_given_restored_resource() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let kv_route = "kv://acme/jobs/orders";
+    let watcher_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let watcher_mailbox = Arc::new(Mailbox::new(16));
+    let router = Arc::new(Router::new());
+    router.register(watcher_address.clone(), watcher_mailbox.clone());
+    let sink = KvDomain::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    commit_value(
+        sink.config.store.clone(),
+        KvResourceScope::new(family, "acme", "jobs", "orders"),
+        b"stale",
+        b"value",
+    );
+    sink.deliver(Envelope::from_route(
+        watcher_address,
+        RouteAddress::new(family, Route::new(kv_route)),
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::SUBSCRIBE),
+            encode_kv_subscribe(kv_route),
+            family,
+        ),
+    ))
+    .expect("subscribe to KV route");
+    let subscription_id =
+        decode_kv_subscription_id(&receive_frame(&watcher_mailbox, "subscribe ack").payload);
+    let artifact = single_key_artifact(family, kv_route);
+
+    // Act
+    sink.restore_kv_snapshot(&artifact.to_bytes().expect("encode snapshot"))
+        .expect("restore snapshot");
+
+    // Assert
+    let notify_frame = receive_frame(&watcher_mailbox, "KV restore notify envelope");
+    assert_eq!(
+        notify_frame.msg_type.as_u16(),
+        crate::dispatch::protocol::kv::msg_type::NOTIFY
+    );
+    assert_eq!(
+        decode_kv_watch_delivery(&notify_frame),
+        (subscription_id, kv_route.to_string(), 2)
+    );
+}
