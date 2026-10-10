@@ -80,7 +80,7 @@ const tx = await client.kv.begin("kv://prod/users", {
   durability: "Sync",
 });
 await tx.put("user:123", "alice");
-await tx.commit(Durability.Sync);
+await tx.commit(CommitPersistence.Sync);
 ```
 
 ### 4. Make Durability Explicit

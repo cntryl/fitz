@@ -56,7 +56,7 @@ tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
 # Transaction methods hide route repetition
 tx.put(b"key", b"value")      # Simple API
 tx.get(b"key")                 # Focus on data
-tx.commit(Durability.Sync)                    # No route visible
+tx.commit(CommitPersistence.Sync)                    # No route visible
 ```
 
 **Under the hood (wire protocol):**
@@ -120,7 +120,7 @@ tx.put(b"key", b"value")  # ❌ Server must remember route from BEGIN
 # Sequential within a transaction (one tx at a time)
 with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
     tx.put(b"key", b"value")
-    tx.commit(Durability.Sync)
+    tx.commit(CommitPersistence.Sync)
 
 # BUT: Multiple transactions to different resources run in PARALLEL
 tx_users = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
@@ -128,8 +128,8 @@ tx_posts = client.kv_begin("kv://prod/app/posts", TxMode.ReadWrite)
 # Both active simultaneously, on same KV channel to different actor instances
 tx_users.put(b"u1", b"alice")
 tx_posts.put(b"p1", b"hello")
-tx_users.commit(Durability.Sync)
-tx_posts.commit(Durability.Sync)
+tx_users.commit(CommitPersistence.Sync)
+tx_posts.commit(CommitPersistence.Sync)
 
 # Parallel queue enqueues to different queues
 msg_id_1 = client.queue_enqueue("queue://prod/app/tasks", b"task1")
@@ -154,8 +154,8 @@ let mut tx_posts = client.kv_begin("kv://prod/app/posts", TxMode::ReadWrite)?;
 tx_users.put(b"key", b"value")?;
 tx_posts.put(b"key", b"value")?;
 
-tx_users.commit(Durability::Sync)?;  // Or auto-rollback in Drop
-tx_posts.commit(Durability::Sync)?;
+tx_users.commit(CommitPersistence::Sync)?;  // Or auto-rollback in Drop
+tx_posts.commit(CommitPersistence::Sync)?;
 ```
 
 **Go (defer, Parallel Transactions):**
@@ -170,8 +170,8 @@ defer tx2.Rollback()  // Safe cleanup
 // Both active simultaneously
 tx1.Put([]byte("key"), []byte("value"))
 tx2.Put([]byte("key"), []byte("value"))
-tx1.Commit(ctx, fitz.KVDurabilitySync)  // Clears rollback flag
-tx2.Commit(ctx, fitz.KVDurabilitySync)  // Clears rollback flag
+tx1.Commit(ctx, fitz.CommitPersistenceSync)  // Clears rollback flag
+tx2.Commit(ctx, fitz.CommitPersistenceSync)  // Clears rollback flag
 ```
 
 **JavaScript (Promises, Parallel Transactions & Queues, Parallel Across Domains):**
@@ -187,8 +187,8 @@ await Promise.all([
 ]);
 
 await Promise.all([
-  tx_users.commit(Durability.Sync),
-  tx_posts.commit(Durability.Sync)
+  tx_users.commit(CommitPersistence.Sync),
+  tx_posts.commit(CommitPersistence.Sync)
 ]);
 
 // Parallel queue enqueues to different queues (same channel / Queue domain)
@@ -237,7 +237,7 @@ const notice_sub = client.noticeSubscribe("notice://prod/app/*");
 const rpc_call = client.rpcRequest("rpc://prod/app/config/get", correlation_id, payload);
 
 // All complete independently and concurrently
-await Promise.all([kv_tx.commit(Durability.Sync), queue_msg, notice_sub, rpc_call]);
+await Promise.all([kv_tx.commit(CommitPersistence.Sync), queue_msg, notice_sub, rpc_call]);
 ```
 
 **Channel Assignment:**
@@ -282,8 +282,8 @@ await Promise.all([
 
 // Both can commit concurrently
 await Promise.all([
-  tx_users.commit(Durability.Sync),
-  tx_posts.commit(Durability.Sync)
+  tx_users.commit(CommitPersistence.Sync),
+  tx_posts.commit(CommitPersistence.Sync)
 ]);
 ```
 
@@ -315,7 +315,7 @@ However, **MULTIPLE transactions can be parallelized** (see Level 2).
 const tx = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
 await tx.put(b"k1", b"v1");      // Request 1 → Response 1
 await tx.put(b"k2", b"v2");      // Request 2 → Response 2 (after Request 1 completes)
-await tx.commit(Durability.Sync);                // Request 3 → Response 3 (after Request 2 completes)
+await tx.commit(CommitPersistence.Sync);                // Request 3 → Response 3 (after Request 2 completes)
 ```
 
 **❌ WRONG - Parallel calls on SAME transaction:**
@@ -337,7 +337,7 @@ await Promise.all([
   tx1.put(b"k1", b"v1"),   // ✅ Different tx_id, can be parallel
   tx2.put(b"k1", b"v1"),   // ✅ Different tx_id, can be parallel
 ]);
-await Promise.all([tx1.commit(Durability.Sync), tx2.commit(Durability.Sync)]);
+await Promise.all([tx1.commit(CommitPersistence.Sync), tx2.commit(CommitPersistence.Sync)]);
 ```
 
 **Why Not Within One Transaction:**
@@ -427,7 +427,7 @@ async def safe_enqueue(client, route, payload):
 | **Same domain, different message types** | ✅ Parallel | Responses distinguishable by type alone | `ENQUEUE` + `RESERVE` together |
 | **Same message type, correlated** | ✅ Parallel | Each response carries its caller's id | 2 KV `GET`s; 2 queue `RESERVE`s |
 | **Same message type, uncorrelated** | ❌ One at a time | Arrival order is not receive order | Legacy broker, or before `SERVER_HELLO` |
-| **ONE transaction, multiple calls** | ❌ NOT parallel | Single tx_id MUST be sequential | `await tx.put(); await tx.commit(Durability.Sync);` |
+| **ONE transaction, multiple calls** | ❌ NOT parallel | Single tx_id MUST be sequential | `await tx.put(); await tx.commit(CommitPersistence.Sync);` |
 | **ONE queue, multiple operations** | ❌ NOT parallel | FIFO ordering must be preserved | Use `batch_size` parameter instead |
 | **RPC requests** | ✅ Parallel (UUID) | Per-request UUID correlation matching | Multiple RPC calls matched by UUID |
 

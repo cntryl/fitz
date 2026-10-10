@@ -791,7 +791,7 @@ class StreamSession:
 - **Watermarks**: Reads stop at the current committed watermark; reading past it returns an empty success
 - **Optimistic Concurrency**: `expected_offset` on APPEND prevents lost updates
 - **Filtered Replay**: `StreamFilterSet` clauses are conjunctive and operate on the optional append discriminator sidecar
-- **Durability**: All committed data survives broker restart
+- **Persistence**: Sync commits wait for the configured local or cloud persistence boundary; Buffered commits can lose recent writes on a crash.
 - **Isolation**: Only one active append session exists per resource at a time; subscriptions are separate live session-scoped state
 - **Resume Model**: Clients track resume offsets locally; `ReadCursor` is response metadata, not a durable broker cursor
 

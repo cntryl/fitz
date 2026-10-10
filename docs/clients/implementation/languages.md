@@ -81,7 +81,6 @@ func (c *KvClient) Begin(ctx context.Context, route string) (*Transaction, error
     req := &BeginRequest{
         Route:      route,
         Mode:       ModeReadWrite,
-        Durability: DurabilitySync,
     }
     
     resp, err := c.client.sendRequest(ctx, MessageTypeBegin, req)
@@ -223,16 +222,16 @@ fitz-python/
 
 ```python
 import asyncio
-from fitz import FitzClient
+from fitz import FitzClient, CommitPersistence
 
 async def main():
     async with FitzClient("ws://localhost:4090") as client:
         await client.connect(jwt="your-token")
         
         # KV transaction
-        async with await client.kv.begin("kv://prod/users") as tx:
+        async with await client.kv.begin("kv://prod/app/users") as tx:
             await tx.put("user:123", b"alice")
-            await tx.commit(Durability.Sync)  # Auto-commit on context exit
+            await tx.commit(CommitPersistence.Sync)  # Explicit commit before context exit
 
 asyncio.run(main())
 ```
@@ -245,13 +244,13 @@ class Transaction:
         self.client = client
         self.tx_id = tx_id
         self.route = route
-        self._committed = False
+        self._finished = False
     
     async def __aenter__(self):
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if not self._committed:
+        if not self._finished:
             await self.rollback()  # Scope exit never chooses persistence
     
     async def put(self, key: str, value: bytes):
@@ -263,11 +262,16 @@ class Transaction:
         )
         await self.client._send_request(MessageType.PUT, req)
     
-    async def commit(self, persistence):
+    async def commit(self, persistence: CommitPersistence):
+        if not isinstance(persistence, CommitPersistence):
+            raise ValueError("commit persistence must be Buffered or Sync")
+        if self._finished:
+            raise RuntimeError("transaction is finished")
+        # After dispatch, a failed reply can leave the outcome unknown.
+        self._finished = True
         await self.client._send_request(
             MessageType.COMMIT, CommitRequest(self.tx_id, self.route, persistence)
         )
-        self._committed = True
 ```
 
 **3. Type hints and dataclasses**

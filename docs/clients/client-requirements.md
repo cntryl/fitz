@@ -190,9 +190,9 @@ rejection of an unknown mode; CREATE errors carry no numeric code on the wire
 
 ### T1 — Object-Oriented State Management
 
-**REQ-ERGON-004 (T1)** KV operations MUST be expressed through a transaction object, not free functions that accept a raw tx_id. The lifecycle is: `client.KV().Begin(ctx, route) → Transaction`, then `tx.Get(ctx, key)`, `tx.Put(...)`, `tx.Commit(ctx, fitz.KVDurabilitySync)`, `tx.Rollback(ctx)`.
+**REQ-ERGON-004 (T1)** KV operations MUST be expressed through a transaction object, not free functions that accept a raw tx_id. The lifecycle is: `client.KV().Begin(ctx, route) → Transaction`, then `tx.Get(ctx, key)`, `tx.Put(...)`, `tx.Commit(ctx, fitz.CommitPersistenceSync)`, `tx.Rollback(ctx)`.
 
-**REQ-ERGON-005 (T1)** Stream write operations MUST be expressed through a session object: `client.Stream().Begin(ctx, route) → StreamSession`, then `session.Append(ctx, expectedOffset, body)`, `session.Commit(ctx, fitz.StreamWriteModeSync)`, `session.Rollback(ctx)`.
+**REQ-ERGON-005 (T1)** Stream write operations MUST be expressed through a session object: `client.Stream().Begin(ctx, route) → StreamSession`, then `session.Append(ctx, expectedOffset, body)`, `session.Commit(ctx, fitz.CommitPersistenceSync)`, `session.Rollback(ctx)`.
 
 **REQ-ERGON-006 (T1)** Subscriptions MUST be expressed through a subscription object with a discoverable `Unsubscribe` method. The user MUST NOT be required to track a raw subscription_id.
 
