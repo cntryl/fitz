@@ -74,6 +74,9 @@ empty, recover and clean up. Guard-stopped finite captures retain missed arrival
 and do not establish a full window or arrival-rate qualification. A harness
 `offered_rate_not_met` termination always fails. All twelve captures must pass;
 the lower full-window rates never substitute for the original 100k drain.
+The manual job has a five-hour total budget for two build diagnostics and all
+twelve captures plus compilation and evidence upload. Each measured capture
+keeps its 120-second stage, 600-second drain and 1,000-second harness guard.
 
 ## Workload
 

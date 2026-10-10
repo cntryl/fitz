@@ -83,7 +83,9 @@ jobs:
     if: ${{ inputs.queue_pressure }}
     name: Matched Queue drain qualification
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Two build diagnostics plus twelve measured captures each have a 1,000s
+    # harness guard; leave room for compilation and evidence upload as well.
+    timeout-minutes: 300
     env:
       RUSTUP_TOOLCHAIN: "1.99.0"
       FITZ_LOG_LEVEL: "off"
