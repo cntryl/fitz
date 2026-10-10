@@ -28,10 +28,11 @@ resource transactions committed; the error identifies completed routes. There
 is no cross-resource atomicity claim.
 
 Restore does not wait for client transactions. Before it mutates anything, it
-expires idle resource locks the same way a read-write `BEGIN` does, then
-rejects the whole restore with an error naming the route if any target
-resource is still locked by an open read-write transaction. Retry after that
-transaction commits, rolls back, or expires.
+checks every target resource. If any target is still locked by an open
+read-write transaction, the whole restore is rejected with an error naming
+that route, and no other transaction is expired. Otherwise it expires the idle
+resource locks the same way a read-write `BEGIN` does and proceeds. Retry after
+that transaction commits, rolls back, or expires.
 
 After each resource transaction commits, restore routes one live KV watch
 notification for that resource route, the same way a client commit does. The

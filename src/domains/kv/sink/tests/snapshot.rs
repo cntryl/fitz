@@ -537,3 +537,91 @@ fn should_notify_kv_subscriber_given_restored_resource() {
         (subscription_id, kv_route.to_string(), 2)
     );
 }
+
+#[test]
+fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_route() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let idle_route = "kv://acme/jobs/orders";
+    let locked_route = "kv://acme/jobs/users";
+    let idle_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let locked_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let idle_mailbox = Arc::new(Mailbox::new(16));
+    let locked_mailbox = Arc::new(Mailbox::new(16));
+    let router = Arc::new(Router::new());
+    router.register(idle_address.clone(), idle_mailbox.clone());
+    router.register(locked_address.clone(), locked_mailbox.clone());
+    let sink = KvDomain::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    )
+    .with_idle_transaction_ttl(Duration::from_millis(100));
+    sink.deliver(Envelope::from_route(
+        idle_address,
+        RouteAddress::new(family, Route::new(idle_route)),
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(idle_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin idle KV transaction");
+    let _ = receive_frame(&idle_mailbox, "idle begin ack envelope");
+    std::thread::sleep(Duration::from_millis(150));
+    sink.deliver(Envelope::from_route(
+        locked_address,
+        RouteAddress::new(family, Route::new(locked_route)),
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(locked_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin active KV transaction");
+    let _ = receive_frame(&locked_mailbox, "active begin ack envelope");
+    let selector = crate::snapshot::SnapshotSelector::new(
+        crate::snapshot::SnapshotDomain::Kv,
+        family,
+        "kv://acme/jobs/**",
+    )
+    .expect("valid realm selector");
+    let entries = || {
+        vec![crate::snapshot::SnapshotKvEntry {
+            key: b"key".to_vec(),
+            value: b"restored".to_vec(),
+        }]
+    };
+    let artifact = crate::snapshot::SnapshotArtifact::from_kv_resources(
+        &selector,
+        vec![
+            crate::snapshot::SnapshotKvResource {
+                route: idle_route.to_string(),
+                entries: entries(),
+            },
+            crate::snapshot::SnapshotKvResource {
+                route: locked_route.to_string(),
+                entries: entries(),
+            },
+        ],
+    )
+    .expect("valid multi-resource artifact");
+
+    // Act
+    let result = sink.restore_kv_snapshot(&artifact.to_bytes().expect("encode snapshot"));
+
+    // Assert
+    let error = result.expect_err("restore must reject the actively locked route");
+    assert!(error.contains(locked_route));
+    assert_eq!(sink.active_transaction_count(), 2);
+    for area_resource in ["orders", "users"] {
+        let value = sink
+            .admin_get_committed_value(family, "acme", "jobs", area_resource, b"key")
+            .expect("read destination value");
+        assert_eq!(value, None);
+    }
+}
