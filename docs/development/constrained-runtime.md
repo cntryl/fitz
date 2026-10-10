@@ -71,16 +71,22 @@ Every accepted message ID and payload is verified before ACK, and each cycle
 ends with an empty queue. This measures a fixed resource/workload envelope;
 it does not assert that every possible database has a universal WAL size cap.
 
-Two separate restart campaigns first enqueue 4,096 strict 16KiB messages and
-require at least 32MiB of catalog-authorized WAL to remain. Each then sends
-SIGKILL, verifies exit 137 without an OOM kill, and either restarts with the same
-cache or removes the container and its anonymous data volume before creating a
-replacement with a fresh cache. Strict `/healthz` must report ready within 180
-seconds measured from the Docker start attempt, including container startup
-and the configured 59-second crashed-writer lease. All accepted
-IDs and exact payloads must recover, be ACKed and leave the queue empty. The
-seven-domain smoke probe must also pass after recovery. Each whole campaign
-has a fixed 1,200-second deadline.
+Two separate restart campaigns first enqueue 4,096 strict 16KiB messages,
+then send SIGKILL and verify exit 137 without an OOM kill. The frozen crash
+state must contain nonempty catalog-authorized WAL and published WAL objects.
+The full 64MiB accepted backlog is split across WAL and SST according to normal
+retirement; healthy SST publication must not fail recovery by shrinking the WAL
+below an arbitrary minimum. The separate 640MiB fixture qualifies WAL-volume
+pressure.
+
+Each campaign either restarts with the same cache or removes the container and
+its anonymous data volume before creating a replacement with a fresh cache.
+Strict `/healthz` must report ready within 180 seconds measured from the crash
+attempt, including evidence capture, cache lifecycle, container startup and the
+configured 59-second crashed-writer lease. All accepted IDs and exact payloads
+must recover, be ACKed and leave the queue empty. The seven-domain smoke probe
+must also pass after recovery. Each whole campaign has a fixed 1,200-second
+deadline.
 
 The large-WAL campaign constructs a separate catalog-authorized 640MiB backlog
 with the pinned Midge frame/record codecs, then opens the ordinary Fitz image

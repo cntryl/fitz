@@ -354,7 +354,10 @@ impl Broker {
     }
 
     pub async fn ready(&mut self) -> f64 {
-        let started = self.readiness_started;
+        self.ready_since(self.readiness_started).await
+    }
+
+    pub async fn ready_since(&mut self, started: Instant) -> f64 {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
