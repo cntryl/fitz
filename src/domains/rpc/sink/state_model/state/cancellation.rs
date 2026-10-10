@@ -75,13 +75,20 @@ impl RpcState {
         &mut self,
         now: Instant,
     ) -> RpcPendingTimeoutResult {
-        self.expire_timed_out_with_grace(now, super::super::RPC_DEFAULT_CANCELLATION_GRACE)
+        self.expire_timed_out_with_grace(
+            now,
+            super::super::RPC_DEFAULT_CANCELLATION_GRACE,
+            |_, _| None,
+        )
     }
 
+    /// `frame_loop_busy_time` reports a worker session's frame-loop busy time;
+    /// an expired cancellation grace is deferred by any busy time not yet credited.
     pub(in crate::domains::rpc::sink) fn expire_timed_out_with_grace(
         &mut self,
         now: Instant,
         cancellation_grace: std::time::Duration,
+        frame_loop_busy_time: impl Fn(RouteFamily, u64) -> Option<std::time::Duration>,
     ) -> RpcPendingTimeoutResult {
         let mut timeout_deliveries = Vec::new();
         let mut removed_pending = 0usize;
@@ -97,6 +104,10 @@ impl RpcState {
                 .expect("tracked pending request")
                 .clone();
             if pending.cancelled {
+                let busy_time = frame_loop_busy_time(key.family, pending.worker_session_id);
+                if self.pending.defer_grace_for_busy_frame_loop(key, busy_time) {
+                    continue;
+                }
                 if let Some(worker_session_id) = self.pending.mark_close_requested(key) {
                     close_worker_sessions.insert((key.family, worker_session_id));
                 }

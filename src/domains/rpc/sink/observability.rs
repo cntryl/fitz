@@ -110,10 +110,14 @@ impl RpcFamilyRuntime<'_> {
 
     pub(super) fn expire_timed_out_requests_at(&mut self, now: Instant) {
         let cancellation_grace_period = self.core.cancellation_grace_period;
-        let timeout_result = {
-            let state = &mut self.core.state;
-            state.expire_timed_out_with_grace(now, cancellation_grace_period)
-        };
+        let router = &self.core.router;
+        let timeout_result = self.core.state.expire_timed_out_with_grace(
+            now,
+            cancellation_grace_period,
+            |family, worker_session_id| {
+                Self::worker_frame_loop_busy_time(router, family, worker_session_id, now)
+            },
+        );
 
         if timeout_result.removed_pending == 0
             && timeout_result.timed_out_requests == 0

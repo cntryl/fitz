@@ -15,6 +15,8 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
     pub(in crate::domains::rpc::sink) supports_cancellation: bool,
     pub(in crate::domains::rpc::sink) cancelled: bool,
     pub(in crate::domains::rpc::sink) close_requested: bool,
+    /// Worker frame-loop busy time already credited to the cancellation grace.
+    pub(in crate::domains::rpc::sink) grace_busy_baseline: Option<std::time::Duration>,
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +77,7 @@ impl RpcPendingRequest {
             supports_cancellation: false,
             cancelled: false,
             close_requested: false,
+            grace_busy_baseline: None,
         }
     }
 

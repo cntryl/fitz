@@ -3,6 +3,7 @@ use crate::domains::rpc::protocol::RpcLifecycleControlDelivery;
 use crate::protocol::rpc_codec::encode_cancel_ack_tlv_frame;
 use bytes::Bytes;
 
+mod frame_loop_grace;
 mod safety;
 
 #[derive(Default)]

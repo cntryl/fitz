@@ -124,6 +124,10 @@ This is a hard Fitz rule:
   when outbound data is saturated. TCP and WebSocket tasks stop and invoke the
   existing session finalizer; removing an inbox alone is not transport closure.
   This signal does not stop or reverse application side effects.
+- The registered session inbox also reports how long the session's frame loop
+  has spent processing inbound frames. Domains that wait on the session's next
+  frame, such as the RPC cancellation grace, use it so time the loop could not
+  read frames is not charged to the session.
 - Client work admitted from a canonical session inbox through routing or a domain
   mailbox retains a shared disconnect flag until its last envelope
   reference drains, including deferred replies. Routing disconnect cleanup marks
