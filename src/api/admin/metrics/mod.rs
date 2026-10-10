@@ -44,7 +44,7 @@ pub(crate) struct StructuredMetricSample {
 
 /// Handle the authenticated structured metrics contract.
 pub(crate) fn handle_structured_metrics(runtime: &Runtime, family: Option<u64>) -> Response {
-    runtime.refresh_stream_admin_snapshot();
+    runtime.refresh_admin_snapshots();
     let mut samples = structured_samples(&generate_prometheus_metrics(runtime), family);
     if let Some(family) = family {
         samples.extend(family_attributable_samples(runtime, family));
