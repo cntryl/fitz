@@ -117,7 +117,12 @@ impl QueueActor {
         })?;
         let mut scan = QueueValidationScan::default();
 
-        for (key, value) in iter {
+        for row in iter {
+            let (key, value) = row.map_err(|error| {
+                format!(
+                    "queue validation failed: family={family} key_category=scan error={error:?}"
+                )
+            })?;
             let Some(suffix) = storage_key::strip_domain_prefix(&key, DomainKeyspace::Queue) else {
                 continue;
             };

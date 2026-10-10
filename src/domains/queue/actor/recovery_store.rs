@@ -236,11 +236,13 @@ impl QueueTransaction {
         })
     }
 
-    pub(crate) fn scan_all(&self) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {
+    pub(crate) fn scan_all(
+        &self,
+    ) -> Result<impl Iterator<Item = Result<(Bytes, Bytes), QueueStoreError>> + '_, QueueStoreError>
+    {
         self.inner
             .scan(&cntryl_midge::Query::new())
-            .map_err(QueueStoreError::from_midge)?
-            .collect::<Result<Vec<_>, _>>()
+            .map(|rows| rows.map(|row| row.map_err(QueueStoreError::from_midge)))
             .map_err(QueueStoreError::from_midge)
     }
 

@@ -68,7 +68,10 @@ impl QueueFamilyState {
                 format!("queue inventory scan failed: family={family} error={error:?}")
             })?;
 
-            for (key, value) in rows {
+            for row in rows {
+                let (key, value) = row.map_err(|error| {
+                    format!("queue inventory scan failed: family={family} error={error:?}")
+                })?;
                 drop(value);
                 if let Some(queue_key) =
                     crate::domains::queue::QueueActor::queue_key_from_authoritative_storage_key(

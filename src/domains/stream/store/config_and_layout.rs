@@ -269,10 +269,9 @@ impl StreamStore {
             .scan(&cntryl_midge::Query::new())
             .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
 
-        for (key, value) in iter
-            .try_collect()
-            .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?
-        {
+        for row in iter {
+            let (key, value) =
+                row.map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
             let validation = Self::validate_persisted_row(&key, &value);
             if let Err((category, error)) = validation {
                 return Err(format!(
