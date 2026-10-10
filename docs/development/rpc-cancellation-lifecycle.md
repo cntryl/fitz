@@ -56,7 +56,9 @@ call. A reconnect creates a new worker session and cannot inherit this identity.
 ## Deadlines
 
 API ingress stamps each request with a local monotonic receive time before it
-enters the family actor. The actor subtracts time spent in its queue from the
+enters the family actor. The stamp is taken once when ingress starts
+dispatching the frame, and ingress backpressure retries reuse it; time the
+frame waited in the session's transport queue before that is not counted. The actor subtracts time spent in its queue from the
 remaining budget. It caps that budget to the configured broker request timeout
 (30 seconds by default) and stores the resulting monotonic deadline with the
 existing queued or pending request state. Queueing never renews the deadline.

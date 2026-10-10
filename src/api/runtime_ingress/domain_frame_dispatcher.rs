@@ -641,8 +641,9 @@ impl DomainFrameDispatcher {
         } = dispatch;
         let (addr, source, descriptor) = self.dispatch_addressing(session_id, route_family, domain);
         let dispatch_payload = payload.into_dispatch_bytes();
+        let received_at = Instant::now();
 
-        let backpressure_started_at = Instant::now();
+        let backpressure_started_at = received_at;
         let mut retries = 0_u64;
         let policy = DOMAIN_DISPATCH_BACKPRESSURE_POLICY;
 
@@ -657,6 +658,7 @@ impl DomainFrameDispatcher {
                     source: source.clone(),
                     destination: addr.clone(),
                     correlation,
+                    received_at,
                 });
             let reply_claim = envelope.reply_claim();
 
