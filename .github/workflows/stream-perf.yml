@@ -64,7 +64,10 @@ jobs:
           baseline="$RUNNER_TEMP/fitz-stream-baseline"
           git worktree add --detach "$baseline" "$BASE_SHA"
           git diff --binary "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/stream-fixtures.patch"
-          git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
+          # A Stream-only change has no fixture diff, and git apply rejects empty input.
+          if [[ -s "$RUNNER_TEMP/stream-fixtures.patch" ]]; then
+            git -C "$baseline" apply "$RUNNER_TEMP/stream-fixtures.patch"
+          fi
           git -C "$baseline" add Cargo.toml Cargo.lock benches
           git -C "$baseline" -c user.name=Stream-qualification -c user.email=stream-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Stream benchmark fixtures'
           test -z "$(git -C "$baseline" diff --name-only "$BASE_SHA" -- src)"

@@ -12,6 +12,7 @@ jobs:
     permissions:
       contents: read
     env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
       FITZ_LOG_LEVEL: off
       OTEL_ENABLED: false
 
@@ -19,8 +20,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Update Rust toolchain
-        run: rustup update stable
+      - name: Install verified Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
       - name: Install cntryl-tools
         run: cargo install --locked --git https://github.com/cntryl/tools --rev d31924bfdbb75e7e417bcf498c7e7b15a4cb9273 cntryl-tools
