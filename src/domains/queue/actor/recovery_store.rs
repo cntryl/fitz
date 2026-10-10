@@ -63,8 +63,9 @@ impl QueueStoreError {
     /// this matches its message. `should_classify_real_midge_l0_rejection_as_retryable_admission`
     /// produces the real rejection, so a Midge rewording fails CI.
     pub(super) fn is_l0_admission_rejection(&self, family: u32) -> bool {
-        matches!(&self.midge_error, Some(cntryl_midge::MidgeError::WriteStall(detail))
-            if detail.starts_with(&format!("column family {family} has no free L0 slot (")))
+        self.midge_error.as_ref().is_some_and(|error| {
+            crate::storage::write_admission::is_l0_admission_rejection(error, family)
+        })
     }
 
     /// True when the commit failed because storage admission stayed closed.

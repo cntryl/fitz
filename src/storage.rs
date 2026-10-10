@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 pub(crate) mod cf_validation;
 pub(crate) mod domain_scan;
+pub(crate) mod write_admission;
 mod write_policy;
 
 #[derive(Clone)]
