@@ -208,13 +208,12 @@ fn should_keep_queue_handoff_within_the_existing_client_reply_budget() {
         rt.block_on(async { tokio::time::timeout(Duration::from_millis(1200), &mut second).await });
     let returned_early = early.is_ok();
     release_tx.send(()).unwrap();
-    let second_result = match early {
-        Ok(result) => result,
-        Err(_) => {
-            entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            release_tx.send(()).unwrap();
-            rt.block_on(second)
-        }
+    let second_result = if let Ok(result) = early {
+        result
+    } else {
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        release_tx.send(()).unwrap();
+        rt.block_on(second)
     };
     rt.block_on(first).unwrap().unwrap();
 
