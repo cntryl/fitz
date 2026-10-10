@@ -553,6 +553,9 @@ pub(crate) fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
 }
 
 pub(crate) fn seed_stream_watermark_lag_data(runtime: &Arc<Runtime>) {
+    // Settle the real Stream projection first; admin reads refresh dirty
+    // projections and would otherwise replace these synthetic watermarks.
+    let _ = runtime.stream_list_streams(None);
     let read_model = runtime.admin_read_model();
     read_model.replace_stream_area_watermarks(vec![
         StreamAreaWatermarkDetail {

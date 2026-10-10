@@ -163,9 +163,7 @@ fn structured_samples(metrics: &str, family: Option<u64>) -> Vec<StructuredMetri
 
 #[allow(clippy::too_many_lines)]
 fn family_attributable_samples(runtime: &Runtime, family: u64) -> Vec<StructuredMetricSample> {
-    let snapshot = runtime
-        .admin_read_model()
-        .bounded_snapshot(Some(family), usize::MAX);
+    let snapshot = runtime.refreshed_admin_snapshot(Some(family), usize::MAX);
     projection_samples(&snapshot, Some(family))
 }
 

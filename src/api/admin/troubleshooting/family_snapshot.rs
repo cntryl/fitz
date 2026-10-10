@@ -29,9 +29,7 @@ pub(crate) fn build_family_troubleshooting(
     runtime: &Runtime,
     family: u64,
 ) -> GlobalTroubleshootingDiagnostics {
-    let snapshot = runtime
-        .admin_read_model()
-        .bounded_snapshot(Some(family), usize::MAX);
+    let snapshot = runtime.refreshed_admin_snapshot(Some(family), usize::MAX);
     build_projection_troubleshooting(&snapshot)
 }
 

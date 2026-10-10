@@ -85,9 +85,7 @@ pub(crate) fn mcp_topology_value(runtime: &Runtime, family: Option<u64>) -> serd
 }
 
 fn build_family_topology(runtime: &Runtime, family: u64) -> MessagingTopology {
-    let snapshot = runtime
-        .admin_read_model()
-        .bounded_snapshot(Some(family), usize::MAX);
+    let snapshot = runtime.refreshed_admin_snapshot(Some(family), usize::MAX);
     build_snapshot_topology(&snapshot, Some(family))
 }
 

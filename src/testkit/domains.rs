@@ -37,6 +37,47 @@ impl DomainRuntimeFixture {
     pub fn preload_schedules(&self) -> Result<(), String> {
         self.schedule.preload_persisted_families()
     }
+
+    /// Dead-letter one family-1 Queue message directly in the store, leaving
+    /// the runtime's Queue actor and admin projection untouched.
+    #[cfg(test)]
+    pub(crate) fn seed_queue_dead_letter(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> crate::domains::queue::MessageId {
+        use crate::domains::queue::{QueueActor, QueueKey, QueueResponse};
+        let family = crate::runtime::routing::RouteFamily::new(1);
+        let key = QueueKey {
+            family,
+            realm: realm.into(),
+            area: area.into(),
+            resource: resource.into(),
+        };
+        let mut actor = QueueActor::new(
+            family,
+            key,
+            self.store(),
+            Some(2),
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let QueueResponse::Sent { id } =
+            actor.handle_send(bytes::Bytes::from_static(b"private work payload"), None)
+        else {
+            panic!("send real queue work")
+        };
+        for _ in 0..2 {
+            let QueueResponse::Received { messages } =
+                actor.handle_receive_for_session(1, 0, Some(1))
+            else {
+                panic!("reserve real queue work")
+            };
+            assert_eq!(messages.len(), 1);
+            actor.process_expired_timers();
+        }
+        id
+    }
 }
 
 /// Compose all seven domains for black-box admin integration tests.

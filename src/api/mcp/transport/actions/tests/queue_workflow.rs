@@ -1,37 +1,12 @@
 use super::*;
-use crate::domains::queue::{MessageId, QueueActor, QueueKey, QueueResponse};
+use crate::domains::queue::{MessageId, QueueActor, QueueKey};
 use crate::runtime::routing::RouteFamily;
 use chrono::TimeZone as _;
 
 fn fixture() -> (crate::testkit::DomainRuntimeFixture, u64) {
     let fixture = crate::testkit::create_domain_runtime_fixture();
-    let family = RouteFamily::new(1);
-    let key = QueueKey {
-        family,
-        realm: "operations".into(),
-        area: "jobs".into(),
-        resource: "dispatch".into(),
-    };
-    let mut actor = QueueActor::new(
-        family,
-        key,
-        fixture.store(),
-        Some(2),
-        crate::utils::idempotency::default_dedup_store(),
-    );
-    let QueueResponse::Sent { id } =
-        actor.handle_send(bytes::Bytes::from_static(b"private work payload"), None)
-    else {
-        panic!("send real queue work")
-    };
-    for _ in 0..2 {
-        let QueueResponse::Received { messages } = actor.handle_receive_for_session(1, 0, Some(1))
-        else {
-            panic!("reserve real queue work")
-        };
-        assert_eq!(messages.len(), 1);
-        actor.process_expired_timers();
-    }
+    let id = fixture.seed_queue_dead_letter("operations", "jobs", "dispatch");
+    let actor = recovered_actor(&fixture);
     let snapshot = actor.admin_dead_letter(id).unwrap().unwrap();
     let timestamp = chrono::Utc
         .timestamp_millis_opt(snapshot.dead_lettered_at_epoch_ms.cast_signed())
@@ -213,9 +188,6 @@ fn should_recheck_real_dead_letter_state_before_dispatch_when_preview_projection
             message_id
         )
         .unwrap());
-    assert!(runtime
-        .queue_dead_letter(1, "operations", "jobs", "dispatch", message_id)
-        .is_some());
 
     // Act
     let result = actions.execute(ticket, &context, &policy, [9; 32], &runtime);
@@ -223,4 +195,41 @@ fn should_recheck_real_dead_letter_state_before_dispatch_when_preview_projection
     // Assert
     assert!(result.unwrap_err().contains("fresh preview"));
     assert_eq!(recovered_actor(&fixture).admin_dead_letters().len(), 0);
+}
+
+#[test]
+fn should_not_preview_purged_dead_letter_without_an_intervening_list_call() {
+    // Arrange
+    let directory = tempfile::tempdir().unwrap();
+    let actions = action_state(directory.path());
+    let (fixture, message_id) = fixture();
+    let runtime = fixture.runtime();
+    let context = context(
+        "queue-operator",
+        AdminRouteFamilyAccess::Explicit(vec!["1".into()]),
+    );
+    assert!(runtime
+        .queue_purge_dead_letter(
+            RouteFamily::new(1),
+            "operations",
+            "jobs",
+            "dispatch",
+            message_id
+        )
+        .unwrap());
+
+    // Act
+    let result = actions.preview_queue_dead_letter(
+        Some(arguments(message_id, "replay")),
+        &context,
+        &privileged_policy(),
+        [9; 32],
+        &runtime,
+    );
+
+    // Assert
+    assert!(result.is_err());
+    let audit = std::fs::read_to_string(directory.path().join("actions.jsonl")).unwrap();
+    let latest = serde_json::from_str::<serde_json::Value>(audit.lines().last().unwrap()).unwrap();
+    assert_eq!(latest["phase"], "dead_letter_not_found");
 }

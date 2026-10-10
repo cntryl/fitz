@@ -42,6 +42,20 @@ impl Runtime {
         }
     }
 
+    /// Refresh dirty domain projections, then copy one bounded family-selected
+    /// snapshot, so admin reads reflect mutations without a prior list call.
+    pub(crate) fn refreshed_admin_snapshot(
+        &self,
+        family: Option<u64>,
+        limit: usize,
+    ) -> crate::control::admin::read_model::AdminSnapshot {
+        let domains = self.domain_admins.read().clone();
+        if let Some(domains) = domains {
+            domains.refresh_admin_snapshots();
+        }
+        self.admin_read_model.bounded_snapshot(family, limit)
+    }
+
     pub(crate) fn stream_durable_metrics_snapshot(
         &self,
     ) -> Option<crate::domains::stream::metrics::StreamDurableMetricsSnapshot> {
@@ -413,6 +427,7 @@ impl Runtime {
         resource: &str,
         message_id: u64,
     ) -> Option<crate::control::admin::QueueDeadLetter> {
+        self.refresh_queue_admin_snapshot();
         self.admin_read_model
             .queue_dead_letter(family, realm, area, resource, message_id)
     }
