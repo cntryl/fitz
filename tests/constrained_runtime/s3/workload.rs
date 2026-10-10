@@ -67,21 +67,3 @@ pub(super) async fn drain(address: SocketAddr, mut accepted: HashMap<u64, u32>) 
         Vec::<Vec<u8>>::new()
     );
 }
-
-/// Seed acknowledged KV WAL before Queue churn so retirement remains non-vacuous.
-pub(super) async fn seed_wal(address: SocketAddr) {
-    use crate::fixtures::transport::{
-        build_kv_begin, build_kv_commit, build_kv_put, parse_kv_tx_id,
-    };
-    let mut client = connect(address).await;
-    let route = "kv://test/s3/wal-seed";
-    let started = request(&mut client, &build_kv_begin(route, 1, 1), 100).await;
-    let id = parse_kv_tx_id(&started).unwrap();
-    request(
-        &mut client,
-        &build_kv_put(id, route, b"seed", &body(u32::MAX)),
-        104,
-    )
-    .await;
-    request(&mut client, &build_kv_commit(id, route), 101).await;
-}

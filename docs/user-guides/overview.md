@@ -16,7 +16,7 @@ for recovery and scale-out details.
 - Notice: live fanout to connected subscribers.
 - Stream: durable append and replay of committed history.
 - KV: current authoritative state.
-- Queue: durable work delivery with reservation, retry, redelivery, and optional dead-letter handling.
+- Queue: work delivery with best-effort persistence, reservation, retry, redelivery, and optional dead-letter handling.
 - RPC: live request and response dispatch to registered workers.
 - Lease: single-broker ownership coordination.
 - Schedule: durable timing intent.

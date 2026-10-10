@@ -224,7 +224,7 @@ wildcards and never cross `RouteFamily` boundaries.
 Neither mode makes downstream delivery durable, retryable, or exactly-once.
 An occurrence is acknowledged and advances when no subscriber accepts it.
 This is intentional: subscriber availability must not turn Schedule into a
-second durable work queue. Use Queue when work must remain available until a
-consumer reserves and acknowledges it.
+second work queue. Use Queue for reservation, redelivery, and acknowledgement;
+its persistence is best effort, so applications must regenerate work lost in a crash.
 
 The architecture stays clean only if these meanings stay stable.

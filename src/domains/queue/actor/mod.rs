@@ -1,4 +1,4 @@
-//! `QueueActor`: manages a single message queue with configurable durability
+//! `QueueActor`: manages a single message queue with best-effort persistence
 //!
 //! Each queue has:
 //! - Identity: (realm, area, resource) from route
@@ -7,20 +7,20 @@
 //!
 //! # Invariants
 //!
-//! 1. **Crash-safe ID reservation**: persisted ID reservations prevent collisions across restarts
-//! 2. **At-least-once delivery**: Messages may be delivered multiple times
+//! 1. **Persisted ID reservation**: recovery resumes from reservations that reached storage
+//! 2. **Redelivery**: Persisted messages may be delivered multiple times
 //! 3. **Inflight isolation**: Reserved messages invisible to other consumers
 //! 4. **Automatic redelivery**: Expired inflight entries or crashes return messages to ready queue
-//! 5. **Policy-scoped recovery**: State that reached durable storage is restored on restart
+//! 5. **Persisted-state recovery**: State that reached storage is restored on restart
 //! 6. **Correct time semantics**: Delays use absolute `SystemTime` epochs (V-002 Fix)
 //! 7. **Fair distribution**: Competing consumers get best-effort ready-queue order
 //!
 //! # Intent vs Events
 //!
 //! Queues represent **intent** (work to be done), not events of record.
-//! Minimal data loss is acceptable under the fast queue write policy (producers can regenerate work items).
+//! Persistence is always best effort; producers must be able to regenerate lost work.
 //! Messages commit together with any required ID-reservation extension.
-//! Crashes may create ID gaps, but never ID reuse or collisions.
+//! Crashes may lose reservations and permit ID reuse; IDs are not durable deduplication keys.
 //!
 //! # State Model
 //!

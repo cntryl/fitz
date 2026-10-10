@@ -24,7 +24,7 @@ restart semantics.
 | Notice | live fanout to connected subscribers | ephemeral |
 | Stream | durable append and replay of committed history | durable according to write mode |
 | KV | current authoritative state | durable on commit according to write mode |
-| Queue | durable work delivery with reservation and redelivery | durable according to queue write policy |
+| Queue | work delivery with reservation and redelivery | best-effort persistence; crash loss is possible |
 | RPC | live request and response dispatch to registered workers | ephemeral |
 | Lease | single-broker ownership coordination | ephemeral |
 | Schedule | durable future timing intent | durable definitions and pending fire claims |

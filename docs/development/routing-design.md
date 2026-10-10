@@ -245,7 +245,7 @@ complete.
 | Domain | Concrete identity | Wildcard read | Live pattern operation | Historical replay |
 | --- | --- | --- | --- | --- |
 | KV | `kv://{realm}/{area}/{resource}` | No | `SUBSCRIBE` / `UNSUBSCRIBE`, generic depth 3 | No; current state only |
-| Queue | `queue://{realm}/{area}/{resource}` | `RESERVE`, generic depth 3 | `WATCH` / `UNWATCH`, generic depth 3 | Durable work, not history |
+| Queue | `queue://{realm}/{area}/{resource}` | `RESERVE`, generic depth 3 | `WATCH` / `UNWATCH`, generic depth 3 | Work with best-effort persistence |
 | Notice | Flexible non-empty route | N/A | `SUBSCRIBE`, flexible depth | No; live fanout |
 | Stream | `stream://{realm}/{area}/{resource}` | `READ`, typed matrix | `SUBSCRIBE` / `UNSUBSCRIBE`, same matrix | Yes |
 | RPC | Flexible non-empty route | No | Worker `REGISTER` / `UNREGISTER`, flexible depth | No; live request/response |
