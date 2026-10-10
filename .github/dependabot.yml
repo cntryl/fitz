@@ -19,7 +19,7 @@ updates:
     open-pull-requests-limit: 10
     ignore:
       # Rust moves with the CI toolchain pin in .github/workflows/ci.yml;
-      # keep its digest current but advance its version deliberately.
+      # advance its version deliberately with the matching CI change.
       - dependency-name: "rust"
         update-types:
           - "version-update:semver-major"

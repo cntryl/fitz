@@ -1,4 +1,4 @@
-FROM node:26.11.1-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS frontend
+FROM node:26.11.1-trixie-slim AS frontend
 
 WORKDIR /ui
 
@@ -16,7 +16,7 @@ COPY ui/ ./
 RUN npm run build
 
 # Keep the Rust tag on the toolchain pinned in .github/workflows/ci.yml.
-FROM rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581 AS chef
+FROM rust:1.99.0-slim-trixie AS chef
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -51,12 +51,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
   && cargo build --release --locked --bin fitz \
   && (strip target/release/fitz || true)
 
-FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS runtime-fs
+FROM debian:trixie-slim AS runtime-fs
 
 RUN mkdir -p /data \
   && chown 65532:65532 /data
 
-FROM gcr.io/distroless/cc-debian13:latest@sha256:159783207c2cd44c2aa5715961d13c8612368ac9bd450f887e3f08fc8ea461e3 AS runtime
+FROM gcr.io/distroless/cc-debian13:latest AS runtime
 
 WORKDIR /app
 
