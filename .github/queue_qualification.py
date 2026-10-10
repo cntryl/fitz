@@ -11,6 +11,48 @@ import subprocess
 WINDOW_SECONDS = 120
 
 
+BACKLOGS = (10000, 25000, 100000)
+# Same-host before/after limits from docs/development/perf-loop.md: throughput
+# keeps at least 90% and latency/duration stays at most 110% of the baseline.
+# (metric, higher_is_better, ratio, absolute slack)
+COMPARISON = (("accepted_per_second", True, 0.90, 0.0), ("drain_seconds", False, 1.10, 1.0),
+              ("ack_p99_ns", False, 1.10, 0), ("cycle_p99_ns", False, 1.10, 0))
+
+
+def p99_upper_ns(distribution):
+    """Mirror Latencies::percentile_upper_ns: the p99 power-of-two bucket upper bound."""
+    target = -(-distribution["count"] * 99 // 100)
+    if target == 0:
+        return 0
+    seen = 0
+    for index, count in enumerate(distribution["bins"]):
+        seen += count
+        if seen >= target:
+            return min(1 << index, 2**64 - 1)
+    return distribution["max_ns"]
+
+
+def metrics(stage):
+    timing = stage["consumer_timing"]
+    return {"accepted_per_second": stage["accounting"]["accepted"] * 1e9 / stage["active_elapsed_ns"],
+            "drain_seconds": stage["drain_elapsed_ns"] / 1e9,
+            "ack_p99_ns": p99_upper_ns(timing["ack"]["distribution"]),
+            "cycle_p99_ns": p99_upper_ns(timing["cycle"]["distribution"])}
+
+
+def compare(before, after):
+    rows = []
+    for metric, higher_is_better, ratio, slack in COMPARISON:
+        if higher_is_better:
+            limit = before[metric] * ratio
+            passed = after[metric] >= limit
+        else:
+            limit = max(before[metric] * ratio, before[metric] + slack)
+            passed = after[metric] <= limit
+        rows.append(dict(metric=metric, before=before[metric], after=after[metric], limit=limit, passed=passed))
+    return rows
+
+
 def offered_rate(backlog):
     """Offer 80% of the backlog guard over the window, so even a stalled consumer cannot trip it."""
     return backlog * 4 // (5 * WINDOW_SECONDS)
@@ -149,6 +191,7 @@ class Campaign:
                             harness_miss_fraction=stage["harness_missed"] / stage["offered"] if stage["offered"] else None)
             if not build:
                 validate(report, self.heads[phase], backlog, finite=finite)
+                metadata["metrics"] = metrics(stage)
             metadata["status"] = "diagnostic_build" if build else "drain_passed"
         except (AssertionError, KeyError, TypeError, ValueError) as error:
             metadata.update(status="failed", error=str(error))
@@ -160,7 +203,7 @@ class Campaign:
     def measure(self):
         results = []
         for finite in (False, True):
-            for index, backlog in enumerate((10000, 25000, 100000)):
+            for index, backlog in enumerate(BACKLOGS):
                 for phase in (("before", "after") if index % 2 == 0 else ("after", "before")):
                     label = f"{'finite-' if finite else ''}pressure-{backlog}-{phase}"
                     print(label, flush=True)
@@ -168,15 +211,32 @@ class Campaign:
                     results.append({"label": label, "head": self.heads[phase], "status": metadata["status"],
                                     "termination": metadata.get("termination"),
                                     "window_completed": metadata.get("configured_window_completed"),
-                                    "harness_miss_fraction": metadata.get("harness_miss_fraction")})
+                                    "harness_miss_fraction": metadata.get("harness_miss_fraction"),
+                                    "metrics": metadata.get("metrics")})
                     save(self.output / "acceptance.json", results)
+        captured = {result["label"]: result["metrics"] for result in results}
+        comparisons = {}
+        for scope in ("", "finite-"):
+            for backlog in BACKLOGS:
+                pair = f"{scope}pressure-{backlog}"
+                before, after = (captured.get(f"{pair}-{phase}") for phase in ("before", "after"))
+                comparisons[pair] = compare(before, after) if before and after else []
+        save(self.output / "comparison.json", comparisons)
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as file:
             file.write("Matched corrected-pacing drains. All six full-window captures and all six unchanged finite-envelope captures must pass. Each full-window capture must complete 120 seconds with at most 1% missed arrivals.\n\n")
             file.write("| Capture | Qualification | Termination | Full active window | Missed arrivals |\n|---|---|---|---|---|\n")
             for result in results:
                 file.write(f"| {result['label']} | {result['status']} | {result['termination']} | {result['window_completed']} | {result['harness_miss_fraction']} |\n")
             file.write("\nGuard and broker-rejection stops fail full-window qualification. A finite-envelope guard drain qualifies only its verified accepted-message count under the original 16,000/s load and 600-second drain deadline. Resource-floor survival and published-dependency qualification remain separate.\n")
+            file.write("\nMatched before/after comparison: throughput must keep at least 90% and drain time and p99s stay at most 110% of before (drain time also allows 1 second). p99s are power-of-two bucket upper bounds.\n\n")
+            file.write("| Scope and envelope | Metric | Before | After | Limit | Result |\n|---|---|---|---|---|---|\n")
+            for pair, rows in comparisons.items():
+                if not rows:
+                    file.write(f"| {pair} | all | | | | not compared: a capture failed |\n")
+                for row in rows:
+                    file.write(f"| {pair} | {row['metric']} | {row['before']:,.2f} | {row['after']:,.2f} | {row['limit']:,.2f} | {'pass' if row['passed'] else 'regressed'} |\n")
         assert all(result["status"] == "drain_passed" for result in results), results
+        assert all(rows and all(row["passed"] for row in rows) for rows in comparisons.values()), comparisons
 
 
 if __name__ == "__main__":
