@@ -410,6 +410,73 @@ where
     assert_eq!(retained_delivery.body.as_slice(), b"retained");
 }
 
+fn uncoded_schedule_error_payload(message: &[u8]) -> Vec<u8> {
+    let mut payload = vec![1_u8];
+    payload.extend_from_slice(&u32::try_from(message.len()).expect("length").to_be_bytes());
+    payload.extend_from_slice(message);
+    payload
+}
+
+async fn subscribe_schedule_payload(client: &mut TcpScheduleConnector, route: &str) -> Vec<u8> {
+    let response = client
+        .send_and_receive(&build_schedule_subscribe(route), 2000)
+        .await
+        .expect("subscribe schedule route");
+    let (_msg_type, _status, payload) = parse_schedule_response(&response);
+    payload
+}
+
+#[tokio::test]
+async fn should_return_pre_373_wildcard_limit_bytes_on_129th_wildcard_subscribe() {
+    // Arrange
+    let server = TestServer::start().await.expect("start");
+    let mut client = TcpScheduleConnector::connect(&server)
+        .await
+        .expect("connect");
+    for index in 0..128 {
+        let payload =
+            subscribe_schedule_payload(&mut client, &format!("schedule://test/jobs/area{index}/*"))
+                .await;
+        assert_eq!(payload[0], 0, "wildcard subscribe {index} should succeed");
+    }
+
+    // Act
+    let payload = subscribe_schedule_payload(&mut client, "schedule://test/jobs/overflow/*").await;
+
+    // Assert
+    assert_eq!(
+        payload,
+        uncoded_schedule_error_payload(b"wildcard subscription limit exceeded (128 per session)")
+    );
+}
+
+#[tokio::test]
+async fn should_return_total_limit_bytes_on_1025th_exact_subscribe() {
+    // Arrange
+    let server = TestServer::start().await.expect("start");
+    let mut client = TcpScheduleConnector::connect(&server)
+        .await
+        .expect("connect");
+    for index in 0..1_024 {
+        let payload = subscribe_schedule_payload(
+            &mut client,
+            &format!("schedule://test/jobs/resource{index}/run"),
+        )
+        .await;
+        assert_eq!(payload[0], 0, "exact subscribe {index} should succeed");
+    }
+
+    // Act
+    let payload =
+        subscribe_schedule_payload(&mut client, "schedule://test/jobs/overflow/run").await;
+
+    // Assert
+    assert_eq!(
+        payload,
+        uncoded_schedule_error_payload(b"total subscription limit exceeded (1024 per session)")
+    );
+}
+
 #[tokio::test]
 async fn should_recover_schedule_definitions_before_accepting_schedule_traffic() {
     let tempdir = tempfile::TempDir::new().expect("tempdir");
