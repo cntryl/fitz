@@ -255,7 +255,7 @@ async def test_kv_transaction_lifecycle():
         await tx.put("user:123", b"alice")
         
         # Commit
-        await tx.commit(Durability.Sync)
+        await tx.commit(CommitPersistence.Sync)
         
         # Verify persistence
         tx2 = await client.kv.begin("kv://test/app/users")
@@ -311,7 +311,7 @@ batch := client.KV.NewBatch()
 batch.Put("key1", value1)
 batch.Put("key2", value2)
 batch.Put("key3", value3)
-results, err := batch.Commit(ctx, fitz.KVDurabilitySync)
+results, err := batch.Commit(ctx, fitz.CommitPersistenceSync)
 ```
 
 ### 3. Zero-Copy Decoding
@@ -418,7 +418,7 @@ client.KV.Commit(ctx, txID)
 // Transaction object encapsulates state
 tx, _ := client.KV.Begin(ctx, "kv://prod/users")
 tx.Put(ctx, "key", value)  // tx_id is internal
-tx.Commit(ctx, fitz.KVDurabilitySync)
+tx.Commit(ctx, fitz.CommitPersistenceSync)
 ```
 
 ### ❌ Pitfall 4: Not Validating Frame Size

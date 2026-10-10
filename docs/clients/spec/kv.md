@@ -367,12 +367,12 @@ tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
 # Transaction methods focus on data, hide route repetition
 tx.put(b"user:123", b"alice")
 value = tx.get(b"user:123")
-tx.commit(Durability.Sync)
+tx.commit(CommitPersistence.Sync)
 
 # Context manager pattern (Python)
 with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
     tx.put(b"key", b"value")
-    tx.commit(Durability.Sync)  # Unfinished work rolls back on __exit__
+    tx.commit(CommitPersistence.Sync)  # Unfinished work rolls back on __exit__
 ```
 
 **Wire Protocol (what actually happens under the hood):**
