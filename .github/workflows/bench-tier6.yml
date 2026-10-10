@@ -28,6 +28,7 @@ jobs:
           - should_soak_notice
           - should_soak_lease
     env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
       CARGO_INCREMENTAL: "0"
       RUST_LOG: "off"
       FITZ_LOG_LEVEL: "off"
@@ -42,8 +43,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Update Rust to stable
-        run: rustup update stable
+      - name: Install verified Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "stress-benches"
 
       - name: Run Tier 6 workload
         shell: bash
