@@ -151,4 +151,22 @@ fn append_counter_metrics(output: &mut String, runtime: &Runtime) {
         runtime.queue_fast_flush_failures_total()
     );
     output.push('\n');
+
+    output.push_str("# HELP fitz_queue_l0_admission_retries_total Total Queue ENQUEUE/ACK commits restaged after Midge rejected them for a missing L0 slot\n");
+    output.push_str("# TYPE fitz_queue_l0_admission_retries_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_queue_l0_admission_retries_total {}",
+        runtime.queue_l0_admission_retries_total()
+    );
+    output.push('\n');
+
+    output.push_str("# HELP fitz_queue_admission_budget_exhausted_total Total Queue ENQUEUE/ACK commits that failed after the 30-second storage admission budget ran out\n");
+    output.push_str("# TYPE fitz_queue_admission_budget_exhausted_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_queue_admission_budget_exhausted_total {}",
+        runtime.queue_admission_budget_exhausted_total()
+    );
+    output.push('\n');
 }

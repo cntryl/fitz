@@ -206,6 +206,8 @@ fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
     assert_metric_exported(&metrics, "fitz_stream_response_drops_total");
     assert_metric_exported(&metrics, "fitz_queue_notify_drops_total");
     assert_metric_exported(&metrics, "fitz_queue_fast_flush_failures_total");
+    assert_metric_exported(&metrics, "fitz_queue_l0_admission_retries_total");
+    assert_metric_exported(&metrics, "fitz_queue_admission_budget_exhausted_total");
     assert_metric_exported(&metrics, "fitz_kv_inventory_estimate_update_failures_total");
     assert_metric_exported(&metrics, "fitz_lease_response_drops_total");
     assert_metric_exported(&metrics, "fitz_lease_notify_drops_total");

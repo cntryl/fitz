@@ -122,11 +122,15 @@ work advances useful progress; rejection, retry, polling, and artifact writes do
 not. Drain has its own deadline and a useful-progress check. Unknown outcomes
 are never retried or reclassified as expected capacity pressure.
 
-Queue ENQUEUE and ACK storage retry only Midge 0.3.1's typed, family-specific
-`WriteStall` rejection for a missing L0 slot. That rejection occurs before WAL
-submission. A fresh transaction restages the same actor-owned record/index and
+Queue ENQUEUE and ACK storage retry only Midge's family-specific `WriteStall`
+rejection for a missing L0 slot. That rejection occurs before WAL submission.
+Midge exposes no structured variant for it, so Fitz matches its message
+prefix; a unit test produces the real Midge rejection so a rewording fails CI. A fresh transaction restages the same actor-owned record/index and
 ID reservation plan, and the actor applies its in-memory plan only after commit succeeds.
-All attempts share the existing 30-second storage-admission wait budget. This
+All attempts share the existing 30-second storage-admission wait budget.
+Each restage increments `fitz_queue_l0_admission_retries_total`; a commit
+that fails on admission after the budget is spent increments
+`fitz_queue_admission_budget_exhausted_total`. This
 does not bound transaction staging or Midge's separate commit response wait.
 Unknown outcomes, conflicts, and other storage errors remain terminal; the
 client must not blindly repeat the operation.

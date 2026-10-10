@@ -64,6 +64,9 @@ impl QueueActor {
                     // The actor owns this queue's mutation plan. Midge rejected it
                     // before WAL submission, so restaging cannot duplicate the write.
                     // Admission is checked again within the original wait budget.
+                    crate::observability::counter_inc(
+                        crate::domains::queue::metrics::METRIC_L0_ADMISSION_RETRIES_TOTAL,
+                    );
                     txn = super::ack_timing::measure(
                         matches!(commit, QueueCommit::Ack),
                         super::ack_timing::Phase::Preparation,
@@ -74,7 +77,16 @@ impl QueueActor {
                         },
                     )?;
                 }
-                Err(error) => return Err(error.to_string()),
+                Err(error) => {
+                    if error.is_admission_pressure(self.queue_key.family.id())
+                        && Instant::now() >= deadline
+                    {
+                        crate::observability::counter_inc(
+                            crate::domains::queue::metrics::METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL,
+                        );
+                    }
+                    return Err(error.to_string());
+                }
             }
         }
     }
