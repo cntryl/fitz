@@ -46,16 +46,17 @@ Live session state is never recovered during startup. Notice subscriptions, Stre
 
 Midge transactions are atomic at the Fitz storage boundary. Durability policy
 controls whether a recent transaction can be lost after acknowledgement; it
-does not give Fitz permission to accept malformed multi-row state. Queue fast
-mode is the exception that needs explicit reconciliation because its WAL-free
+does not give Fitz permission to accept malformed multi-row state. Queue
+persistence is the exception that needs explicit reconciliation because its WAL-free
 flush can expose a policy-permitted remnant after restart.
 
 ## Failure Handling
 
 - On unrecoverable corruption, remain not ready and require operator intervention.
-- On recoverable fast-queue partial state, durably discard only the incomplete
-  message remnants, invalidate the affected derived indexes, log the discarded
-  message IDs, and continue startup.
+- On recoverable Queue partial state, discard only the incomplete message
+  remnants and invalidate affected derived indexes using best-effort writes.
+  Log discarded message IDs and continue startup. A crash can lose the repair,
+  so the next startup validates and repairs again.
 
 ## Related Docs
 
