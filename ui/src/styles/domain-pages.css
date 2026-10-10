@@ -128,9 +128,9 @@
   line-height: var(--ak-line-height-normal, 1.4);
 }
 
+/* Tables never scroll sideways: they fit by folding detail under each value. */
 .domain-table-wrap {
   max-width: 100%;
-  overflow-x: auto;
 }
 
 .lease-ownership-card [data-slot="card-title"] {
