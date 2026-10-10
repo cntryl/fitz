@@ -75,14 +75,6 @@ and do not establish a full window or arrival-rate qualification. A harness
 `offered_rate_not_met` termination always fails. All twelve captures must pass;
 the lower full-window rates never substitute for the original 100k drain.
 
-Matched before/after comparisons run separately for every envelope in both
-scopes. Each after capture must retain at least 90% of baseline accepted
-throughput; drain duration and ACK/cycle p99 must stay within 110% of baseline
-(drain duration also permits one second of jitter). P99 values are
-power-of-two histogram bucket upper bounds. Missing metrics or a regression
-fails qualification even when both individual captures passed. All six pairs
-and their four metrics appear in `comparison.json` and the step summary.
-
 ## Workload
 
 One local-disk broker and store remain alive for the whole campaign. Every stage
@@ -216,8 +208,9 @@ that change; do not label it a broker failure.
 
 ## Matched before/after comparison
 
-After all six captures, the workflow compares each matched 10k, 25k and 100k
-pair and fails when the after capture regresses beyond the same-host limits in
+After all twelve captures, the workflow compares each matched 10k, 25k and 100k
+pair separately within the full-window and finite-envelope scopes. All six
+pairs must pass. The workflow fails when an after capture regresses beyond the same-host limits in
 [the performance loop](perf-loop.md):
 
 | Metric | Report source | Limit for after |
@@ -232,7 +225,7 @@ The 1-second drain allowance stops near-empty drains, which finish within a few
 histogram bucket upper bounds, so any move to a higher bucket fails. Each pair
 is a single sample: a failure is a regression signal to reproduce, not a
 measured regression size. The comparison is written to the step summary and to
-`comparison.json`. A pair with a failed capture is not compared and fails.
+`comparison.json`. A pair with a failed capture or missing metrics is not compared and fails.
 
 ## Initial local evidence
 
