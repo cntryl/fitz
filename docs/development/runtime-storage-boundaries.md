@@ -50,19 +50,22 @@ the recovered queue; this is not a constant-memory recovery guarantee.
 
 `QueueActor` owns index-counter validation, fallback selection, live ready and
 delayed state reconstruction, and the recovered ID boundary. `QueuePersistence`
-groups the concrete engine, cached persistence keys, recovery store, and
-Fitz-owned write policy; conversion to Midge write options occurs only there.
+groups the concrete engine, cached persistence keys, and recovery store. All
+Queue writes, including index rebuilds and startup repair, use Midge
+`WriteOptions::best_effort()`; Queue has no configurable persistence policy.
 The recovery store receives
 a borrowed index-rebuild description and commits stale-index deletion, new
 entries, and metadata together. A failed replacement commit does not publish a
 partially replaced index. Recovery assumes the existing single-owner queue
 lifecycle; snapshot consistency does not authorize concurrent queue writers.
 
-Storage formats, acknowledgement guarantees, RouteFamily isolation, and
-ephemeral inflight ownership are unchanged.
+Queue acknowledgements are always best effort: a crash can lose accepted
+messages, ACKs, or ID reservations. Persisted messages may be redelivered, and
+IDs from lost reservations may be reused. Storage formats, RouteFamily
+isolation, and ephemeral inflight ownership are unchanged.
 
-In fast write mode, family actors submit dirty column families to one bounded
+Family actors submit dirty column families to one bounded
 Queue-domain flush worker. A family has at most one flush in flight; new writes
 stay dirty for a later pass, and a full worker queue leaves work pending for
 retry. The storage flush no longer occupies the Queue request actor, but slow or
-failed storage can still extend the documented loss window.
+failed storage can delay persistence without a fixed loss-window bound.

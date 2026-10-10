@@ -89,7 +89,7 @@ admitted. It is never converted into an expected admission-capacity rejection
 or a successful one-hour soak.
 
 Artifacts and framework parameters record the selected profile. Both profiles
-use the existing fast Queue write policy. Running against local disk adds storage
+use Queue's always-best-effort persistence. Running against local disk adds storage
 flush/compaction coverage; this suite still makes no restart-recovery, strict
 Queue durability or ownership-continuity claim. Ephemeral Notice, RPC and Lease
 semantics remain ephemeral when the broker has local storage.
