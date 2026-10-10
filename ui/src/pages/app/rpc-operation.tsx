@@ -1,7 +1,7 @@
 import { Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
 import { Badge, Block } from "@askrjs/themes/components";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -13,6 +13,7 @@ import {
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
+import TitledCell from "@/components/shared/titled-cell";
 import type { RpcCallObservation } from "@/adapters";
 import { createRpcOperationQuery } from "@/features/rpc/rpc-query";
 import { formatNumber, formatTimestamp } from "@/shared/format";
@@ -44,40 +45,50 @@ function formatObservationState(value: string) {
     .join(" ");
 }
 
+function formatObservedAt(row: RpcCallObservation) {
+  if (row.submitted_at) return `Submitted ${formatTimestamp(row.submitted_at)}`;
+  if (row.registered_at) return `Registered ${formatTimestamp(row.registered_at)}`;
+  return "Observed at --";
+}
+
+// Timing and worker fold under each value so the table never scrolls sideways.
+const callColumns: readonly DataTableColumn<RpcCallObservation>[] = [
+  {
+    id: "correlation",
+    header: "Correlation",
+    width: "64%",
+    cellComponent: ({ row }) => (
+      <TitledCell
+        title={row.correlation_id ?? undefined}
+        subtitle={`${formatObservedAt(row)} · worker ${row.worker_session_id ?? "--"}`}
+      >
+        {row.correlation_id ?? "--"}
+      </TitledCell>
+    ),
+  },
+  {
+    id: "state",
+    header: "State",
+    width: "36%",
+    cellComponent: ({ row }) => (
+      <TitledCell
+        subtitle={`age ${row.age_seconds === null ? "--" : `${formatNumber(row.age_seconds)}s`}`}
+      >
+        {formatObservationState(row.state)}
+      </TitledCell>
+    ),
+  },
+];
+
 function RpcCallEvidenceList(props: { rows: RpcCallObservation[] }) {
   return (
-    <div class="domain-table-wrap">
-      <Table>
-        <TableHead>
-          <TableRow>
-            <TableHeaderCell>Correlation</TableHeaderCell>
-            <TableHeaderCell>State</TableHeaderCell>
-            <TableHeaderCell>Age</TableHeaderCell>
-            <TableHeaderCell>Observed at</TableHeaderCell>
-            <TableHeaderCell>Worker</TableHeaderCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {props.rows.map((row) => (
-            <TableRow>
-              <TableCell>{row.correlation_id ?? "--"}</TableCell>
-              <TableCell>{formatObservationState(row.state)}</TableCell>
-              <TableCell>
-                {row.age_seconds === null ? "--" : `${formatNumber(row.age_seconds)}s`}
-              </TableCell>
-              <TableCell>
-                {row.submitted_at
-                  ? `Submitted ${formatTimestamp(row.submitted_at)}`
-                  : row.registered_at
-                    ? `Registered ${formatTimestamp(row.registered_at)}`
-                    : "--"}
-              </TableCell>
-              <TableCell>{row.worker_session_id ?? "--"}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
+    <DataTable<RpcCallObservation>
+      ariaLabel="Live call evidence"
+      class="domain-resource-data-table"
+      columns={callColumns}
+      getKey={(row, index) => `${index}-${row.correlation_id ?? row.state}`}
+      rows={props.rows}
+    />
   );
 }
 

@@ -1,9 +1,9 @@
 import { currentRoute } from "@askrjs/askr/router";
 import { state } from "@askrjs/askr";
-import { For, Show } from "@askrjs/askr/control";
+import { Show } from "@askrjs/askr/control";
 import { task } from "@askrjs/askr/resources";
 import { Badge, Block } from "@askrjs/themes/components";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -14,6 +14,7 @@ import {
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
+import TitledCell from "@/components/shared/titled-cell";
 import { formatDurationSeconds, formatNumber, formatTimestamp } from "@/shared/format";
 import { createLeaseResourceRowsQuery } from "@/features/lease/lease-query";
 import { deriveLeaseRemainingLifetime } from "@/features/lease/lease-mappers";
@@ -68,11 +69,57 @@ function formatState(state: LeaseOwnershipRowState) {
   }
 }
 
+function formatTokenDetail(row: LeaseOwnershipSearchRow) {
+  return `${row.state === "waiting" ? "Queued token" : "Fencing token"} ${row.queuedToken ?? "--"}`;
+}
+
+function formatStateDetail(row: LeaseOwnershipSearchRow) {
+  const age = `age ${row.ageSeconds === null ? "--" : formatDurationSeconds(row.ageSeconds)}`;
+
+  return row.state === "waiting" ? age : `${formatNumber(row.pendingWaiters)} waiters · ${age}`;
+}
+
 function LeaseOwnershipTable(props: {
   limit: number;
   rows: LeaseOwnershipSearchRow[];
   now: () => number;
 }) {
+  // Detail folds under each value so the table fits every width without scrolling.
+  const columns: readonly DataTableColumn<LeaseOwnershipSearchRow>[] = [
+    {
+      id: "session",
+      header: "Owner / waiting session",
+      width: "45%",
+      cellComponent: ({ row }) => (
+        <TitledCell title={formatOwner(row)} subtitle={formatTokenDetail(row)}>
+          {formatOwner(row)}
+        </TitledCell>
+      ),
+    },
+    {
+      id: "state",
+      header: "State",
+      width: "27%",
+      cellComponent: ({ row }) => (
+        <TitledCell subtitle={formatStateDetail(row)}>{formatState(row.state)}</TitledCell>
+      ),
+    },
+    {
+      id: "remaining-ttl",
+      header: "Remaining TTL",
+      width: "28%",
+      cellComponent: ({ row }) => (
+        <TitledCell
+          subtitle={row.expiresAt ? `Expires ${formatTimestamp(row.expiresAt)}` : "No expiry"}
+        >
+          <span class="lease-remaining-ttl" data-field="remaining-ttl">
+            {() => formatRemaining(row.expiresAt, props.now())}
+          </span>
+        </TitledCell>
+      ),
+    },
+  ];
+
   return (
     <DomainDataSection
       id="lease-ownership-rows"
@@ -83,50 +130,15 @@ function LeaseOwnershipTable(props: {
         ) : undefined
       }
     >
-      <div class="domain-table-wrap">
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableHeaderCell>Owner / waiting session</TableHeaderCell>
-              <TableHeaderCell>State</TableHeaderCell>
-              <TableHeaderCell>Fencing / queued token</TableHeaderCell>
-              <TableHeaderCell>Waiters</TableHeaderCell>
-              <TableHeaderCell>Age</TableHeaderCell>
-              <TableHeaderCell>Remaining TTL</TableHeaderCell>
-              <TableHeaderCell>Expiry</TableHeaderCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            <For
-              each={props.rows}
-              by={(row) =>
-                `${row.ownerSessionId}-${row.ownerId ?? "none"}-${row.queuedToken ?? "none"}-${row.area}-${row.realm}-${row.resource}-${row.state}`
-              }
-            >
-              {(row) => (
-                <TableRow>
-                  <TableCell>{formatOwner(row)}</TableCell>
-                  <TableCell>{formatState(row.state)}</TableCell>
-                  <TableCell>
-                    {row.state === "waiting" ? "Queued token" : "Fencing token"}{" "}
-                    {row.queuedToken ?? "--"}
-                  </TableCell>
-                  <TableCell>
-                    {row.state === "waiting" ? "--" : formatNumber(row.pendingWaiters)}
-                  </TableCell>
-                  <TableCell>
-                    {row.ageSeconds === null ? "--" : formatDurationSeconds(row.ageSeconds)}
-                  </TableCell>
-                  <TableCell class="lease-remaining-ttl" data-field="remaining-ttl">
-                    {() => formatRemaining(row.expiresAt, props.now())}
-                  </TableCell>
-                  <TableCell>{row.expiresAt ? formatTimestamp(row.expiresAt) : "--"}</TableCell>
-                </TableRow>
-              )}
-            </For>
-          </TableBody>
-        </Table>
-      </div>
+      <DataTable<LeaseOwnershipSearchRow>
+        ariaLabel="Owners and waiters"
+        class="domain-resource-data-table"
+        columns={columns}
+        getKey={(row) =>
+          `${row.ownerSessionId}-${row.ownerId ?? "none"}-${row.queuedToken ?? "none"}-${row.area}-${row.realm}-${row.resource}-${row.state}`
+        }
+        rows={props.rows}
+      />
     </DomainDataSection>
   );
 }
