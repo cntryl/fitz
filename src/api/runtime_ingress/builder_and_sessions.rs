@@ -46,6 +46,7 @@ impl RuntimeIngress {
             queue_dispatch_permits: Arc::new(tokio::sync::Semaphore::new(
                 super::domain_frame_dispatcher::BLOCKING_DOMAIN_DISPATCH_CONCURRENCY,
             )),
+            queue_family_dispatch: Arc::new(DashMap::new()),
         };
         Self {
             registry,

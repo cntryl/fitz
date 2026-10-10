@@ -16,8 +16,8 @@ const DOMAIN_DISPATCH_BACKPRESSURE_POLICY: DomainDispatchBackpressurePolicy =
         retry_delay: Duration::from_micros(50),
     };
 
-/// Bound blocking-task admission separately for Queue and Stream, whose sinks
-/// wait for synchronous actor replies. Tokio's blocking-pool limit can vary.
+/// Bound Stream blocking tasks and Queue waiters separately. Queue uses one
+/// blocking handoff per route family instead of one thread per queued caller.
 pub(super) const BLOCKING_DOMAIN_DISPATCH_CONCURRENCY: usize = 64;
 
 #[derive(Clone, Copy)]
@@ -84,6 +84,8 @@ pub(super) struct DomainFrameDispatcher {
     pub(super) auth_required: bool,
     pub(super) stream_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
     pub(super) queue_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(super) queue_family_dispatch:
+        std::sync::Arc<dashmap::DashMap<u32, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl RuntimeIngress {
@@ -565,68 +567,6 @@ impl DomainFrameDispatcher {
         (addr, source, descriptor)
     }
 
-    async fn route_client_domain(
-        &self,
-        router: &crate::runtime::Router,
-        domain: DispatchDomain,
-        envelope: crate::runtime::Envelope,
-    ) -> Result<(), crate::runtime::router::RouteError> {
-        let permits = match domain {
-            DispatchDomain::Stream => &self.stream_dispatch_permits,
-            DispatchDomain::Queue => &self.queue_dispatch_permits,
-            _ => return router.route_to_domain(domain.as_str(), envelope),
-        };
-
-        let destination = envelope.destination().clone();
-        let permit = match permits.clone().try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Err(crate::runtime::router::RouteError::DeliveryFailed(
-                    destination,
-                    crate::runtime::DeliveryError::MailboxFull {
-                        capacity: BLOCKING_DOMAIN_DISPATCH_CONCURRENCY,
-                        current_len: BLOCKING_DOMAIN_DISPATCH_CONCURRENCY,
-                    },
-                ));
-            }
-            Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(crate::runtime::router::RouteError::DeliveryFailed(
-                    destination,
-                    crate::runtime::DeliveryError::ActorStopped,
-                ));
-            }
-        };
-
-        let blocking_router = self
-            .router
-            .as_ref()
-            .expect("domain dispatch requires an attached router")
-            .clone();
-        match tokio::task::spawn_blocking(move || {
-            // Retain admission until the synchronous sink returns, even if
-            // the awaiting client task is cancelled after enqueue.
-            let _permit = permit;
-            blocking_router.route_to_domain(domain.as_str(), envelope)
-        })
-        .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                warn!(
-                    domain = domain.as_str(),
-                    error = %error,
-                    "Ingress: blocking dispatch task failed after handoff"
-                );
-                // Handoff may have enqueued the command; this must not become
-                // a retryable pre-enqueue rejection.
-                Err(crate::runtime::router::RouteError::DeliveryFailed(
-                    destination,
-                    crate::runtime::DeliveryError::ActorStopped,
-                ))
-            }
-        }
-    }
-
     async fn dispatch_domain_frame(
         &self,
         dispatch: DomainDispatchRequest<'_>,
@@ -674,7 +614,9 @@ impl DomainFrameDispatcher {
             );
 
             let dispatch_start = Instant::now();
-            let dispatch_result = self.route_client_domain(router, domain, envelope).await;
+            let dispatch_result = self
+                .route_client_domain(router, domain, envelope, backpressure_started_at)
+                .await;
             if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
                 collector.histogram_observe_us(
                     obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
