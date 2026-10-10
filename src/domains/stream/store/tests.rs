@@ -60,3 +60,5 @@ mod model_based;
 mod offsets_and_reads;
 mod overflow_and_recovery;
 mod ttl_cursor_regressions;
+
+mod storage_admission;
