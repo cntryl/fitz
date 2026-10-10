@@ -81,6 +81,7 @@ export default function KvResourcePage() {
       rowsHref(scope, {
         limit: nextLimit,
         startsWith: startsWithDraft(),
+        transactions: transactionsRequested,
       }),
     );
   }
@@ -278,7 +279,7 @@ export default function KvResourcePage() {
         <Show when={concreteFamily !== null && !rowsRequested}>
           <RowsRequestPrompt
             description="Committed rows load only when requested."
-            href={rowsHref(scope, { limit, startsWith })}
+            href={rowsHref(scope, { limit, startsWith, transactions: transactionsRequested })}
             label="Load rows"
           />
         </Show>
@@ -290,6 +291,7 @@ export default function KvResourcePage() {
             limit={limit}
             scope={scope}
             startsWith={startsWith}
+            transactions={transactionsRequested}
           />
         </Show>
 

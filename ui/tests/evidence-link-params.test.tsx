@@ -67,4 +67,23 @@ describe("evidence links keep the sections already on screen", () => {
     expect(query.get("limit")).toBe("25");
     expect(query.get("transactions")).toBe("1");
   });
+
+  it("keeps inspected KV transactions when paging rows", async () => {
+    // Arrange
+    const { default: KvResourcePage } = await import("@/pages/app/kv-resource");
+
+    // Act
+    const root = await mountRoute(
+      "/admin/1/kv/default/ops/primary?rows=1&transactions=1&cursor=cursor-2&cursorTrail=cursor-1",
+      "/admin/{family}/kv/{realm}/{area}/{resource}",
+      KvResourcePage,
+    );
+    const firstPage = linkQuery(root, "First page");
+    const previousPage = linkQuery(root, "Previous page");
+
+    // Assert
+    expect(firstPage.get("transactions")).toBe("1");
+    expect(previousPage.get("transactions")).toBe("1");
+    expect(previousPage.get("cursor")).toBe("cursor-1");
+  });
 });
