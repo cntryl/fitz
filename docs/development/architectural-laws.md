@@ -45,6 +45,11 @@ Examples:
 - Lease ownership is ephemeral.
 - Schedule intent is durable.
 
+KV BEGIN establishes scope and transaction mode only. KV and Stream COMMIT
+require an explicit Buffered or Sync choice. Local commits use Buffered/Sync;
+cloud commits use CloudAsync/CloudStrict. Background cloud configuration must
+never downgrade a client-selected Sync commit.
+
 Ambiguity here is a correctness bug.
 
 ## Law 3: Disconnect Kills Session State

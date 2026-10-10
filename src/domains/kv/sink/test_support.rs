@@ -121,15 +121,15 @@ impl KvDomain {
         .unwrap_or_default()
     }
 
-    /// Apply the configured BEGIN write policy through the mailbox actor.
-    pub(super) fn apply_write_options(
+    /// Resolve COMMIT persistence through the family mailbox.
+    pub(super) fn resolve_commit_persistence(
         &self,
-        message: crate::domains::kv::KvMessage,
-    ) -> crate::domains::kv::KvMessage {
-        let fallback = message.clone();
-        self.request_actor(self.route_families[0], "apply_write_options", |reply| {
-            KvDomainCommand::ApplyWriteOptions(message, reply)
-        })
-        .unwrap_or(fallback)
+        persistence: crate::domains::CommitPersistence,
+    ) -> Option<crate::domains::WritePolicy> {
+        self.request_actor(
+            self.route_families[0],
+            "resolve_commit_persistence",
+            |reply| KvDomainCommand::ResolveCommitPersistence(persistence, reply),
+        )
     }
 }

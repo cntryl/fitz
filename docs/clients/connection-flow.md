@@ -113,14 +113,13 @@ User-facing call:
 tx = client.kv_begin(
     route="kv://prod/app/users",
     mode=TxMode.ReadWrite,
-    durability=Durability.Sync,
 )
 ```
 
 Wire payload shape:
 
 ```text
-[MessageType=100][Length=N][route][mode][durability]
+[MessageType=100][Length=N][u32 route_len][route][u8 mode]
 ```
 
 Client-side processing:
@@ -135,7 +134,7 @@ Response handling:
 
 ```python
 tx.put(b"user:123", b"alice")
-tx.commit()
+tx.commit(CommitPersistence.Sync)
 ```
 
 The transaction object may store route and transaction identifiers internally so the

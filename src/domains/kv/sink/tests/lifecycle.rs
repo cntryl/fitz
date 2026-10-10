@@ -64,7 +64,7 @@ fn should_reject_queued_begin_after_cleanup_without_recreating_session_state() {
             session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     );
@@ -114,7 +114,7 @@ fn should_release_resource_lock_given_session_cleanup() {
             first_session_id,
             ChannelId::Sub,
             MessageType::new(100),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -143,7 +143,7 @@ fn should_release_resource_lock_given_session_cleanup() {
             second_session_id,
             ChannelId::Sub,
             MessageType::new(100),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -184,7 +184,7 @@ fn should_reject_conflicting_read_write_begin_given_active_transaction_in_other_
             first_session_id,
             ChannelId::Sub,
             MessageType::new(100),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -199,7 +199,7 @@ fn should_reject_conflicting_read_write_begin_given_active_transaction_in_other_
             second_session_id,
             ChannelId::Sub,
             MessageType::new(100),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -250,18 +250,18 @@ fn should_keep_write_lock_when_other_session_commits_read_only_transaction() {
         .expect("deliver KV frame");
         receive_frame(&mailboxes[index].2, "KV response envelope")
     };
-    let writer_begin = send(0, 100, encode_kv_begin(kv_route, 1, 0));
+    let writer_begin = send(0, 100, encode_kv_begin(kv_route, 1));
     assert_eq!(writer_begin.payload[0], 0, "writer holds the resource lock");
-    let reader_begin = send(1, 100, encode_kv_begin(kv_route, 0, 0));
+    let reader_begin = send(1, 100, encode_kv_begin(kv_route, 0));
     let reader_tx_id = decode_kv_begin_tx_id(&reader_begin.payload);
 
     // Act
     let reader_commit = send(
         1,
         crate::dispatch::protocol::kv::msg_type::COMMIT,
-        encode_kv_commit(reader_tx_id, kv_route),
+        encode_kv_commit(reader_tx_id, kv_route, 0),
     );
-    let second_writer_begin = send(2, 100, encode_kv_begin(kv_route, 1, 0));
+    let second_writer_begin = send(2, 100, encode_kv_begin(kv_route, 1));
 
     // Assert
     assert_eq!(reader_commit.payload[0], 0, "read-only commit succeeds");
@@ -294,7 +294,7 @@ fn should_rebuild_kv_admin_transactions_from_actor_state() {
             session_id,
             ChannelId::Sub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -335,7 +335,6 @@ fn should_route_kv_cleanup_through_family_actor() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     assert!(matches!(
         begin_response,
@@ -382,7 +381,7 @@ fn should_keep_passive_kv_transaction_count_after_family_actor_stops() {
             session_id,
             ChannelId::Sub,
             MessageType::new(100),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -417,7 +416,6 @@ fn should_route_kv_admin_snapshot_sync_through_family_actor() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     assert!(matches!(
         begin_response,
@@ -456,7 +454,7 @@ fn should_route_kv_latency_snapshot_query_through_family_actor() {
             session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -483,7 +481,7 @@ fn should_route_kv_latency_snapshot_query_through_family_actor() {
             session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, kv_route),
+            encode_kv_commit(tx_id, kv_route, 0),
             family,
         ),
     ))
@@ -504,34 +502,20 @@ fn should_route_kv_latency_snapshot_query_through_family_actor() {
 }
 
 #[test]
-fn should_route_kv_sync_write_options_mapping_through_family_actor() {
+fn should_resolve_commit_persistence_only_through_a_running_family_actor() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
-    let router = Arc::new(Router::new());
-    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomain::new(store, router, admin_read_model)
-        .with_sync_write_policy(crate::domains::WritePolicy::CloudStrict);
-    let message = crate::domains::kv::KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "acme".to_string(),
-            "app".to_string(),
-            "users".to_string(),
-        ),
-        mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Sync,
-    };
+    let sink = KvDomain::new(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    sink.stop_actor_for_tests();
 
     // Act
-    sink.stop_actor_for_tests();
-    let mapped = sink.apply_write_options(message);
+    let resolved = sink.resolve_commit_persistence(crate::domains::CommitPersistence::Sync);
 
     // Assert
     assert!(!sink.is_actor_running());
-    match mapped {
-        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert_ne!(write_options, crate::domains::WritePolicy::CloudStrict);
-        }
-        _ => panic!("expected KV begin message"),
-    }
+    assert!(resolved.is_none());
 }

@@ -657,7 +657,7 @@ fn should_surface_router_backpressure_in_ingress_decision() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         ingress.on_open(session).await.unwrap();
-        let frame = crate::benchkit::transport::build_kv_begin("kv://test/app/users", 1, 0);
+        let frame = crate::benchkit::transport::build_kv_begin("kv://test/app/users", 1);
         let payload = Bytes::from(frame[3..].to_vec());
 
         let decision = ingress

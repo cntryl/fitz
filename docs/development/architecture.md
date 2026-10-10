@@ -872,7 +872,7 @@ mod tests {
 **File:** `tests/*.rs`
 ```rust
 #[tokio::test]
-async fn test_kv_begin_get_commit() {
+async fn should_commit_kv_transaction_with_explicit_persistence() {
     // Arrange
     let broker = start_broker(Default::default()).await;
     let client = connect_client(&broker).await;
@@ -880,7 +880,7 @@ async fn test_kv_begin_get_commit() {
     client.send_connect_frame().await;
     let tx_id = client.send_begin_frame("resource", TxMode::ReadWrite).await;
     client.send_put_frame(tx_id, "key", "value").await;
-    client.send_commit_frame(tx_id).await;
+    client.send_commit_frame(tx_id, CommitPersistence::Sync).await;
     // Assert
     // Verify transaction committed and value persisted
 }

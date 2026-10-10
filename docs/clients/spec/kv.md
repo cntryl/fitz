@@ -6,6 +6,11 @@ Split from the former `queue-rpc-kv.md`; the Queue and RPC domains are in [queue
 
 **Purpose:** Transaction-based CRUD and range operations with isolation.
 **IMPORTANT:** All KV operations occur within transactions (Begin/Commit/Rollback).
+BEGIN selects scope and transaction mode only. Every COMMIT explicitly selects
+Buffered or Sync. Missing choices, values other than 0/1, and trailing bytes are
+rejected. Local Buffered/Sync map to buffered WAL/synced WAL; cloud Buffered/Sync
+map to CloudAsync/CloudStrict even when background cloud durability is configured.
+A success response follows completion of the selected storage commit boundary.
 
 #### Message Types
 
@@ -30,7 +35,6 @@ Split from the former `queue-rpc-kv.md`; the Queue and RPC domains are in [queue
 [u32 BE]  route_len
 [bytes]   route (UTF-8, e.g., "kv://realm/area/resource")
 [u8]      mode (0=ReadOnly, 1=ReadWrite)
-[u8]      durability (0=Buffered, 1=Sync; other values invalid)
 Response (success):
   [u8]     0 (status: success)
   [u64 BE] tx_id
@@ -42,7 +46,7 @@ Response (error):
 
 The broker authorizes BEGIN by its mode, so it decodes the whole payload before
 dispatch. A BEGIN that cannot be decoded (truncated fields, an invalid route,
-mode, or durability, or bytes after `durability`) closes the connection with an
+mode, or bytes after `mode`) closes the connection with an
 `authorization parse failed` reason instead of receiving an error response.
 Clients MUST NOT retry the same malformed frame.
 
@@ -172,6 +176,7 @@ Response (error):
 [u64 BE]  tx_id
 [u32 BE]  route_len
 [bytes]   route
+[u8]      persistence (0=Buffered, 1=Sync; required; other values invalid)
 Response (success):
   [u8]     0 (status: success)
 Response (error):
@@ -275,22 +280,24 @@ Response (error):
 - If ReadWrite transaction begins while another active: ERR_ISOLATION_CONFLICT
 - If ReadOnly transaction begins during ReadWrite: blocks until commit/rollback
 
-##### Durability Modes
+##### Commit Persistence
 
-Only `0` and `1` are valid durability values. Other values are rejected.
+Every COMMIT must explicitly include `persistence=0` (Buffered) or
+`persistence=1` (Sync). Missing, unknown, or trailing values are rejected.
+BEGIN has no persistence selector.
 
-**Sync (durability=1):**
+**Sync (`persistence=1`):**
 
-- Commits are flushed to durable storage (WAL fsync) before returning
-- Survives broker crash/restart
-- Higher latency, stronger crash durability at the configured storage layer
+- Local storage waits for the WAL fsync before returning.
+- Cloud storage waits for the CloudStrict acknowledgement before returning,
+  including when background cloud durability is configured.
+- The configured storage layer determines the resulting recovery guarantees.
 
-**Buffered (durability=0):**
+**Buffered (`persistence=0`):**
 
-- Commits written to memory buffer, background flush to storage
-- Lower latency, best-effort durability
-- May lose recent commits on broker crash (up to flush interval)
-- Use for caching or when throughput > durability
+- Local storage uses a buffered WAL commit; cloud storage uses CloudAsync.
+- Background persistence can reduce latency, but recent commits may be lost
+  on a crash. A configured flush interval does not bound that loss window.
 
 ##### SCAN Semantics
 
@@ -355,17 +362,17 @@ client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
 
 # Begin transaction - returns Transaction object
 # Route is full URI: kv://realm/area/resource
-tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync)
+tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
 
 # Transaction methods focus on data, hide route repetition
 tx.put(b"user:123", b"alice")
 value = tx.get(b"user:123")
-tx.commit()
+tx.commit(CommitPersistence.Sync)
 
 # Context manager pattern (Python)
-with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync) as tx:
+with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
     tx.put(b"key", b"value")
-    tx.commit()  # Or auto-commit on __exit__
+    tx.commit(CommitPersistence.Sync)  # Unfinished work rolls back on __exit__
 ```
 
 **Wire Protocol (what actually happens under the hood):**

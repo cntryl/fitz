@@ -112,7 +112,6 @@ fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, key: Bytes, value: 
     let begin = actor.actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("KV begin failed: {begin:?}")
@@ -127,7 +126,11 @@ fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, key: Bytes, value: 
         KvResponse::PutOk
     ));
     let response = if commit {
-        actor.actor.handle(KvMessage::Commit { tx_id, scope })
+        actor.actor.handle(KvMessage::Commit {
+            tx_id,
+            scope,
+            persistence: fitz::domains::CommitPersistence::Sync,
+        })
     } else {
         actor.actor.handle(KvMessage::Rollback { tx_id, scope })
     };
@@ -173,9 +176,9 @@ impl EncodedState {
     pub(crate) fn new(storage: StorageProfile) -> Self {
         Self {
             actor: direct_actor(storage),
-            begin: build_kv_begin(ROUTE, 1, 1),
+            begin: build_kv_begin(ROUTE, 1),
             put: build_kv_put(0, ROUTE, b"key", &vec![0xA5; PAYLOAD_SIZE]),
-            commit: build_kv_commit(0, ROUTE),
+            commit: build_kv_commit(0, ROUTE, 1),
             rollback: fitz::benchkit::build_kv_rollback(0, ROUTE),
             sequence: 0,
         }
@@ -274,9 +277,9 @@ struct WireState {
 impl WireState {
     fn new(route: &str) -> Self {
         Self {
-            begin: build_kv_begin(route, 1, 1),
+            begin: build_kv_begin(route, 1),
             put: build_kv_put(0, route, b"key", &vec![0xA5; PAYLOAD_SIZE]),
-            commit: build_kv_commit(0, route),
+            commit: build_kv_commit(0, route, 1),
             sequence: 0,
         }
     }

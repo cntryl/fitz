@@ -12,7 +12,6 @@ pub(super) fn should_reject_insert_when_key_exists() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -55,7 +54,6 @@ pub(super) fn should_validate_delete_range_parameters() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -92,7 +90,6 @@ pub(super) fn should_reject_route_family_zero() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
 
     // Assert
@@ -116,7 +113,6 @@ pub(super) fn should_delete_existing_key() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -167,7 +163,6 @@ pub(super) fn should_scan_key_range() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -217,7 +212,6 @@ pub(super) fn should_reject_delete_range_with_invalid_bounds() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -252,7 +246,6 @@ pub(super) fn should_scan_with_limit() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -303,7 +296,6 @@ pub(super) fn should_scan_reverse() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");

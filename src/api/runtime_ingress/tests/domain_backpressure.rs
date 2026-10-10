@@ -85,7 +85,7 @@ fn domain_ingress_cases() -> Vec<DomainIngressCase> {
         (
             "kv",
             ChannelId::Pub,
-            crate::benchkit::build_kv_begin("kv://test/app/users", 1, 0),
+            crate::benchkit::build_kv_begin("kv://test/app/users", 1),
         ),
         (
             "queue",

@@ -35,7 +35,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/users";
     let begin = client
-        .request(&build_kv_begin(route, 1, 0), 2000)
+        .request(&build_kv_begin(route, 1), 2000)
         .await
         .expect("BEGIN response");
     let tx_id = expect_kv_begin_ok(&begin, "scope integrity");
@@ -53,7 +53,7 @@ where
         assert_eq!(status, 1, "mismatched PUT must be rejected");
     }
     for terminal in [
-        build_kv_commit(tx_id, "kv://other/app/users"),
+        build_kv_commit(tx_id, "kv://other/app/users", 0),
         build_kv_rollback(tx_id, "kv://test/other/users"),
     ] {
         let response = client
@@ -68,7 +68,7 @@ where
         .await
         .expect("matching PUT response");
     let commit = client
-        .request(&build_kv_commit(tx_id, route), 2000)
+        .request(&build_kv_commit(tx_id, route, 0), 2000)
         .await
         .expect("matching COMMIT response");
 
@@ -85,7 +85,7 @@ where
 
     // Arrange
     // Act
-    let begin_frame = build_kv_begin("kv://test/app/users", 1, 0);
+    let begin_frame = build_kv_begin("kv://test/app/users", 1);
     let result = client.request(&begin_frame, 1000).await;
 
     // Assert
@@ -117,7 +117,7 @@ where
         .expect("auth readiness");
 
     // Act
-    let begin_frame = build_kv_begin("kv://test-realm/app/users", 1, 0);
+    let begin_frame = build_kv_begin("kv://test-realm/app/users", 1);
     let response = client
         .request(&begin_frame, 2000)
         .await
@@ -186,7 +186,7 @@ where
         .await
         .expect("auth readiness");
 
-    let begin_frame = build_kv_begin("kv://corp/app/users", 1, 0);
+    let begin_frame = build_kv_begin("kv://corp/app/users", 1);
     let result = client.request(&begin_frame, 1000).await;
 
     if let Ok(response) = result {
@@ -217,8 +217,8 @@ pub(crate) async fn should_create_separate_sessions_for_each_connection_with_aut
         .await
         .expect("auth readiness");
 
-    let begin_frame1 = build_kv_begin("kv://test-realm/app/users", 1, 0);
-    let begin_frame2 = build_kv_begin("kv://test-realm/app/posts", 1, 0);
+    let begin_frame1 = build_kv_begin("kv://test-realm/app/users", 1);
+    let begin_frame2 = build_kv_begin("kv://test-realm/app/posts", 1);
     let response1 = client1.request(&begin_frame1, 2000).await.expect("BEGIN 1");
     let response2 = client2.request(&begin_frame2, 2000).await.expect("BEGIN 2");
 
@@ -265,7 +265,7 @@ where
 {
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    let commit_frame = build_kv_commit(1, "kv://test/app/users");
+    let commit_frame = build_kv_commit(1, "kv://test/app/users", 0);
     let result = client.request(&commit_frame, 2000).await;
 
     if let Ok(response) = result {
@@ -286,7 +286,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/users";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     let response = client
         .request(&begin_frame, 2000)
         .await
@@ -299,7 +299,7 @@ where
     let (_msg_type, status, _data) = parse_kv_response(&response);
     assert_eq!(status, 0);
 
-    let commit_frame = build_kv_commit(1, route);
+    let commit_frame = build_kv_commit(1, route, 0);
     let response = client
         .request(&commit_frame, 2000)
         .await
@@ -314,7 +314,7 @@ where
 {
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    let begin_frame = build_kv_begin("kv://test/app/bench", 1, 0);
+    let begin_frame = build_kv_begin("kv://test/app/bench", 1);
     let response = client
         .request(&begin_frame, 500)
         .await
@@ -333,7 +333,7 @@ pub(crate) async fn should_handle_concurrent_connections_with_separate_transacti
         let mut client = C::connect(server).await.expect("connect failed");
         let route = format!("kv://test/app/resource{idx}");
 
-        let begin_frame = build_kv_begin(&route, 1, 0);
+        let begin_frame = build_kv_begin(&route, 1);
         let response = client
             .request(&begin_frame, 2000)
             .await
@@ -353,15 +353,15 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/items";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     let response = client.request(&begin_frame, 2000).await.expect("BEGIN 1");
     let (_msg_type, status, _data) = parse_kv_response(&response);
     assert_eq!(status, 0);
 
-    let commit_frame = build_kv_commit(1, route);
+    let commit_frame = build_kv_commit(1, route, 0);
     client.request(&commit_frame, 2000).await.expect("COMMIT");
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     let response = client.request(&begin_frame, 2000).await.expect("BEGIN 2");
     let (_msg_type, status, _data) = parse_kv_response(&response);
     assert_eq!(status, 0);
@@ -374,13 +374,13 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/users";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     let put_frame = build_kv_put(1, route, b"k1", b"v1");
     client.request(&put_frame, 2000).await.expect("PUT");
 
-    let commit_frame = build_kv_commit(1, route);
+    let commit_frame = build_kv_commit(1, route, 0);
     client.request(&commit_frame, 2000).await.expect("COMMIT");
 
     let put_frame2 = build_kv_put(1, route, b"k2", b"v2");
@@ -400,7 +400,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/roll";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     let put_frame = build_kv_put(1, route, b"key", b"value");
@@ -423,7 +423,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/empty";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     let put_frame = build_kv_put(1, route, b"", b"");
@@ -443,7 +443,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/large";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     let large_val = vec![b'X'; 60_000];
@@ -463,12 +463,12 @@ where
 {
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    let begin1 = build_kv_begin("kv://test/app/resource1", 1, 0);
+    let begin1 = build_kv_begin("kv://test/app/resource1", 1);
     let response1 = client.request(&begin1, 2000).await.expect("BEGIN 1");
     let (_msg_type, status1, _data) = parse_kv_response(&response1);
     assert_eq!(status1, 0);
 
-    let begin2 = build_kv_begin("kv://test/app/resource2", 1, 0);
+    let begin2 = build_kv_begin("kv://test/app/resource2", 1);
     let response2 = client.request(&begin2, 2000).await.expect("BEGIN 2");
     let (_msg_type, status2, _data) = parse_kv_response(&response2);
     assert_eq!(status2, 0);
@@ -493,7 +493,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/disconnect";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     let begin_response = client.request(&begin_frame, 2000).await.expect("BEGIN");
     let (_msg_type, status, _data) = parse_kv_response(&begin_response);
     assert_eq!(status, 0, "Expected BEGIN success before disconnect");
@@ -520,7 +520,7 @@ where
 
     // Act
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
-    let begin_frame2 = build_kv_begin(route, 1, 0);
+    let begin_frame2 = build_kv_begin(route, 1);
     let response = client2
         .request(&begin_frame2, 2000)
         .await
@@ -540,7 +540,7 @@ pub(crate) async fn should_reject_stale_transaction_id_after_client_reconnect<C>
     let route = "kv://test/app/disconnect-stale";
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     let begin_response = client.request(&begin_frame, 2000).await.expect("BEGIN");
     let tx_id = expect_kv_begin_ok(&begin_response, "stale reconnect setup");
 
@@ -588,7 +588,7 @@ where
     let subscription_id = extract_kv_subscription_id(&data).expect("extract subscription id");
 
     let begin_response = writer
-        .request(&build_kv_begin(route, 1, 0), 2000)
+        .request(&build_kv_begin(route, 1), 2000)
         .await
         .expect("begin failed");
     let tx_id = expect_kv_begin_ok(&begin_response, "kv watch commit");
@@ -602,7 +602,7 @@ where
     assert_eq!(status, 0, "Expected put success");
 
     let commit_response = writer
-        .request(&build_kv_commit(tx_id, route), 2000)
+        .request(&build_kv_commit(tx_id, route, 0), 2000)
         .await
         .expect("commit failed");
     let (_msg_type, status, _data) = parse_kv_response(&commit_response);
@@ -721,7 +721,7 @@ where
         subscription_ids.push(extract_kv_subscription_id(&data).expect("KV subscription id"));
     }
     let begin = writer
-        .request(&build_kv_begin(route, 1, 0), 2000)
+        .request(&build_kv_begin(route, 1), 2000)
         .await
         .expect("begin KV transaction");
     let tx_id = expect_kv_begin_ok(&begin, "overlapping wildcard notification");
@@ -732,7 +732,7 @@ where
 
     // Act
     let commit = writer
-        .request(&build_kv_commit(tx_id, route), 2000)
+        .request(&build_kv_commit(tx_id, route, 0), 2000)
         .await
         .expect("commit KV transaction");
     assert_eq!(parse_kv_response(&commit).1, 0);
@@ -757,7 +757,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/putget";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     // Act - PUT a key
@@ -786,7 +786,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/multiputs";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     // Act - PUT first key
@@ -820,7 +820,7 @@ where
     assert_eq!(status3, 0, "Third PUT should succeed");
 
     // Act - COMMIT
-    let commit_frame = build_kv_commit(1, route);
+    let commit_frame = build_kv_commit(1, route, 0);
     let commit_response = client
         .request(&commit_frame, 2000)
         .await
@@ -839,7 +839,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/sequence";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     // Act - PUT initial value
@@ -894,7 +894,7 @@ where
     let route = "kv://test/app/putcommitget";
 
     // First transaction: BEGIN, PUT, COMMIT
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     let begin1_response = client.request(&begin_frame, 2000).await.expect("BEGIN 1");
     let (_msg_type, status, data) = parse_kv_response(&begin1_response);
     assert_eq!(status, 0);
@@ -903,14 +903,14 @@ where
     let put_frame = build_kv_put(tx_id1, route, b"persistent", b"data");
     client.request(&put_frame, 2000).await.expect("PUT");
 
-    let commit_frame = build_kv_commit(tx_id1, route);
+    let commit_frame = build_kv_commit(tx_id1, route, 0);
     let commit_response = client.request(&commit_frame, 2000).await.expect("COMMIT");
 
     let (_msg_type, status, _data) = parse_kv_response(&commit_response);
     assert_eq!(status, 0);
 
     // Act - Second transaction: BEGIN, GET to verify persistence
-    let verify_begin_frame = build_kv_begin(route, 1, 0);
+    let verify_begin_frame = build_kv_begin(route, 1);
     let verify_begin_response = client
         .request(&verify_begin_frame, 2000)
         .await
@@ -937,7 +937,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/batch";
 
-    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_frame = build_kv_begin(route, 1);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     // Act - Write 50 key-value pairs
@@ -954,7 +954,7 @@ where
         assert_eq!(status, 0, "PUT {i} should succeed");
     }
 
-    let commit_frame = build_kv_commit(1, route);
+    let commit_frame = build_kv_commit(1, route, 0);
     let commit_response = client
         .request(&commit_frame, 2000)
         .await

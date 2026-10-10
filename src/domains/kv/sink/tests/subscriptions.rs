@@ -92,7 +92,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -121,7 +121,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, kv_route),
+            encode_kv_commit(tx_id, kv_route, 0),
             family,
         ),
     ))
@@ -182,7 +182,7 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -197,7 +197,7 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, kv_route),
+            encode_kv_commit(tx_id, kv_route, 0),
             family,
         ),
     ))
@@ -263,7 +263,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -292,7 +292,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, kv_route),
+            encode_kv_commit(tx_id, kv_route, 0),
             family,
         ),
     ))

@@ -184,7 +184,7 @@ async fn authenticated_client(
 async fn seed_kv(client: &mut TestClient, seeded: &OperatorSeededFamily) -> Result<(), String> {
     let begin = request_frame(
         client,
-        &frames::build_kv_begin(&seeded.kv_route, 1, 0),
+        &frames::build_kv_begin(&seeded.kv_route, 1),
         "KV BEGIN",
     )
     .await?;
@@ -208,7 +208,7 @@ async fn seed_kv(client: &mut TestClient, seeded: &OperatorSeededFamily) -> Resu
 
     let commit = request_frame(
         client,
-        &frames::build_kv_commit(tx_id, &seeded.kv_route),
+        &frames::build_kv_commit(tx_id, &seeded.kv_route, 0),
         "KV COMMIT",
     )
     .await?;

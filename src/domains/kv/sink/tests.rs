@@ -25,12 +25,11 @@ fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-fn encode_kv_begin(route: &str, mode: u8, durability: u8) -> Bytes {
+fn encode_kv_begin(route: &str, mode: u8) -> Bytes {
     let mut payload = Vec::new();
     payload.put_u32(usize_to_u32_saturating(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(mode);
-    payload.put_u8(durability);
     Bytes::from(payload)
 }
 
@@ -46,11 +45,12 @@ fn encode_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Bytes {
     Bytes::from(payload)
 }
 
-fn encode_kv_commit(tx_id: u64, route: &str) -> Bytes {
+fn encode_kv_commit(tx_id: u64, route: &str, persistence: u8) -> Bytes {
     let mut payload = Vec::new();
     payload.put_u64(tx_id);
     payload.put_u32(usize_to_u32_saturating(route.len()));
     payload.put_slice(route.as_bytes());
+    payload.put_u8(persistence);
     Bytes::from(payload)
 }
 

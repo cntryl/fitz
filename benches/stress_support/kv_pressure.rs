@@ -155,7 +155,7 @@ async fn bounded<T>(
         })?
 }
 async fn begin(client: &mut TestClient, mode: u8) -> Result<u64, BenchFailure> {
-    let body = bounded(request(client, &build_kv_begin(ROUTE, mode, 1), 100)).await?;
+    let body = bounded(request(client, &build_kv_begin(ROUTE, mode), 100)).await?;
     require_ok(&body, "KV BEGIN")?;
     let mut decoder = PayloadDecoder::new(&body);
     decoder.get_u8().map_err(BenchFailure::validation)?;
@@ -179,7 +179,7 @@ async fn write(client: &mut TestClient, start: u64, count: u64) -> Result<(), Be
         .await?;
         empty_success(&body, "KV PUT")?;
     }
-    let body = bounded(request(client, &build_kv_commit(tx, ROUTE), 101)).await?;
+    let body = bounded(request(client, &build_kv_commit(tx, ROUTE, 1), 101)).await?;
     empty_success(&body, "KV COMMIT")
 }
 async fn verify(

@@ -58,8 +58,8 @@ impl KvFamilyRuntime<'_> {
                 let _ = reply.send(self.latency_snapshots(&resource_key));
             }
             #[cfg(test)]
-            KvDomainCommand::ApplyWriteOptions(message, reply) => {
-                let _ = reply.send(self.apply_write_options(message));
+            KvDomainCommand::ResolveCommitPersistence(persistence, reply) => {
+                let _ = reply.send(self.resolve_commit_persistence(persistence));
             }
             KvDomainCommand::PanicForFailpoint => {
                 panic!("injected KV domain actor panic");

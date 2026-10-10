@@ -29,7 +29,6 @@ impl KvFamilyRuntime<'_> {
             return Ok(());
         }
 
-        let kv_message = self.apply_write_options(kv_message);
         let session_id = meta.session_id;
         let read_tx_id = match &kv_message {
             KvMessage::Get { tx_id, .. } | KvMessage::Scan { tx_id, .. } => Some(*tx_id),

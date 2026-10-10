@@ -69,7 +69,7 @@ KvClient
 │   ├── put(key, value)
 │   ├── delete(key)
 │   ├── scan(start, end, limit) → Iterator
-│   ├── commit()
+│   ├── commit(persistence)
 │   └── rollback()
 ```
 
@@ -248,17 +248,17 @@ async def test_kv_transaction_lifecycle():
         await client.connect(jwt=TEST_JWT)
         
         # Begin transaction
-        tx = await client.kv.begin("kv://test/app/users", durability="Sync")
+        tx = await client.kv.begin("kv://test/app/users")
         assert tx.tx_id > 0
         
         # Put data
         await tx.put("user:123", b"alice")
         
         # Commit
-        await tx.commit()
+        await tx.commit(CommitPersistence.Sync)
         
         # Verify persistence
-        tx2 = await client.kv.begin("kv://test/app/users", durability="Sync")
+        tx2 = await client.kv.begin("kv://test/app/users")
         result = await tx2.get("user:123")
         assert isinstance(result, GetResult.Found)
         assert result.value == b"alice"
@@ -311,7 +311,7 @@ batch := client.KV.NewBatch()
 batch.Put("key1", value1)
 batch.Put("key2", value2)
 batch.Put("key3", value3)
-results, err := batch.Commit(ctx)
+results, err := batch.Commit(ctx, fitz.CommitPersistenceSync)
 ```
 
 ### 3. Zero-Copy Decoding
@@ -408,7 +408,7 @@ Apply the same rule to every session-scoped handle: re-register RPC workers, re-
 **Problem:**
 ```go
 // User has to manage tx_id manually
-txID, _ := client.KV.Begin(ctx, "kv://prod/users", fitz.KVDurabilitySync)
+txID, _ := client.KV.Begin(ctx, "kv://prod/users")
 client.KV.Put(ctx, txID, "key", value)  // Easy to use wrong tx_id
 client.KV.Commit(ctx, txID)
 ```
@@ -416,9 +416,9 @@ client.KV.Commit(ctx, txID)
 **Solution:**
 ```go
 // Transaction object encapsulates state
-tx, _ := client.KV.Begin(ctx, "kv://prod/users", fitz.KVDurabilitySync)
+tx, _ := client.KV.Begin(ctx, "kv://prod/users")
 tx.Put(ctx, "key", value)  // tx_id is internal
-tx.Commit(ctx)
+tx.Commit(ctx, fitz.CommitPersistenceSync)
 ```
 
 ### ❌ Pitfall 4: Not Validating Frame Size

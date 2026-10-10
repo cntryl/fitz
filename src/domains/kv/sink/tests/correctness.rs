@@ -125,7 +125,6 @@ fn should_roll_back_read_write_begin_when_response_cannot_be_delivered() {
             crate::domains::kv::KvMessage::Begin {
                 scope: KvResourceScope::new(family, "acme", "app", "users"),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: crate::domains::WritePolicy::Buffered,
             },
         )
     });
@@ -171,7 +170,6 @@ fn should_roll_back_read_only_begin_when_response_cannot_be_delivered() {
             crate::domains::kv::KvMessage::Begin {
                 scope: KvResourceScope::new(family, "acme", "app", "users"),
                 mode: crate::domains::kv::TxMode::ReadOnly,
-                write_options: crate::domains::WritePolicy::Buffered,
             },
         )
     });
@@ -207,7 +205,7 @@ fn should_update_kv_admin_transaction_incrementally_given_lifecycle() {
             session_id,
             ChannelId::Sub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -224,7 +222,7 @@ fn should_update_kv_admin_transaction_incrementally_given_lifecycle() {
             session_id,
             ChannelId::Sub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, kv_route),
+            encode_kv_commit(tx_id, kv_route, 0),
             family,
         ),
     ))
@@ -258,7 +256,7 @@ fn should_read_admin_transaction_count_while_session_actor_is_busy() {
             session_id,
             ChannelId::Sub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(route, 1, 0),
+            encode_kv_begin(route, 1),
             family,
         ),
     ))
@@ -303,7 +301,7 @@ fn should_expire_idle_read_write_transaction_before_competing_begin() {
             7,
             ChannelId::Sub,
             MessageType::new(100),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -319,7 +317,7 @@ fn should_expire_idle_read_write_transaction_before_competing_begin() {
             8,
             ChannelId::Sub,
             MessageType::new(100),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -353,7 +351,7 @@ fn should_process_second_family_while_first_family_is_blocked() {
             7,
             ChannelId::Sub,
             MessageType::new(100),
-            encode_kv_begin(first_route, 1, 0),
+            encode_kv_begin(first_route, 1),
             first_family,
         ),
     ))
@@ -374,7 +372,7 @@ fn should_process_second_family_while_first_family_is_blocked() {
                 8,
                 ChannelId::Sub,
                 MessageType::new(100),
-                encode_kv_begin(second_route, 1, 0),
+                encode_kv_begin(second_route, 1),
                 second_family,
             ),
         ))
@@ -437,7 +435,7 @@ fn should_read_active_transaction_counts_from_domain_state_when_projection_is_em
             session_id,
             ChannelId::Sub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -451,7 +449,7 @@ fn should_read_active_transaction_counts_from_domain_state_when_projection_is_em
             second_session_id,
             ChannelId::Sub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             second_family,
         ),
     ))
@@ -515,7 +513,6 @@ fn should_reject_kv_request_when_source_and_destination_families_differ() {
                     "users".to_string(),
                 ),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: crate::domains::WritePolicy::BestEffort,
             },
         )),
     );
@@ -561,7 +558,6 @@ fn should_reject_kv_operation_when_decoded_family_differs_from_request() {
                     "users".to_string(),
                 ),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: crate::domains::WritePolicy::BestEffort,
             },
         )),
     );

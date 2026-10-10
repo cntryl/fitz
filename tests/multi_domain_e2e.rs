@@ -710,11 +710,11 @@ async fn should_allow_kv_writes_while_holding_lease_lock_tcp() {
         .send_and_receive(&lease_frame, 2000)
         .await
         .expect("acquire lock");
-    let kv_begin = build_kv_begin("test/kv/protected", 1, 0);
+    let kv_begin = build_kv_begin("test/kv/protected", 1);
     let begin_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
     let kv_put = build_kv_put(1, "test/kv/protected", b"key", b"value");
     let put_response = kv_client.request(&kv_put, 2000).await.expect("kv put");
-    let kv_commit = build_kv_commit(1, "test/kv/protected");
+    let kv_commit = build_kv_commit(1, "test/kv/protected", 0);
     let commit_response = kv_client
         .request(&kv_commit, 2000)
         .await
@@ -748,11 +748,11 @@ async fn should_allow_kv_writes_while_holding_lease_lock_ws() {
         .send_and_receive(&lease_frame, 2000)
         .await
         .expect("acquire lock");
-    let kv_begin = build_kv_begin("test/kv/protected", 1, 0);
+    let kv_begin = build_kv_begin("test/kv/protected", 1);
     let begin_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
     let kv_put = build_kv_put(1, "test/kv/protected", b"key", b"value");
     let put_response = kv_client.request(&kv_put, 2000).await.expect("kv put");
-    let kv_commit = build_kv_commit(1, "test/kv/protected");
+    let kv_commit = build_kv_commit(1, "test/kv/protected", 0);
     let commit_response = kv_client
         .request(&kv_commit, 2000)
         .await
@@ -788,13 +788,13 @@ async fn should_allow_lease_release_after_kv_transaction_tcp() {
         .expect("acquire");
     let (_msg_type, status, data) = parse_lease_response(&lease_response);
     let token = parse_lease_token_response(&data).expect("parse token");
-    let kv_begin = build_kv_begin("test/kv/locked", 1, 0);
+    let kv_begin = build_kv_begin("test/kv/locked", 1);
     let _ = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
 
     let kv_put = build_kv_put(1, "test/kv/locked", b"k", b"v");
     let _ = kv_client.request(&kv_put, 2000).await.expect("kv put");
 
-    let kv_commit = build_kv_commit(1, "test/kv/locked");
+    let kv_commit = build_kv_commit(1, "test/kv/locked", 0);
     let _ = kv_client
         .request(&kv_commit, 2000)
         .await
@@ -831,13 +831,13 @@ async fn should_allow_lease_release_after_kv_transaction_ws() {
         .expect("acquire");
     let (_msg_type, status, data) = parse_lease_response(&lease_response);
     let token = parse_lease_token_response(&data).expect("parse token");
-    let kv_begin = build_kv_begin("test/kv/locked", 1, 0);
+    let kv_begin = build_kv_begin("test/kv/locked", 1);
     let _ = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
 
     let kv_put = build_kv_put(1, "test/kv/locked", b"k", b"v");
     let _ = kv_client.request(&kv_put, 2000).await.expect("kv put");
 
-    let kv_commit = build_kv_commit(1, "test/kv/locked");
+    let kv_commit = build_kv_commit(1, "test/kv/locked", 0);
     let _ = kv_client
         .request(&kv_commit, 2000)
         .await
@@ -871,7 +871,7 @@ async fn should_keep_realms_isolated_while_multiple_domains_are_active_tcp() {
         .expect("queue connect");
 
     // Act
-    let kv_begin = build_kv_begin("test/realm1/data", 1, 0);
+    let kv_begin = build_kv_begin("test/realm1/data", 1);
     let kv_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
     let queue_frame = build_queue_enqueue("tasks", b"task");
     let queue_response = queue_client
@@ -901,7 +901,7 @@ async fn should_keep_realms_isolated_while_multiple_domains_are_active_ws() {
         .expect("queue connect");
 
     // Act
-    let kv_begin = build_kv_begin("test/realm1/data", 1, 0);
+    let kv_begin = build_kv_begin("test/realm1/data", 1);
     let kv_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
     let queue_frame = build_queue_enqueue("tasks", b"task");
     let queue_response = queue_client

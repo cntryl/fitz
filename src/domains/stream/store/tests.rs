@@ -50,6 +50,7 @@ fn drain_maintenance(store: &StreamStore, family: u64) -> StreamMaintenanceResul
 mod sessions_layout_and_watermarks;
 use sessions_layout_and_watermarks::*;
 mod bounded_replay;
+mod commit_persistence;
 mod compacted_locator_cache;
 mod filters_ttl_and_metadata;
 mod global_ordering;
