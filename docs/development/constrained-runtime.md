@@ -92,6 +92,10 @@ WAL recovery; the two Queue campaigns separately prove preservation of writes
 acknowledged through Fitz. Only the external driver enables the
 `recovery-qualification` feature; the production image uses its normal features.
 
+Startup validation and inventory consume storage rows incrementally so Queue,
+Stream, and Schedule do not retain unrelated KV payloads while selecting their
+own rows. This avoids copying the fixture's entire KV state into a startup scan.
+
 Reports retain the supplied source SHA, resolved runtime image ID, provider
 digest, actual Docker resource limits, authoritative WAL catalog and remote
 object inventories, readiness timings, container lifecycle, broker logs and
