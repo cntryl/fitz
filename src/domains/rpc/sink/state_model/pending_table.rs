@@ -3,6 +3,7 @@ use super::{
     RpcCancellationAckDisposition, RpcCancellationDisposition, RpcCorrelationKey, RpcFastMap,
     RpcPendingCleanupResult, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
     RpcQueuedRequest, RpcRegistrationId, RpcWorkerCancellation,
+    RPC_MAX_CANCELLATION_GRACE_DEFERRAL,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -161,9 +162,9 @@ impl RpcPendingTable {
         {
             return RpcCancellationAckDisposition::Rejected;
         }
-        RpcCancellationAckDisposition::Acknowledged(
+        RpcCancellationAckDisposition::Acknowledged(Box::new(
             self.remove(&key).expect("acknowledged pending request"),
-        )
+        ))
     }
 
     pub(in crate::domains::rpc::sink) fn mark_close_requested(
@@ -195,6 +196,51 @@ impl RpcPendingTable {
         }
     }
 
+    /// Records the worker's frame-loop busy time when a cancellation grace starts.
+    pub(in crate::domains::rpc::sink) fn start_grace_busy_accounting(
+        &mut self,
+        key: RpcCorrelationKey,
+        busy_time: Option<std::time::Duration>,
+    ) {
+        if let Some(pending) = self.pending.get_mut(&key) {
+            if pending.cancelled && !pending.close_requested {
+                pending.grace_busy_baseline = busy_time;
+            }
+        }
+    }
+
+    /// Pushes an expired grace back by the time the worker's frame loop spent
+    /// busy since the grace was last credited, so the grace only runs while the
+    /// loop is free to read the cleanup ACK. Total deferral per cancellation is
+    /// capped at `RPC_MAX_CANCELLATION_GRACE_DEFERRAL`; once the cap is reached
+    /// this returns `false` and the worker is closed. Returns whether it was deferred.
+    pub(in crate::domains::rpc::sink) fn defer_grace_for_busy_frame_loop(
+        &mut self,
+        key: RpcCorrelationKey,
+        busy_time: Option<std::time::Duration>,
+    ) -> bool {
+        let Some(pending) = self.pending.get_mut(&key) else {
+            return false;
+        };
+        let (Some(busy_time), Some(baseline)) = (busy_time, pending.grace_busy_baseline) else {
+            return false;
+        };
+        let remaining_ceiling =
+            RPC_MAX_CANCELLATION_GRACE_DEFERRAL.saturating_sub(pending.grace_deferred);
+        let unpaid = busy_time.saturating_sub(baseline).min(remaining_ceiling);
+        if unpaid.is_zero() {
+            return false;
+        }
+        pending.grace_busy_baseline = Some(busy_time);
+        pending.grace_deferred += unpaid;
+        pending.expires_at += unpaid;
+        let expires_at = pending.expires_at;
+        self.expirations
+            .push(ExpiringPendingRequest { expires_at, key });
+        self.compact_pending_expirations_if_needed();
+        true
+    }
+
     pub(in crate::domains::rpc::sink) fn retry_close_for_worker(
         &mut self,
         family: RouteFamily,
@@ -210,6 +256,7 @@ impl RpcPendingTable {
                     && pending.cancelled
                 {
                     pending.close_requested = false;
+                    pending.grace_busy_baseline = None;
                     pending.expires_at = expires_at;
                     Some(*key)
                 } else {

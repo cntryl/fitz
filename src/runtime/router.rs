@@ -107,6 +107,16 @@ pub trait MailboxSink: Send + Sync {
     /// `DeliveryError::HighLaneFull` when full; single-lane sinks forward ordinary
     /// delivery errors, including `DeliveryError::MailboxFull`.
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError>;
+
+    /// Total time the owning session's frame loop has spent processing inbound
+    /// frames up to `now`, including a frame still in progress.
+    ///
+    /// Only session-inbox sinks backed by a transport frame loop report this.
+    /// Domains use it so a session is not charged for time it could not read
+    /// frames, such as an RPC cancellation grace waiting for a cleanup ACK.
+    fn frame_loop_busy_time(&self, _now: std::time::Instant) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Errors that can occur during envelope delivery

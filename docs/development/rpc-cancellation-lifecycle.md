@@ -116,8 +116,26 @@ broker sends best-effort cancellation only to workers that negotiated support.
 
 The cancellation grace defaults to 5,000 ms. Set
 `FITZ_RPC_CANCELLATION_GRACE_MS` to a value from 0 through 86,400,000 to change
-it. Invalid settings log a warning and use the five-second default. If a
-supporting worker has not acknowledged cleanup by expiry, the
+it. Invalid settings log a warning and use the five-second default.
+
+A session reads and processes inbound frames one at a time, so a worker's
+cleanup acknowledgment can wait behind a slow frame on the same connection,
+such as a Stream commit waiting on storage. The grace therefore runs only while
+the worker session's frame loop is free to read the acknowledgment: the TCP or
+WebSocket transport records how long the loop spends processing frames, and
+when the grace deadline passes the broker pushes it back by any busy time since
+the grace started or was last extended. A worker whose loop is held past the
+nominal grace by its own traffic is not closed for that; a worker that stays
+free and never acknowledges is closed once the grace of free loop time has
+elapsed. Busy time is read from the live session inbox at the timeout sweep, so
+the deadline can be deferred repeatedly while one long frame stays in progress.
+Total deferral per cancellation is capped at 60 seconds
+(`RPC_MAX_CANCELLATION_GRACE_DEFERRAL`), the longest legitimate frame hold,
+which is the Stream client storage reply budget. A worker is therefore closed
+no later than the nominal grace expiry plus 60 seconds, even if its frame loop
+never frees up or it never acknowledges. The ceiling is fixed and does not
+change with `FITZ_RPC_CANCELLATION_GRACE_MS`.
+If a supporting worker has not acknowledged cleanup by expiry, the
 broker requests transport-level session close. Credit remains reserved until
 actual session cleanup removes that worker's pending calls. Failed close
 requests are retried every 250 ms. Grace expiry is a bound on broker cleanup,
