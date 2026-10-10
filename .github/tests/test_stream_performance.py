@@ -106,6 +106,7 @@ class StreamPerformanceWorkflowTests(unittest.TestCase):
         shared = {
             "src/api", "src/dispatch", "src/runtime", "src/session",
             "src/snapshot", "src/snapshot.rs", "src/storage", "src/storage.rs",
+            "src/testkit",
         }
         self.assertLessEqual(shared, triggers)
         self.assertLessEqual(shared, skip)
