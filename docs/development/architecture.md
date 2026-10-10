@@ -274,8 +274,9 @@ API-edge session management:
   runs those waits on blocking workers. Stream retains its separate 64 permits
   through completion. Queue serializes handoffs within each route family, with
   at most 64 pending transport waiters and one active handoff per family. Its
-  one-second handoff wait budget starts before the dispatch retry loop. This
-  avoids allocating a blocking thread for every caller queued behind one actor.
+  existing 60-second client reply budget starts before the dispatch retry loop
+  and is shared with actor reply waiting, so transport queueing cannot reset it.
+  This avoids allocating a blocking thread for every caller queued behind one actor.
   Cancellation retains an active handoff until the sink returns. Full or expired
   handoffs reject before enqueue; post-handoff failures retain their terminal or
   indeterminate classification. Core Queue admission remains unchanged.
