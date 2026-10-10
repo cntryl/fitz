@@ -231,6 +231,7 @@ jobs:
             http://127.0.0.1:9001/healthz
 
       - name: Qualify S3 WAL retention and crash recovery at the resource floor
+        shell: bash
         timeout-minutes: 85
         env:
           FITZ_S3_TEST_ENDPOINT: http://127.0.0.1:9000
