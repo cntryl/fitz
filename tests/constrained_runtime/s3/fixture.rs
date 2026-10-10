@@ -27,7 +27,7 @@ fn scoped_key(index: u32) -> Vec<u8> {
     key
 }
 
-pub(super) fn publish(campaign: &Campaign) -> u64 {
+pub(super) fn publish(campaign: &Campaign, records: u32) -> u64 {
     let cache = tempfile::tempdir().unwrap();
     let options = OpenOptions::cloud(cache.path(), campaign.location())
         .memory_budget(MemoryBudget::Bytes(256 * 1024 * 1024))
@@ -75,7 +75,7 @@ pub(super) fn publish(campaign: &Campaign) -> u64 {
     );
     let mut bytes = Vec::new();
     let mut actual_bytes = 0;
-    for index in 0..RECORDS {
+    for index in 0..records {
         let mut record = WalRecord::new(
             WalOpKind::Put,
             scoped_key(index).into(),
@@ -86,7 +86,7 @@ pub(super) fn publish(campaign: &Campaign) -> u64 {
         record.cf_id = cf.id();
         frame::append_frame(&mut bytes, &encoding::encode(&record).unwrap()).unwrap();
         sequence += 1;
-        if bytes.len() >= 16 * 1024 * 1024 || index + 1 == RECORDS {
+        if bytes.len() >= 16 * 1024 * 1024 || index + 1 == records {
             let object_key = cloud_segment_object_key(segment_id, epoch);
             campaign.upload_object(&object_key, &bytes);
             segments.insert(segment_id.to_string(), json!({
@@ -104,7 +104,7 @@ pub(super) fn publish(campaign: &Campaign) -> u64 {
     actual_bytes
 }
 
-pub(super) async fn verify(broker: &Broker) {
+pub(super) async fn verify(broker: &Broker, records: u32) {
     let mut workers = tokio::task::JoinSet::new();
     for worker in 0..16 {
         let address = broker.address();
@@ -113,7 +113,7 @@ pub(super) async fn verify(broker: &Broker) {
             let started = super::super::request(&mut client, &build_kv_begin(ROUTE, 0), 100).await;
             let id = parse_kv_tx_id(&started).unwrap();
             let mut verified = 0;
-            for index in (worker..RECORDS).step_by(16) {
+            for index in (worker..records).step_by(16) {
                 let value = super::super::request(
                     &mut client,
                     &build_kv_get(id, ROUTE, &index.to_be_bytes()),
@@ -131,18 +131,18 @@ pub(super) async fn verify(broker: &Broker) {
     while let Some(result) = workers.join_next().await {
         verified += result.unwrap();
     }
-    assert_eq!(verified, RECORDS);
+    assert_eq!(verified, records);
 }
 
 async fn recover() -> serde_json::Value {
     let campaign = Campaign::new("large");
-    let wal_bytes = publish(&campaign);
+    let wal_bytes = publish(&campaign, RECORDS);
     let backlog = campaign.snapshot("large-backlog");
     assert!(wal_bytes > 512 * MIB);
     assert!(backlog.catalog_bytes >= wal_bytes);
     let mut broker = Broker::start(&campaign);
     let ready_seconds = broker.ready().await;
-    verify(&broker).await;
+    verify(&broker, RECORDS).await;
     super::super::smoke(broker.address(), &format!("large-{}", campaign.id)).await;
     let after = super::super::inspect_container(&broker.name);
     let report = json!({ "synthetic_offline_wal": true, "wal_bytes": wal_bytes,
