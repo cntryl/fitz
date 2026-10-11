@@ -122,7 +122,7 @@ impl TcpHandler {
     ) -> Result<(), String> {
         // Try to extract complete frames from buffer
         while buffer.len() >= 4 {
-            let len = frame_len(&buffer);
+            let len = frame_len(buffer);
 
             // Check frame size
             if len > self.config.max_frame_size {
