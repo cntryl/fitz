@@ -347,11 +347,11 @@ fn should_keep_worker_credit_until_deadline_cancellation_grace_expires() {
 
     // Act
     let timeout_at = deadline + Duration::from_millis(1);
-    let timeout = state.expire_timed_out_with_grace(timeout_at, grace);
+    let timeout = state.expire_timed_out_with_grace(timeout_at, grace, |_, _| None);
     let available_during_grace = state.claim_registration_for_tests(family, &route);
     let grace_expiry = timeout_at + grace + Duration::from_millis(1);
-    let expired = state.expire_timed_out_with_grace(grace_expiry, grace);
-    let duplicate_expiry = state.expire_timed_out_with_grace(grace_expiry, grace);
+    let expired = state.expire_timed_out_with_grace(grace_expiry, grace, |_, _| None);
+    let duplicate_expiry = state.expire_timed_out_with_grace(grace_expiry, grace, |_, _| None);
     let cleanup = state.cleanup_session_with_grace(42, grace_expiry, grace);
 
     // Assert

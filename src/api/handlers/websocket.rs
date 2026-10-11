@@ -521,13 +521,16 @@ where
                     break Err(reason);
                 }
 
-                if let Err(error) = crate::api::session::process_session_frame(
-                    context.session,
-                    frame,
-                    context.ingress,
-                )
-                .await
-                {
+                let frame_result = {
+                    let _busy = context.sink.begin_frame();
+                    crate::api::session::process_session_frame(
+                        context.session,
+                        frame,
+                        context.ingress,
+                    )
+                    .await
+                };
+                if let Err(error) = frame_result {
                     if crate::api::session::is_stale_session_frame_error(&error) {
                         tracing::debug!(
                             session_id = context.session_id,
