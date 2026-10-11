@@ -106,6 +106,10 @@ impl Campaign {
             "/proc/diskstats",
             "/proc/pressure/cpu",
             "/proc/pressure/io",
+            "/proc/self/stat",
+            "/proc/self/status",
+            "/proc/self/sched",
+            "/proc/self/mountinfo",
         ];
         let mut metadata = json!({"host_sync_seconds":started.elapsed().as_secs_f64(),"host_before":support::host(&paths),
             "head":self.heads[phase],"production_baseline":self.production,"command":command,"cwd":source,
