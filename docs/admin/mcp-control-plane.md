@@ -114,6 +114,24 @@ absence or complete history.
 Cached indexed projections identify themselves and report unknown source age
 when `source_updated_at` is `null`; `observed_at` is the collection time.
 
+REST stats, topology, troubleshooting, and structured metrics request a refresh
+of dirty domain projections before reading them. These refreshes are best
+effort: enqueue or reply failures can leave previously cached state visible.
+Domains refresh separately, so the result has no atomic observation point
+across domains and does not guarantee that a concurrent mutation is included.
+Queue projection refresh observes actor state; it does not expire reservations,
+promote delayed work, wake parked reserves, or evict idle actors. Those state
+transitions remain part of normal Queue execution and maintenance.
+
+The bounded MCP read tools, operational resources, and prompts use cached
+indexed projections without requesting those domain refreshes. Their item,
+byte, and wait budgets do not bound the cost of a REST projection refresh.
+Queue dead-letter action preview does request the Queue projection refresh
+before looking up the exact target, so a successful refresh can expose a newly
+dead-lettered message without a preceding list call. A preview remains an
+observation. Confirmation dispatch independently reads the owning Queue actor
+and revalidates the observed state before starting the shared admin command.
+
 The reads mirror the admin REST contracts and current read models. They do not
 add data-plane permissions or infer history, ownership, replay, or recovery.
 See [domain guarantees](mcp/domain-guarantees.md) for Fitz's domain meanings.

@@ -68,13 +68,14 @@ impl DomainRuntimeFixture {
             panic!("send real queue work")
         };
         for _ in 0..2 {
+            // Zero-duration reservations are due immediately, without sleeping.
             let QueueResponse::Received { messages } =
                 actor.handle_receive_for_session(1, 0, Some(1))
             else {
                 panic!("reserve real queue work")
             };
             assert_eq!(messages.len(), 1);
-            actor.process_expired_timers();
+            assert!(actor.process_expired_timers());
         }
         id
     }

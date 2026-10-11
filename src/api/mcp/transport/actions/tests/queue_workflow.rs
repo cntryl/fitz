@@ -198,6 +198,58 @@ fn should_recheck_actor_dead_letter_state_at_dispatch_after_purge() {
 }
 
 #[test]
+fn should_preview_newly_projected_dead_letter_without_an_intervening_list_call() {
+    // Arrange
+    let directory = tempfile::tempdir().unwrap();
+    let actions = action_state(directory.path());
+    let fixture = crate::testkit::create_domain_runtime_fixture();
+    let replay_id = fixture.seed_queue_dead_letter("operations", "jobs", "dispatch");
+    let preview_id = fixture.seed_queue_dead_letter("operations", "jobs", "dispatch");
+    assert_ne!(replay_id, preview_id);
+    assert_eq!(recovered_actor(&fixture).admin_dead_letters().len(), 2);
+    let runtime = fixture.runtime();
+    let context = context(
+        "queue-operator",
+        AdminRouteFamilyAccess::Explicit(vec!["1".into()]),
+    );
+    assert!(runtime
+        .queue_replay_dead_letter(
+            RouteFamily::new(1),
+            "operations",
+            "jobs",
+            "dispatch",
+            replay_id.as_u64(),
+        )
+        .unwrap());
+    assert!(runtime
+        .admin_read_model()
+        .queue_dead_letter(1, "operations", "jobs", "dispatch", preview_id.as_u64())
+        .is_none());
+
+    // Act
+    let preview = actions
+        .preview_queue_dead_letter(
+            Some(arguments(preview_id.as_u64(), "replay")),
+            &context,
+            &privileged_policy(),
+            [9; 32],
+            &runtime,
+        )
+        .unwrap();
+
+    // Assert
+    assert_eq!(preview["action"], "queue.dead-letter.replay");
+    assert!(preview["target"].as_str().unwrap().starts_with(&format!(
+        "route_family=1;queue://operations/jobs/dispatch;message_id={};",
+        preview_id.as_u64(),
+    )));
+    assert!(runtime
+        .admin_read_model()
+        .queue_dead_letter(1, "operations", "jobs", "dispatch", preview_id.as_u64())
+        .is_some());
+}
+
+#[test]
 fn should_not_preview_purged_dead_letter_without_an_intervening_list_call() {
     // Arrange
     let directory = tempfile::tempdir().unwrap();

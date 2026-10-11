@@ -42,7 +42,8 @@ impl Runtime {
         }
     }
 
-    /// Refresh every lazily projected domain once, without copying a snapshot.
+    /// Attempt each domain's best-effort projection refresh once, without
+    /// copying a snapshot.
     pub(crate) fn refresh_admin_snapshots(&self) {
         let domains = self.domain_admins.read().clone();
         if let Some(domains) = domains {
@@ -50,8 +51,9 @@ impl Runtime {
         }
     }
 
-    /// Refresh dirty domain projections, then copy one bounded family-selected
-    /// snapshot, so admin reads reflect mutations without a prior list call.
+    /// Attempt dirty domain projection refreshes, then copy one family-selected
+    /// snapshot with a collection limit. Failed refreshes can leave cached data;
+    /// the domains do not share an atomic observation point.
     pub(crate) fn refreshed_admin_snapshot(
         &self,
         family: Option<u64>,
