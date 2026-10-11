@@ -182,7 +182,7 @@ fn should_bound_reserve_batch_to_tlv_payload_capacity() {
 }
 
 #[test]
-fn should_dead_letter_oversized_head_and_reserve_following_message() {
+fn should_reserve_past_an_oversized_queue_head() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(

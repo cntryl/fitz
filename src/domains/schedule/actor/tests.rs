@@ -381,7 +381,7 @@ fn should_report_oldest_pending_claim_age_given_pending_fire() {
 }
 
 #[test]
-fn should_bound_due_claims_per_scan_and_leave_remaining_work_ready() {
+fn should_claim_every_due_route_once_across_bounded_scans() {
     // Arrange
     let clock = Arc::new(MockClock::new(epoch_ms(2026, 8, 28, 19, 13, 0)));
     let mut actor = make_actor_with_clock(clock.clone());

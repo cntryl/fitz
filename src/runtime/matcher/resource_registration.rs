@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn should_match_nonterminal_wildcards_and_zero_segment_suffixes() {
+    fn should_match_valid_nonterminal_wildcard_registrations() {
         // Arrange
         let registrations = [
             "rpc://acme/**/run",

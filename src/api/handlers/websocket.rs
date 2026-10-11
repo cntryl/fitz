@@ -656,7 +656,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_abort_and_join_websocket_writer_after_cleanup_timeout() {
+    async fn should_terminate_websocket_writer_after_cleanup_timeout() {
         // Arrange
         let dropped = Arc::new(AtomicBool::new(false));
         let signal = DropSignal(dropped.clone());

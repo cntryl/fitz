@@ -367,6 +367,12 @@ required-features = ["benchkit"]
 
 # Tier 5: Full TCP concurrency/saturation sweeps.
 [[bench]]
+name = "tier5_queue_drains"
+harness = false
+path = "benches/tier5_queue_drains.rs"
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
 name = "tier5_saturation"
 harness = false
 path = "benches/tier5_saturation.rs"

@@ -183,7 +183,7 @@ fn should_enforce_wildcard_lease_subscription_cap_per_session() {
 }
 
 #[test]
-fn should_enforce_exact_and_wildcard_lease_registration_limits_per_session() {
+fn should_enforce_lease_registration_quotas_per_session() {
     // Arrange
     let family = RouteFamily::new(1);
     let source = RouteAddress::new(family, Route::new("inbox://session/7"));
@@ -733,7 +733,8 @@ fn should_drain_served_items_from_retained_snapshot_memory() {
 
 #[test]
 fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exceeded() {
-    // Arrange: several independent multi-page scans, each retaining a few
+    // Arrange
+    // Several independent multi-page scans, each retaining a few
     // not-yet-served items, until the (test-shrunk) global retained-item
     // budget is exceeded. Each scan uses its own family so the (also
     // test-shrunk) per-family candidate ceiling never interferes — this
@@ -748,6 +749,8 @@ fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exc
         &families,
     );
     let mut first_snapshot_id = None;
+
+    // Act
     for scan in 0..scans_needed {
         let family = RouteFamily::new(u32::try_from(scan).expect("scan index fits u32") + 1);
         for item in 0..3 {
@@ -775,7 +778,8 @@ fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exc
         }
     }
 
-    // Assert: the retained total across every outstanding snapshot never
+    // Assert
+    // The retained total across every outstanding snapshot never
     // exceeds the global bound, and the oldest scan was evicted to make
     // room rather than growing past it.
     let total_retained: usize = sink
@@ -937,13 +941,16 @@ fn should_reclaim_idle_lease_list_snapshot_past_its_ttl() {
 
 #[test]
 fn should_classify_invalid_list_responses_as_failures() {
-    // A LIST response the reviewer flagged as miscounted: malformed
-    // patterns and stale cursors must count as failures for latency/SLO
-    // metrics, the same as any other Lease error.
-    assert!(LeaseFamilyRuntime::lease_response_is_failure(
-        &LeaseResponse::InvalidListPattern("bad pattern".to_string())
-    ));
-    assert!(LeaseFamilyRuntime::lease_response_is_failure(
-        &LeaseResponse::InvalidListCursor
-    ));
+    // Arrange
+    let responses = [
+        LeaseResponse::InvalidListPattern("bad pattern".to_string()),
+        LeaseResponse::InvalidListCursor,
+    ];
+
+    // Act
+    let failures =
+        responses.map(|response| LeaseFamilyRuntime::lease_response_is_failure(&response));
+
+    // Assert
+    assert_eq!(failures, [true, true]);
 }

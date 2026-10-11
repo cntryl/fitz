@@ -50,7 +50,7 @@ fn sink() -> KvDomain {
 }
 
 #[test]
-fn should_page_only_selected_kv_family_realm_and_area_metadata() {
+fn should_page_only_selected_kv_metadata_scope() {
     // Arrange
     let sink = sink();
     let family = RouteFamily::new(1);

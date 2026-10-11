@@ -11,6 +11,12 @@ Use Rust's normal split between unit and integration tests.
 - Domain end-to-end flows use `tests/*_e2e.rs`.
 - Semantic boundary checks live under `tests/semantic_boundaries.rs`.
 
+Cover backend behavior in Rust and UI behavior in TypeScript. Use the existing
+test runners; do not add Python files or standalone scripts to reproduce or
+check behavior.
+Assert observable results and semantic invariants. Do not read source files to
+assert function names, code fragments, or implementation layout.
+
 Use unit tests for isolated parsing, state transitions, actor helpers, storage-key helpers, and protocol codecs. Use integration tests when a behavior spans transport, session state, runtime routing, storage, auth, or multiple domains.
 
 ## Stateful correctness models
@@ -94,7 +100,20 @@ Required coverage patterns:
 
 ## Validation Commands
 
+`cntryl-tools` owns test-structure conventions and module-size checks. Run those
+checks directly; do not reproduce them with source-scanning tests. CI installs
+the pinned revision documented in `CONTRIBUTING.md`.
+
+Performance and stress workloads belong in the six benchmark tiers and use
+`cntryl-stress` through direct `cargo bench` commands. See
+[Benchmark Guidelines](benchmarks.md) for the dedicated workflows and framework
+artifacts. Correctness tests exercise broker behavior and benchmark accounting
+invariants; they do not launch performance campaigns.
+
 ```sh
+cntryl-tools validate-tests
+cntryl-tools check-module-sizes
+cntryl-tools validate-benchmarks
 cargo fmt --all -- --check
 cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic

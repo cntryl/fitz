@@ -533,7 +533,7 @@ fn should_include_second_family_live_session_in_admin_projection() {
 }
 
 #[test]
-fn should_reuse_live_overlay_snapshot_and_refresh_after_commit() {
+fn should_refresh_live_overlay_snapshot_after_commit() {
     // Arrange
     let context = setup_test_context();
     let route = "stream://bench/events/orders";

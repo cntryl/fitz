@@ -64,7 +64,7 @@ fn should_reject_missing_broadcast_recipient() {
 }
 
 #[test]
-fn should_reject_unknown_occurrence_and_receiver() {
+fn should_reject_unknown_delivery_identity() {
     // Arrange
     let mut ledger = Ledger::new(1, false);
     // Act

@@ -22,7 +22,7 @@ fn should_remove_watch_session_subscriptions_on_cleanup() {
 }
 
 #[test]
-fn should_reject_exact_watch_over_total_session_limit_and_reclaim_slots_on_cleanup() {
+fn should_reclaim_exact_watch_capacity_after_session_cleanup() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;

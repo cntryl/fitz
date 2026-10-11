@@ -91,7 +91,7 @@ fn should_encode_terminal_error_response_tlv_frame() {
 }
 
 #[test]
-fn should_preserve_rpc_request_response_delivery_and_error_golden_bytes() {
+fn should_preserve_rpc_wire_golden_vectors() {
     // Arrange
     let correlation_id = Uuid::from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
     let request = RpcRequest::new(
@@ -148,47 +148,28 @@ fn should_keep_cancellation_control_out_of_domain_rpc_messages() {
 }
 
 #[test]
-fn should_parse_negotiated_registration_and_remaining_budget_extensions() {
+fn should_parse_negotiated_worker_cancellation_registration() {
     // Arrange
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/operation");
-    let mut registration_payload = BytesMut::new();
-    put_payload_string(&mut registration_payload, route.as_str());
-    registration_payload.put_u32(2);
-    registration_payload.put_u8(RPC_LIFECYCLE_EXTENSION_VERSION);
-    registration_payload.put_u8(RPC_WORKER_CANCELLATION_SUPPORTED);
-    let registration_context = FrameContext::new(
+    let mut payload = BytesMut::new();
+    put_payload_string(&mut payload, route.as_str());
+    payload.put_u32(2);
+    payload.put_u8(RPC_LIFECYCLE_EXTENSION_VERSION);
+    payload.put_u8(RPC_WORKER_CANCELLATION_SUPPORTED);
+    let context = FrameContext::new(
         42,
         crate::protocol::frame::ChannelId::Rpc,
         MessageType::new(300),
-        registration_payload.clone().freeze(),
-        family,
-    );
-    let request = RpcRequest::new(
-        family,
-        Uuid::new_v4(),
-        route.clone(),
-        Bytes::from_static(b"request"),
-    );
-    let mut request_payload = encode_request_into(&request, &mut PayloadEncoder::new());
-    request_payload.extend_from_slice(&[RPC_LIFECYCLE_EXTENSION_VERSION, 0x01, 0, 0, 4, 210]);
-    let request_context = FrameContext::new(
-        1,
-        crate::protocol::frame::ChannelId::Rpc,
-        MessageType::new(302),
-        Bytes::from(request_payload.clone()),
+        payload.clone().freeze(),
         family,
     );
 
     // Act
-    let registration = parse_request(&registration_context, &registration_payload, family)
-        .expect("parse supporting worker registration");
-    let parsed_request = parse_request(&request_context, &request_payload, family)
-        .expect("parse request with remaining budget");
-    let supports_cancellation = extract_registration_cancellation_support(&registration_payload)
-        .expect("extract worker capability");
-    let remaining_budget =
-        extract_request_remaining_budget_ms(&request_payload).expect("extract request budget");
+    let registration =
+        parse_request(&context, &payload, family).expect("parse supporting worker registration");
+    let supports_cancellation =
+        extract_registration_cancellation_support(&payload).expect("extract worker capability");
 
     // Assert
     assert!(matches!(
@@ -199,39 +180,55 @@ fn should_parse_negotiated_registration_and_remaining_budget_extensions() {
         }
     ));
     assert!(supports_cancellation);
-    assert_eq!(remaining_budget, Some(1_234));
-    assert!(matches!(
-        parsed_request,
-        RpcMessage::Request(parsed)
-            if parsed.correlation_id == request.correlation_id
-                && parsed.route == route
-                && parsed.body == request.body
-    ));
-    assert_eq!(
-        extract_auth_route(302, &request_payload).expect("extract request route"),
-        Some(route.as_str())
-    );
 }
 
 #[test]
-fn should_parse_caller_cancel_and_worker_cleanup_ack_controls() {
+fn should_parse_request_with_remaining_budget_extension() {
     // Arrange
-    let correlation_id = Uuid::new_v4();
-    let mut cancel_payload = BytesMut::with_capacity(18);
-    cancel_payload.put_u8(1);
-    put_uuid(&mut cancel_payload, &correlation_id);
-    cancel_payload.put_u8(RpcCancellationReason::Explicit as u8);
-    let ack_frame = encode_cancel_ack_tlv_frame(&correlation_id);
-    let (ack_type, ack_payload) = decode_single_frame(&ack_frame);
+    let family = RouteFamily::new(1);
+    let route = Route::new("rpc://bench/system/resource/operation");
+    let request = RpcRequest::new(
+        family,
+        Uuid::new_v4(),
+        route.clone(),
+        Bytes::from_static(b"request"),
+    );
+    let mut payload = encode_request_into(&request, &mut PayloadEncoder::new());
+    payload.extend_from_slice(&[RPC_LIFECYCLE_EXTENSION_VERSION, 0x01, 0, 0, 4, 210]);
+    let context = FrameContext::new(
+        1,
+        crate::protocol::frame::ChannelId::Rpc,
+        MessageType::new(302),
+        Bytes::from(payload.clone()),
+        family,
+    );
 
     // Act
-    let cancel = parse_cancellation_message(&cancel_payload).expect("parse caller cancel");
-    let ack = parse_cancellation_message(&ack_payload).expect("parse worker cleanup ack");
-    let worker_signal =
-        encode_worker_cancel_tlv_frame(&correlation_id, RpcCancellationReason::BrokerDeadline);
-    let result = encode_cancel_result_tlv_frame(&correlation_id, RpcCancellationResult::Forwarded);
-    let (worker_signal_type, worker_signal_payload) = decode_single_frame(&worker_signal);
-    let (result_type, result_payload) = decode_single_frame(&result);
+    let parsed_request =
+        parse_request(&context, &payload, family).expect("parse request with remaining budget");
+    let remaining_budget =
+        extract_request_remaining_budget_ms(&payload).expect("extract request budget");
+    let auth_route = extract_auth_route(302, &payload).expect("extract request route");
+
+    // Assert
+    assert_eq!(remaining_budget, Some(1_234));
+    assert!(matches!(parsed_request, RpcMessage::Request(parsed)
+        if parsed.correlation_id == request.correlation_id
+            && parsed.route == route && parsed.body == request.body));
+    assert_eq!(auth_route, Some(route.as_str()));
+}
+
+#[test]
+fn should_parse_explicit_caller_cancellation_control() {
+    // Arrange
+    let correlation_id = Uuid::new_v4();
+    let mut payload = BytesMut::with_capacity(18);
+    payload.put_u8(1);
+    put_uuid(&mut payload, &correlation_id);
+    payload.put_u8(RpcCancellationReason::Explicit as u8);
+
+    // Act
+    let cancel = parse_cancellation_message(&payload).expect("parse caller cancel");
 
     // Assert
     assert_eq!(
@@ -241,18 +238,53 @@ fn should_parse_caller_cancel_and_worker_cleanup_ack_controls() {
             reason: RpcCancellationReason::Explicit,
         }
     );
+}
+
+#[test]
+fn should_round_trip_worker_cleanup_ack_control() {
+    // Arrange
+    let correlation_id = Uuid::new_v4();
+
+    // Act
+    let frame = encode_cancel_ack_tlv_frame(&correlation_id);
+    let (message_type, payload) = decode_single_frame(&frame);
+    let ack = parse_cancellation_message(&payload).expect("parse worker cleanup ack");
+
+    // Assert
     assert_eq!(
         ack,
         RpcCancellationMessage::WorkerCleanupAck { correlation_id }
     );
-    assert_eq!(ack_type.as_u16(), 304);
-    assert_eq!(worker_signal_type.as_u16(), 305);
-    assert_eq!(result_type.as_u16(), 305);
-    assert_eq!(worker_signal_payload[0], 2);
-    assert_eq!(
-        worker_signal_payload[17],
-        RpcCancellationReason::BrokerDeadline as u8
-    );
-    assert_eq!(result_payload[0], 4);
-    assert_eq!(result_payload[17], RpcCancellationResult::Forwarded as u8);
+    assert_eq!(message_type.as_u16(), 304);
+}
+
+#[test]
+fn should_encode_broker_deadline_worker_cancellation_control() {
+    // Arrange
+    let correlation_id = Uuid::new_v4();
+
+    // Act
+    let frame =
+        encode_worker_cancel_tlv_frame(&correlation_id, RpcCancellationReason::BrokerDeadline);
+    let (message_type, payload) = decode_single_frame(&frame);
+
+    // Assert
+    assert_eq!(message_type.as_u16(), 305);
+    assert_eq!(payload[0], 2);
+    assert_eq!(payload[17], RpcCancellationReason::BrokerDeadline as u8);
+}
+
+#[test]
+fn should_encode_forwarded_cancellation_result_control() {
+    // Arrange
+    let correlation_id = Uuid::new_v4();
+
+    // Act
+    let frame = encode_cancel_result_tlv_frame(&correlation_id, RpcCancellationResult::Forwarded);
+    let (message_type, payload) = decode_single_frame(&frame);
+
+    // Assert
+    assert_eq!(message_type.as_u16(), 305);
+    assert_eq!(payload[0], 4);
+    assert_eq!(payload[17], RpcCancellationResult::Forwarded as u8);
 }

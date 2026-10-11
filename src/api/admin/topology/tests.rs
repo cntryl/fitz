@@ -54,7 +54,7 @@ fn runtime_with_identical_routes_in_two_families() -> Runtime {
 }
 
 #[test]
-fn should_preserve_unscoped_route_scopes_and_rollups_in_global_rest_topology() {
+fn should_preserve_global_rest_topology_scope_consistency() {
     // Arrange
     let runtime = runtime_with_identical_routes_in_two_families();
 
@@ -107,7 +107,7 @@ fn should_keep_route_families_distinct_in_all_family_mcp_topology() {
 }
 
 #[test]
-fn should_keep_selected_family_notice_and_rpc_topology_scopes() {
+fn should_preserve_selected_family_topology_scope_consistency() {
     // Arrange
     let runtime = runtime_with_identical_routes_in_two_families();
 

@@ -397,7 +397,7 @@ fn should_not_infer_read_only_write_from_backend_message() {
 }
 
 #[test]
-fn should_preserve_kv_request_response_notification_and_error_golden_bytes() {
+fn should_preserve_kv_wire_golden_vectors() {
     // Arrange
     let request = [
         0, 0, 0, 15, b'k', b'v', b':', b'/', b'/', b'a', b'c', b'm', b'e', b'/', b'a', b'/', b'r',

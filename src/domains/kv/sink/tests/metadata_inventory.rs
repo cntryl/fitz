@@ -204,7 +204,7 @@ fn should_page_kv_metadata_while_the_live_transaction_index_is_locked() {
 }
 
 #[test]
-fn should_preserve_live_transaction_and_latency_fields_in_full_kv_inventory() {
+fn should_preserve_operational_fields_in_full_kv_inventory() {
     // Arrange
     let sink = sink();
     let family = RouteFamily::new(1);

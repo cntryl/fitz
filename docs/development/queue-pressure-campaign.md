@@ -42,41 +42,36 @@ The unchanged finite accepted-message drain remains a separate required gate.
 The large-drain qualification and quarter-core/512 MiB
 survival/recovery qualification remain distinct gates.
 
-The manual Tier 5 workflow's `queue_pressure` input selects matched 10k, 25k,
-and 100k campaigns on one Linux host. Both sources use the same corrected
-harness, locked dependency, and the initial benchmark-only instrumentation;
-later production optimizations are never copied onto the baseline. Actual
-diagnostic build campaigns finish before timing. The runner retains every failed
-capture. Each of the six full-window captures must end with `configured_window` after the
-full 120-second active window, miss at most 1% of offered arrivals, accept at
-least 99% of the window's scheduled arrivals, reconcile known outcomes, verify
-every ACK, observe the 5 ms minimum pause, drain within 600 seconds, and pass
-empty verification, recovery and cleanup. Guard-stopped captures still appear in
-the step summary with their termination and missed arrivals, but they fail the
-full-window gate.
+The manual Tier 5 workflow's `suite: queue-drains` selection runs six explicit
+`tier5_queue_drains` workloads: full-window and finite-drain envelopes at 10k,
+25k, and 100k outstanding-work guards. Each row uses the real Queue driver,
+ledger, corrected pacing worker, bounded drain, empty verification, recovery
+probe, and cleanup. These workloads ignore generic pressure overrides so their
+declared envelopes stay fixed.
 
-Each capture's backlog guard (10k, 25k or 100k) fixes its offered rate at 80%
-of the guard spread over the window: 66, 166 and 666 arrivals per second, or
-7,920, 19,920 and 79,920 messages. Outstanding work can never exceed what was
-sent, so the guard cannot stop the window even if the consumer stalls. The one
-paced consumer drains roughly 186 messages per second on the Linux runner, so
-the three rates sit below, near and well above its capacity. The 100k capture
-leaves at most 79,920 messages to drain, about 430 seconds at that rate, inside
-the 600-second deadline. The earlier fixed 16,000 per second rate tripped every
-guard within seconds and never completed a window.
+Full-window rows must end with `configured_window` after a 120-second active
+window, miss at most 1% of scheduled arrivals, and accept at least 99%. They use
+256 producers, a 5 ms minimum pause after each validated ACK, a 500,000-attempt
+cap, and a 600-second drain deadline. Rates are 80% of the backlog guard spread
+over the window: 66, 166, and 666 arrivals per second. These rates permit the
+full window to finish without the backlog guard stopping it.
 
-Six additional captures retain #404's unchanged finite-drain envelope: 16,000
-arrivals per second, 120-second configured stages, 256 producers, the same 10k,
-25k and 100k outstanding-work guards, 500,000 attempt cap, 5 ms post-ACK pause,
-and 600-second drain deadline. Each must accept at least its guard's message
-count, verify every ID/payload and ACK, reconcile all known outcomes, finish
-empty, recover and clean up. Guard-stopped finite captures retain missed arrivals
-and do not establish a full window or arrival-rate qualification. A harness
-`offered_rate_not_met` termination always fails. All twelve captures must pass;
-the lower full-window rates never substitute for the original 100k drain.
-The manual job has a five-hour total budget for two build diagnostics and all
-twelve captures plus compilation and evidence upload. Each measured capture
-keeps its 120-second stage, 600-second drain and 1,000-second harness guard.
+Finite-drain rows preserve the original envelope: 16,000 arrivals per second,
+120-second configured stages, 256 producers, 10k/25k/100k guards, the same
+attempt cap, pause, and drain deadline. They must accept at least the declared
+guard's message count. Guard-stopped finite drains do not establish a full-window
+or offered-rate result. Both kinds fail on missing work, indeterminate outcomes,
+invalid pacing evidence, failed drain, nonempty Queue, or failed recovery/cleanup.
+
+The workflow runs each native workload independently and uploads failures and
+partial reports. These are single-source correctness and liveness diagnostics;
+matrix jobs can use different hosts and do not establish cross-revision timing
+ratios. The former custom matched-source orchestration is retired. Any future
+same-host performance qualification must retain matched fixtures and locked
+dependencies, throughput of at least 90% of baseline, ACK/cycle p99 at most
+110%, and drain time at most the larger of 110% of baseline or baseline plus
+one second. Use shared benchmark tooling for comparisons; these diagnostics
+do not waive an outstanding performance qualification.
 
 ## Workload
 
@@ -187,16 +182,19 @@ may require increasing `STRESS_TIMEOUT_SECS`; a hard timeout is still a failed
 campaign. This row is opt-in and does not extend the seven-domain scheduled
 workflow matrix.
 
-The manual matched workflow compares the dispatched candidate against its
-`queue_baseline` input, which can be a commit, tag or branch. Left empty, it
-uses the merge base with `origin/develop`, which suits a feature branch. A
-dispatch on `develop` has no distinct merge base, so set `queue_baseline` to the
-develop commit before the change under test. The baseline receives the
-candidate's `Cargo.toml`, `Cargo.lock` and `benches`. A baseline that predates
-the benchmark-only Queue diagnostics (develop commit `1e3b18dd`) also receives
-that commit's own `src/domains/queue` diff and nothing later. The job fails
-before compiling if the prepared baseline and candidate have identical `src/`
-trees.
+Run a fixed envelope directly:
+
+```bash
+FITZ_LOG_LEVEL=off RUST_LOG=off OTEL_ENABLED=false \
+  cargo bench --locked --quiet --bench tier5_queue_drains --features benchkit,stress-soak -- \
+  --workload should_complete_queue_full_window_10k
+```
+
+Select `should_complete_queue_full_window_25k`,
+`should_complete_queue_full_window_100k`, or
+`should_drain_queue_finite_10k` / `25k` / `100k` for the other fixed rows.
+Each keeps the single-sample diagnostic contract and a 1,000-second harness
+guard in the hosted workflow.
 
 Raw stage and partial evidence is atomically written under
 `target/fitz-stress/queue-pressure/`. Reports record scheduled, missed, sent,
@@ -224,12 +222,11 @@ consumer delay, storage, producer pool and stage duration. For generator or
 safety boundaries, change the limiting harness dimension explicitly and record
 that change; do not label it a broker failure.
 
-## Matched before/after comparison
+## Same-host performance qualification
 
-After all twelve captures, the workflow compares each matched 10k, 25k and 100k
-pair separately within the full-window and finite-envelope scopes. All six
-pairs must pass. The workflow fails when an after capture regresses beyond the same-host limits in
-[the performance loop](perf-loop.md):
+The retired matched-source workflow used the following limits for each 10k,
+25k, and 100k pair in both envelope kinds. They remain the acceptance policy
+for a future same-host qualification:
 
 | Metric | Report source | Limit for after |
 | --- | --- | --- |
@@ -238,12 +235,15 @@ pairs must pass. The workflow fails when an after capture regresses beyond the s
 | ACK p99 | `consumer_timing.ack.distribution` | At most 110% of before |
 | Cycle p99 | `consumer_timing.cycle.distribution` | At most 110% of before |
 
-The 1-second drain allowance stops near-empty drains, which finish within a few
-10-millisecond drain polls, from failing on jitter. The p99 values are power-of-two
-histogram bucket upper bounds, so any move to a higher bucket fails. Each pair
-is a single sample: a failure is a regression signal to reproduce, not a
-measured regression size. The comparison is written to the step summary and to
-`comparison.json`. A pair with a failed capture or missing metrics is not compared and fails.
+The 1-second drain allowance accounts for jitter in near-empty drains. The p99
+values are power-of-two histogram bucket upper bounds. A failed capture or
+missing metric cannot produce a passing comparison. Single-sample observations
+are signals to reproduce, not estimates of a stable regression size.
+
+The native Tier 5 rows enforce their workload invariants and emit these
+observations. They do not produce the former `comparison.json` or enforce
+cross-revision ratios across matrix hosts. That comparison policy belongs in
+shared benchmark tooling and requires stable, compatible host evidence.
 
 ## Initial local evidence
 

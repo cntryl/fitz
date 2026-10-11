@@ -283,7 +283,7 @@ fn should_reject_corrupt_snapshot_before_restore_mutates_destination() {
 }
 
 #[test]
-fn should_replace_selected_kv_resources_and_remove_post_capture_values() {
+fn should_restore_selected_kv_resources_to_captured_state() {
     // Arrange
     let family = RouteFamily::new(1);
     let sink = KvDomain::new(

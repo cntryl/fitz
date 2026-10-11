@@ -278,6 +278,7 @@ async fn should_verify_permissions_using_inline_jwks_for_hmac_token() {
 
 #[tokio::test]
 async fn should_reject_unallowlisted_issuer_even_with_signed_token() {
+    // Arrange
     let secret = b"test_secret";
     let claims = json!({
         "iss": "https://attacker.example/",
@@ -303,14 +304,17 @@ async fn should_reject_unallowlisted_issuer_even_with_signed_token() {
         }],
     );
 
+    // Act
     let result = permissions_from_verified_jwt(&token, &config).await;
 
+    // Assert
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("issuer not allowed"));
 }
 
 #[tokio::test]
 async fn should_reject_wrong_audience_for_hmac_tokens() {
+    // Arrange
     let claims = json!({
         "iss": "",
         "aud": "wrong-audience",
@@ -327,14 +331,17 @@ async fn should_reject_wrong_audience_for_hmac_tokens() {
     .unwrap();
 
     let config = AuthConfig::hmac("test-secret-key", "fitz-broker");
+    // Act
     let result = permissions_from_verified_jwt(&token, &config).await;
 
+    // Assert
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("audience mismatch"));
 }
 
 #[tokio::test]
 async fn should_reject_tokens_that_are_not_yet_valid() {
+    // Arrange
     let now = now_epoch_secs();
     let claims = json!({
         "iss": "",
@@ -353,14 +360,17 @@ async fn should_reject_tokens_that_are_not_yet_valid() {
     .unwrap();
 
     let config = AuthConfig::hmac("test-secret-key", "fitz-broker");
+    // Act
     let result = permissions_from_verified_jwt(&token, &config).await;
 
+    // Assert
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not yet valid"));
 }
 
 #[tokio::test]
 async fn should_keep_configured_identity_claim_given_other_identity_claims() {
+    // Arrange
     let claims = json!({
         "iss": "",
         "aud": "fitz-broker",
@@ -378,8 +388,10 @@ async fn should_keep_configured_identity_claim_given_other_identity_claims() {
     .unwrap();
 
     let config = AuthConfig::hmac("test-secret-key", "fitz-broker");
+    // Act
     let result = permissions_from_verified_jwt(&token, &config).await;
 
+    // Assert
     assert!(result.is_ok());
     assert_eq!(result.unwrap().1.identity_value.as_deref(), Some("realm1"));
 }

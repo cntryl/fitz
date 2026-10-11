@@ -69,7 +69,7 @@ fn should_keep_rpc_receive_stamp_across_backpressure_retry() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn should_keep_transport_rpc_stamp_through_authentication_owned_and_shared_dispatch() {
+async fn should_preserve_transport_rpc_stamp_across_dispatch_paths() {
     for transport in [TransportKind::Tcp, TransportKind::WebSocket] {
         for shared_payload in [false, true] {
             // Arrange

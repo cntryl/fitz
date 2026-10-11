@@ -95,7 +95,7 @@ fn run_child(directory: &std::path::Path) {
 }
 
 #[test]
-fn should_preserve_fast_queue_backlog_and_ack_after_process_exit() {
+fn should_recover_acknowledged_fast_queue_state_after_process_exit() {
     // Arrange
     let directory = tempfile::tempdir().unwrap();
     run_child(directory.path());

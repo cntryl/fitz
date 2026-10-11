@@ -330,7 +330,7 @@ fn should_cancel_only_originating_family_when_identical_correlations_are_live() 
 }
 
 #[test]
-fn should_ignore_wrong_worker_and_duplicate_cleanup_ack_without_releasing_credit() {
+fn should_ignore_cleanup_ack_from_unassigned_worker() {
     // Arrange
     let h = Harness::new();
     let id = uuid::Uuid::new_v4();
@@ -347,12 +347,27 @@ fn should_ignore_wrong_worker_and_duplicate_cleanup_ack_without_releasing_credit
             rpc_frame(43, h.family, message_type, payload),
         ))
         .expect("wrong worker ack is ignored");
-    let after_wrong_worker = h.capacity();
-    h.ack(id);
+    let capacity_after_wrong_worker = h.capacity();
     h.ack(id);
 
     // Assert
-    assert_eq!(after_wrong_worker, 1);
+    assert_eq!(capacity_after_wrong_worker, 1);
+    assert_eq!(h.capacity(), 0);
+}
+
+#[test]
+fn should_ignore_repeated_cleanup_ack() {
+    // Arrange
+    let h = Harness::new();
+    let id = uuid::Uuid::new_v4();
+    h.request(id);
+    h.cancel(id);
+    h.ack(id);
+
+    // Act
+    h.ack(id);
+
+    // Assert
     assert_eq!(h.capacity(), 0);
 }
 
@@ -386,7 +401,7 @@ fn should_keep_completed_call_terminal_when_cancellation_arrives_later() {
 }
 
 #[test]
-fn should_remove_queued_call_once_and_leave_dispatched_capacity_reserved() {
+fn should_preserve_dispatched_credit_when_queued_cancellation_repeats() {
     // Arrange
     let h = Harness::new();
     let dispatched = uuid::Uuid::new_v4();

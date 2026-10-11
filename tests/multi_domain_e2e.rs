@@ -24,7 +24,7 @@ fn assert_rpc_delivery_ok(frame: &[u8]) {
 // ============================================================================
 
 #[tokio::test]
-async fn should_support_queue_enqueue_and_lease_acquire_on_same_server_tcp() {
+async fn should_isolate_queue_work_from_lease_ownership_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: enqueue a queue message, then acquire a lease in the same server runtime.
 
@@ -56,7 +56,7 @@ async fn should_support_queue_enqueue_and_lease_acquire_on_same_server_tcp() {
 }
 
 #[tokio::test]
-async fn should_support_queue_enqueue_and_lease_acquire_on_same_server_ws() {
+async fn should_isolate_queue_work_from_lease_ownership_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: enqueue a queue message, then acquire a lease in the same server runtime.
 
@@ -183,7 +183,7 @@ async fn should_allow_stream_append_with_active_notice_subscription_tcp() {
         .await
         .expect("notice connect");
 
-    // Act - First create a stream session with BEGIN
+    // Establish the append session before exercising coexistence.
     let begin_frame = build_stream_begin("stream://test/stream/events/write");
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 3000)
@@ -192,28 +192,29 @@ async fn should_allow_stream_append_with_active_notice_subscription_tcp() {
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
-    // Act - Now append to the session
-    let append_frame = build_stream_append(session_id, 0, b"event-1");
-    let append_response = stream_client
-        .send_and_receive(&append_frame, 3000)
-        .await
-        .expect("stream append");
-
-    // Act - Subscribe to notice (fire-and-forget PUBLISH wouldn't return a response)
+    // Keep a successful Notice subscription active while appending.
     let subscribe_frame = build_notice_subscribe("notice://test/notifications/**");
     let subscribe_response = notice_client
         .send_and_receive(&subscribe_frame, 3000)
         .await
         .expect("notice subscribe");
 
-    // Assert
-    let (_msg_type, status, _data) = parse_stream_response(&append_response);
-    assert_eq!(status, 0, "Stream append should succeed");
     let (_msg_type, status, _data) = parse_notice_response(&subscribe_response);
     assert_eq!(
         status, 0,
         "Notice subscribe should succeed concurrently with stream append"
     );
+
+    // Act
+    let append_frame = build_stream_append(session_id, 0, b"event-1");
+    let append_response = stream_client
+        .send_and_receive(&append_frame, 3000)
+        .await
+        .expect("stream append");
+
+    // Assert
+    let (_msg_type, status, _data) = parse_stream_response(&append_response);
+    assert_eq!(status, 0, "Stream append should succeed");
 }
 
 #[tokio::test]
@@ -230,7 +231,7 @@ async fn should_allow_stream_append_with_active_notice_subscription_ws() {
         .await
         .expect("notice connect");
 
-    // Act - First create a stream session with BEGIN
+    // Establish the append session before exercising coexistence.
     let begin_frame = build_stream_begin("stream://test/stream/events/write");
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 3000)
@@ -239,24 +240,25 @@ async fn should_allow_stream_append_with_active_notice_subscription_ws() {
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
-    // Act - Now append to the session
-    let append_frame = build_stream_append(session_id, 0, b"event-1");
-    let append_response = stream_client
-        .send_and_receive(&append_frame, 3000)
-        .await
-        .expect("stream append");
-
-    // Act - Subscribe to notice (fire-and-forget PUBLISH wouldn't return a response)
+    // Keep a successful Notice subscription active while appending.
     let subscribe_frame = build_notice_subscribe("notice://test/notifications/**");
     let subscribe_response = notice_client
         .send_and_receive(&subscribe_frame, 3000)
         .await
         .expect("notice subscribe");
 
+    let (_msg_type, status, _data) = parse_notice_response(&subscribe_response);
+    assert_eq!(status, 0);
+
+    // Act
+    let append_frame = build_stream_append(session_id, 0, b"event-1");
+    let append_response = stream_client
+        .send_and_receive(&append_frame, 3000)
+        .await
+        .expect("stream append");
+
     // Assert
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
-    assert_eq!(status, 0);
-    let (_msg_type, status, _data) = parse_notice_response(&subscribe_response);
     assert_eq!(status, 0);
 }
 

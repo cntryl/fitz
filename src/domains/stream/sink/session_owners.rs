@@ -49,7 +49,7 @@ mod tests {
     use crate::runtime::routing::RouteFamily;
 
     #[test]
-    fn should_match_stream_session_owner_only_with_the_same_connection_and_family() {
+    fn should_require_matching_stream_session_owner_identity() {
         // Arrange
         let family = RouteFamily::new(1);
         let key = super::super::model::StreamResourceScope {

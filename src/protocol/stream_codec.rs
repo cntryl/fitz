@@ -536,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn should_encode_versioned_stream_error_and_preserve_read_envelope() {
+    fn should_preserve_versioned_stream_error_envelopes() {
         // Arrange
         let response = StreamClientResponseBody::Error("session not found".to_string());
 
@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn should_encode_frozen_stream_response_notification_and_error_golden_vectors() {
+    fn should_preserve_stream_wire_golden_vectors() {
         // Arrange
         // Act
         let success = encode_response(

@@ -479,6 +479,7 @@ async fn should_return_total_limit_bytes_on_1025th_exact_subscribe() {
 
 #[tokio::test]
 async fn should_recover_schedule_definitions_before_accepting_schedule_traffic() {
+    // Arrange
     let tempdir = tempfile::TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-schedule-restart");
     let db_path = db_path.to_string_lossy().to_string();
@@ -504,10 +505,12 @@ async fn should_recover_schedule_definitions_before_accepting_schedule_traffic()
     drop(store);
     tokio::time::sleep(Duration::from_millis(100)).await;
 
+    // Act
     let server = TestServer::start_with_local_storage(db_path)
         .await
         .expect("start server from persisted schedule state");
 
+    // Assert
     let schedules = server.runtime.schedule_list_schedules(None);
     let schedule = schedules
         .iter()

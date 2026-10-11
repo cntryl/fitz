@@ -36,7 +36,7 @@ fn request(mut body: serde_json::Value, revision: &str, method: &str) -> Request
 }
 
 #[tokio::test]
-async fn should_require_authentication_and_audit_without_recording_credentials() {
+async fn should_reject_unauthenticated_requests_with_credential_free_audit() {
     // Arrange
     let state = tests::http_state_for_tests();
     let request = Request::builder()
@@ -208,7 +208,7 @@ async fn should_reject_direct_call_to_disabled_action_tool() {
 }
 
 #[tokio::test]
-async fn should_audit_resource_validation_error_and_preserve_request_id() {
+async fn should_correlate_invalid_resource_request_audit_with_jsonrpc_error() {
     // Arrange
     let state = tests::http_state_for_tests();
     let request = request(

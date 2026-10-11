@@ -37,7 +37,7 @@ fn should_reject_malformed_remaining_budget_extensions() {
 }
 
 #[test]
-fn should_accept_zero_and_maximum_remaining_budget() {
+fn should_accept_remaining_budget_boundaries() {
     // Arrange
     let budgets = [0, MAX_RPC_BUDGET_MILLIS];
 
@@ -54,7 +54,7 @@ fn should_accept_zero_and_maximum_remaining_budget() {
 }
 
 #[test]
-fn should_reject_worker_only_reasons_and_trailing_cancellation_bytes() {
+fn should_reject_invalid_caller_cancellation_payloads() {
     // Arrange
     let id = Uuid::new_v4();
     let malformed = [
@@ -73,7 +73,7 @@ fn should_reject_worker_only_reasons_and_trailing_cancellation_bytes() {
 }
 
 #[test]
-fn should_reject_unknown_registration_flags_and_trailing_extension_bytes() {
+fn should_reject_invalid_registration_cancellation_extensions() {
     // Arrange
     let extensions = [vec![2, 1], vec![1, 2], vec![1], vec![1, 1, 0]];
 

@@ -764,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_queue_request_response_notification_and_error_golden_bytes() {
+    fn should_preserve_queue_wire_golden_vectors() {
         // Arrange
         let route = "queue://r/a/x";
         let request = [

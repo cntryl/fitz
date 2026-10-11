@@ -790,7 +790,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
 }
 
 #[tokio::test]
-async fn should_require_exact_kv_realm_area_and_resource_at_ingress() {
+async fn should_require_exact_kv_resource_scope_at_ingress() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 622;

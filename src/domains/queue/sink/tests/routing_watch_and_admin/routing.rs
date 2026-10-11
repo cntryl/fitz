@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_enforce_exact_and_wildcard_watch_limits_per_session() {
+fn should_enforce_watch_registration_quotas_per_session() {
     // Arrange
     let exact_harness = QueueWatchHarness::new();
     let mut first_exact_id = None;

@@ -532,10 +532,14 @@ mod tests {
 
     #[test]
     fn should_default_event_limit_to_the_stream_contract() {
-        assert_eq!(
-            SizeLimits::default().max_event_size.get(),
-            crate::domains::stream::protocol::MAX_EVENT_SIZE
-        );
+        // Arrange
+        let limits = SizeLimits::default();
+
+        // Act
+        let maximum = limits.max_event_size.get();
+
+        // Assert
+        assert_eq!(maximum, crate::domains::stream::protocol::MAX_EVENT_SIZE);
     }
 
     #[test]

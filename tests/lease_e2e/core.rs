@@ -38,14 +38,14 @@ where
     assert_ne!(status, 0, "Should reject renew of unowned lease");
 }
 
-async fn should_acquire_and_renew_lease_before_expiry<C>(server: &TestServer)
+async fn should_renew_lease_before_expiry<C>(server: &TestServer)
 where
     C: LeaseConnector,
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
 
-    // Act - Acquire lease
+    // Acquire the live lease that will be renewed.
     let acquire_frame = build_lease_acquire_immediate("lease://test/locks/resource", "owner1", 10);
     let acquire_response = client
         .send_and_receive(&acquire_frame, 2000)
@@ -57,7 +57,7 @@ where
 
     let token = parse_lease_token_response(&data).expect("parse token");
 
-    // Act - Renew lease before expiry
+    // Act
     let renew_frame = build_lease_renew("lease://test/locks/resource", "owner1", token, 20);
     let renew_response = client
         .send_and_receive(&renew_frame, 2000)
@@ -69,14 +69,14 @@ where
     assert_eq!(status, 0, "Expected renew success");
 }
 
-async fn should_release_lease_and_allow_reacquisition<C>(server: &TestServer)
+async fn should_reacquire_released_lease<C>(server: &TestServer)
 where
     C: LeaseConnector,
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
 
-    // Act - Acquire lease
+    // Acquire the lease before releasing it for a new owner.
     let acquire_frame = build_lease_acquire_immediate("lease://test/locks/app", "owner1", 30);
     let acquire_response = client
         .send_and_receive(&acquire_frame, 2000)
@@ -88,7 +88,7 @@ where
 
     let token = parse_lease_token_response(&data).expect("parse token");
 
-    // Act - Release lease
+    // Release ownership before attempting reacquisition.
     let release_frame = build_lease_release("lease://test/locks/app", "owner1", token);
     let release_response = client
         .send_and_receive(&release_frame, 2000)
@@ -98,7 +98,7 @@ where
     let (_msg_type, status, _data) = parse_lease_response(&release_response);
     assert_eq!(status, 0, "Expected release success");
 
-    // Act - Try to reacquire (should succeed now)
+    // Act
     let reacquire_frame = build_lease_acquire_immediate("lease://test/locks/app", "owner2", 30);
     let reacquire_response = client
         .send_and_receive(&reacquire_frame, 2000)
@@ -305,15 +305,15 @@ async fn should_reject_renew_of_unowned_lease_tcp() {
 }
 
 #[tokio::test]
-async fn should_acquire_and_renew_lease_before_expiry_tcp() {
+async fn should_renew_lease_before_expiry_tcp() {
     let server = TestServer::start().await.expect("start");
-    should_acquire_and_renew_lease_before_expiry::<TcpLeaseConnector>(&server).await;
+    should_renew_lease_before_expiry::<TcpLeaseConnector>(&server).await;
 }
 
 #[tokio::test]
-async fn should_release_lease_and_allow_reacquisition_tcp() {
+async fn should_reacquire_released_lease_tcp() {
     let server = TestServer::start().await.expect("start");
-    should_release_lease_and_allow_reacquisition::<TcpLeaseConnector>(&server).await;
+    should_reacquire_released_lease::<TcpLeaseConnector>(&server).await;
 }
 
 #[tokio::test]
@@ -360,15 +360,15 @@ async fn should_reject_renew_of_unowned_lease_ws() {
 }
 
 #[tokio::test]
-async fn should_acquire_and_renew_lease_before_expiry_ws() {
+async fn should_renew_lease_before_expiry_ws() {
     let server = TestServer::start().await.expect("start");
-    should_acquire_and_renew_lease_before_expiry::<WsLeaseConnector>(&server).await;
+    should_renew_lease_before_expiry::<WsLeaseConnector>(&server).await;
 }
 
 #[tokio::test]
-async fn should_release_lease_and_allow_reacquisition_ws() {
+async fn should_reacquire_released_lease_ws() {
     let server = TestServer::start().await.expect("start");
-    should_release_lease_and_allow_reacquisition::<WsLeaseConnector>(&server).await;
+    should_reacquire_released_lease::<WsLeaseConnector>(&server).await;
 }
 
 #[tokio::test]

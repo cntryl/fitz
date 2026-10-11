@@ -22,7 +22,7 @@ async fn should_enforce_minimum_pause_before_a_reserve_permit() {
 }
 
 #[tokio::test]
-async fn should_cancel_a_long_pause_and_join_the_worker() {
+async fn should_shutdown_worker_after_cancelled_long_pause() {
     // Arrange
     let mut pacer = Pacer::new();
     // Act
