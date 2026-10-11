@@ -506,6 +506,14 @@ impl Router {
         self.registry.get(address)
     }
 
+    /// Retain the real domain sink before testkit installs a forwarding gate.
+    pub(crate) fn resolve_domain_sink_for_tests(
+        &self,
+        domain: &str,
+    ) -> Option<Arc<dyn MailboxSink>> {
+        self.registry.get_by_domain(domain)
+    }
+
     /// Deliver through a previously resolved exact-route sink while preserving
     /// the router's panic containment and delivery-failure accounting.
     #[allow(clippy::unused_self)] // Keeps resolved delivery behind a Router-owned API.
