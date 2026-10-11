@@ -581,7 +581,7 @@ fn should_not_wake_pending_reserve_when_an_unrelated_dead_letter_is_purged() {
 /// Invariant: the failure is counted for alerting and the family stays dirty,
 /// so the next flush pass retries instead of silently widening the loss window.
 #[test]
-fn should_count_and_retain_failed_fast_flushes() {
+fn should_retain_failed_fast_flush_for_retry() {
     // Arrange
     let family = RouteFamily::new(1);
     let sink = new_queue_domain_sink(

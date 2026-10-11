@@ -49,13 +49,17 @@ fn should_reject_credentials_in_allowed_host_authority() {
 }
 
 #[test]
-fn should_normalize_https_origins_and_default_ports() {
+fn should_canonicalize_https_origin_ports() {
     // Arrange
-    let origin_without_port = parse_origin("https://console.example.test").unwrap();
-    let origin_with_default_port = parse_origin("https://console.example.test:443").unwrap();
+    let origins = [
+        "https://console.example.test",
+        "https://console.example.test:443",
+        "https://console.example.test:8443",
+    ];
 
     // Act
-    let origin_with_other_port = parse_origin("https://console.example.test:8443").unwrap();
+    let [origin_without_port, origin_with_default_port, origin_with_other_port] =
+        origins.map(|origin| parse_origin(origin).unwrap());
 
     // Assert
     assert_eq!(origin_without_port, origin_with_default_port);
@@ -81,7 +85,7 @@ fn should_reject_non_origin_urls_from_allowlist() {
 }
 
 #[tokio::test]
-async fn should_serve_primary_http_discovery_and_scoped_diagnostic_prompt() {
+async fn should_list_tools_through_primary_http_discovery() {
     // Arrange
     let (url, token, stop, server) = spawn_authenticated_mcp_service().await;
     let transport =
@@ -98,13 +102,36 @@ async fn should_serve_primary_http_discovery_and_scoped_diagnostic_prompt() {
 
     // Act
     let tools = client.list_tools(None).await.expect("tool listing");
+
+    // Assert
+    assert_eq!(tools.tools.len(), 10);
+    client.cancel().await.expect("close primary client");
+    stop.cancel();
+    server.await.expect("HTTP listener task");
+}
+
+#[tokio::test]
+async fn should_serve_scoped_diagnostic_prompt_through_primary_http_discovery() {
+    // Arrange
+    let (url, token, stop, server) = spawn_authenticated_mcp_service().await;
+    let transport =
+        StreamableHttpClientTransport::from_config(authenticated_transport_config(url, token));
+    let client = ClientConfig::default()
+        .serve_with_lifecycle(
+            transport,
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .expect("primary stateless discovery should succeed");
+
     let arguments = serde_json::from_value(serde_json::json!({
-        "route_family": "1",
-        "realm": "customer-space",
-        "area": "jobs",
-        "resource": "dispatch"
+        "route_family": "1", "realm": "customer-space", "area": "jobs", "resource": "dispatch"
     }))
     .expect("prompt arguments");
+
+    // Act
     let prompt = client
         .get_prompt(GetPromptRequestParams::new("diagnose_kv").with_arguments(arguments))
         .await
@@ -112,7 +139,6 @@ async fn should_serve_primary_http_discovery_and_scoped_diagnostic_prompt() {
     let prompt_text = format!("{prompt:?}");
 
     // Assert
-    assert_eq!(tools.tools.len(), 10);
     assert!(prompt_text.contains("Resource detail"));
     assert!(prompt_text.contains("Recent timeline"));
     client.cancel().await.expect("close primary client");
@@ -121,7 +147,7 @@ async fn should_serve_primary_http_discovery_and_scoped_diagnostic_prompt() {
 }
 
 #[tokio::test]
-async fn should_serve_compatibility_http_initialize_and_tool_call() {
+async fn should_enforce_resource_scope_through_compatibility_http_client() {
     // Arrange
     let (url, token, stop, server) = spawn_authenticated_mcp_service().await;
     let transport =
@@ -156,7 +182,7 @@ async fn should_serve_compatibility_http_initialize_and_tool_call() {
 }
 
 #[tokio::test]
-async fn should_serve_versioned_resources_with_evidence_and_enforce_scope() {
+async fn should_advertise_authorized_versioned_http_resource_catalog() {
     // Arrange
     let (url, token, stop, server) = spawn_authenticated_mcp_service().await;
     let transport =
@@ -180,6 +206,40 @@ async fn should_serve_versioned_resources_with_evidence_and_enforce_scope() {
         .list_resource_templates(None)
         .await
         .expect("operational catalog");
+
+    // Assert
+    assert_eq!(documents.resources.len(), 3);
+    assert!(documents
+        .resources
+        .iter()
+        .all(|resource| resource.uri.starts_with("fitz://docs/v1/")));
+    assert_eq!(templates.resource_templates.len(), 8);
+    assert!(templates
+        .resource_templates
+        .iter()
+        .all(|template| template.name != "broker_summary_v1"));
+    client.cancel().await.expect("close resource client");
+    stop.cancel();
+    server.await.expect("resource HTTP listener");
+}
+
+#[tokio::test]
+async fn should_enforce_versioned_http_resource_read_scope() {
+    // Arrange
+    let (url, token, stop, server) = spawn_authenticated_mcp_service().await;
+    let transport =
+        StreamableHttpClientTransport::from_config(authenticated_transport_config(url, token));
+    let client = ClientConfig::default()
+        .serve_with_lifecycle(
+            transport,
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .expect("restricted primary MCP client");
+
+    // Act
     let resource = client
         .read_resource(ReadResourceRequestParams::new(
             "fitz://resource/v1/kv/1/customer-space/jobs/dispatch",
@@ -199,16 +259,6 @@ async fn should_serve_versioned_resources_with_evidence_and_enforce_scope() {
         .await;
 
     // Assert
-    assert_eq!(documents.resources.len(), 3);
-    assert!(documents
-        .resources
-        .iter()
-        .all(|resource| resource.uri.starts_with("fitz://docs/v1/")));
-    assert_eq!(templates.resource_templates.len(), 8);
-    assert!(templates
-        .resource_templates
-        .iter()
-        .all(|template| template.name != "broker_summary_v1"));
     assert!(facts["_meta"]["observed_at"].is_string());
     assert!(facts["_meta"]["evidence_id"].is_string());
     assert!(facts["_meta"]["partial"].is_boolean());
@@ -371,23 +421,47 @@ fn serve_http_state(
 }
 
 #[tokio::test]
-async fn should_reject_unconfigured_host_origin_and_oversized_declared_body() {
+async fn should_reject_unconfigured_http_host() {
     // Arrange
     let state = http_state_for_tests();
-    let bad_host = Request::builder()
+    let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
         .header(HOST, "evil.example.test")
         .body(Full::new(Bytes::new()))
         .unwrap();
-    let bad_origin = Request::builder()
+
+    // Act
+    let response = state.handle(request).await;
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn should_reject_unconfigured_http_origin() {
+    // Arrange
+    let state = http_state_for_tests();
+    let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
         .header(HOST, "fitz.example.test")
         .header(ORIGIN, "https://evil.example.test")
         .body(Full::new(Bytes::new()))
         .unwrap();
-    let oversized = Request::builder()
+
+    // Act
+    let response = state.handle(request).await;
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn should_reject_oversized_declared_http_body() {
+    // Arrange
+    let state = http_state_for_tests();
+    let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
         .header(HOST, "fitz.example.test")
@@ -396,14 +470,10 @@ async fn should_reject_unconfigured_host_origin_and_oversized_declared_body() {
         .unwrap();
 
     // Act
-    let host_response = state.handle(bad_host).await;
-    let origin_response = state.handle(bad_origin).await;
-    let body_response = state.handle(oversized).await;
+    let response = state.handle(request).await;
 
     // Assert
-    assert_eq!(host_response.status(), StatusCode::FORBIDDEN);
-    assert_eq!(origin_response.status(), StatusCode::FORBIDDEN);
-    assert_eq!(body_response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 pub(super) fn http_state_for_tests() -> McpHttpState {

@@ -502,25 +502,33 @@ mod tests {
         let permission = Pattern::new("lease://acme/*/*");
         let requested = Pattern::new("lease://acme/**");
 
-        // Act / Assert
-        assert!(permission.covers_at_fixed_depth(&requested, 3));
+        // Act
+        let covered = permission.covers_at_fixed_depth(&requested, 3);
+
+        // Assert
+        assert!(covered);
     }
 
     #[test]
     fn should_not_cover_broader_realm_at_fixed_depth() {
-        // Arrange: a grant scoped to "acme" must not cover a selector that
+        // Arrange
+        // A grant scoped to "acme" must not cover a selector that
         // can also match other realms, even when both are bounded to depth
         // three.
         let permission = Pattern::new("lease://acme/*/*");
         let requested = Pattern::new("lease://*/*/*");
 
-        // Act / Assert
-        assert!(!permission.covers_at_fixed_depth(&requested, 3));
+        // Act
+        let covered = permission.covers_at_fixed_depth(&requested, 3);
+
+        // Assert
+        assert!(!covered);
     }
 
     #[test]
     fn should_cover_multi_double_star_alias_at_fixed_depth() {
-        // Arrange: `lease://**/x/**` matches every 3-segment route with "x"
+        // Arrange
+        // `lease://**/x/**` matches every 3-segment route with "x"
         // in any position; a full `lease://*/*/*#read` grant covers all of
         // them, but no single literal-or-* 3-segment permission narrower
         // than that could, since the requested language is itself a union
@@ -529,9 +537,13 @@ mod tests {
         let realm_scoped_grant = Pattern::new("lease://acme/*/*");
         let requested = Pattern::new("lease://**/x/**");
 
-        // Act / Assert
-        assert!(full_grant.covers_at_fixed_depth(&requested, 3));
-        assert!(!realm_scoped_grant.covers_at_fixed_depth(&requested, 3));
+        // Act
+        let full_coverage = full_grant.covers_at_fixed_depth(&requested, 3);
+        let realm_scoped_coverage = realm_scoped_grant.covers_at_fixed_depth(&requested, 3);
+
+        // Assert
+        assert!(full_coverage);
+        assert!(!realm_scoped_coverage);
     }
 
     #[test]

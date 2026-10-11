@@ -96,7 +96,7 @@ mod tests {
     }
 
     #[test]
-    fn should_count_structured_content_and_text_fallback_during_serialization() {
+    fn should_enforce_response_limit_on_complete_serialized_envelope() {
         // Arrange
         let value = serde_json::json!({"text": "\"".repeat(MAX_RESPONSE_BYTES / 6)});
         let result = rmcp::model::CallToolResult::structured(value.clone());

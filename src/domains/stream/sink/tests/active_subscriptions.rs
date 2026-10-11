@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn should_project_exact_and_wildcard_stream_subscriptions_until_session_cleanup() {
+fn should_project_stream_subscription_lifecycle() {
     // Arrange
     let context = setup_test_context();
     let known_route = "stream://bench/events/orders";
@@ -58,7 +58,7 @@ fn should_project_exact_and_wildcard_stream_subscriptions_until_session_cleanup(
 }
 
 #[test]
-fn should_enforce_exact_and_wildcard_stream_registration_limits_per_session() {
+fn should_enforce_stream_registration_quotas_per_session() {
     // Arrange
     let exact_context = setup_test_context();
     let subscribe = |context: &TestContext, route: &str| {

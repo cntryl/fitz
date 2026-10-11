@@ -16,8 +16,14 @@ documentation = [
   "docs/development/bench-targets.md",
   "docs/operations/performance-tuning.md",
 ]
-workflow = ".github/workflows/bench.yml"
-additional_workflows = [".github/workflows/bench-tier5.yml", ".github/workflows/bench-tier6.yml"]
+workflow = ".github/workflows/bench-tier1.yml"
+additional_workflows = [
+  ".github/workflows/bench-tier2.yml",
+  ".github/workflows/bench-tier3.yml",
+  ".github/workflows/bench-tier4.yml",
+  ".github/workflows/bench-tier5.yml",
+  ".github/workflows/bench-tier6.yml",
+]
 not_pr_gate_phrase = "not a pull-request performance gate"
 
 [benchmarks.manual_targets]

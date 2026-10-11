@@ -180,28 +180,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_advertise_versioned_documents_and_all_operational_scopes() {
+    fn should_advertise_versioned_document_catalog() {
         // Arrange
-        let resources = documents();
         // Act
-        let templates = templates();
+        let resources = documents();
         // Assert
         assert_eq!(resources.len(), 3);
         assert!(resources
             .iter()
             .all(|resource| resource.uri.starts_with("fitz://docs/v1/")));
+    }
+
+    #[test]
+    fn should_advertise_complete_versioned_operational_template_catalog() {
+        // Arrange
+        // Act
+        let templates = templates();
+        // Assert
         assert_eq!(templates.len(), 9);
         assert!(templates
             .iter()
             .all(|template| template.uri_template.contains("/v1/")));
-        assert_eq!(
-            document("fitz://docs/v1/domain-guarantees"),
-            document("fitz://docs/domain-guarantees")
-        );
     }
 
     #[test]
-    fn should_map_family_and_realm_to_independent_authorized_tool_arguments() {
+    fn should_resolve_legacy_domain_guarantees_document_alias() {
+        // Arrange
+        let canonical = "fitz://docs/v1/domain-guarantees";
+        let legacy = "fitz://docs/domain-guarantees";
+        // Act
+        let versioned = document(canonical);
+        let aliased = document(legacy);
+        // Assert
+        assert_eq!(versioned, aliased);
+    }
+
+    #[test]
+    fn should_preserve_orthogonal_scope_identifiers_in_authorized_tool_arguments() {
         // Arrange
         let uri = "fitz://resource/v1/queue/41/department%20west/work/jobs";
         // Act
@@ -214,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_unknown_versions_ambiguous_families_and_encoded_path_separators() {
+    fn should_reject_noncanonical_operational_resource_uris() {
         // Arrange
         let uris = [
             "fitz://broker/v2/summary",

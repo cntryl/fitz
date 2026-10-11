@@ -1,4 +1,5 @@
 use super::super::types::BenchFailure;
+use super::envelope::Envelope;
 use serde::Serialize;
 
 #[derive(Clone, Serialize)]
@@ -29,6 +30,18 @@ fn setting(name: &str, default: u64, maximum: u64) -> Result<u64, BenchFailure> 
 }
 
 impl Config {
+    pub fn from_envelope(envelope: Envelope) -> Self {
+        Self {
+            rates: vec![envelope.rate()],
+            stage_seconds: Envelope::WINDOW_SECONDS,
+            producer_connections: Envelope::PRODUCERS,
+            consumer_delay_ms: Envelope::CONSUMER_DELAY_MS,
+            max_backlog: envelope.backlog(),
+            max_attempts_per_stage: Envelope::MAX_ATTEMPTS,
+            drain_seconds: Envelope::DRAIN_SECONDS,
+        }
+    }
+
     pub fn from_env() -> Result<Self, BenchFailure> {
         let raw = match std::env::var("FITZ_QUEUE_PRESSURE_RATES") {
             Ok(value) => value,

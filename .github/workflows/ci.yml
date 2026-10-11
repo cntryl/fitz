@@ -41,8 +41,17 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Benchmark measurement acceptance regressions
-        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+      - name: Install cntryl-tools
+        run: cargo install --locked --git https://github.com/cntryl/tools --rev d31924bfdbb75e7e417bcf498c7e7b15a4cb9273 cntryl-tools
+
+      - name: Validate test conventions
+        run: cntryl-tools validate-tests
+
+      - name: Check module sizes
+        run: cntryl-tools check-module-sizes
+
+      - name: Validate benchmark contract
+        run: cntryl-tools validate-benchmarks
 
       - name: Pedantic lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
@@ -54,7 +63,7 @@ jobs:
         run: cargo test --locked --workspace
 
       - name: Queue diagnostic artifact regressions
-        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts --test queue_pressure_accounting --test queue_pacing
+        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts --test queue_pressure_accounting --test queue_pacing --test queue_pressure_envelopes
 
   frontend:
     runs-on: ubuntu-latest

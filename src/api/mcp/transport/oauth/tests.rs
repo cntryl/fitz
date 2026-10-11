@@ -71,7 +71,7 @@ fn bearer(claims: &TestClaims) -> hyper::header::HeaderValue {
 }
 
 #[test]
-fn should_authenticate_valid_rs256_bearer_and_provision_mcp_capabilities() {
+fn should_provision_authorized_mcp_context_from_valid_rs256_bearer() {
     // Arrange
     let claims = claims();
     let authorization = bearer(&claims);

@@ -272,11 +272,15 @@ async fn should_accept_wildcard_lease_subscription_routes_tcp() {
 
 #[tokio::test]
 async fn should_deliver_lease_watch_notification_to_matching_wildcard_subscription_tcp() {
+    // Arrange
     let server = TestServer::start().await.expect("start");
+    // Act
     should_deliver_lease_watch_notification_to_matching_wildcard_subscription::<TcpLeaseConnector>(
         &server,
     )
     .await;
+    // Assert
+    // The shared transport scenario checks the delivered notification.
 }
 
 #[tokio::test]
@@ -314,11 +318,15 @@ async fn should_accept_wildcard_lease_subscription_routes_ws() {
 
 #[tokio::test]
 async fn should_deliver_lease_watch_notification_to_matching_wildcard_subscription_ws() {
+    // Arrange
     let server = TestServer::start().await.expect("start");
+    // Act
     should_deliver_lease_watch_notification_to_matching_wildcard_subscription::<WsLeaseConnector>(
         &server,
     )
     .await;
+    // Assert
+    // The shared transport scenario checks the delivered notification.
 }
 
 #[tokio::test]

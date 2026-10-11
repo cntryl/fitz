@@ -151,8 +151,7 @@ async fn should_reject_already_canceled_stdio_request_before_forwarding_new_work
 }
 
 #[tokio::test]
-async fn should_report_indeterminate_confirmation_and_forward_cancellation_before_upstream_cleanup()
-{
+async fn should_cancel_confirmation_with_indeterminate_result_before_upstream_cleanup() {
     // Arrange
     let server = BlockingServer::default();
     let (upstream_io, remote_io) = tokio::io::duplex(8192);

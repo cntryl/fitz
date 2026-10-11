@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_finalize_connection_counter_and_permit_exactly_once() {
+    async fn should_finalize_connection_lifecycle_exactly_once() {
         // Arrange
         let runtime = Arc::new(Runtime::new(Arc::new(crate::runtime::Router::new())));
         runtime.increment_connections();

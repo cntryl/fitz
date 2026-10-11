@@ -58,7 +58,7 @@ fn query() -> Value {
 }
 
 #[test]
-fn should_bind_cursor_to_principal_and_scope() {
+fn should_bind_cursor_to_authorized_query_context() {
     // Arrange
     let runtime = runtime();
     let owner = context("owner", "rpc://acme/jobs/**#read");
@@ -131,7 +131,7 @@ fn should_deny_broad_inventory_before_collecting_protected_names() {
 }
 
 #[test]
-fn should_report_unknown_projection_age_and_partial_evidence() {
+fn should_disclose_partial_inventory_projection_evidence() {
     // Arrange
     let runtime = runtime();
     let context = context("reader", "rpc://acme/jobs/**#read");

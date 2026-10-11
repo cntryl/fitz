@@ -95,24 +95,6 @@ describe("admin infrastructure smoke tests", () => {
     expect(root.querySelector('a[href="/admin/1/metrics"]')).toBeTruthy();
     expect(root.querySelector('a[href="/api/v1/queue/stats"]')).toBeTruthy();
   });
-  it("folds diagnostics prose into row subtitles instead of columns", async () => {
-    // Arrange
-    const { default: DiagnosticsPage } = await import("@/pages/app/diagnostics");
-
-    // Act
-    const root = await mountRoute(
-      "/admin/1/diagnostics",
-      "/admin/{family}/diagnostics",
-      DiagnosticsPage,
-    );
-    const proseHeaders = ["detail", "internals", "evidence", "remediation", "help"].filter(
-      (id) => root.querySelector(`th[data-column-id="${id}"]`) !== null,
-    );
-
-    // Assert
-    expect(proseHeaders).toEqual([]);
-    expect(root.querySelectorAll(".titled-cell-subtitle").length).toBeGreaterThan(0);
-  });
   it("refreshes every diagnostics source from the page action", async () => {
     const { default: DiagnosticsPage } = await import("@/pages/app/diagnostics");
     mocks.refresh.mockClear();

@@ -480,7 +480,7 @@ mod tests {
     use crate::runtime::routing::RouteFamily;
 
     #[test]
-    fn should_match_only_selected_domain_and_route_family() {
+    fn should_match_only_selected_snapshot_scope() {
         // Arrange
         let selector =
             SnapshotSelector::new(SnapshotDomain::Kv, RouteFamily::new(7), "kv://acme/**")
@@ -580,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn should_round_trip_stream_records_and_captured_watermark() {
+    fn should_round_trip_complete_stream_snapshot_payload() {
         // Arrange
         let selector = SnapshotSelector::new(
             SnapshotDomain::Stream,

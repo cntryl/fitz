@@ -5,7 +5,7 @@ mod durable;
 mod ephemeral;
 mod fixture;
 mod histogram;
-// Shared helpers; only the queue_pressure target registers the offered-rate row.
+// Shared helpers for offered-rate pressure and fixed Queue drain envelopes.
 #[allow(dead_code)]
 mod queue_pressure;
 mod runner;
@@ -17,6 +17,10 @@ mod types;
 pub(crate) use queue_pressure::run as run_queue_pressure;
 #[allow(unused_imports)]
 pub(crate) use queue_pressure::run_latency as run_queue_drain_latency;
+#[allow(unused_imports)]
+pub(crate) use queue_pressure::{
+    run_envelope as run_queue_envelope, Backlog as QueueBacklog, Envelope as QueueEnvelope,
+};
 pub(crate) use runner::run;
 #[allow(unused_imports)]
 pub(crate) use schedule_pressure::run as run_schedule_pressure;

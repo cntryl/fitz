@@ -429,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn should_report_aggregate_registration_high_water_threshold_and_cleanup() {
+    fn should_preserve_registration_high_water_after_cleanup() {
         // Arrange
         let metrics = crate::observability::metrics();
         let domain = TestSubscription::metric_domain();
@@ -470,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn should_enforce_total_registration_limit_and_release_slots_on_removal() {
+    fn should_reclaim_total_registration_capacity_after_removal() {
         // Arrange
         let family = RouteFamily::new(1);
         let session_id = 42;

@@ -416,10 +416,11 @@ where
     assert_eq!(status, 0);
 }
 
-pub(crate) async fn should_handle_empty_key_and_value<C>(server: &TestServer)
+pub(crate) async fn should_accept_empty_kv_entry<C>(server: &TestServer)
 where
     C: KvConnector,
 {
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/empty";
 
@@ -427,11 +428,13 @@ where
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     let put_frame = build_kv_put(1, route, b"", b"");
+    // Act
     let response = client
         .request(&put_frame, 2000)
         .await
         .expect("PUT with empty key/value");
 
+    // Assert
     let (_msg_type, status, _data) = parse_kv_response(&response);
     assert_eq!(status, 0);
 }
@@ -749,7 +752,7 @@ where
     assert!(deliveries.iter().all(|delivery| delivery.route == route));
 }
 
-pub(crate) async fn should_put_and_get_same_key_in_transaction<C>(server: &TestServer)
+pub(crate) async fn should_read_own_transaction_writes<C>(server: &TestServer)
 where
     C: KvConnector,
 {
@@ -760,14 +763,14 @@ where
     let begin_frame = build_kv_begin(route, 1, 0);
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
-    // Act - PUT a key
+    // Prepare the transaction-local write.
     let put_frame = build_kv_put(1, route, b"key1", b"value1");
     let put_response = client.request(&put_frame, 2000).await.expect("PUT failed");
 
     let (_msg_type, status, _data) = parse_kv_response(&put_response);
     assert_eq!(status, 0, "PUT should succeed");
 
-    // Act - GET the same key
+    // Act
     let get_frame = build_kv_get(1, route, b"key1");
     let get_response = client.request(&get_frame, 2000).await.expect("GET failed");
 

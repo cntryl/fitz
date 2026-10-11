@@ -53,6 +53,8 @@ Right:
 - Optimize for simplicity. Complexity, DRY, and clarity are mandatory design constraints.
 - Avoid adding async constructs to core Rust code outside transport (`.await`, `tokio::spawn`, `tokio::sync`, async locks).
 - Do not create a top-level `scripts/` directory or repo-owned standalone shell scripts. Put automation in Rust tests or tools, package scripts, or explicit workflow steps.
+- Cover backend behavior with idiomatic Rust tests and UI behavior with idiomatic TypeScript tests. Do not add Python files or standalone scripts as substitutes for tests.
+- Test observable behavior and semantic invariants. Do not assert source-file strings, implementation spelling, or file layout as substitutes for behavior tests.
 - When editing UI tooling, prefer ESM and `.js` over `.mjs` for repo-owned files.
 - When `public/openapi.yml` or the UI client changes, regenerate adapters with `npm run gen:adapters` from `ui/`.
 
@@ -66,9 +68,12 @@ Right:
 - Do not send credentials or private/customer data in `state`.
 
 ## Validation
+
+- Test structure and module sizes: `cntryl-tools validate-tests`, `cntryl-tools check-module-sizes`. Keep these checks in the shared tooling; do not duplicate them in repository tests.
 - Rust: `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic`.
 - UI: run from `ui/` with `npm run test`, `npm run lint`, `npm run type-check`, and `npm run build`.
 - Benchmarks: use direct `cargo bench` commands for the relevant tier or target, then run `cntryl-tools summarize-benchmarks` when a report is needed.
+- Model performance, saturation, and soak workloads in the benchmark tiers with `cntryl-stress`. Do not wrap benchmark campaigns in ignored integration tests or repository-owned orchestration scripts.
 
 ## Test Rules
 - Use `should_*` names for Rust tests.

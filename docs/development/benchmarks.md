@@ -229,6 +229,16 @@ accepts correctness and liveness evidence without claiming statistical quality.
 
 Benchmark workflows are scheduled or manually dispatched and are not a pull-request performance gate.
 
+Each tier has a dedicated workflow:
+[Tier 1](../../.github/workflows/bench-tier1.yml),
+[Tier 2](../../.github/workflows/bench-tier2.yml),
+[Tier 3](../../.github/workflows/bench-tier3.yml), and
+[Tier 4](../../.github/workflows/bench-tier4.yml) run daily or by manual dispatch.
+Tier 4 includes all Stream transport, shape, bounded-replay, and compacted-replay
+workloads. These workflows run registered
+`cntryl-stress` targets directly and upload native artifacts on failure as well
+as success. CI checks benchmark structure with `cntryl-tools validate-benchmarks`.
+
 The [Tier 5 workflow](../../.github/workflows/bench-tier5.yml) runs weekly and the
 [Tier 6 workflow](../../.github/workflows/bench-tier6.yml) runs monthly, each with
 seven independent domain jobs. Both require `benchkit,stress-soak`, preserve
@@ -301,8 +311,14 @@ Tier 4 benchmark binaries silence Fitz observability by default; set
 `FITZ_BENCH_ALLOW_LOGS=true` only when you need transport or startup logs while
 debugging a benchmark harness issue.
 
-Run the hosted suite locally by using the command list in
-[`.github/workflows/bench.yml`](../../.github/workflows/bench.yml), then summarize:
+Run the hosted Tier 1 through Tier 4 suite locally, then summarize:
+
+```bash
+cargo bench --locked --quiet --bench 'tier1_*'
+cargo bench --locked --quiet --bench 'tier2_*'
+cargo bench --locked --quiet --bench 'tier3_*' --features benchkit
+cargo bench --locked --quiet --bench 'tier4_*' --features benchkit
+```
 
 ```bash
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"

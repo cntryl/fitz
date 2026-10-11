@@ -56,7 +56,7 @@ fn append_event_at(
 }
 
 #[test]
-fn should_round_trip_readable_stream_history_for_selected_family_and_pattern() {
+fn should_round_trip_readable_stream_history_for_selected_scope() {
     // Arrange
     let context = setup_test_context();
     let family = context.family;

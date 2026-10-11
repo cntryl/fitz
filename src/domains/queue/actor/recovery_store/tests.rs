@@ -468,7 +468,7 @@ fn should_classify_real_midge_l0_rejection_as_retryable_admission() {
 }
 
 #[test]
-fn should_reject_other_error_variants_and_nonmatching_l0_prefixes() {
+fn should_reject_unqualified_l0_admission_errors() {
     // Arrange
     let errors = [
         cntryl_midge::MidgeError::Timeout("column family 1 has no free L0 slot (15/14)".into()),

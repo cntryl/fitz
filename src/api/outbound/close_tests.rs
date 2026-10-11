@@ -27,7 +27,7 @@ fn should_signal_session_close_even_when_outbound_data_is_full() {
 }
 
 #[test]
-fn should_coalesce_duplicate_close_requests_and_preserve_first_reason() {
+fn should_preserve_first_close_reason_under_duplicate_requests() {
     // Arrange
     let (tx, _data) = mpsc::channel(1);
     let (sink, signal) = SessionOutboundSink::with_close_signal(tx);

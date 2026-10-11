@@ -374,7 +374,7 @@ async fn should_cleanup_real_schedule_subscription_on_close() {
 }
 
 #[tokio::test]
-async fn should_cleanup_real_stream_session_and_subscription_on_close() {
+async fn should_remove_real_stream_session_lifecycle_state_on_close() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 96;
@@ -559,10 +559,12 @@ async fn should_cleanup_real_kv_transaction_on_close() {
 
 #[tokio::test]
 async fn should_reject_non_connect_before_auth() {
+    // Arrange
     let ingress = runtime_ingress_with_jwks_auth();
     let session = make_session_info(4, TransportKind::WebSocket);
     ingress.on_open(session).await.unwrap();
 
+    // Act
     let decision = ingress
         .on_frame(
             4,
@@ -573,15 +575,18 @@ async fn should_reject_non_connect_before_auth() {
         )
         .await;
 
+    // Assert
     assert!(matches!(decision, IngressDecision::Close(_)));
 }
 
 #[tokio::test]
 async fn should_reject_control_non_connect_before_auth() {
+    // Arrange
     let ingress = runtime_ingress_with_jwks_auth();
     let session = make_session_info(5, TransportKind::WebSocket);
     ingress.on_open(session).await.unwrap();
 
+    // Act
     // Control message with wrong type
     let decision = ingress
         .on_frame(
@@ -593,6 +598,7 @@ async fn should_reject_control_non_connect_before_auth() {
         )
         .await;
 
+    // Assert
     assert!(matches!(decision, IngressDecision::Close(_)));
 }
 

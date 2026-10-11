@@ -33,41 +33,45 @@ regression-gate throughput must remain at least 90% of baseline with p95 at most
 most 105%; and hot-resource append with 100,000 prior events must remain within
 10% of an empty resource.
 
-The Stream performance workflow isolates each of the eight transport workloads
-in its own process capture. Memory replay therefore never follows disk writes
-within a capture. Timed comparisons require all 32 workloads, identical fixtures,
-and the default sampling profile. Each workload has three alternating
-baseline/candidate pairs.
-The maximum-event write and WebSocket exact-replay workloads also have three
-alternating same-binary control pairs; both throughput and p95 ratios must lie
-within 0.95–1.05. An unstable control labels the entire run
-`measurement_unstable`, regardless of observed budget results.
+The Tier 4 workflow runs the registered Stream workloads directly through
+`cntryl-stress`. Native artifacts retain sampling, correctness, quality, and
+environment data. Use the framework's baseline comparison and
+`cntryl-tools summarize-benchmarks` for performance analysis; do not launch
+comparison campaigns from integration tests or repository-owned scripts.
 
-Compilation and binary/dependency/fixture audits finish before timing. One full
-qualification and one predeclared full confirmation use the same archived
-executables on the same host. Both must pass every original budget and both
-controls. Preserve raw quality labels, semantic checks, source SHAs, executable
-hashes, locked resolution, and untimed CPU/I/O snapshots. Retain failures and
-leave qualification open when controls remain unstable; additional exploratory
-runs do not replace the declared pair.
+The six memory transport workloads declare native `max_regression_pct = 10`
+budgets; maximum-event disk writes declare `5`. With a compatible raw native
+baseline, `cntryl-stress` applies these budgets to throughput and the paired
+p95 latency measurement. Sampling stays at the framework default. No baseline
+means these relative budgets are unevaluated, and statistically inconclusive
+comparisons do not establish a regression. These guards use the framework's
+environment, trust, quality, and confidence checks; the committed summary
+baseline is not a raw native baseline. Keep accepted raw baselines separate
+from current output artifacts and supply them with the native `--baseline`
+option. Paired latency rows remain report-only in the configured release
+summary; explicit native budgets also apply when doing this raw comparison.
 
-Dependency comparisons with unchanged benchmark fixtures retain the baseline's
-original Cargo manifest and lockfile. Both libraries and every benchmark must
-have fresh compiler artifacts from the expected source paths. If the compiler's
-release source inputs match and all emitted library artifacts and benchmark
-executables are byte-identical, the workflow records `binary_equivalent` with
-provenance. Diagnostic build captures are retained; qualification and confirmation
-timing samples are not collected. This records artifact equivalence, not a new
-measured performance result. Every other case requires both full timing runs and
-all existing budgets and controls, including source comparisons whose executables
-are unchanged. Fresh compiler artifacts from the expected library and benchmark
-source paths establish provenance; cached or wrong-source artifacts remain an
-error.
-Pair individual disk-size rows directly across source versions. The Stream
-qualification workflow also requires an unchanged-binary maximum-event control
-to stay within 5% for throughput and p95; retain failed comparisons.
-Flush pending measurement-host I/O before each trial and record preparation
-and I/O pressure separately from unchanged benchmark samples.
+The former bespoke Stream comparison workflow is retired. Ordinary tier runs
+and the two configured Stream release rows do not enforce its complete
+same-host qualification policy. The existing blocked qualification remains
+blocked; a scheduled benchmark pass does not satisfy it or refresh the baseline.
+
+That outstanding qualification requires all 32 workloads, identical fixtures,
+the default sampling profile, and three alternating baseline/candidate pairs
+per workload on a stable Linux host. Maximum-event writes and WebSocket exact
+replay also require three alternating unchanged-binary control pairs with
+throughput and p95 ratios within 0.95–1.05. Unstable controls invalidate the
+performance conclusion regardless of observed budget results.
+
+One full qualification and one predeclared full confirmation must use the same
+archived executables; both must pass the budgets above and both controls.
+Finish compilation and fixture/dependency audits before timing. Preserve source
+SHAs, locked dependency resolution, executable hashes, raw quality labels,
+semantic checks, failed captures, and untimed host CPU/I/O observations.
+Dependency comparisons must retain the baseline's original manifest and lockfile.
+Byte-identical outputs alone do not qualify a source change. A performance
+host and shared-tool support for this policy are still required; no new timing
+qualification or artifact-equivalence verdict is claimed by this cleanup.
 
 ## Selection Rules
 

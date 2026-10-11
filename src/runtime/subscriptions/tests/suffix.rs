@@ -63,7 +63,7 @@ fn should_agree_with_direct_matching_for_exhaustive_legal_small_suffixes() {
 }
 
 #[test]
-fn should_match_suffixes_across_inline_and_spilled_frontier_sizes() {
+fn should_match_suffixes_across_frontier_capacity_boundaries() {
     // Arrange
     let mut index = SubscriptionIndex::new();
     index.insert(family(1), &route("notice://realm/**/end"), sub_id(1));

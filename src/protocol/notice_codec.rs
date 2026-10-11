@@ -327,7 +327,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_preserve_notice_request_response_notification_and_error_golden_bytes() {
+    fn should_preserve_notice_wire_golden_vectors() {
         // Arrange
         let route = "notice://r/a/x";
         let request = [

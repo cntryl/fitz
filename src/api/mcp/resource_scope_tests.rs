@@ -25,7 +25,7 @@ fn assert_no_unattributed_counter(result: &Value) {
 }
 
 #[test]
-fn should_identify_unknown_global_stat_fields_and_conservative_health() {
+fn should_identify_unavailable_global_stat_fields() {
     // Arrange
     let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), AdminReadModel::new());
     let context = McpExecutionContext::authenticated(
@@ -42,6 +42,30 @@ fn should_identify_unknown_global_stat_fields_and_conservative_health() {
     let stats = registry
         .execute("get_global_stats", &runtime, &context, &policy, None)
         .unwrap();
+
+    // Assert
+    let pointers = stats["_meta"]["unavailable_fields"].as_array().unwrap();
+    assert_eq!(pointers.len(), 10);
+    assert!(pointers
+        .iter()
+        .all(|pointer| stats.pointer(pointer.as_str().unwrap()).is_some()));
+}
+
+#[test]
+fn should_report_unknown_health_without_complete_runtime_evidence() {
+    // Arrange
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), AdminReadModel::new());
+    let context = McpExecutionContext::authenticated(
+        AdminPrincipal {
+            username: "admin".into(),
+            route_family_access: AdminRouteFamilyAccess::wildcard(),
+        },
+        crate::auth::default_anonymous_permissions(),
+    );
+    let registry = McpToolRegistry::summary_only();
+    let policy = McpCapabilityPolicy::summary_only();
+
+    // Act
     let diagnosis = registry
         .execute(
             "get_global_troubleshooting",
@@ -53,11 +77,6 @@ fn should_identify_unknown_global_stat_fields_and_conservative_health() {
         .unwrap();
 
     // Assert
-    let pointers = stats["_meta"]["unavailable_fields"].as_array().unwrap();
-    assert_eq!(pointers.len(), 10);
-    assert!(pointers
-        .iter()
-        .all(|pointer| stats.pointer(pointer.as_str().unwrap()).is_some()));
     assert_eq!(diagnosis["incident_summary"]["status"], "unknown");
 }
 
@@ -244,7 +263,7 @@ fn should_match_rpc_operation_after_nonterminal_multi_segment_wildcard() {
 }
 
 #[test]
-fn should_select_resource_before_copying_sibling_domains_and_resource_rows() {
+fn should_exclude_sibling_rows_before_projecting_resource_details() {
     // Arrange
     let model = AdminReadModel::new();
     model.replace_notice_subscriptions(
@@ -386,7 +405,7 @@ fn should_select_authorized_provisioned_families_before_discovery_limit() {
 }
 
 #[test]
-fn should_report_rpc_deadlines_and_per_call_outcomes_as_unavailable() {
+fn should_disclose_unavailable_rpc_execution_evidence() {
     // Arrange
     let model = AdminReadModel::new();
     model.replace_rpc_pending(vec![crate::control::admin::RpcPendingRequest::snapshot(

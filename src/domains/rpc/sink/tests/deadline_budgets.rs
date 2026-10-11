@@ -237,7 +237,7 @@ fn should_preserve_live_request_when_expired_duplicate_arrives() {
 }
 
 #[test]
-fn should_expire_queued_dispatch_before_worker_delivery_and_release_exact_credit() {
+fn should_release_queued_dispatch_credit_on_timeout() {
     // Arrange
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());

@@ -45,7 +45,7 @@ fn add_single_mode_candidates(
 /// the identical cursor value for an identical candidate set, and both must
 /// count the all-rejecting handoff as one live-publish failure.
 #[test]
-fn should_advance_cursor_identically_via_scan_and_run_now_when_all_single_mode_candidates_reject() {
+fn should_advance_single_delivery_cursor_identically_across_rejecting_delivery_paths() {
     // Arrange
     let family = RouteFamily::new(1);
     let scan_route = "schedule://acme/jobs/scan-reject/run";

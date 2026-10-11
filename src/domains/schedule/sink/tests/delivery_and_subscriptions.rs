@@ -42,7 +42,7 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
 }
 
 #[test]
-fn should_enforce_exact_and_wildcard_schedule_registration_limits_per_session() {
+fn should_enforce_schedule_registration_quotas_per_session() {
     // Arrange
     let exact_fixture = create_unsubscribe_fixture();
     for index in 0..crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION {

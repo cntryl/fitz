@@ -254,12 +254,17 @@ mod tests {
 
     #[test]
     fn should_round_trip_logical_owner_id_through_session_scoping() {
-        // Arrange / Act / Assert
-        assert_eq!(
-            logical_owner_id(&session_scoped_owner_id(7, "owner1")),
-            "owner1"
-        );
-        assert_eq!(logical_owner_id(&session_scoped_owner_id(7, "")), "");
+        // Arrange
+        let owners = ["owner1", ""];
+
+        // Act
+        let round_tripped = owners.map(|owner| {
+            let scoped = session_scoped_owner_id(7, owner);
+            logical_owner_id(&scoped).to_owned()
+        });
+
+        // Assert
+        assert_eq!(round_tripped, owners);
     }
 
     #[test]
@@ -267,8 +272,11 @@ mod tests {
         // Arrange
         let scoped = session_scoped_owner_id(42, "team:renderers");
 
-        // Act / Assert
-        assert_eq!(logical_owner_id(&scoped), "team:renderers");
+        // Act
+        let logical = logical_owner_id(&scoped);
+
+        // Assert
+        assert_eq!(logical, "team:renderers");
     }
 
     #[test]

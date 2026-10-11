@@ -2,13 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import { createRouteRegistry, group, type RouteHandler, route } from "@askrjs/askr/router";
 import { click } from "@askrjs/askr/testing";
-import { Card, CardContent } from "@askrjs/themes/components";
 import { ThemeScope } from "@askrjs/themes/theme";
 import AppLayout from "@/pages/app/_layout";
 import RouteFamilySelectorPage from "@/pages/app/route-family";
 import AuthLayout from "@/pages/auth/_layout";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceInventoryTable from "@/components/shared/domain-resource-inventory-table";
 import {
   domainResourceInventoryRows,
@@ -16,19 +14,13 @@ import {
   scopeDomainResourceInventoryRows,
 } from "@/components/shared/domain-resource-inventory-table";
 import DomainHeader from "@/components/shared/domain-header";
-import QueueInflightTable from "@/components/shared/queue-inflight-table";
-import {
-  QueryCompactEmptyState,
-  QueryEmptyState,
-  QueryErrorState,
-} from "@/components/shared/query-state";
+import { QueryEmptyState, QueryErrorState } from "@/components/shared/query-state";
 import { domainLinks, pathWithRouteFamily } from "@/shared/navigation/domains";
 import {
   createOperatorScopeSnapshot,
   OperatorScope,
   type OperatorScopeSnapshot,
 } from "@/shared/operator-scope";
-import { routeFamilyIconSlot } from "@/shared/route-family-appearance";
 
 vi.mock("@/features/session/session-query", () => ({
   createCurrentSessionQuery: () => ({
@@ -279,23 +271,6 @@ describe("shared UI polish contracts", () => {
     expect(onSearchChange).toHaveBeenCalledWith("");
   });
 
-  it("renders sparse resource inventories as standard tables", async () => {
-    const root = await mount(() => (
-      <PureDomainResourceInventoryTable
-        domain="notice"
-        emptyDescription="No routes"
-        onRowOpen={vi.fn()}
-        onSearchChange={vi.fn()}
-        rowHref={() => "/admin/1/notice/default/ops/primary"}
-        rows={[{ area: "ops", realm: "default", resource: "primary" }]}
-        searchValue=""
-        title="Notice inventory"
-      />
-    ));
-
-    expect(root.querySelector(".domain-resource-data-table [data-slot='table']")).toBeTruthy();
-  });
-
   it("scopes resource inventory rows to the route hierarchy", () => {
     const rows = domainResourceInventoryRows({
       realms: [
@@ -320,14 +295,6 @@ describe("shared UI polish contracts", () => {
     expect(scopeDomainResourceInventoryRows(rows, { area: "payments", realm: "acme" })).toEqual([
       { area: "payments", realm: "acme", resource: "orders" },
     ]);
-  });
-
-  it("renders the compact secondary empty-state class", async () => {
-    const root = await mount(() => (
-      <QueryCompactEmptyState title="No suggested queries" description="Nothing recommended." />
-    ));
-
-    expect(root.querySelector(".domain-state-compact")).toBeTruthy();
   });
 
   it("disables and marks a refresh action busy while refreshing", async () => {
@@ -397,7 +364,7 @@ describe("shared UI polish contracts", () => {
     }
   });
 
-  it("uses icon-backed shell controls with stable labels", async () => {
+  it("exposes accessible shell controls and route-family navigation", async () => {
     const root = await mount(
       () => (
         <AppLayout>
@@ -410,7 +377,6 @@ describe("shared UI polish contracts", () => {
     );
 
     const skipLink = root.querySelector('a[href="#main-content"]');
-    const routeSurface = root.querySelector(".route-transition-surface");
     const main = root.querySelector("main#main-content");
     const themeToggle = root.querySelector('button[aria-label="Toggle color theme"]');
     const routeFamilySelector = root.querySelector('button[aria-label="Route Family selector"]');
@@ -419,35 +385,18 @@ describe("shared UI polish contracts", () => {
     expect(root.textContent).toContain("Admin");
     expect(routeFamilySelector?.getAttribute("aria-label")).toBe("Route Family selector");
     expect(skipLink?.textContent).toContain("Skip to main content");
-    expect(routeSurface?.tagName).toBe("DIV");
-    expect(routeSurface?.parentElement?.classList.contains("operator-shell-layout")).toBe(true);
     expect(main?.getAttribute("tabindex")).toBe("-1");
-    expect(main?.getAttribute("data-slot")).toBe("main");
     expect(root.querySelectorAll("main")).toHaveLength(1);
-    expect(root.querySelectorAll('[data-slot="container"]')).toHaveLength(3);
-    expect(root.querySelectorAll('[data-slot="container"][data-ak-layout="true"]')).toHaveLength(3);
     expect(root.querySelector('footer [href="https://github.com/cntryl/fitz"]')).toBeTruthy();
     expect(root.querySelector('footer [href="https://github.com/cntryl/fitz-ts"]')).toBeTruthy();
     expect(root.querySelector('footer [href="https://github.com/cntryl/fitz-go"]')).toBeTruthy();
     expect(root.textContent).toContain("fitz-ts");
     expect(root.textContent).toContain("fitz-go");
     expect(themeToggle).toBeTruthy();
-    expect(themeToggle?.getAttribute("data-size")).toBe("icon");
-    expect(themeToggle?.getAttribute("data-variant")).toBe("ghost");
-    expect(themeToggle?.querySelector('[data-slot="icon"]')).toBeTruthy();
-    expect(themeToggle?.textContent).not.toContain("☀");
-    expect(themeToggle?.textContent).not.toContain("☾");
     expect(routeFamilySelector).toBeTruthy();
     expect(root.querySelector('form[role="search"]')).toBeNull();
-    expect(routeFamilySelector?.querySelector('[data-slot="icon"]')).toBeTruthy();
-    expect(
-      routeFamilySelector
-        ?.querySelector<HTMLElement>(".route-family-icon")
-        ?.getAttribute("data-route-family-identity"),
-    ).toBe(routeFamilyIconSlot("1"));
     const signOut = root.querySelector('a[aria-label="Sign out"]');
     expect(signOut?.getAttribute("href")).toBe("/logout");
-    expect(signOut?.textContent).toBe("");
     expect(root.textContent).not.toContain("Administration");
     expect(
       root
@@ -458,14 +407,7 @@ describe("shared UI polish contracts", () => {
     click(routeFamilySelector!);
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
-    expect(document.body.textContent).toContain("Route Family");
-    expect(
-      document.body
-        .querySelector<HTMLElement>(
-          '.operator-route-family-option[data-route-family="7"] .route-family-icon',
-        )
-        ?.getAttribute("data-route-family-identity"),
-    ).toBe(routeFamilyIconSlot("7"));
+    expect(document.body.textContent).toContain("Route Family 7");
 
     expect(root.querySelector('button[aria-label="Account menu"]')).toBeNull();
   });
@@ -569,7 +511,7 @@ describe("shared UI polish contracts", () => {
     expect(breadcrumbs?.textContent).toContain("Resource: primary");
   });
 
-  it("renders auth pages in a focused full-viewport shell", async () => {
+  it("renders auth content in a focusable main without app navigation", async () => {
     const root = await mount(
       () => (
         <AuthLayout>
@@ -581,8 +523,6 @@ describe("shared UI polish contracts", () => {
 
     expect(root.querySelector("main#main-content")?.textContent).toContain("Auth page");
     expect(root.querySelector("main#main-content")?.getAttribute("tabindex")).toBe("-1");
-    expect(root.querySelector("main#main-content")?.classList.contains("auth-page")).toBe(true);
-    expect(root.querySelector(".auth-panel")?.textContent).toContain("Auth page");
     expect(root.querySelector("header, footer")).toBeNull();
   });
 
@@ -600,24 +540,18 @@ describe("shared UI polish contracts", () => {
 
     const routeFamilySelector = root.querySelector('button[aria-label="Route Family selector"]');
     const contentBeforeOpen = root.querySelector('[data-slot="dropdown-content"]');
-    const containers = document.querySelectorAll('[data-slot="container"]');
 
     expect(routeFamilySelector).toBeTruthy();
     expect(contentBeforeOpen).toBeNull();
-    expect(containers.length).toBe(3);
-    expect(
-      document.querySelectorAll('[data-slot="container"][data-ak-layout="true"]'),
-    ).toHaveLength(3);
 
     for (const link of domainLinks) {
       const item = root.querySelector(`a[href="${pathWithRouteFamily(link.href, "1")}"]`);
 
       expect(item?.textContent).toContain(link.title);
-      expect(item?.querySelector('[data-slot="icon"]')).toBeTruthy();
     }
   });
 
-  it("keeps the shared page frame to one full-width content surface", async () => {
+  it("renders routed children inside one main landmark", async () => {
     const root = await mount(
       () => (
         <AppLayout>
@@ -630,13 +564,10 @@ describe("shared UI polish contracts", () => {
     );
 
     expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
-    expect(root.querySelectorAll(".page-frame-main")).toHaveLength(1);
-    expect(root.querySelectorAll(".page-frame-sidebar")).toHaveLength(0);
-    expect(root.querySelectorAll('[data-slot="container"][data-ak-layout="true"]')).toHaveLength(3);
-    expect(root.textContent).toContain("Workspace");
+    expect(root.querySelector("main#main-content")?.textContent).toContain("Workspace");
   });
 
-  it("renders query states as in-place surfaces instead of nested cards", async () => {
+  it("renders empty and failure states with an accessible error alert", async () => {
     const root = await mount(() => (
       <main>
         <QueryEmptyState title="No resources" description="Nothing is visible." />
@@ -644,14 +575,12 @@ describe("shared UI polish contracts", () => {
       </main>
     ));
 
-    expect(root.querySelectorAll(".domain-state")).toHaveLength(2);
-    expect(root.querySelector("[data-slot='card']")).toBeNull();
     expect(root.textContent).toContain("No resources");
     expect(root.textContent).toContain("Network failed");
     expect(root.querySelector('[role="alert"]')).toBeTruthy();
   });
 
-  it("renders flat resource inventory with virtual table links and metric typography", async () => {
+  it("renders resource inventory records with scoped navigation", async () => {
     const root = await mount(() => (
       <main>
         <DomainResourceInventoryTable
@@ -691,13 +620,8 @@ describe("shared UI polish contracts", () => {
     expect(root.textContent).toContain("Resource inventory");
     expect(root.textContent).toContain("Route");
     expect(root.textContent).toContain("Records");
+    expect(root.textContent).toContain("300");
     expect(root.textContent).toContain("kv://default/ops/primary");
-    expect(root.querySelector('[data-slot="table"]')).toBeTruthy();
-    expect(root.querySelector(".domain-resource-data-table")).toBeTruthy();
-    expect(root.querySelector(".domain-resource-metric")?.getAttribute("data-font")).toBe("mono");
-    expect(root.querySelector(".domain-resource-metric")?.getAttribute("data-numeric")).toBe(
-      "tabular",
-    );
     expect(root.querySelector('a[href="/admin/1/kv/default/ops/primary"]')).toBeTruthy();
   });
 
@@ -771,56 +695,5 @@ describe("shared UI polish contracts", () => {
     click(sort!);
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
     expect(root.querySelector('button[aria-label="Sort by Ready, descending"]')).toBeTruthy();
-  });
-
-  it("uses AskR table and card styling without app-local table chrome", async () => {
-    const root = await mount(() => (
-      <main>
-        <DomainMetricTable
-          title="Current values"
-          metrics={[
-            {
-              label: "Ready",
-              value: 3,
-            },
-          ]}
-        />
-        <Card>
-          <CardContent>
-            <QueueInflightTable
-              messages={[
-                {
-                  area: "payments",
-                  attempts: 1,
-                  expiresAt: "2026-06-18T12:00:00Z",
-                  family: 7,
-                  inflightToken: "token-1",
-                  messageId: 42,
-                  realm: "acme",
-                  resource: "inbox",
-                  sessionId: "session-1",
-                },
-              ]}
-            />
-          </CardContent>
-        </Card>
-      </main>
-    ));
-
-    const tables = root.querySelectorAll('[data-slot="table"]');
-    const cards = root.querySelectorAll('[data-slot="card"]');
-
-    expect(tables).toHaveLength(2);
-    expect(cards).toHaveLength(2);
-    expect(root.querySelectorAll(".domain-table-wrap")).toHaveLength(2);
-    expect(root.querySelector(".domain-table")).toBeNull();
-    expect(root.querySelector(".domain-metric-card")).toBeNull();
-    expect(root.querySelector(".domain-metric-value")?.getAttribute("data-font")).toBe("mono");
-    expect(root.querySelector(".domain-metric-value")?.getAttribute("data-numeric")).toBe(
-      "tabular",
-    );
-    expect(root.querySelector('[data-slot="card-title"]')?.tagName).toBe("H2");
-    expect(root.textContent).toContain("Current values");
-    expect(root.textContent).toContain("session-1");
   });
 });

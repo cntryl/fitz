@@ -51,7 +51,7 @@ fn should_visit_each_secondary_index_row_once_during_bulk_family_removal() {
 }
 
 #[test]
-fn should_remove_mixed_exact_and_wildcard_rows_from_all_indices() {
+fn should_remove_retired_family_rows_from_every_index() {
     // Arrange
     let identity_reads = Arc::new(AtomicUsize::new(0));
     let mut rows = rows(&identity_reads);

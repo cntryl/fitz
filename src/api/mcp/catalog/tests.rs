@@ -35,7 +35,7 @@ fn should_pin_distinct_sdk_lifecycles_for_supported_revisions() {
 }
 
 #[test]
-fn should_preserve_read_tool_names_and_paginated_inventory_in_stable_protocol_catalog_order() {
+fn should_preserve_read_only_protocol_catalog_contract() {
     // Arrange
     let registry = McpToolRegistry::read_only();
 
