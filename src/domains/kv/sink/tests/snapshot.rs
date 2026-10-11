@@ -590,7 +590,9 @@ fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_ro
             .resource_locks
             .get_mut(&key)
             .expect("idle transaction owns its resource lock")
-            .last_activity = Instant::now() - Duration::from_secs(120);
+            .last_activity = Instant::now()
+            .checked_sub(Duration::from_secs(120))
+            .expect("test clock supports a two-minute idle age");
     });
     let selector = crate::snapshot::SnapshotSelector::new(
         crate::snapshot::SnapshotDomain::Kv,
