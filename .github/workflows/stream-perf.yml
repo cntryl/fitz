@@ -77,6 +77,13 @@ jobs:
         if: steps.comparison.outputs.needed == 'true'
         shell: bash
         run: |
+          # Keep runner services from preempting latency-sensitive disk trials.
+          # Children inherit these priorities; sampling and budgets stay unchanged.
+          sudo renice -n -20 -p "$$"
+          sudo ionice -c 2 -n 0 -p "$$"
+          ps -o pid,ni,cls,comm -p "$$"
+          ionice -p "$$"
+          findmnt -T "$RUNNER_TEMP" -o TARGET,SOURCE,FSTYPE,OPTIONS
           cargo test --locked --test workflow_qualification should_qualify_stream_same_host -- --exact --ignored --nocapture
       - name: Upload immutable comparisons and raw evidence
         if: always() && steps.comparison.outputs.needed == 'true'

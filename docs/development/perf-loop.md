@@ -57,6 +57,12 @@ qualification workflow also requires an unchanged-binary maximum-event control
 to stay within 5% for throughput and p95; retain failed comparisons.
 Flush pending measurement-host I/O before each trial and record preparation
 and I/O pressure separately from unchanged benchmark samples.
+The hosted comparison raises the measurement process to nice -20 and best-effort
+I/O priority 0 before running either source. Both archived executables inherit
+the same priorities. Retain the priority and filesystem setup in the job log,
+and process scheduling and mount snapshots with every capture. These settings
+reduce interference from runner services; unchanged-binary controls still decide
+whether the host is stable enough to qualify the pair.
 
 ## Selection Rules
 
