@@ -205,7 +205,11 @@ authority below. Every other denial, including unauthorized families or
 targets, purge without `admin`, and malformed or unknown-challenge Queue
 requests (a Queue target is not authorized until a preview binds it), is
 recorded only in the bounded in-memory MCP audit and denial metric, so repeated
-unauthorized calls cannot fill the audit file. Calls from principals without the tool's action capability are rejected
+unauthorized calls cannot fill the audit file. This also applies to oversized
+Queue arguments and interruption before an authorized target or owned preview
+can be bound. Authority for an admitted request is captured before execution so
+an interrupted confirmation can still be durably recorded after consuming its
+preview. Calls from principals without the tool's action capability are rejected
 before argument parsing by the same in-memory path.
 
 Queue dead-letter replay and purge require an explicit provisioned family,

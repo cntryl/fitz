@@ -1,4 +1,5 @@
 mod audit;
+mod interruption;
 
 use self::audit::McpActionAuditSink;
 use crate::api::admin::auth::AdminPrincipal;
@@ -112,6 +113,18 @@ struct PreviewQueueDeadLetterArguments {
     area: String,
     resource: String,
     message_id: u64,
+}
+
+impl PreviewQueueDeadLetterArguments {
+    fn target(&self) -> QueueTarget {
+        QueueTarget {
+            route_family: self.route_family,
+            realm: self.realm.clone(),
+            area: self.area.clone(),
+            resource: self.resource.clone(),
+            message_id: self.message_id,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -325,13 +338,7 @@ impl McpActionState {
             Ok(parsed) => parsed,
             Err(_) => return self.denied(context, PREVIEW_QUEUE_TOOL, "invalid_arguments", false),
         };
-        let target = QueueTarget {
-            route_family: parsed.route_family,
-            realm: parsed.realm,
-            area: parsed.area,
-            resource: parsed.resource,
-            message_id: parsed.message_id,
-        };
+        let target = parsed.target();
         if !Self::authorized_queue(context, policy, runtime, &target, &parsed.operation) {
             return self.denied(context, PREVIEW_QUEUE_TOOL, "authority_denied", false);
         }
@@ -599,39 +606,6 @@ impl McpActionState {
             runtime: runtime_result,
         })
         .map_err(|_| "action completed but its response could not be encoded".to_string())
-    }
-
-    /// Persist the request's interruption separately from any later synchronous command outcome.
-    pub(super) fn record_request_interruption(
-        &self,
-        tool_name: &str,
-        challenge_id: Option<&str>,
-        context: &McpExecutionContext,
-        fingerprint: [u8; 32],
-        outcome: &'static str,
-    ) -> Result<(), String> {
-        let username = context.principal_name().unwrap_or_else(|| "unknown".into());
-        let requested_id = challenge_id
-            .and_then(|value| Uuid::parse_str(value).ok())
-            .map(|value| value.to_string());
-        let operation_id = requested_id
-            .filter(|id| {
-                self.previews.lock().get(id).is_none_or(|preview| {
-                    preview.username == username && preview.token_fingerprint == fingerprint
-                })
-            })
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-        context.record_action_audit(tool_name, outcome, McpAuditDecision::Denied);
-        if !self.audit.append(
-            &operation_id,
-            &username,
-            action_name(tool_name),
-            "redacted",
-            outcome,
-        ) {
-            return Err("action request interruption could not be durably audited".into());
-        }
-        Ok(())
     }
 
     fn issue_preview(

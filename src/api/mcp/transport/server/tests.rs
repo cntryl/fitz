@@ -1,5 +1,7 @@
 use super::*;
 
+mod interruptions;
+
 #[test]
 fn should_preserve_independent_family_and_realm_in_domain_prompt_scope() {
     // Arrange

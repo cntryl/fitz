@@ -185,6 +185,7 @@ impl McpServer {
                 &context,
                 self.token_fingerprint,
                 "arguments_over_limit",
+                matches!(tool_name, PREVIEW_DRAIN_TOOL | CONFIRM_DRAIN_TOOL),
             )?;
             return Err("arguments exceed the MCP request limit".into());
         }
@@ -194,6 +195,14 @@ impl McpServer {
         ) {
             return Err("unknown MCP action".into());
         }
+        let audit_authorized = actions.interruption_authorized(
+            tool_name,
+            arguments.as_ref(),
+            &context,
+            &self.policy,
+            self.token_fingerprint,
+            self.runtime.as_ref(),
+        );
         let permit = match super::execution::admit(
             &self.execution_slots,
             &context,
@@ -208,6 +217,7 @@ impl McpServer {
                     &context,
                     self.token_fingerprint,
                     "request_not_admitted",
+                    audit_authorized,
                 )?;
                 return Err(message);
             }
@@ -230,6 +240,7 @@ impl McpServer {
                     &context_for_worker,
                     fingerprint,
                     "request_cancelled_before_worker_start",
+                    audit_authorized,
                 )?;
                 return Err("MCP action was cancelled before execution".into());
             }
@@ -272,7 +283,7 @@ impl McpServer {
                 let preview = matches!(tool_name, PREVIEW_DRAIN_TOOL | PREVIEW_QUEUE_TOOL);
                 if let Err(error) = actions_for_observer.record_request_interruption(tool_name,
                     Some(&request_target), &context, fingerprint,
-                    if preview { "request_cancelled" } else { "indeterminate_do_not_retry" }) {
+                    if preview { "request_cancelled" } else { "indeterminate_do_not_retry" }, audit_authorized) {
                     return Err(format!("{error}; any admitted action outcome may be indeterminate; do not retry"));
                 }
                 return Err(if preview {
@@ -296,6 +307,7 @@ impl McpServer {
                     &context,
                     fingerprint,
                     "indeterminate_do_not_retry",
+                    audit_authorized,
                 ) {
                     return Err(format!(
                         "{error}; action outcome is indeterminate; do not retry"
