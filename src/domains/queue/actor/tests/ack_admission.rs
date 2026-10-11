@@ -1,6 +1,8 @@
 use super::*;
 use crate::domains::queue::actor::recovery_store::QueueStore;
 
+mod metrics;
+
 fn actor() -> QueueActor {
     let mut key = unique_queue_key("ack-admission");
     key.family = RouteFamily::new(1);
