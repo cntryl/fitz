@@ -85,6 +85,7 @@ TRIGGER_ONLY = {
     ".github/workflows/stream-perf.yml",
     ".github/stream_performance.py",
     ".github/tests/test_stream_performance.py",
+    ".github/tests/test_stream_dependency_comparison.py",
 }
 
 
@@ -97,6 +98,12 @@ def comparison_paths():
 
 
 class StreamPerformanceWorkflowTests(unittest.TestCase):
+    def test_should_trigger_acceptance_tests_when_their_inputs_change(self):
+        text = WORKFLOW.read_text()
+        for path in TRIGGER_ONLY:
+            with self.subTest(path=path):
+                self.assertIn("      - " + path + "\n", text)
+
     def test_should_keep_the_path_filter_and_in_job_skip_identical(self):
         triggers, skip = comparison_paths()
         self.assertEqual(triggers, skip)

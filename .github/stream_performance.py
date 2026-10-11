@@ -133,6 +133,11 @@ def fresh_compiler_artifact(build_log, package_id, kind, source_path, name=None)
 
 def compiled_source_inputs(source, build_log, package_id):
     artifact = fresh_compiler_artifact(build_log, package_id, "lib", source / "src/lib.rs")
+    emitted_libraries = [Path(name) for name in artifact["filenames"]
+                         if Path(name).suffix in (".rlib", ".rmeta")]
+    assert emitted_libraries and all(path.is_file() for path in emitted_libraries), "Missing emitted library artifact"
+    library_hashes = {path.suffix: sha256(path) for path in emitted_libraries}
+    assert len(library_hashes) == len(emitted_libraries), "Ambiguous emitted library artifacts"
     libraries = [Path(name) for name in artifact["filenames"] if name.endswith(".rmeta")]
     if not libraries:
         libraries = [Path(name) for name in artifact["filenames"] if name.endswith(".rlib")]
@@ -153,7 +158,8 @@ def compiled_source_inputs(source, build_log, package_id):
         if relative.parts[0] == "src":
             hashes[str(relative)] = sha256(path)
     assert "src/lib.rs" in hashes, "Missing compiler-recorded library source inputs"
-    return {"hashes": hashes, "dep_info": dep_info.read_text(), "compiler_artifact": artifact}
+    return {"hashes": hashes, "library_sha256": library_hashes,
+            "dep_info": dep_info.read_text(), "compiler_artifact": artifact}
 
 
 def binary_equivalence(kind, provenance, hashes):
@@ -163,8 +169,10 @@ def binary_equivalence(kind, provenance, hashes):
     assert all(set(rows) == targets and all(rows.values()) for rows in hashes.values())
     inputs = [provenance[phase]["compiled_source_inputs"] for phase in ("before", "after")]
     assert all("src/lib.rs" in rows for rows in inputs)
+    libraries = [provenance[phase]["compiled_library_sha256"] for phase in ("before", "after")]
+    assert all(rows and all(rows.values()) for rows in libraries), "Missing library artifact provenance"
     if kind == "dependencies" and inputs[0] == inputs[1]:
-        return hashes["before"] == hashes["after"]
+        return libraries[0] == libraries[1] and hashes["before"] == hashes["after"]
     for target in targets:
         assert hashes["before"][target] != hashes["after"][target], "Source variants reused the same binary: " + target
     return False
@@ -228,7 +236,13 @@ class Campaign:
                 if index == 0:
                     witness = compiled_source_inputs(source, build_log, provenance[phase]["package_id"])
                     provenance[phase]["compiled_source_inputs"] = witness["hashes"]
+                    provenance[phase]["compiled_library_sha256"] = witness["library_sha256"]
                     save(self.output / (phase + "-compiled-source-inputs.json"), witness)
+                    archive = self.output / "libraries" / phase
+                    archive.mkdir(parents=True)
+                    for name in witness["compiler_artifact"]["filenames"]:
+                        if Path(name).suffix in (".rlib", ".rmeta"):
+                            shutil.copy2(name, archive / Path(name).name)
                 artifact = fresh_compiler_artifact(build_log, provenance[phase]["package_id"], "bench",
                                                    source / "benches" / (target + ".rs"), target)
                 save(self.output / label / "compiler-artifact.json", artifact)
@@ -335,7 +349,7 @@ def main():
     if campaign.binary_equivalent:
         save(campaign.output / "acceptance.json", {"status": "binary_equivalent", "head": campaign.heads["after"]})
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as file:
-            file.write("\nStream dependency comparison: original baseline dependencies were retained. Independently rebuilt libraries used identical compiler-recorded source inputs, and every benchmark binary is byte-identical. No timing samples were taken; this records artifact equivalence.\n")
+            file.write("\nStream dependency comparison: original baseline dependencies were retained. Independently rebuilt libraries used identical compiler-recorded source inputs, and every emitted library artifact and benchmark binary is byte-identical. No timing samples were taken; this records artifact equivalence.\n")
         return
     # Predeclared confirmation runs even when the first set has failed budgets
     # or unstable controls. There is no retry-until-green loop.

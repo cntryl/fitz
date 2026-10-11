@@ -30,6 +30,7 @@ on:
       - .github/workflows/stream-perf.yml
       - .github/stream_performance.py
       - .github/tests/test_stream_performance.py
+      - .github/tests/test_stream_dependency_comparison.py
   workflow_dispatch:
 
 permissions:
@@ -99,7 +100,7 @@ jobs:
             fi
           fi
           git -C "$baseline" add Cargo.toml Cargo.lock benches
-          git -C "$baseline" -c user.name=Stream-qualification -c user.email=stream-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Stream benchmark fixtures'
+          git -C "$baseline" -c commit.gpgsign=false -c user.name=Stream-qualification -c user.email=stream-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Stream benchmark fixtures'
           test -z "$(git -C "$baseline" diff --name-only "$BASE_SHA" -- src)"
           echo "STREAM_COMPARISON_KIND=$comparison_kind" >> "$GITHUB_ENV"
           echo "STREAM_BASELINE=$baseline" >> "$GITHUB_ENV"
@@ -122,5 +123,7 @@ jobs:
             ${{ env.STREAM_OUTPUT }}/**/stress/**
             ${{ env.STREAM_OUTPUT }}/**/*.csv
             ${{ env.STREAM_OUTPUT }}/**/*.json
+            ${{ env.STREAM_OUTPUT }}/libraries/**
+            ${{ env.STREAM_OUTPUT }}/binaries/**
           if-no-files-found: error
           retention-days: 14
