@@ -1,4 +1,5 @@
 mod audit;
+mod interruption;
 
 use self::audit::McpActionAuditSink;
 use crate::api::admin::auth::AdminPrincipal;
@@ -114,6 +115,18 @@ struct PreviewQueueDeadLetterArguments {
     message_id: u64,
 }
 
+impl PreviewQueueDeadLetterArguments {
+    fn target(&self) -> QueueTarget {
+        QueueTarget {
+            route_family: self.route_family,
+            realm: self.realm.clone(),
+            area: self.area.clone(),
+            resource: self.resource.clone(),
+            message_id: self.message_id,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ConfirmActionArguments {
     challenge_id: String,
@@ -195,12 +208,15 @@ impl McpActionState {
             .ok()
             .map(PathBuf::from)
             .ok_or("FITZ_MCP_ACTION_AUDIT_FILE is required when MCP mutations are enabled")?;
-        let audit = Arc::new(McpActionAuditSink::open(audit_path)?);
-        Ok(Some(Self {
+        Self::open(&runtime_target, audit_path).map(Some)
+    }
+
+    pub(super) fn open(runtime_target: &str, audit_path: PathBuf) -> Result<Self, String> {
+        Ok(Self {
             runtime_target: runtime_target.into(),
-            audit,
+            audit: Arc::new(McpActionAuditSink::open(audit_path)?),
             previews: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-        }))
+        })
     }
 
     pub(super) fn tool_definitions(
@@ -263,6 +279,29 @@ impl McpActionState {
         )
     }
 
+    /// Argument-free gate run before parsing, admission or any durable write.
+    /// Callers without the tool's action capability get only a counted in-memory
+    /// denial, so they cannot fill the bounded durable audit file. Every later
+    /// preview, confirmation and dispatch authority check still runs.
+    pub(super) fn require_action_capability(
+        tool_name: &str,
+        context: &McpExecutionContext,
+        policy: &McpCapabilityPolicy,
+    ) -> Result<(), String> {
+        let capable = match tool_name {
+            PREVIEW_DRAIN_TOOL | CONFIRM_DRAIN_TOOL => Self::authorized_runtime(context, policy),
+            PREVIEW_QUEUE_TOOL | CONFIRM_QUEUE_TOOL => {
+                context.principal.is_some() && policy.allows(McpCapabilityClass::Mutate)
+            }
+            _ => false,
+        };
+        if capable {
+            return Ok(());
+        }
+        context.record_action_audit(tool_name, "capability_denied", McpAuditDecision::Denied);
+        Err("MCP action request was denied".into())
+    }
+
     pub(super) fn preview_runtime_drain(
         &self,
         context: &McpExecutionContext,
@@ -271,7 +310,7 @@ impl McpActionState {
         runtime: &Runtime,
     ) -> Result<serde_json::Value, String> {
         if !Self::authorized_runtime(context, policy) {
-            return self.denied(context, PREVIEW_DRAIN_TOOL, "authority_denied");
+            return self.denied(context, PREVIEW_DRAIN_TOOL, "authority_denied", false);
         }
         let observation = runtime_drain_observation(runtime);
         let observation_hash = digest_value(&observation)?;
@@ -293,28 +332,29 @@ impl McpActionState {
         runtime: &Runtime,
     ) -> Result<serde_json::Value, String> {
         let Some(arguments) = arguments else {
-            return self.denied(context, PREVIEW_QUEUE_TOOL, "missing_arguments");
+            return self.denied(context, PREVIEW_QUEUE_TOOL, "missing_arguments", false);
         };
         let parsed: PreviewQueueDeadLetterArguments = match serde_json::from_value(arguments) {
             Ok(parsed) => parsed,
-            Err(_) => return self.denied(context, PREVIEW_QUEUE_TOOL, "invalid_arguments"),
+            Err(_) => return self.denied(context, PREVIEW_QUEUE_TOOL, "invalid_arguments", false),
         };
-        let target = QueueTarget {
-            route_family: parsed.route_family,
-            realm: parsed.realm,
-            area: parsed.area,
-            resource: parsed.resource,
-            message_id: parsed.message_id,
-        };
+        let target = parsed.target();
         if !Self::authorized_queue(context, policy, runtime, &target, &parsed.operation) {
-            return self.denied(context, PREVIEW_QUEUE_TOOL, "authority_denied");
+            return self.denied(context, PREVIEW_QUEUE_TOOL, "authority_denied", false);
         }
         let observation = match queue_dead_letter_observation(runtime, &target) {
             Err(_) => {
-                return self.denied(context, PREVIEW_QUEUE_TOOL, "state_observation_failed");
+                return self.denied(
+                    context,
+                    PREVIEW_QUEUE_TOOL,
+                    "state_observation_failed",
+                    true,
+                );
             }
             Ok(Some(observation)) => observation,
-            Ok(None) => return self.denied(context, PREVIEW_QUEUE_TOOL, "dead_letter_not_found"),
+            Ok(None) => {
+                return self.denied(context, PREVIEW_QUEUE_TOOL, "dead_letter_not_found", true)
+            }
         };
         let observed_state = digest_value(&observation)?;
         let action = Action::QueueDeadLetter {
@@ -345,28 +385,51 @@ impl McpActionState {
         token_fingerprint: [u8; 32],
         runtime: &Runtime,
     ) -> Result<ActionTicket, String> {
+        // Drain has one fixed target, so runtime authority fully covers any denial
+        // before a preview is bound. Queue targets live in the request and are not
+        // authorized until a preview binds them, so those denials stay in memory.
+        let fixed_target_authorized =
+            tool_name == CONFIRM_DRAIN_TOOL && Self::authorized_runtime(context, policy);
         let Some(arguments) = arguments else {
-            return self.denied(context, tool_name, "missing_arguments");
+            return self.denied(
+                context,
+                tool_name,
+                "missing_arguments",
+                fixed_target_authorized,
+            );
         };
         let arguments: ConfirmActionArguments = match serde_json::from_value(arguments) {
             Ok(arguments) => arguments,
-            Err(_) => return self.denied(context, tool_name, "invalid_arguments"),
+            Err(_) => {
+                return self.denied(
+                    context,
+                    tool_name,
+                    "invalid_arguments",
+                    fixed_target_authorized,
+                )
+            }
         };
         let Some(username) = context
             .principal
             .as_ref()
             .map(|principal| principal.username.clone())
         else {
-            return self.denied(context, tool_name, "authentication_required");
+            return self.denied(context, tool_name, "authentication_required", false);
         };
         let ticket = {
             let mut previews = self.previews.lock();
             let Some(preview) = previews.get(&arguments.challenge_id).cloned() else {
-                return self.denied(context, tool_name, "challenge_missing_or_used");
+                return self.denied(
+                    context,
+                    tool_name,
+                    "challenge_missing_or_used",
+                    fixed_target_authorized,
+                );
             };
+            let authorized = Self::authorized_action(context, policy, runtime, &preview.action);
             if preview.expires_at <= Instant::now() {
                 previews.remove(&arguments.challenge_id);
-                return self.denied(context, tool_name, "challenge_expired");
+                return self.denied(context, tool_name, "challenge_expired", authorized);
             }
             if preview.action.confirmation_tool() != tool_name
                 || preview.username != username
@@ -374,10 +437,10 @@ impl McpActionState {
                 || preview.target != arguments.target
                 || preview.confirmation != arguments.confirmation
             {
-                return self.denied(context, tool_name, "confirmation_mismatch");
+                return self.denied(context, tool_name, "confirmation_mismatch", authorized);
             }
-            if !Self::authorized_action(context, policy, runtime, &preview.action) {
-                return self.denied(context, tool_name, "authority_revalidation_denied");
+            if !authorized {
+                return self.denied(context, tool_name, "authority_revalidation_denied", false);
             }
             previews.remove(&arguments.challenge_id);
             ActionTicket {
@@ -545,39 +608,6 @@ impl McpActionState {
         .map_err(|_| "action completed but its response could not be encoded".to_string())
     }
 
-    /// Persist the request's interruption separately from any later synchronous command outcome.
-    pub(super) fn record_request_interruption(
-        &self,
-        tool_name: &str,
-        challenge_id: Option<&str>,
-        context: &McpExecutionContext,
-        fingerprint: [u8; 32],
-        outcome: &'static str,
-    ) -> Result<(), String> {
-        let username = context.principal_name().unwrap_or_else(|| "unknown".into());
-        let requested_id = challenge_id
-            .and_then(|value| Uuid::parse_str(value).ok())
-            .map(|value| value.to_string());
-        let operation_id = requested_id
-            .filter(|id| {
-                self.previews.lock().get(id).is_none_or(|preview| {
-                    preview.username == username && preview.token_fingerprint == fingerprint
-                })
-            })
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-        context.record_action_audit(tool_name, outcome, McpAuditDecision::Denied);
-        if !self.audit.append(
-            &operation_id,
-            &username,
-            action_name(tool_name),
-            "redacted",
-            outcome,
-        ) {
-            return Err("action request interruption could not be durably audited".into());
-        }
-        Ok(())
-    }
-
     fn issue_preview(
         &self,
         action: Action,
@@ -587,7 +617,7 @@ impl McpActionState {
         token_fingerprint: [u8; 32],
     ) -> Result<serde_json::Value, String> {
         if target.len() > MAX_TARGET_BYTES {
-            return self.denied(context, "mcp_action_preview", "target_over_limit");
+            return self.denied(context, "mcp_action_preview", "target_over_limit", true);
         }
         let username = context
             .principal
@@ -602,7 +632,7 @@ impl McpActionState {
         previews.retain(|_, preview| preview.expires_at > Instant::now());
         if previews.len() >= MAX_PREVIEWS {
             drop(previews);
-            return self.denied(context, "mcp_action_preview", "preview_capacity_full");
+            return self.denied(context, "mcp_action_preview", "preview_capacity_full", true);
         }
         let pending = PendingAction {
             username: username.clone(),
@@ -672,13 +702,20 @@ impl McpActionState {
         Err(message)
     }
 
+    /// Every denial is counted in memory. Only a principal that passed the authority
+    /// check for the requested operation and target is also written to the durable
+    /// audit, so unauthorized callers cannot fill the mandatory audit file.
     fn denied<T>(
         &self,
         context: &McpExecutionContext,
         tool_name: &str,
         reason: &str,
+        authorized: bool,
     ) -> Result<T, String> {
         context.record_action_audit(tool_name, reason, McpAuditDecision::Denied);
+        if !authorized {
+            return Err("MCP action request was denied".into());
+        }
         let username = context
             .principal_name()
             .unwrap_or_else(|| "unknown".to_string());

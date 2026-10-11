@@ -7,6 +7,10 @@ on:
         description: Run matched 10k, 25k and 100k Queue drains instead of the seven one-hour sweeps
         type: boolean
         default: false
+      queue_baseline:
+        description: Queue drain baseline commit, tag or branch. Empty uses the merge base with origin/develop, so a develop dispatch must set it
+        type: string
+        default: ""
   schedule:
     - cron: "0 6 * * 1"
 
@@ -34,6 +38,7 @@ jobs:
           - should_measure_notice_concurrency
           - should_measure_lease_concurrency
     env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
       CARGO_INCREMENTAL: "0"
       RUST_LOG: "off"
       FITZ_LOG_LEVEL: "off"
@@ -46,10 +51,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Update Rust to stable
-        run: rustup update stable
+      - name: Install verified Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "stress-benches"
 
       - name: Run Tier 5 workload
         shell: bash
@@ -60,7 +70,7 @@ jobs:
 
       - name: Upload benchmark reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bench-tier5-${{ matrix.workload }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -73,7 +83,9 @@ jobs:
     if: ${{ inputs.queue_pressure }}
     name: Matched Queue drain qualification
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Two build diagnostics plus twelve measured captures each have a 1,000s
+    # harness guard; leave room for compilation and evidence upload as well.
+    timeout-minutes: 300
     env:
       RUSTUP_TOOLCHAIN: "1.99.0"
       FITZ_LOG_LEVEL: "off"
@@ -82,40 +94,59 @@ jobs:
       STRESS_PROFILE: smoke
       STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
       STRESS_TIMEOUT_SECS: "1000"
-      # Immutable initial instrumentation only. Do not copy later production
-      # optimizations onto the comparison baseline.
-      QUEUE_TIMING_COMMIT: c99b54ef50ab93b778a072219c12b15f19f7b9f7
+      QUEUE_BASELINE_REF: ${{ inputs.queue_baseline }}
+      # Develop commit (#417) that added the benchmark-only Queue diagnostics.
+      # A baseline that predates it receives only that commit's own
+      # src/domains/queue diff, never later production optimizations.
+      QUEUE_TIMING_COMMIT: 1e3b18dd05a342f52b1fe57418f753f1dfa7a725
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Install verified Rust toolchain
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Test drain acceptance logic
         run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: queue-pressure
       - name: Prepare identical pacing and diagnostics on the baseline
         shell: bash
         run: |
-          base=$(git merge-base HEAD origin/develop)
+          set -euo pipefail
+          if [ -n "${QUEUE_BASELINE_REF:-}" ]; then
+            base=$(git rev-parse --verify --quiet "$QUEUE_BASELINE_REF^{commit}" ||
+              git rev-parse --verify --quiet "origin/$QUEUE_BASELINE_REF^{commit}") || {
+              echo "::error::queue_baseline '$QUEUE_BASELINE_REF' does not resolve to a fetched commit"
+              exit 1
+            }
+          else
+            base=$(git merge-base HEAD origin/develop)
+          fi
           baseline="$RUNNER_TEMP/fitz-queue-baseline"
           git worktree add --detach "$baseline" "$base"
           git diff --binary "$base" HEAD -- Cargo.toml Cargo.lock benches > "$RUNNER_TEMP/queue-fixtures.patch"
-          git diff --binary "$base" "$QUEUE_TIMING_COMMIT" -- src/domains/queue > "$RUNNER_TEMP/queue-timing.patch"
-          git -C "$baseline" apply "$RUNNER_TEMP/queue-fixtures.patch"
-          git -C "$baseline" apply "$RUNNER_TEMP/queue-timing.patch"
+          if [ -s "$RUNNER_TEMP/queue-fixtures.patch" ]; then
+            git -C "$baseline" apply "$RUNNER_TEMP/queue-fixtures.patch"
+          fi
+          if ! git merge-base --is-ancestor "$QUEUE_TIMING_COMMIT" "$base"; then
+            git diff --binary "$QUEUE_TIMING_COMMIT^" "$QUEUE_TIMING_COMMIT" -- src/domains/queue > "$RUNNER_TEMP/queue-timing.patch"
+            git -C "$baseline" apply "$RUNNER_TEMP/queue-timing.patch"
+          fi
           git -C "$baseline" add Cargo.toml Cargo.lock benches src/domains/queue
           git -C "$baseline" -c user.name=Queue-qualification -c user.email=queue-qualification@users.noreply.github.com commit --allow-empty -m 'test: identical Queue pacing and diagnostic instrumentation'
+          if [ "$(git -C "$baseline" rev-parse HEAD:src)" = "$(git rev-parse HEAD:src)" ]; then
+            echo "::error::Queue baseline $base and candidate $(git rev-parse HEAD) build identical src/ trees, so there is nothing to compare. Dispatch with a distinct queue_baseline (for example the develop commit before the change under test)."
+            exit 1
+          fi
           echo "QUEUE_BASELINE=$baseline" >> "$GITHUB_ENV"
           echo "QUEUE_BASE_PRODUCTION=$base" >> "$GITHUB_ENV"
           echo "QUEUE_OUTPUT=$RUNNER_TEMP/queue-qualification" >> "$GITHUB_ENV"
-      - name: Compile both sources then run all six matched campaigns
+      - name: Compile both sources then run all twelve matched campaigns
         run: python3 .github/queue_qualification.py
       - name: Upload complete and failed evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: queue-pressure-${{ github.sha }}
           path: |
