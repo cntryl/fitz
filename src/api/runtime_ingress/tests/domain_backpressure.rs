@@ -5,6 +5,8 @@ use crate::api::runtime_ingress::domain_frame_dispatcher::DomainFrameDispatcher;
 mod rpc;
 #[path = "domain_backpressure_stream.rs"]
 mod stream;
+#[path = "domain_backpressure_transport.rs"]
+mod transport;
 
 struct AlwaysBackpressuredSink;
 

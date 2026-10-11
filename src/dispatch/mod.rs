@@ -77,7 +77,7 @@ pub(crate) struct DomainEnvelopeBuildRequest {
     pub(crate) destination: RouteAddress,
     /// Correlation the client attached to this frame, if any.
     pub(crate) correlation: Option<std::num::NonZeroU64>,
-    /// Monotonic time ingress began dispatching the frame. Retries reuse it so
+    /// Monotonic time the transport received the complete frame. Retries reuse it so
     /// redelivery never renews a request deadline.
     pub(crate) received_at: std::time::Instant,
 }

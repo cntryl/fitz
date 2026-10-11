@@ -27,7 +27,7 @@ struct DomainDispatchBackpressurePolicy {
 }
 
 impl DomainDispatchBackpressurePolicy {
-    fn within_budget(self, started_at: Instant) -> bool {
+    fn within_budget(self, started_at: tokio::time::Instant) -> bool {
         started_at.elapsed() < self.wait_budget
     }
 
@@ -126,6 +126,7 @@ impl DomainFrameDispatcher {
         u64::try_from(start.elapsed().as_micros().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn dispatch_if_domain(
         &self,
         session_id: u64,
@@ -134,6 +135,7 @@ impl DomainFrameDispatcher {
         msg_type: crate::protocol::tlv::MessageType,
         payload: DomainDispatchPayload<'_>,
         correlation: Option<std::num::NonZeroU64>,
+        received_at: Instant,
     ) -> Result<(), IngressDecision> {
         let Some(router) = &self.router else {
             return Ok(());
@@ -167,6 +169,7 @@ impl DomainFrameDispatcher {
                     msg_type,
                     payload,
                     correlation,
+                    received_at,
                 };
                 self.authorize_and_dispatch_domain_frame(dispatch).await
             }
@@ -638,12 +641,15 @@ impl DomainFrameDispatcher {
             msg_type,
             payload,
             correlation,
+            received_at,
         } = dispatch;
         let (addr, source, descriptor) = self.dispatch_addressing(session_id, route_family, domain);
         let dispatch_payload = payload.into_dispatch_bytes();
-        let received_at = Instant::now();
-
-        let backpressure_started_at = received_at;
+        // Transport/session queueing consumes an RPC deadline, but admission
+        // retries get their own budget starting when dispatch begins.
+        let backpressure_started_at = Instant::now();
+        // Use the same clock for the retry budget and its async waits.
+        let retry_started_at = tokio::time::Instant::now();
         let mut retries = 0_u64;
         let policy = DOMAIN_DISPATCH_BACKPRESSURE_POLICY;
 
@@ -691,7 +697,7 @@ impl DomainFrameDispatcher {
                 // descheduled past the budget between the two attempts.
                 Err(error)
                     if Self::domain_dispatch_backpressured(&error)
-                        && (retries == 0 || policy.within_budget(backpressure_started_at)) =>
+                        && (retries == 0 || policy.within_budget(retry_started_at)) =>
                 {
                     retries = retries.saturating_add(1);
                     Self::record_backpressure_retry();

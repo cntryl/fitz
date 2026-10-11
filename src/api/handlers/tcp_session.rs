@@ -110,7 +110,7 @@ struct TcpFrameTaskContext {
 }
 
 fn spawn_tcp_frame_task(
-    frame_rx: tokio::sync::mpsc::Receiver<(u64, bytes::Bytes)>,
+    frame_rx: tokio::sync::mpsc::Receiver<crate::api::tcp::StampedTcpFrame>,
     context: TcpFrameTaskContext,
     mut close_signal: tokio::sync::watch::Receiver<Option<&'static str>>,
 ) -> tokio::task::JoinHandle<Result<(), String>> {
@@ -158,17 +158,18 @@ fn spawn_tcp_frame_task(
                 }
             };
 
-            let Some((_sid, frame)) = next_frame else {
+            let Some(frame) = next_frame else {
                 break;
             };
             context.runtime.increment_messages_received();
             context.ingress.record_frame_received(context.session_id);
             let frame_result = {
                 let _busy = context.outbound_sink.begin_frame();
-                crate::api::session::process_session_frame(
+                crate::api::session::process_session_frame_at(
                     &mut session,
-                    frame,
+                    frame.frame,
                     context.ingress.as_ref(),
+                    frame.received_at,
                 )
                 .await
             };
@@ -230,7 +231,7 @@ fn maybe_rebind_tcp_inbox(
 }
 
 async fn resolve_tcp_run_result(
-    frame_tx: tokio::sync::mpsc::Sender<(u64, bytes::Bytes)>,
+    frame_tx: tokio::sync::mpsc::Sender<crate::api::tcp::StampedTcpFrame>,
     mut frame_handle: tokio::task::JoinHandle<Result<(), String>>,
     mut handler_task: tokio::task::JoinHandle<Result<(), String>>,
     mut writer_handle: tokio::task::JoinHandle<Result<(), String>>,
