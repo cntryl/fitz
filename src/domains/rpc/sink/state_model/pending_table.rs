@@ -213,7 +213,8 @@ impl RpcPendingTable {
     /// busy since the grace was last credited, so the grace only runs while the
     /// loop is free to read the cleanup ACK. Total deferral per cancellation is
     /// capped at `RPC_MAX_CANCELLATION_GRACE_DEFERRAL`; once the cap is reached
-    /// this returns `false` and the worker is closed. Returns whether it was deferred.
+    /// this returns `false`, allowing the caller to request worker close.
+    /// Returns whether it was deferred.
     pub(in crate::domains::rpc::sink) fn defer_grace_for_busy_frame_loop(
         &mut self,
         key: RpcCorrelationKey,

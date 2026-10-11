@@ -46,11 +46,10 @@ pub(in crate::domains::rpc::sink) const RPC_DEFAULT_REQUEST_TIMEOUT: Duration =
 pub(in crate::domains::rpc::sink) const RPC_DEFAULT_CANCELLATION_GRACE: Duration =
     Duration::from_secs(5);
 /// Upper bound on how much a cancellation grace can be extended for a worker's
-/// frame-loop busy time, measured from its original expiry. The longest
-/// legitimate frame hold is a Stream client commit waiting on storage, bounded
-/// by `STREAM_CLIENT_ACTOR_REPLY_TIMEOUT` (60 s). A frame that outlives that
-/// bound is not making progress, so the worker is closed no later than
-/// original grace expiry plus this ceiling.
+/// frame-loop busy time, measured from its original expiry. This matches
+/// `STREAM_CLIENT_ACTOR_REPLY_TIMEOUT` (60 s). Once the bounded grace expires,
+/// the next timeout sweep requests close; actual transport cleanup follows
+/// its own lifecycle.
 pub(in crate::domains::rpc::sink) const RPC_MAX_CANCELLATION_GRACE_DEFERRAL: Duration =
     Duration::from_secs(60);
 pub(in crate::domains::rpc::sink) const RPC_CANCELLATION_CLOSE_RETRY_INTERVAL: Duration =
