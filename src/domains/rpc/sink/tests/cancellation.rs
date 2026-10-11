@@ -4,6 +4,7 @@ use crate::protocol::rpc_codec::encode_cancel_ack_tlv_frame;
 use bytes::Bytes;
 
 mod safety;
+mod sweep_disconnect;
 
 #[derive(Default)]
 struct CaptureRpcEndpoint {

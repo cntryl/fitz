@@ -77,6 +77,10 @@ recovery for cloud deployments. No logical export/import is required solely by
 this update. Verify that lease-loss storage errors remain terminal and do not
 become successful reads or automatic mutation retries.
 
+The 0.3.2 to 0.3.3 update follows the same procedure. Fitz pins Midge 0.3.3 to
+an untagged git rev; before release, confirm the pin matches a published 0.3.3
+tag or record why the release ships an untagged storage dependency.
+
 ## Stream error envelope generation 2 release gate
 
 For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK
