@@ -497,6 +497,7 @@ where
 
         match msg_result {
             Ok(Message::Binary(data)) => {
+                let received_at = std::time::Instant::now();
                 let frame = data;
                 context.runtime.increment_messages_received();
                 context.ingress.record_frame_received(context.session_id);
@@ -521,10 +522,11 @@ where
                     break Err(reason);
                 }
 
-                if let Err(error) = crate::api::session::process_session_frame(
+                if let Err(error) = crate::api::session::process_session_frame_at(
                     context.session,
                     frame,
                     context.ingress,
+                    received_at,
                 )
                 .await
                 {

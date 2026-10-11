@@ -55,13 +55,26 @@ call. A reconnect creates a new worker session and cannot inherit this identity.
 
 ## Deadlines
 
-API ingress stamps each request with a local monotonic receive time before it
-enters the family actor. The stamp is taken once when ingress starts
-dispatching the frame, and ingress backpressure retries reuse it; time the
-frame waited in the session's transport queue before that is not counted. The
-actor subtracts time spent in its queue from the remaining budget. It caps that
-budget to the configured broker request timeout
-(30 seconds by default) and stores the resulting monotonic deadline with the
+The transport stamps each complete frame with a local monotonic receive time.
+TCP captures it immediately after the socket read that completes the frame,
+before extracting or forwarding that read's batch; all frames completed by
+that read share the stamp. WebSocket captures it when the stream yields a
+binary message, before validation and session processing. This starts the
+broker's clock after transport receipt; it does not measure client-to-broker
+network transit or bytes still buffered before that receipt.
+
+All complete TLVs decoded from a frame keep its stamp, even when handling an
+earlier TLV waits. A TLV fragmented across frames uses the stamp of the frame
+that completes it. Session handoff queueing, authentication, authorization,
+ingress backpressure retries, and the family actor mailbox all consume the
+same RPC deadline. The mailbox admission retry budget starts separately when
+dispatch begins, so old transport frames do not prematurely exhaust another
+domain's admission retries. Direct callers of the compatible unstamped
+ingress/session APIs start their clock when those APIs are entered.
+
+The actor subtracts elapsed receive time from the remaining budget. It caps
+that budget to the configured broker request timeout (30 seconds by default)
+and stores the resulting monotonic deadline with the
 existing queued or pending request state. Queueing never renews the deadline.
 An already-expired request is rejected before worker credit or global pending
 capacity is claimed. A queued request that expires before dispatch gets one
