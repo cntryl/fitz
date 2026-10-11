@@ -1,4 +1,4 @@
-FROM node:slim AS frontend
+FROM node:26.11.1-trixie-slim AS frontend
 
 WORKDIR /ui
 
@@ -15,7 +15,8 @@ COPY ui/ ./
 
 RUN npm run build
 
-FROM rust:slim AS chef
+# Keep the Rust tag on the toolchain pinned in .github/workflows/ci.yml.
+FROM rust:1.99.0-slim-trixie AS chef
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -25,7 +26,7 @@ RUN apt-get update \
   pkg-config \
   && rm -rf /var/lib/apt/lists/*
 
-RUN cargo install --locked cargo-chef
+RUN cargo install --locked cargo-chef --version 0.1.78
 
 WORKDIR /usr/src/fitz
 
@@ -55,7 +56,7 @@ FROM debian:trixie-slim AS runtime-fs
 RUN mkdir -p /data \
   && chown 65532:65532 /data
 
-FROM gcr.io/distroless/cc-debian13 AS runtime
+FROM gcr.io/distroless/cc-debian13:latest AS runtime
 
 WORKDIR /app
 
