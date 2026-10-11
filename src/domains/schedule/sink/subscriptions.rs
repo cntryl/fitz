@@ -68,14 +68,13 @@ impl ScheduleDomainRuntime<'_> {
                 );
                 id
             } else {
-                if state
+                if let Some(limit) = state
                     .subscriptions
                     .registration_limit_for_session(session_id, &pattern)
-                    .is_some()
                 {
                     return ScheduleResponse::Error(ScheduleFailure::new(
                         ScheduleFailureCategory::SubscriptionLimit,
-                        "subscription registration limit exceeded",
+                        registration_limit_message(limit),
                     ));
                 }
                 let Ok(new_id) = self.core.next_sub_id.try_update(
@@ -138,5 +137,25 @@ impl ScheduleDomainRuntime<'_> {
             .subscriptions
             .remove_session_route(family_id, session_id, route.as_str());
         ScheduleResponse::Ok
+    }
+}
+
+/// Schedule SUBSCRIBE limit errors are uncoded, so clients distinguish them only
+/// by these exact messages. The wildcard text is the pre-#373 production wire text.
+fn registration_limit_message(
+    limit: crate::domains::subscription_state::RegistrationLimit,
+) -> String {
+    use crate::domains::subscription_state::{
+        RegistrationLimit, MAX_TOTAL_REGISTRATIONS_PER_SESSION,
+        MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+    };
+
+    match limit {
+        RegistrationLimit::Wildcard => format!(
+            "wildcard subscription limit exceeded ({MAX_WILDCARD_REGISTRATIONS_PER_SESSION} per session)"
+        ),
+        RegistrationLimit::Total => format!(
+            "total subscription limit exceeded ({MAX_TOTAL_REGISTRATIONS_PER_SESSION} per session)"
+        ),
     }
 }

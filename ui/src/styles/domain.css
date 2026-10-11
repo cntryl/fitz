@@ -273,8 +273,6 @@
 
 .domain-table-wrap {
   margin-top: 0;
-  overflow-x: auto;
-  scrollbar-gutter: stable;
 }
 
 .domain-table-wrap > [data-slot="table"] {
@@ -835,10 +833,6 @@
 
   .metrics-shortcut {
     width: 100%;
-  }
-
-  .domain-table-wrap {
-    overflow-x: visible;
   }
 
   .domain-table-cell-truncate {
