@@ -225,14 +225,14 @@ async fn should_audit_resource_validation_error_and_preserve_request_id() {
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     // Assert
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["id"], 7);
-    assert!(body.get("error").is_some(), "{body}");
+    assert_eq!(body["error"]["code"], -32602, "{body}");
     assert!(state
         .audit_buffer
         .records()
         .iter()
-        .any(|record| record.result_summary == "protocol_rejected"));
+        .any(|record| record.result_summary == "invalid_resource_uri"));
 }
 
 #[tokio::test]
