@@ -15,7 +15,7 @@ misleading, mass-produced, or unsupported submissions to protect review capacity
 
 ## Dev Setup
 
-- Install the Rust toolchain pinned for CI in `.github/workflows/ci.yml` (currently 1.99.0). Advance it intentionally after pedantic Clippy, build, and workspace tests pass on the candidate stable release.
+- Install the Rust toolchain pinned for CI in `.github/workflows/ci.yml` (currently 1.99.0). Advance it intentionally after pedantic Clippy, build, and workspace tests pass on the candidate stable release. The benchmark workflows (`bench.yml`, `bench-tier5.yml`, `bench-tier6.yml`, `stream-perf.yml`) pin the same `RUSTUP_TOOLCHAIN`; advance them together so benchmark results do not drift with compiler releases.
 - Install shared tooling when working on benchmark reports:
   - `cargo install --git https://github.com/cntryl/tools --locked`
 - Clone the repo and run the workspace tests:

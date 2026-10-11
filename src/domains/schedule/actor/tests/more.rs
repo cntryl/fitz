@@ -545,33 +545,43 @@ fn should_continue_after_deleted_schedule_list_cursor_anchor() {
 }
 
 #[test]
-fn should_reject_invalid_schedule_list_cursors() {
+fn should_return_first_schedule_list_page_given_unusable_cursor() {
     // Arrange
     let mut actor = make_actor();
-    actor
-        .create_schedule(
-            "schedule://acme/jobs/a/run".to_string(),
-            "* * * * *".to_string(),
-            Bytes::new(),
-        )
-        .expect("create schedule");
+    let routes = ["schedule://acme/jobs/a/run", "schedule://acme/jobs/b/run"];
+    for route in routes {
+        actor
+            .create_schedule(route.to_string(), "* * * * *".to_string(), Bytes::new())
+            .expect("create schedule");
+    }
     let cursors = [
+        "",
         "schedule-list-v1:2:schedule://acme/jobs/a/run",
+        "schedule://acme/jobs/a/run",
         "schedule-list-v1:invalid",
         "schedule-list-v1:1:",
     ];
 
     // Act
-    let results = cursors
+    let pages = cursors
         .iter()
-        .map(|cursor| actor.list_entries_v2(Some(cursor), 10))
+        .map(|cursor| {
+            let (entries, has_more, continuation) = actor
+                .list_entries_v2(Some(cursor), 1)
+                .expect("unusable cursor lists from the first page");
+            (entries[0].route.clone(), has_more, continuation)
+        })
         .collect::<Vec<_>>();
 
     // Assert
-    assert!(
-        results.iter().all(Result::is_err),
-        "foreign-family and malformed cursors must be rejected"
-    );
+    for (route, has_more, continuation) in pages {
+        assert_eq!(route, routes[0]);
+        assert!(has_more);
+        assert_eq!(
+            continuation.as_deref(),
+            Some("schedule-list-v1:1:schedule://acme/jobs/a/run")
+        );
+    }
 }
 
 #[test]

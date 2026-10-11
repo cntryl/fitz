@@ -1,6 +1,5 @@
 import { Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { RefreshCwIcon } from "@askrjs/lucide";
 import {
   Block,
@@ -29,6 +28,7 @@ import type {
   KvCommittedPair,
   KvKeyEncoding,
   KvResourceScope,
+  KvTransaction,
 } from "@/features/kv/kv-models";
 import { createKvRowsQuery } from "@/features/kv/kv-rows-query";
 import { createKvTransactionsQuery } from "@/features/kv/kv-query";
@@ -205,9 +205,36 @@ export function KvRowsSection({
   );
 }
 
+function formatTransactionDetail(transaction: KvTransaction) {
+  return [
+    transaction.mode ?? "--",
+    `started ${transaction.startedAt ? formatTimestamp(transaction.startedAt) : "--"}`,
+    `${transaction.operationsCount === undefined ? "--" : formatNumber(transaction.operationsCount)} operations`,
+  ].join(" · ");
+}
+
 export function KvTransactionsSection({ scope }: { scope: KvResourceScope }) {
   const query = createKvTransactionsQuery(scope);
   const transactions = query.data ?? [];
+  // Mode, start, and operation count fold under the id so the table never scrolls sideways.
+  const transactionColumns: readonly DataTableColumn<KvTransaction>[] = [
+    {
+      id: "transaction",
+      header: "Transaction",
+      width: "72%",
+      cellComponent: ({ row }) => (
+        <TitledCell subtitle={formatTransactionDetail(row)}>{row.txId ?? "--"}</TitledCell>
+      ),
+    },
+    {
+      id: "idle",
+      header: "Idle",
+      width: "28%",
+      cellComponent: ({ row }) => (
+        <span>{row.idleSeconds === undefined ? "--" : `${formatNumber(row.idleSeconds)}s`}</span>
+      ),
+    },
+  ];
 
   return (
     <DomainDataSection id="kv-active-transactions" title="Active transactions">
@@ -229,40 +256,13 @@ export function KvTransactionsSection({ scope }: { scope: KvResourceScope }) {
           />
         </Show>
         <Show when={transactions.length > 0}>
-          <div class="domain-table-wrap">
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableHeaderCell>Transaction</TableHeaderCell>
-                  <TableHeaderCell>Mode</TableHeaderCell>
-                  <TableHeaderCell>Started</TableHeaderCell>
-                  <TableHeaderCell>Idle</TableHeaderCell>
-                  <TableHeaderCell>Operations</TableHeaderCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {transactions.map((transaction) => (
-                  <TableRow>
-                    <TableCell>{transaction.txId ?? "--"}</TableCell>
-                    <TableCell>{transaction.mode ?? "--"}</TableCell>
-                    <TableCell>
-                      {transaction.startedAt ? formatTimestamp(transaction.startedAt) : "--"}
-                    </TableCell>
-                    <TableCell>
-                      {transaction.idleSeconds === undefined
-                        ? "--"
-                        : `${formatNumber(transaction.idleSeconds)}s`}
-                    </TableCell>
-                    <TableCell>
-                      {transaction.operationsCount === undefined
-                        ? "--"
-                        : formatNumber(transaction.operationsCount)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <DataTable<KvTransaction>
+            ariaLabel="Active transactions"
+            class="domain-resource-data-table"
+            columns={transactionColumns}
+            getKey={(transaction, index) => `${index}-${transaction.txId ?? "none"}`}
+            rows={transactions}
+          />
         </Show>
       </Block>
     </DomainDataSection>

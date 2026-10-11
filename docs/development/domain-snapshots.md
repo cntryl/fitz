@@ -32,7 +32,10 @@ is no cross-resource atomicity claim.
 Capture runs on the selected family actor. It records each selected resource's
 exclusive committed resource watermark and the readable event bodies and
 metadata below that watermark. The artifact preserves per-resource event order.
-Expired events omitted by normal Stream reads are not recreated.
+Expired events omitted by normal Stream reads are not recreated. Capture stops
+reading a resource once storage reports no further records, so a tail removed
+below the watermark (for example by TTL maintenance) costs no extra reads per
+missing offset. The artifact still records the watermark from resource metadata.
 
 Restore requires every matching destination resource to have no committed
 history before replay starts. It writes events through the Stream storage
