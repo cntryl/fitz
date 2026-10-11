@@ -163,14 +163,17 @@ fn spawn_tcp_frame_task(
             };
             context.runtime.increment_messages_received();
             context.ingress.record_frame_received(context.session_id);
-            if let Err(error) = crate::api::session::process_session_frame_at(
-                &mut session,
-                frame.frame,
-                context.ingress.as_ref(),
-                frame.received_at,
-            )
-            .await
-            {
+            let frame_result = {
+                let _busy = context.outbound_sink.begin_frame();
+                crate::api::session::process_session_frame_at(
+                    &mut session,
+                    frame.frame,
+                    context.ingress.as_ref(),
+                    frame.received_at,
+                )
+                .await
+            };
+            if let Err(error) = frame_result {
                 if crate::api::session::is_stale_session_frame_error(&error) {
                     tracing::debug!(
                         session_id = context.session_id,

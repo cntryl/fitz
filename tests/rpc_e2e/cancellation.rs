@@ -3,16 +3,18 @@ use bytes::BufMut;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use uuid::Uuid;
 
+mod stream_commit;
+
 fn frame(message_type: u16, payload: &[u8]) -> Vec<u8> {
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(message_type, payload);
     builder.build()
 }
 
-fn subscribe_cancellation_worker(route: &str) -> Vec<u8> {
+fn subscribe_cancellation_worker(route: &str, max_concurrent: u32) -> Vec<u8> {
     let mut payload = PayloadEncoder::new();
     payload.put_string(route);
-    payload.put_u32(1);
+    payload.put_u32(max_concurrent);
     payload.put_u8(1);
     payload.put_u8(1);
     frame(300, &payload.finish())
@@ -65,7 +67,7 @@ where
 {
     let mut worker = C::connect(server).await.expect("connect worker");
     let response = worker
-        .request(&subscribe_cancellation_worker(route), 2000)
+        .request(&subscribe_cancellation_worker(route, 1), 2000)
         .await
         .expect("subscribe worker");
     let (_, status, _) = parse_rpc_response(&response);
