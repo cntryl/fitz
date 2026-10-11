@@ -466,3 +466,49 @@ fn should_classify_real_midge_l0_rejection_as_retryable_admission() {
     );
     assert!(!rejection.is_l0_admission_rejection(2));
 }
+
+#[test]
+fn should_reject_other_error_variants_and_nonmatching_l0_prefixes() {
+    // Arrange
+    let errors = [
+        cntryl_midge::MidgeError::Timeout("column family 1 has no free L0 slot (15/14)".into()),
+        cntryl_midge::MidgeError::WriteStall("column family 10 has no free L0 slot (15/14)".into()),
+        cntryl_midge::MidgeError::WriteStall(
+            "prefix column family 1 has no free L0 slot (15/14)".into(),
+        ),
+        cntryl_midge::MidgeError::WriteStall(
+            "column family 1 has no free L0 slot after WAL submission".into(),
+        ),
+    ];
+
+    // Act
+    let classified: Vec<_> = errors
+        .into_iter()
+        .map(QueueStoreError::from_midge)
+        .map(|error| {
+            (
+                error.is_l0_admission_rejection(1),
+                error.is_admission_pressure(1),
+            )
+        })
+        .collect();
+
+    // Assert
+    assert_eq!(classified, vec![(false, false); 4]);
+}
+
+#[test]
+fn should_not_infer_admission_pressure_from_unstructured_error_text() {
+    // Arrange
+    let error = QueueStoreError {
+        message: "Queue storage admission remained stalled for 20ms".to_string(),
+        midge_error: None,
+        admission_stalled: false,
+    };
+
+    // Act
+    let pressure = error.is_admission_pressure(1);
+
+    // Assert
+    assert!(!pressure);
+}
