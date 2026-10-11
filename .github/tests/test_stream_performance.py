@@ -113,7 +113,8 @@ class StreamPerformanceWorkflowTests(unittest.TestCase):
         shared = {
             "src/lib.rs", "src/auth", "src/boot", "src/control",
             "src/api", "src/dispatch", "src/runtime", "src/session",
-            "src/observability", "src/utils",
+            "src/observability", "src/prelude", "src/utils",
+            "src/domains/mod.rs", "src/domains/write_policy.rs",
             "src/snapshot", "src/snapshot.rs", "src/storage", "src/storage.rs",
             "src/testkit",
         }
