@@ -249,8 +249,10 @@ fn should_allow_extensionless_ui_node_tooling() {
 
 #[test]
 fn should_allow_rust_attributes_mentioning_node() {
-    assert!(!prohibited_shebang(
-        "tests/check.rs",
-        "#![cfg(feature = \"node\")]"
-    ));
+    // Arrange
+    let source = r#"#![cfg(feature = "node")]"#;
+    // Act
+    let prohibited = prohibited_shebang("tests/check.rs", source);
+    // Assert
+    assert!(!prohibited);
 }
