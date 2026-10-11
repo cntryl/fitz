@@ -1,4 +1,7 @@
 use crate::boot::observability;
+use crate::domains::queue::metrics::{
+    METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL, METRIC_L0_ADMISSION_RETRIES_TOTAL,
+};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -41,6 +44,13 @@ pub(super) fn append_observability_metrics(output: &mut String) {
 
         result.push_str("# Observability metrics from MetricsCollector\n");
         for (name, value) in metrics.export_counters() {
+            // Queue owns stable metadata and unconditional zero exports for these counters.
+            if matches!(
+                name.as_str(),
+                METRIC_L0_ADMISSION_RETRIES_TOTAL | METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL
+            ) {
+                continue;
+            }
             append_metric_metadata(
                 &mut result,
                 &mut emitted_types,
