@@ -405,6 +405,7 @@ pub fn route_frame_to_address(
                 source: source.clone(),
                 destination: destination.clone(),
                 correlation: None,
+                received_at: std::time::Instant::now(),
             },
         );
         return router.route_to_domain(descriptor.domain_name(), envelope);
