@@ -1,5 +1,6 @@
 // Shared drivers and measurement support for saturation and endurance campaigns.
 mod artifacts;
+mod capacity_boundary;
 mod durable;
 mod ephemeral;
 mod fixture;

@@ -30,6 +30,7 @@ fn should_durably_record_interrupted_request_separately_from_later_command_compl
             &context,
             [9; 32],
             "request_cancelled_indeterminate",
+            true,
         )
         .unwrap();
     let result = actions
@@ -69,6 +70,7 @@ fn should_redact_foreign_pending_challenge_in_request_interruption_audit() {
             &other,
             [8; 32],
             "request_cancelled_indeterminate",
+            true,
         )
         .unwrap();
 
@@ -100,6 +102,7 @@ fn should_fail_request_interruption_audit_when_mandatory_sink_is_full() {
         &context,
         [9; 32],
         "request_cancelled_indeterminate",
+        true,
     );
 
     // Assert
