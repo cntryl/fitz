@@ -354,12 +354,12 @@ broker enforce the contract.
 
 A route-shaped permission must not contain an empty path segment. `kv://#read`,
 `queue:///orders/**#write`, `queue://acme//orders/**#write`, and
-`queue://acme/orders/**/#write` are all invalid. One invalid grant rejects the
-whole permission claim: the broker does not drop the bad grant and keep the
-others, and it does not fall back to a lower-priority permission source. Token
-authentication fails and the CONNECT is refused. The MCP OAuth path applies the
-same rule and rejects the token as invalid provisioning (`403`
-`insufficient_scope`).
+`queue://acme/orders/**/#write` are all invalid. One invalid grant in the
+selected permission source rejects the whole claim: the broker does not drop
+the bad grant and keep the others, and it does not fall back to a lower-priority
+permission source. Token authentication fails and the CONNECT is refused. The
+MCP OAuth path applies the same path-segment rule to `fitz_permissions` and
+rejects the token as invalid provisioning (`403 insufficient_scope`).
 
 For an organization-identity setup, use an API access token for the Fitz API
 identifier, emit the organization id claim, include route-shaped permissions,

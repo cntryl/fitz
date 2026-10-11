@@ -80,10 +80,10 @@ Write `access_token` directly to a protected token file for `fitz-mcp-stdio`, or
 hold it in memory for the HTTP client. Request a new token before expiry.
 Fitz checks signature, issuer, resource audience, time bounds, subject, role,
 family grants, route permissions and capabilities. Scope alone grants no Fitz
-authority. A route permission with an empty path segment (for example
-`kv://#read` or `kv://prod//orders#read`) invalidates the whole token, not
-just that grant. The example deliberately cannot read other families or realms, run
-global summaries, or mutate resources.
+authority. An empty path segment in a `fitz_permissions` grant (for example
+`kv://#read` or `kv://prod//orders#read`) rejects the token as invalid
+provisioning (`403 insufficient_scope`). The example deliberately cannot read
+other families or realms, run global summaries, or mutate resources.
 
 ## Pinned-key rotation
 
