@@ -48,6 +48,11 @@ impl KvResourceLockOwner {
     const fn is_owned_by(self, session_id: u64, tx_id: u64) -> bool {
         self.session_id == session_id && self.tx_id == tx_id
     }
+
+    /// Whether this owner has been idle long enough to be expired on the next write `BEGIN`.
+    pub(super) fn is_idle(self, idle_transaction_ttl: std::time::Duration) -> bool {
+        self.last_activity.elapsed() >= idle_transaction_ttl
+    }
 }
 
 struct KvTransactionLock {
@@ -96,8 +101,7 @@ impl KvFamilyRuntime<'_> {
 
     pub(super) fn expire_resource_lock_if_idle(&mut self, resource_key: &KvResourceLockKey) {
         let owner = self.core.resource_locks.get(resource_key).copied();
-        let Some(owner) =
-            owner.filter(|owner| owner.last_activity.elapsed() >= self.core.idle_transaction_ttl)
+        let Some(owner) = owner.filter(|owner| owner.is_idle(self.core.idle_transaction_ttl))
         else {
             return;
         };

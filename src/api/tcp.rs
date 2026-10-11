@@ -15,11 +15,23 @@ use crate::session::{
 };
 use bytes::{Bytes, BytesMut};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
+
+/// A complete TCP frame and the monotonic time of the read that completed it.
+///
+/// This stamp survives handoff queueing and retries. Frames completed by the
+/// same socket read share a stamp, even when forwarding an earlier frame waits.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StampedTcpFrame {
+    pub session_id: u64,
+    pub frame: Bytes,
+    pub received_at: Instant,
+}
 
 /// TCP connection handler
 ///
@@ -37,7 +49,7 @@ pub struct TcpHandler {
     /// Session ID assigned by ingress
     pub session_id: u64,
     /// Channel for sending frames to runtime
-    tx: mpsc::Sender<(u64, Bytes)>,
+    tx: mpsc::Sender<StampedTcpFrame>,
     /// Read half of the TCP stream (writer half is owned by the outbound task)
     read_half: OwnedReadHalf,
 }
@@ -55,7 +67,7 @@ impl TcpHandler {
     pub fn new(
         config: IngressConfig,
         session_id: u64,
-        tx: mpsc::Sender<(u64, Bytes)>,
+        tx: mpsc::Sender<StampedTcpFrame>,
         read_half: OwnedReadHalf,
     ) -> Self {
         Self {
@@ -81,7 +93,7 @@ impl TcpHandler {
         info!(session_id = self.session_id, "TCP handler run loop started");
 
         loop {
-            let n = self.read_into_buffer(&mut buffer).await?;
+            let (n, received_at) = self.read_into_buffer(&mut buffer).await?;
 
             // 0 bytes means EOF
             if n == 0 {
@@ -98,60 +110,78 @@ impl TcpHandler {
                 "TCP read data"
             );
 
-            // Try to extract complete frames from buffer
-            while buffer.len() >= 4 {
-                let len = frame_len(&buffer);
-
-                // Check frame size
-                if len > self.config.max_frame_size {
-                    let reason =
-                        format!("frame too large: {} > {}", len, self.config.max_frame_size);
-                    warn!(
-                        session_id = self.session_id,
-                        frame_len = len,
-                        max = self.config.max_frame_size,
-                        "TCP frame too large, closing"
-                    );
-                    return Err(reason);
-                }
-
-                // Check if we have the complete frame
-                if buffer.len() < 4 + len {
-                    break;
-                }
-
-                // Split the complete length-prefixed record once and slice the
-                // payload directly so the hot path does not clone frame bytes.
-                let record = buffer.split_to(4 + len).freeze();
-                let frame = record.slice(4..);
-
-                debug!(
-                    session_id = self.session_id,
-                    frame_len = len,
-                    "TCP frame extracted, forwarding to runtime"
-                );
-
-                // Forward to runtime with backpressure handling.
-                // Pass ownership directly — recover from TrySendError::Full to avoid
-                // an atomic ref-count increment (Bytes::clone) on every successful send.
-                let _handoff_latency = crate::observability::ScopedHistogramUs::new(
-                    obs::METRIC_TCP_CHANNEL_HANDOFF_LATENCY,
-                );
-                if let Err(send_error) = self.tx.try_send((self.session_id, frame)) {
-                    self.handle_send_error(send_error).await?;
-                } else {
-                    trace!(
-                        session_id = self.session_id,
-                        "TCP frame forwarded to channel successfully"
-                    );
-                }
-            }
+            self.forward_complete_frames(&mut buffer, received_at)
+                .await?;
         }
     }
 
-    async fn read_into_buffer(&mut self, buffer: &mut BytesMut) -> Result<usize, String> {
-        match self.read_half.read_buf(buffer).await {
-            Ok(bytes_read) => Ok(bytes_read),
+    async fn forward_complete_frames(
+        &self,
+        buffer: &mut BytesMut,
+        received_at: Instant,
+    ) -> Result<(), String> {
+        // Try to extract complete frames from buffer
+        while buffer.len() >= 4 {
+            let len = frame_len(buffer);
+
+            // Check frame size
+            if len > self.config.max_frame_size {
+                let reason = format!("frame too large: {} > {}", len, self.config.max_frame_size);
+                warn!(
+                    session_id = self.session_id,
+                    frame_len = len,
+                    max = self.config.max_frame_size,
+                    "TCP frame too large, closing"
+                );
+                return Err(reason);
+            }
+
+            // Check if we have the complete frame
+            if buffer.len() < 4 + len {
+                break;
+            }
+
+            // Split the complete length-prefixed record once and slice the
+            // payload directly so the hot path does not clone frame bytes.
+            let record = buffer.split_to(4 + len).freeze();
+            let frame = record.slice(4..);
+
+            debug!(
+                session_id = self.session_id,
+                frame_len = len,
+                "TCP frame extracted, forwarding to runtime"
+            );
+
+            // Forward to runtime with backpressure handling.
+            // Pass ownership directly — recover from TrySendError::Full to avoid
+            // an atomic ref-count increment (Bytes::clone) on every successful send.
+            let _handoff_latency = crate::observability::ScopedHistogramUs::new(
+                obs::METRIC_TCP_CHANNEL_HANDOFF_LATENCY,
+            );
+            if let Err(send_error) = self.tx.try_send(StampedTcpFrame {
+                session_id: self.session_id,
+                frame,
+                received_at,
+            }) {
+                self.handle_send_error(send_error).await?;
+            } else {
+                trace!(
+                    session_id = self.session_id,
+                    "TCP frame forwarded to channel successfully"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    async fn read_into_buffer(
+        &mut self,
+        buffer: &mut BytesMut,
+    ) -> Result<(usize, Instant), String> {
+        let result = self.read_half.read_buf(buffer).await;
+        let received_at = Instant::now();
+        match result {
+            Ok(bytes_read) => Ok((bytes_read, received_at)),
             Err(error) => {
                 error!(session_id = self.session_id, error = %error, "TCP read error");
                 let reason = format!("read error: {error}");
@@ -162,10 +192,10 @@ impl TcpHandler {
 
     async fn handle_send_error(
         &self,
-        error: mpsc::error::TrySendError<(u64, Bytes)>,
+        error: mpsc::error::TrySendError<StampedTcpFrame>,
     ) -> Result<(), String> {
         match error {
-            mpsc::error::TrySendError::Full((_, frame)) => self.retry_send(frame).await,
+            mpsc::error::TrySendError::Full(frame) => self.retry_send(frame).await,
             mpsc::error::TrySendError::Closed(_) => {
                 error!(session_id = self.session_id, "TCP runtime channel closed");
                 Self::close_with_error("runtime channel closed".to_string())
@@ -173,18 +203,13 @@ impl TcpHandler {
         }
     }
 
-    async fn retry_send(&self, frame: Bytes) -> Result<(), String> {
+    async fn retry_send(&self, frame: StampedTcpFrame) -> Result<(), String> {
         crate::observability::counter_inc(obs::METRIC_TCP_BACKPRESSURE);
         warn!(
             session_id = self.session_id,
             "TCP channel full, waiting for handoff capacity"
         );
-        match tokio::time::timeout(
-            self.config.backpressure_timeout,
-            self.tx.send((self.session_id, frame)),
-        )
-        .await
-        {
+        match tokio::time::timeout(self.config.backpressure_timeout, self.tx.send(frame)).await {
             Ok(Ok(())) => {
                 debug!(
                     session_id = self.session_id,
@@ -236,7 +261,7 @@ pub async fn create_session(
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     stream: TcpStream,
-    tx: mpsc::Sender<(u64, Bytes)>,
+    tx: mpsc::Sender<StampedTcpFrame>,
 ) -> Result<(TcpHandler, OwnedWriteHalf), String> {
     stream
         .set_nodelay(true)
@@ -334,9 +359,7 @@ mod tests {
         assert_eq!(decoded_len, 1024 * 1024);
     }
 
-    #[tokio::test]
-    async fn should_resume_tcp_handoff_when_capacity_returns_before_timeout() {
-        // Arrange
+    async fn test_handler() -> (TcpHandler, mpsc::Receiver<StampedTcpFrame>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test listener");
@@ -345,35 +368,111 @@ mod tests {
         let _client = client.expect("connect test client");
         let (server, _) = accepted.expect("accept test client");
         let (read_half, _write_half) = server.into_split();
-        let (tx, mut rx) = mpsc::channel(1);
-        tx.try_send((7, Bytes::from_static(b"occupied")))
-            .expect("fill handoff channel");
+        let (tx, rx) = mpsc::channel(1);
         let handler = TcpHandler::new(
-            IngressConfig::default().with_backpressure_timeout(Duration::from_millis(200)),
+            IngressConfig::default().with_backpressure_timeout(Duration::from_secs(1)),
             7,
             tx,
             read_half,
         );
+        (handler, rx)
+    }
+
+    fn stamped_frame(frame: &'static [u8], received_at: Instant) -> StampedTcpFrame {
+        StampedTcpFrame {
+            session_id: 7,
+            frame: Bytes::from_static(frame),
+            received_at,
+        }
+    }
+
+    fn append_record(buffer: &mut BytesMut, payload: &[u8]) {
+        let len = u32::try_from(payload.len()).expect("test frame length");
+        buffer.extend_from_slice(&len.to_be_bytes());
+        buffer.extend_from_slice(payload);
+    }
+
+    #[tokio::test]
+    async fn should_resume_tcp_handoff_when_capacity_returns_before_timeout() {
+        // Arrange
+        let (handler, mut rx) = test_handler().await;
+        let received_at = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("model old receive stamp");
+        handler
+            .tx
+            .try_send(stamped_frame(b"occupied", received_at))
+            .unwrap();
+        let full = handler
+            .tx
+            .try_send(stamped_frame(b"next", received_at))
+            .unwrap_err();
 
         // Act
-        let mut retry =
-            tokio::spawn(async move { handler.retry_send(Bytes::from_static(b"next")).await });
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        let mut retry = std::pin::pin!(handler.handle_send_error(full));
+        assert!(futures_util::poll!(retry.as_mut()).is_pending());
         let _ = rx.recv().await.expect("drain occupied frame");
-        let resumed = tokio::time::timeout(Duration::from_millis(50), &mut retry).await;
-        if resumed.is_err() {
-            retry.abort();
-            let _ = retry.await;
-        }
+        let result = retry.await;
 
         // Assert
-        let retry_result = resumed
-            .expect("handoff should resume promptly")
-            .expect("join retry task");
-        assert_eq!(retry_result, Ok(()));
+        assert_eq!(result, Ok(()));
         assert_eq!(
-            rx.recv().await.expect("retried frame"),
-            (7, Bytes::from_static(b"next"))
+            rx.recv().await.unwrap(),
+            stamped_frame(b"next", received_at)
+        );
+    }
+
+    #[tokio::test]
+    async fn should_keep_one_read_stamp_for_batched_tcp_frames_across_backpressure() {
+        // Arrange
+        let (handler, mut rx) = test_handler().await;
+        let received_at = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("model completed read");
+        let mut buffer = BytesMut::new();
+        append_record(&mut buffer, b"first");
+        append_record(&mut buffer, b"second");
+
+        // Act
+        let mut forwarding =
+            std::pin::pin!(handler.forward_complete_frames(&mut buffer, received_at));
+        assert!(futures_util::poll!(forwarding.as_mut()).is_pending());
+        let first = rx.recv().await.unwrap();
+        let result = forwarding.await;
+        let second = rx.recv().await.unwrap();
+
+        // Assert
+        assert_eq!(result, Ok(()));
+        assert_eq!(first, stamped_frame(b"first", received_at));
+        assert_eq!(second, stamped_frame(b"second", received_at));
+    }
+
+    #[tokio::test]
+    async fn should_stamp_fragmented_tcp_record_with_its_completing_read() {
+        // Arrange
+        let (handler, mut rx) = test_handler().await;
+        let completed_at = Instant::now();
+        let started_at = completed_at.checked_sub(Duration::from_secs(2)).unwrap();
+        let mut record = BytesMut::new();
+        append_record(&mut record, b"fragmented");
+        let mut buffer = record.split_to(record.len() - 2);
+
+        // Act
+        handler
+            .forward_complete_frames(&mut buffer, started_at)
+            .await
+            .unwrap();
+        assert!(rx.try_recv().is_err());
+        buffer.extend_from_slice(&record);
+        handler
+            .forward_complete_frames(&mut buffer, completed_at)
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            stamped_frame(b"fragmented", completed_at)
         );
     }
 }

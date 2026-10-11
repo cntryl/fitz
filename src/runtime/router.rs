@@ -107,6 +107,16 @@ pub trait MailboxSink: Send + Sync {
     /// `DeliveryError::HighLaneFull` when full; single-lane sinks forward ordinary
     /// delivery errors, including `DeliveryError::MailboxFull`.
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError>;
+
+    /// Total time the owning session's frame loop has spent processing inbound
+    /// frames up to `now`, including a frame still in progress.
+    ///
+    /// Only session-inbox sinks backed by a transport frame loop report this.
+    /// Domains use it so a session is not charged for time it could not read
+    /// frames, such as an RPC cancellation grace waiting for a cleanup ACK.
+    fn frame_loop_busy_time(&self, _now: std::time::Instant) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Errors that can occur during envelope delivery
@@ -494,6 +504,14 @@ impl Router {
     #[must_use]
     pub fn resolve_sink(&self, address: &RouteAddress) -> Option<Arc<dyn MailboxSink>> {
         self.registry.get(address)
+    }
+
+    /// Retain the real domain sink before testkit installs a forwarding gate.
+    pub(crate) fn resolve_domain_sink_for_tests(
+        &self,
+        domain: &str,
+    ) -> Option<Arc<dyn MailboxSink>> {
+        self.registry.get_by_domain(domain)
     }
 
     /// Deliver through a previously resolved exact-route sink while preserving
