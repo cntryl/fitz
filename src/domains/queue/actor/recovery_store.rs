@@ -35,6 +35,8 @@ pub(crate) enum QueueTransactionMode {
 pub(crate) struct QueueStoreError {
     message: String,
     midge_error: Option<cntryl_midge::MidgeError>,
+    /// The pre-commit wait for Midge to clear its write stall timed out.
+    admission_stalled: bool,
 }
 
 #[cfg(test)]
@@ -55,12 +57,23 @@ impl QueueStoreError {
         Self {
             message: error.to_string(),
             midge_error: Some(error),
+            admission_stalled: false,
         }
     }
 
+    /// Matches Midge's pre-WAL `WriteStall` rejection for a missing L0 slot.
+    ///
+    /// Midge exposes no structured variant or constant for this rejection, so
+    /// this matches its message. `should_classify_real_midge_l0_rejection_as_retryable_admission`
+    /// produces the real rejection, so a Midge rewording fails CI.
     pub(super) fn is_l0_admission_rejection(&self, family: u32) -> bool {
         matches!(&self.midge_error, Some(cntryl_midge::MidgeError::WriteStall(detail))
             if detail.starts_with(&format!("column family {family} has no free L0 slot (")))
+    }
+
+    /// True when the commit failed because storage admission stayed closed.
+    pub(super) fn is_admission_pressure(&self, family: u32) -> bool {
+        self.admission_stalled || self.is_l0_admission_rejection(family)
     }
 }
 
@@ -112,6 +125,7 @@ impl QueueStore {
             return Err(QueueStoreError {
                 message: "Injected queue fast flush failure".to_string(),
                 midge_error: None,
+                admission_stalled: false,
             });
         }
         let families = self
@@ -215,6 +229,7 @@ impl QueueTransaction {
                 return Err(QueueStoreError {
                     message: format!("Queue storage admission remained stalled for {timeout:?}"),
                     midge_error: None,
+                    admission_stalled: true,
                 });
             }
         }

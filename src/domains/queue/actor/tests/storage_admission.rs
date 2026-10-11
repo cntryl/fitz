@@ -3,7 +3,7 @@ use crate::domains::WritePolicy;
 use std::sync::Arc;
 use std::time::Duration;
 
-fn storage_under_pressure() -> (Arc<cntryl_midge::Engine>, u32, u32) {
+pub(super) fn storage_under_pressure() -> (Arc<cntryl_midge::Engine>, u32, u32) {
     let engine = Arc::new(
         cntryl_midge::Engine::open(
             cntryl_midge::OpenOptions::in_memory()
@@ -117,10 +117,10 @@ fn should_leave_queue_storage_unchanged_when_pressure_wait_expires() {
         transaction.commit_with_pressure_wait(WritePolicy::BestEffort, Duration::from_millis(20));
 
     // Assert
-    assert!(result
-        .expect_err("pressure remains blocked")
-        .to_string()
-        .contains("storage admission"));
+    let error = result.expect_err("pressure remains blocked");
+    assert!(error.to_string().contains("storage admission"));
+    assert!(error.is_admission_pressure(queue));
+    assert!(!error.is_l0_admission_rejection(queue));
     let read = store
         .begin(queue, QueueTransactionMode::ReadOnly)
         .expect("read Queue state");
