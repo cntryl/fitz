@@ -1,7 +1,7 @@
 # RPC REQUEST failure-reply compatibility and rollout
 
 This is the migration plan for the REQUEST (302) failure contract in
-[the wire specification](spec/queue-rpc-kv.md). It is recorded before the broker
+[the wire specification](spec/queue-rpc.md). It is recorded before the broker
 wire change in issue #267. This change does not publish a broker or client.
 
 ## Baseline and compatibility
