@@ -83,6 +83,45 @@ test("omits comparison controls from queue resource inspection", async ({ page }
   await expect(timeline).toBeVisible();
   await expect(timeline.getByRole("listitem")).toHaveCount(1);
   await expect(page.locator("#queue-timeline table")).toHaveCount(0);
+  // Revealing transitions keeps the messages the operator already loaded.
+  await expect(page.getByRole("table", { name: "Dead-letter queue messages" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Inflight queue messages" })).toBeVisible();
+});
+
+test("keeps queue transitions when inspecting messages afterwards", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  const queueScope = { area: "payments", routeFamily: 2, realm: "acme", resource: "orders" };
+  await mockQueueResourceApis(page, queueScope);
+  await page.goto("/admin/2/queue/acme/payments/orders");
+
+  await page.getByRole("link", { name: "Inspect transitions" }).click();
+  const timeline = page.getByRole("list", { name: "Queue resource timeline" });
+  await expect(timeline).toBeVisible();
+  await page.getByRole("link", { name: "Inspect messages" }).click();
+
+  await expect(page.getByRole("table", { name: "Dead-letter queue messages" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Inflight queue messages" })).toBeVisible();
+  await expect(timeline).toBeVisible();
+});
+
+test("keeps KV row paging when inspecting active transactions", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockResourceDetailApis(page, "kv", {
+    area: "default",
+    realm: "default",
+    resource: "primary",
+  });
+  await page.goto("/admin/1/kv/default/default/primary?rows=1&startsWith=user%3A&limit=25");
+  await expect(page.getByRole("table", { name: "Committed KV rows" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Inspect active transactions" }).click();
+
+  await expect(page.getByRole("heading", { name: "Active transactions" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Committed KV rows" })).toBeVisible();
+  const query = new URL(page.url()).searchParams;
+  expect(query.get("startsWith")).toBe("user:");
+  expect(query.get("limit")).toBe("25");
+  expect(query.get("transactions")).toBe("1");
 });
 
 test("captures lease overview empty state", async ({ page }, testInfo) => {
