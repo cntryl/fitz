@@ -128,6 +128,18 @@ impl RpcFamilyRuntime<'_> {
         self.dispatch_queued_requests_for_family(meta.route_family);
     }
 
+    /// Busy time reported by the transport frame loop behind a worker's inbox.
+    pub(super) fn worker_frame_loop_busy_time(
+        router: &crate::runtime::Router,
+        family: RouteFamily,
+        worker_session_id: u64,
+        now: std::time::Instant,
+    ) -> Option<std::time::Duration> {
+        router
+            .resolve_sink(&session_inbox_address(family, worker_session_id))?
+            .frame_loop_busy_time(now)
+    }
+
     pub(super) fn forward_worker_cancellation(
         &mut self,
         cancellation: &RpcWorkerCancellation,
@@ -154,6 +166,19 @@ impl RpcFamilyRuntime<'_> {
             return false;
         };
         let worker_id = pending.dispatch_info.worker_correlation_id;
+        let busy_time = Self::worker_frame_loop_busy_time(
+            &self.core.router,
+            cancellation.family,
+            cancellation.worker_session_id,
+            std::time::Instant::now(),
+        );
+        self.core.state.pending.start_grace_busy_accounting(
+            super::state_model::RpcCorrelationKey {
+                family: cancellation.family,
+                correlation_id: cancellation.correlation_id,
+            },
+            busy_time,
+        );
         let bytes = crate::protocol::rpc_codec::encode_worker_cancel_tlv_frame(
             &worker_id,
             cancellation.reason,
