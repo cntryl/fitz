@@ -556,7 +556,7 @@ fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_ro
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     )
-    .with_idle_transaction_ttl(Duration::from_millis(100));
+    .with_idle_transaction_ttl(Duration::from_secs(60));
     sink.deliver(Envelope::from_route(
         idle_address,
         RouteAddress::new(family, Route::new(idle_route)),
@@ -570,7 +570,6 @@ fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_ro
     ))
     .expect("begin idle KV transaction");
     let _ = receive_frame(&idle_mailbox, "idle begin ack envelope");
-    std::thread::sleep(Duration::from_millis(150));
     sink.deliver(Envelope::from_route(
         locked_address,
         RouteAddress::new(family, Route::new(locked_route)),
@@ -584,6 +583,15 @@ fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_ro
     ))
     .expect("begin active KV transaction");
     let _ = receive_frame(&locked_mailbox, "active begin ack envelope");
+    sink.run_on_family_for_tests(family, |runtime| {
+        let key = super::super::locks::KvResourceLockKey::new(1, "acme", "jobs", "orders");
+        runtime
+            .core
+            .resource_locks
+            .get_mut(&key)
+            .expect("idle transaction owns its resource lock")
+            .last_activity = Instant::now() - Duration::from_secs(120);
+    });
     let selector = crate::snapshot::SnapshotSelector::new(
         crate::snapshot::SnapshotDomain::Kv,
         family,
