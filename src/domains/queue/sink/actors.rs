@@ -68,7 +68,10 @@ impl QueueFamilyState {
                 format!("queue inventory scan failed: family={family} error={error:?}")
             })?;
 
-            for (key, value) in rows {
+            for row in rows {
+                let (key, value) = row.map_err(|error| {
+                    format!("queue inventory scan failed: family={family} error={error:?}")
+                })?;
                 drop(value);
                 if let Some(queue_key) =
                     crate::domains::queue::QueueActor::queue_key_from_authoritative_storage_key(
@@ -124,8 +127,7 @@ impl QueueFamilyState {
     }
 
     pub(super) fn fast_flush_enabled(&mut self) -> bool {
-        self.queue_write_policy == crate::domains::WritePolicy::BestEffort
-            && self.maintenance_clock.fast_flush_enabled()
+        self.maintenance_clock.fast_flush_enabled()
     }
 
     pub(super) fn mark_fast_flush_dirty(
@@ -139,9 +141,6 @@ impl QueueFamilyState {
 
     pub(super) fn maybe_flush_dirty_fast_families_at(&mut self, now: Instant) {
         self.complete_fast_flushes();
-        if self.queue_write_policy != crate::domains::WritePolicy::BestEffort {
-            return;
-        }
         if self.maintenance_clock.fast_flush_due(now) {
             self.flush_dirty_fast_families();
         }
@@ -283,13 +282,8 @@ impl QueueFamilyState {
     where
         F: FnOnce(&mut crate::domains::queue::QueueActor) -> R,
     {
-        self.actor_registry.with_actor(
-            key,
-            &self.store,
-            &self.dedup_store,
-            self.queue_write_policy,
-            operation,
-        )
+        self.actor_registry
+            .with_actor(key, &self.store, &self.dedup_store, operation)
     }
 
     pub(super) fn maybe_sweep_idle_actors(&mut self) {

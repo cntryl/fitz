@@ -2,6 +2,17 @@
 
 These guidelines define how Fitz tests are written and reviewed.
 
+System tests, harnesses, performance checks, and repository regression guards
+are Rust tests invoked directly through Cargo. Do not introduce Python,
+JavaScript, or standalone shell test scripts, including inline equivalents in
+workflows. The UI application, its TypeScript tests, and build tooling are scoped
+to `ui/`.
+
+`cargo test --locked --test workflow_qualification` verifies the repository
+policy and the performance-test decision rules. The same target contains
+explicitly ignored full Stream and Queue tests; CI opts into the relevant
+test with `--exact --ignored --nocapture` after preparing its baseline.
+
 ## Test Organization
 
 Use Rust's normal split between unit and integration tests.
@@ -80,7 +91,7 @@ Required coverage patterns:
 - Notice: disconnect cleanup, wildcard matching, duplicate subscription handling, RouteFamily isolation, no replay expectation.
 - Stream: append sessions, commit ordering, replay from offsets, watermarks, restart recovery of committed history, no live subscription recovery.
 - KV: transaction scope, commit, rollback, stale transaction rejection, RouteFamily isolation, restart recovery of committed values only.
-- Queue: enqueue, reserve, complete, extend, redelivery, dead-letter handling, write-policy durability, invalid token rejection.
+- Queue: enqueue, reserve, complete, extend, redelivery, dead-letter handling, best-effort acceptance, explicitly flushed recovery, crash-loss boundaries, invalid token rejection.
 - RPC: worker registration, request correlation, timeout, backpressure, streaming sequence, cleanup after disconnect or restart.
 - Lease: single live holder, fencing token scope, renew/release token validation, wait ordering, restart loss, selector grammar and authorization parity, exact keyed LIST, bounded wildcard snapshot work and retention, byte-bounded pagination, cursor misuse and expiry filtering, total and wildcard registration quotas and indexed fanout, notification transitions, RouteFamily isolation, and race-safe subscribe-before-list observers across reconnect, overflow, periodic reconciliation, and close on every supported client transport.
 - Schedule: persisted definitions, due-time handling, skip-forward overdue normalization, pending fire claims, live-only subscriptions.

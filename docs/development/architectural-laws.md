@@ -38,7 +38,7 @@ Examples:
 
 - Notice delivery is ephemeral.
 - RPC pending state is ephemeral.
-- Queue backlog is durable according to the configured queue write policy.
+- Queue backlog persistence is always best effort; acceptance does not guarantee crash recovery.
 - Queue inflight processing is ephemeral.
 - Stream committed history is durable.
 - KV committed state is durable.
@@ -70,7 +70,7 @@ Examples of durable state:
 
 - Stream committed records
 - KV committed writes
-- Queue enqueued backlog that reached durable storage under the configured queue write policy
+- Queue enqueued backlog that completed background persistence
 - Schedule persisted intent
 
 If a client must resume something, the client must do so explicitly against a domain that supports it.
@@ -195,7 +195,7 @@ Fitz must remain a runtime of narrow, composable primitives:
 - Notice = live awareness
 - Stream = durable history
 - KV = authoritative current state
-- Queue = durable work distribution with configurable write-policy latency/durability tradeoffs
+- Queue = competing work distribution with best-effort persistence
 - RPC = live execution dispatch
 - Lease = explicit ownership coordination
 - Schedule = durable timing intent
@@ -224,7 +224,7 @@ wildcards and never cross `RouteFamily` boundaries.
 Neither mode makes downstream delivery durable, retryable, or exactly-once.
 An occurrence is acknowledged and advances when no subscriber accepts it.
 This is intentional: subscriber availability must not turn Schedule into a
-second durable work queue. Use Queue when work must remain available until a
-consumer reserves and acknowledges it.
+second work queue. Use Queue for reservation, redelivery, and acknowledgement;
+its persistence is best effort, so applications must regenerate work lost in a crash.
 
 The architecture stays clean only if these meanings stay stable.

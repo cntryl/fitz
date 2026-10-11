@@ -13,7 +13,8 @@
 //! - All operations execute within a transaction
 //! - Transactions are scoped to a single resource (table)
 //! - Explicit `RouteFamily` -> `ColumnFamily` mapping (no default CF)
-//! - Direct exposure of Midge semantics (no buffering, retries, caching)
+//! - Original Midge transaction and snapshot retained during bounded write
+//!   admission; submitted commits are not retried
 //!
 //! # Routes
 //!

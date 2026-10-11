@@ -22,7 +22,7 @@
 - Keep `src/session/`, `src/runtime/`, `src/protocol/`, and `src/domains/` synchronous.
 - Sessions are ephemeral. Disconnect creates a new session.
 - Do not imply durability, replay, exactly-once delivery, recovery, or ownership continuity unless storage and docs explicitly support it.
-- Preserve the domain meanings: Notice = live ephemeral fanout, Stream = durable history/replay, KV = current authoritative state, Queue = durable work delivery, RPC = live request/response, Lease = ephemeral ownership coordination, Schedule = durable timing intent.
+- Preserve the domain meanings: Notice = live ephemeral fanout, Stream = durable history/replay, KV = current authoritative state, Queue = work delivery with best-effort persistence, RPC = live request/response, Lease = ephemeral ownership coordination, Schedule = durable timing intent.
 - If semantics change, update the relevant docs in the same change.
 
 ## Realm vs RouteFamily
@@ -53,6 +53,7 @@ Right:
 - Optimize for simplicity. Complexity, DRY, and clarity are mandatory design constraints.
 - Avoid adding async constructs to core Rust code outside transport (`.await`, `tokio::spawn`, `tokio::sync`, async locks).
 - Do not create a top-level `scripts/` directory or repo-owned standalone shell scripts. Put automation in Rust tests or tools, package scripts, or explicit workflow steps.
+- Broker/system tests, regression guards, benchmark checks, and test harnesses must be Rust, invoked directly through Cargo. Do not add Python, JavaScript, or other scripting-language system test tooling, script files, or inline test programs in workflows. The UI application, its TypeScript tests, and its build tooling stay in `ui/`.
 - When editing UI tooling, prefer ESM and `.js` over `.mjs` for repo-owned files.
 - When `public/openapi.yml` or the UI client changes, regenerate adapters with `npm run gen:adapters` from `ui/`.
 

@@ -12,9 +12,16 @@ Recovery behavior is designed to preserve committed durability state and reject 
 
 1. Validate configuration and startup resource preflight.
 2. Start the HTTP listener so a separate control path can observe `/targetz` during orchestrated handoff while the data plane remains closed.
-3. Initialize the configured storage backend, acquire the active Midge writer lease, and ensure all configured route-family column families exist.
-4. Register storage-backed domains and synchronously validate or preload durable domain state before marking domains ready. Queue validates persisted queue state for existing families; fast policy durably removes incomplete split message remnants and invalidates their derived queue indexes before continuing. Schedule preloads persisted schedule families and pending fire claims. KV and Stream attach storage-backed sinks. Notice, RPC, and Lease intentionally start with empty live state.
+3. Initialize the configured storage backend, acquire the active Midge writer lease, and ensure all configured route-family column families exist. Before domain initialization, wait up to one shared 60-second budget for existing route-family column families to admit writes after replay; pressure guards remain enforced and timeout fails startup.
+4. Register storage-backed domains and synchronously validate or preload durable domain state before marking domains ready. Queue validates persisted queue state for existing families; best-effort startup repair removes incomplete split message remnants and invalidates their derived queue indexes before continuing. A crash may lose that repair, so a later startup validates again. Schedule preloads persisted schedule families and pending fire claims. KV and Stream attach storage-backed sinks. Notice, RPC, and Lease intentionally start with empty live state.
 5. Start the TCP listener, mark startup complete, and return `200` from `/healthz` or `/readyz` only when storage, auth configuration, durable domain initialization, startup completion, and traffic acceptance are all true.
+
+Domain startup scans stream their rows rather than collecting a whole shared
+column family. Recognized foreign realm/domain key ranges are skipped with a
+range seek, so a large KV payload history does not have to be materialized by
+Queue, Stream or Schedule initialization. Owned rows retain the same decoding
+and validation. Unrecognized keys and binary-leading legacy keys remain visible
+to validators; non-ASCII realm prefixes conservatively retain the full scan.
 
 `/targetz` is intentionally weaker than data-plane readiness. It can return `200` once the HTTP listener is usable and the process is not draining, even while storage or domain preload is still pending. It is only for a separate orchestration path; a customer-facing ALB target group must use `/healthz`. WebSocket upgrades and TCP sessions still reject data-plane traffic until the strict readiness gate passes.
 
@@ -33,22 +40,23 @@ Live session state is never recovered during startup. Notice subscriptions, Stre
 | Domain | Persisted write shape | Startup treatment |
 | --- | --- | --- |
 | KV | User values are submitted in one Midge transaction. Buffered mode may lose a recent transaction, but does not make a policy-permitted half-transaction an accepted KV startup state. Inventory estimates (record count, storage bytes) are updated in a separate transaction after the data commit succeeds; if that update fails, the commit still succeeds, the failure is logged and counted in `fitz_kv_inventory_estimate_update_failures_total`, and the family queues the resource for repair. Later KV frames on that family retry persisting the estimate as incomplete (backing off after a failed attempt), which makes the admin inventory rescan exact counts. Pending repairs are held in memory per family: if the family restarts before a retry succeeds, the estimate stays stale until the resource is written again. | Committed rows attach directly; malformed engine state remains a storage failure. Inventory estimates are non-authoritative. |
-| Queue | Fast mode skips the WAL, so a crash during the flush window can leave one side of a split header/body record. Buffered and strict modes retain a WAL-backed transaction boundary. | Fast mode deletes incomplete header or body remnants with the broker's sync/cloud-strict write policy, deletes the affected queue's derived indexes, logs the discarded rows, and continues. Buffered and strict modes reject the same state. Complete split records and embedded legacy records are unchanged. |
+| Queue | Queue always skips WAL; a crash before background persistence completes can lose accepted mutations or leave incomplete split header/body records. | Startup deletes incomplete remnants and derived indexes with best-effort writes, logs discarded rows, and rebuilds indexes. Repair may repeat after a crash. Complete records remain unchanged; other malformed authoritative state fails closed. |
 | Stream | Event rows, discriminators, counters, metadata, and watermarks for a commit are submitted in one Midge transaction using buffered or sync durability locally, or cloud-async (the default `background` cloud durability) or cloud-strict in cloud mode. Stream has no best-effort persistent mode. | Existing rows are decoded and layout-validated; invalid authoritative rows fail closed. |
 | Schedule | Definitions and bodies are written together. Best-effort writes exist only in non-recoverable memory mode; persistent modes use sync writes locally, and cloud-async (the default `background` cloud durability) or cloud-strict writes in cloud mode. | Persistent definitions and pending claims preload before readiness. Missing definition bodies or malformed claims fail closed. Reconstructed definition, body, due-index, and pending-claim routes must satisfy the same concrete-route grammar as normal Schedule writes; valid orphan pending claims remain recoverable. |
 
 Midge transactions are atomic at the Fitz storage boundary. Durability policy
 controls whether a recent transaction can be lost after acknowledgement; it
-does not give Fitz permission to accept malformed multi-row state. Queue fast
-mode is the exception that needs explicit reconciliation because its WAL-free
+does not give Fitz permission to accept malformed multi-row state. Queue
+persistence is the exception that needs explicit reconciliation because its WAL-free
 flush can expose a policy-permitted remnant after restart.
 
 ## Failure Handling
 
 - On unrecoverable corruption, remain not ready and require operator intervention.
-- On recoverable fast-queue partial state, durably discard only the incomplete
-  message remnants, invalidate the affected derived indexes, log the discarded
-  message IDs, and continue startup.
+- On recoverable Queue partial state, discard only the incomplete message
+  remnants and invalidate affected derived indexes using best-effort writes.
+  Log discarded message IDs and continue startup. A crash can lose the repair,
+  so the next startup validates and repairs again.
 
 ## Related Docs
 

@@ -64,7 +64,6 @@ pub fn create_domain_runtime_fixture() -> DomainRuntimeFixture {
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            crate::domains::WritePolicy::Buffered,
             crate::utils::idempotency::default_dedup_store(),
         )),
         Arc::new(NoticeDomain::new(router.clone(), admin_read_model.clone())),

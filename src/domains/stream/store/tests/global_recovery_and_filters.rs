@@ -182,6 +182,15 @@ fn should_reject_data_transaction_after_writer_epoch_fence() {
         "ERR_STREAM_WRITER_FENCED"
     );
     assert_eq!(store.get_global_watermark(1).expect("read watermark"), 1);
+    let transaction = store
+        .db
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+        .expect("inspect rejected data transaction");
+    assert!(transaction
+        .get(&encode_resource_meta_key("north", "orders", "created"))
+        .expect("read rejected resource metadata")
+        .is_none());
+    assert!(store.pending_global_reservations.lock().is_empty());
 }
 
 #[test]

@@ -8,8 +8,8 @@ on:
       - src/domains/stream/**
       - benches/tier4_stream*
       - .github/workflows/stream-perf.yml
-      - .github/stream_performance.py
-      - .github/tests/test_stream_performance.py
+      - tests/workflow_qualification.rs
+      - tests/workflow_qualification/**
   workflow_dispatch:
 
 permissions:
@@ -34,8 +34,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+      - name: Install verified Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Test measurement acceptance logic
-        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+        run: cargo test --locked --test workflow_qualification
       - name: Determine whether Stream comparison inputs changed
         id: comparison
         shell: bash
@@ -47,9 +49,6 @@ jobs:
             echo 'Stream comparison not applicable: runtime, dependency and benchmark inputs are unchanged. Measurement acceptance tests passed.' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "needed=$compare" >> "$GITHUB_OUTPUT"
-      - name: Install verified Rust toolchain
-        if: steps.comparison.outputs.needed == 'true'
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.comparison.outputs.needed == 'true'
         with:
@@ -78,7 +77,14 @@ jobs:
         if: steps.comparison.outputs.needed == 'true'
         shell: bash
         run: |
-          python3 .github/stream_performance.py
+          # Keep runner services from preempting latency-sensitive disk trials.
+          # Children inherit these priorities; sampling and budgets stay unchanged.
+          sudo renice -n -20 -p "$$"
+          sudo ionice -c 2 -n 0 -p "$$"
+          ps -o pid,ni,cls,comm -p "$$"
+          ionice -p "$$"
+          findmnt -T "$RUNNER_TEMP" -o TARGET,SOURCE,FSTYPE,OPTIONS
+          cargo test --locked --test workflow_qualification should_qualify_stream_same_host -- --exact --ignored --nocapture
       - name: Upload immutable comparisons and raw evidence
         if: always() && steps.comparison.outputs.needed == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

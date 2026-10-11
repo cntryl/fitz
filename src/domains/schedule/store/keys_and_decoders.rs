@@ -190,17 +190,16 @@ impl ScheduleStore {
         tx: &cntryl_midge::Transaction,
         suffix_prefix: &[u8],
     ) -> Result<ScheduleRows, String> {
-        let rows = tx
-            .scan(&cntryl_midge::Query::new())
-            .map_err(|e| format!("scan schedule rows failed: {e:?}"))?
-            .try_collect()
+        let scan = crate::storage::domain_scan::scan_domain_rows(tx, DomainKeyspace::Schedule)
             .map_err(|e| format!("scan schedule rows failed: {e:?}"))?;
-
-        Ok(rows
-            .into_iter()
-            .filter(|(key, _)| Self::schedule_key_suffix(key).starts_with(suffix_prefix))
-            .map(|(key, value)| (key.to_vec(), value.to_vec()))
-            .collect())
+        let mut rows = Vec::new();
+        for row in scan {
+            let (key, value) = row.map_err(|e| format!("scan schedule rows failed: {e:?}"))?;
+            if Self::schedule_key_suffix(&key).starts_with(suffix_prefix) {
+                rows.push((key.to_vec(), value.to_vec()));
+            }
+        }
+        Ok(rows)
     }
 
     pub(crate) fn encode_definition_key(route: &str) -> Vec<u8> {

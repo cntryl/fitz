@@ -270,8 +270,19 @@ API-edge session management:
 **Constraints:**
 - `src/runtime`, `src/domains`, `src/protocol`, and `src/session` remain synchronous core modules with no `.await`, Tokio primitives, or futures dependencies
 - Async ingress code stays under `src/api`
+- Queue and Stream sinks wait for synchronous actor replies. Transport dispatch
+  runs those waits on blocking workers. Stream retains its separate 64 permits
+  through completion. Queue serializes handoffs within each route family, with
+  at most 64 pending transport waiters and one active handoff per family. Its
+  existing 60-second client reply budget starts before the dispatch retry loop
+  and is shared with actor reply waiting, so transport queueing cannot reset it.
+  This avoids allocating a blocking thread for every caller queued behind one actor.
+  Cancellation retains an active handoff until the sink returns. Full or expired
+  handoffs reject before enqueue; post-handoff failures retain their terminal or
+  indeterminate classification. Core Queue admission remains unchanged.
+  Synchronous maintenance also runs serially on blocking workers.
 - Use parking_lot or DashMap for concurrency
-- Return responses immediately; never queue for later
+- Bound transport waiting; respond when the domain operation completes
 ### Layer 4: Domains
 **Files:** `src/domains/kv/`, `src/domains/queue/`, `src/domains/notice/`, etc.
 **Responsibility:** Domain-specific business logic.

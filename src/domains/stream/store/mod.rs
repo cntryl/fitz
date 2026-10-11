@@ -285,6 +285,7 @@ impl From<String> for PromotionWriteFailure {
 }
 
 enum PromotionTransactionFailure {
+    AdmissionRejected,
     WriteConflict,
     Other(String),
 }
@@ -877,6 +878,7 @@ mod compact_page_writes;
 mod config_and_layout;
 mod global_recovery;
 mod maintenance;
+mod write_admission;
 #[cfg(test)]
 pub(super) use maintenance::MaintenanceFailureStage;
 pub use maintenance::StreamMaintenanceResult;

@@ -106,7 +106,7 @@ jobs:
       - name: Install verified Rust toolchain
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Test drain acceptance logic
-        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+        run: cargo test --locked --test workflow_qualification
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: queue-pressure
@@ -143,7 +143,7 @@ jobs:
           echo "QUEUE_BASE_PRODUCTION=$base" >> "$GITHUB_ENV"
           echo "QUEUE_OUTPUT=$RUNNER_TEMP/queue-qualification" >> "$GITHUB_ENV"
       - name: Compile both sources then run all twelve matched campaigns
-        run: python3 .github/queue_qualification.py
+        run: cargo test --locked --test workflow_qualification should_qualify_queue_same_host -- --exact --ignored --nocapture
       - name: Upload complete and failed evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

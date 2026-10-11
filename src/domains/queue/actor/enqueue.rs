@@ -139,8 +139,7 @@ impl QueueActor {
             return response;
         }
 
-        // Commit with the queue's configured policy; admission retries do not
-        // strengthen buffered writes into strict durability.
+        // Admission retries retain Queue's unconditional best-effort persistence.
         let commit_start = Instant::now();
         let result = self.commit_prepared_with_admission_retry(txn, QueueCommit::Enqueue, |txn| {
             prepare(txn).map_err(Self::enqueue_staging_error)

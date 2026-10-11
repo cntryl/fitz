@@ -70,11 +70,18 @@ fn should_preserve_previous_index_when_replacement_commit_fails() {
         dlq: &dlq,
     };
 
+    QueueStore::fail_next_commit_for_tests(cntryl_midge::MidgeError::Internal(
+        "injected index replacement failure".to_string(),
+    ));
+
     // Act
-    let result = store.replace_index(&replacement, WritePolicy::CloudStrict);
+    let result = store.replace_index(&replacement);
 
     // Assert
-    assert!(result.is_err(), "cloud policy must fail on local storage");
+    assert!(
+        result.is_err(),
+        "replacement commit must report its failure"
+    );
     let snapshot = store.snapshot().expect("read original index");
     assert_eq!(
         store
@@ -111,9 +118,7 @@ fn should_read_reserved_id_from_recovery_snapshot_after_concurrent_commit() {
             None,
         )
         .expect("advance ID reservation");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit reservation");
+    write.commit().expect("commit reservation");
 
     // Act
     let reserved = store
@@ -154,9 +159,7 @@ fn should_use_authoritative_reservation_when_index_hit_has_stale_next_id() {
             None,
         )
         .expect("write stale index next ID");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit stale index");
+    write.commit().expect("commit stale index");
 
     // Act
     actor.recover_from_store().expect("recover empty queue");
@@ -187,9 +190,7 @@ fn should_use_authoritative_reservation_when_index_counters_are_invalid() {
             None,
         )
         .expect("write invalid counters and ID");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit corrupt index");
+    write.commit().expect("commit corrupt index");
 
     // Act
     let recovery = actor.recover_from_store();
@@ -235,9 +236,7 @@ fn should_use_authoritative_reservation_when_index_rows_are_invalid_and_queue_is
             None,
         )
         .expect("write malformed ready index row");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit corrupt index");
+    write.commit().expect("commit corrupt index");
 
     // Act
     actor.recover_from_store().expect("recover empty queue");
@@ -311,9 +310,7 @@ fn should_fail_closed_when_existing_index_has_no_reservation_row() {
     write
         .delete(QueueActor::meta_key(&store.key))
         .expect("remove reservation row");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit reservation removal");
+    write.commit().expect("commit reservation removal");
 
     // Act
     let result = actor.recover_from_store();
@@ -338,9 +335,7 @@ fn should_fail_closed_when_header_scan_finds_messages_without_reservation_metada
     write
         .delete(store.index_meta_key.clone())
         .expect("remove index metadata");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit metadata removal");
+    write.commit().expect("commit metadata removal");
 
     // Act
     let result = actor.recover_from_store();
@@ -365,9 +360,7 @@ fn should_fail_closed_when_header_ids_exceed_reservation_metadata() {
     write
         .delete(store.index_meta_key.clone())
         .expect("remove index metadata to force header scan");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit stale reservation");
+    write.commit().expect("commit stale reservation");
 
     // Act
     let result = actor.recover_from_store();
@@ -393,9 +386,7 @@ fn should_decode_header_rows_only_as_consumed() {
             None,
         )
         .expect("write malformed later header");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit malformed header");
+    write.commit().expect("commit malformed header");
     let snapshot = store.snapshot().expect("read snapshot");
 
     // Act

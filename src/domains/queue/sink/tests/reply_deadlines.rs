@@ -40,7 +40,6 @@ fn should_wait_for_admitted_queue_client_work_beyond_the_control_reply_budget() 
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     ));
     let release = block_family(&sink);
     let envelope = Envelope::from_route(
@@ -90,7 +89,6 @@ fn should_keep_the_short_queue_control_reply_deadline() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     );
     let release = block_family(&sink);
     let cleanup = Envelope::new(
@@ -104,4 +102,85 @@ fn should_keep_the_short_queue_control_reply_deadline() {
 
     // Assert
     assert!(matches!(result, Err(DeliveryError::Timeout)));
+}
+
+#[test]
+fn should_use_remaining_client_deadline_for_queue_actor_reply() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let inbox = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(inbox.clone(), mailbox);
+    let sink = Arc::new(new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    ));
+    let release = block_family(&sink);
+    let envelope = Envelope::from_route(
+        inbox,
+        RouteAddress::new(family, Route::new("queue://inbound")),
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send("queue://acme/jobs/deadline", b"work"),
+            family,
+        ),
+    );
+    let (result_tx, result_rx) = crossbeam_channel::bounded(1);
+    let delivery = std::thread::spawn(move || {
+        let envelope =
+            envelope.with_deadline(std::time::Instant::now() + Duration::from_millis(20));
+        result_tx.send(sink.deliver(envelope)).unwrap();
+    });
+
+    // Act
+    let early = result_rx.recv_timeout(Duration::from_millis(200));
+    release.send(()).unwrap();
+    delivery.join().unwrap();
+
+    // Assert
+    assert!(
+        matches!(early, Ok(Err(DeliveryError::Timeout))),
+        "actor waiting restarted the client's original deadline: {early:?}"
+    );
+}
+
+#[test]
+fn should_reject_expired_queue_client_work_before_enqueue() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let inbox = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Arc::new(Router::new());
+    router.register(inbox.clone(), Arc::new(Mailbox::new(8)));
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let deadline = std::time::Instant::now()
+        .checked_sub(Duration::from_millis(1))
+        .unwrap();
+    let envelope = Envelope::from_route(
+        inbox,
+        RouteAddress::new(family, Route::new("queue://inbound")),
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send("queue://acme/jobs/expired", b"work"),
+            family,
+        ),
+    )
+    .with_deadline(deadline);
+
+    // Act
+    let result = sink.deliver(envelope);
+
+    // Assert
+    assert!(matches!(result, Err(DeliveryError::MailboxFull { .. })));
+    assert_eq!(sink.counts().pending, 0);
+    assert_eq!(sink.actor_count_for_tests(), 0);
 }

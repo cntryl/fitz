@@ -1,5 +1,8 @@
 //! External driver: the broker must be capped independently of this process.
 mod fixtures;
+#[path = "constrained_runtime/s3.rs"]
+#[cfg(feature = "recovery-qualification")]
+mod s3;
 
 use fixtures::transport::*;
 use std::net::SocketAddr;

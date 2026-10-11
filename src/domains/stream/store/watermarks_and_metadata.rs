@@ -141,40 +141,54 @@ impl StreamStore {
     /// Returns an error if activation or the durable metadata transaction fails.
     pub fn set_global_watermark(&self, family: u64, watermark: u64) -> Result<(), String> {
         self.ensure_layout_activation_for_family(family)?;
-        let key = encode_global_watermark_key();
-        let mut txn = self
-            .db
-            .begin_tx(
-                family_to_storage_partition(family),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
-            .map_err(|error| format!("begin global watermark write failed: {error:?}"))?;
-        if let Some(bytes) = txn
-            .get(&key)
-            .map_err(|error| format!("read global watermark guard failed: {error:?}"))?
-        {
-            if watermark <= WatermarkValue::decode(&bytes)?.watermark {
-                return Ok(());
-            }
-        }
-        txn.put(key, WatermarkValue { watermark }.encode(), None)
-            .map_err(|error| format!("write global watermark failed: {error:?}"))?;
-        #[cfg(test)]
-        {
-            let should_fail = FAIL_NEXT_GLOBAL_WATERMARK_PERSIST.with(|cell| {
-                let should_fail = cell.get();
-                if should_fail {
-                    cell.set(false);
+        let admission = super::write_admission::StreamWriteAdmission::new(family);
+        loop {
+            let key = encode_global_watermark_key();
+            let mut txn = self
+                .db
+                .begin_tx(
+                    family_to_storage_partition(family),
+                    cntryl_midge::TransactionMode::ReadWrite,
+                )
+                .map_err(|error| format!("begin global watermark write failed: {error:?}"))?;
+            if let Some(bytes) = txn
+                .get(&key)
+                .map_err(|error| format!("read global watermark guard failed: {error:?}"))?
+            {
+                if watermark <= WatermarkValue::decode(&bytes)?.watermark {
+                    return Ok(());
                 }
-                should_fail
-            });
+            }
+            txn.put(key, WatermarkValue { watermark }.encode(), None)
+                .map_err(|error| format!("write global watermark failed: {error:?}"))?;
+            #[cfg(test)]
+            {
+                let should_fail = FAIL_NEXT_GLOBAL_WATERMARK_PERSIST.with(|cell| {
+                    let should_fail = cell.get();
+                    if should_fail {
+                        cell.set(false);
+                    }
+                    should_fail
+                });
 
-            if should_fail {
-                return Err("Injected global watermark persistence failure".to_string());
+                if should_fail {
+                    return Err("Injected global watermark persistence failure".to_string());
+                }
+            }
+            match Self::commit_storage_transaction(txn, self.sync_write_options) {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if crate::storage::write_admission::is_l0_admission_rejection(
+                        &error,
+                        family_to_storage_partition(family),
+                    ) =>
+                {
+                    admission.rejected();
+                    admission.wait(&self.db)?;
+                }
+                Err(error) => return Err(format!("commit global watermark failed: {error:?}")),
             }
         }
-        txn.commit(self.sync_write_options)
-            .map_err(|error| format!("commit global watermark failed: {error:?}"))
     }
 
     #[cfg(test)]

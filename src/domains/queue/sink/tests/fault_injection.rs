@@ -75,7 +75,6 @@ fn should_reject_long_poll_when_family_reserve_capacity_is_full() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for (session_id, inbox, _) in &clients {
         for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
@@ -126,7 +125,6 @@ fn should_release_long_poll_capacity_when_session_is_cleaned_up() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
         park_queue_reserve(&sink, family, &queue_address, 8, &inbox);
@@ -157,7 +155,6 @@ fn should_reject_long_poll_when_session_reserve_capacity_is_full() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
         park_queue_reserve(&sink, family, &queue_address, 8, &inbox);
@@ -193,7 +190,6 @@ fn should_release_long_poll_capacity_when_reserves_expire() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
         park_queue_reserve(&sink, family, &queue_address, 9, &inbox);
@@ -229,7 +225,6 @@ fn should_not_deliver_woken_reserve_to_a_session_cleaned_up_before_enqueue() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
 
     // Act
@@ -324,7 +319,6 @@ fn should_reject_stale_ack_after_visibility_expiry_already_released_inflight_to_
         store,
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
 
     sink.deliver(Envelope::from_route(
@@ -428,7 +422,6 @@ fn should_retain_subscription_when_notify_delivery_fails() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     );
 
     sink.deliver(Envelope::from_route(
@@ -543,7 +536,6 @@ fn should_not_wake_pending_reserve_when_an_unrelated_dead_letter_is_purged() {
         store,
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
 
     sink.deliver(Envelope::from_route(
@@ -588,7 +580,6 @@ fn should_count_and_retain_failed_fast_flushes() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     );
     let failures_before = crate::observability::metrics()
         .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL);
@@ -626,7 +617,6 @@ fn should_serve_queue_delivery_while_fast_flush_is_blocked() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     )
     .with_fast_flush_worker_for_tests(Duration::from_millis(100), move |_| {
         if first_flush.swap(false, std::sync::atomic::Ordering::AcqRel) {

@@ -18,8 +18,8 @@ procedures in their own environment.
 - No sustained growth in delivery failures.
 - Mailbox depth and pending queue metrics remain bounded.
 - Authentication failures remain near expected baseline.
-- Queue write-policy and cloud durability settings match the operator's loss-window expectations.
-- `fitz_queue_fast_flush_failures_total` stays flat. Any sustained increase means fast-mode Queue writes are not reaching disk within the loss window; check disk space and storage health.
+- Queue persistence is always best effort; producers can regenerate lost work and consumers tolerate redelivery after lost ACKs.
+- `fitz_queue_fast_flush_failures_total` stays flat. Any sustained increase means Queue background persistence is failing; check disk space and storage health. The flush interval does not guarantee a maximum loss window.
 - `fitz_kv_inventory_estimate_update_failures_total` stays flat. Increases mean admin KV estimates are being repaired by rescan; user data is unaffected.
 - Active Midge writer-lease health remains healthy. Fitz withdraws orchestration health and readiness and terminates if lease renewal health is lost; investigate the provider and replacement event rather than expecting in-process reacquisition.
 

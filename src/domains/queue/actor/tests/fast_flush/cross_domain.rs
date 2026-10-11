@@ -35,14 +35,13 @@ fn should_keep_stream_usable_after_fast_queue_sst_publication() {
             mode: StreamWriteMode::Buffered,
         })
         .unwrap();
-    let store = QueueStore::new(engine.clone()).with_local_fast_wal(true);
-    let mut queue = QueueActor::new_with_write_policy(
+    let store = QueueStore::new(engine.clone());
+    let mut queue = QueueActor::new(
         RouteFamily::new(1),
         queue_key(),
         store.clone(),
         None,
         crate::utils::idempotency::default_dedup_store(),
-        crate::domains::WritePolicy::BestEffort,
     );
     for index in 0..2048 {
         assert!(matches!(

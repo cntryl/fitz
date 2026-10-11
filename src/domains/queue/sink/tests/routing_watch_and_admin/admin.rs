@@ -103,12 +103,7 @@ pub(super) fn should_register_queue_watch_given_watch_request() {
     let router = Arc::new(Router::new());
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model);
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -152,12 +147,7 @@ pub(super) fn should_remove_queue_watch_given_unwatch_request() {
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     router.register(sender_address.clone(), sender_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
@@ -234,13 +224,7 @@ pub(super) fn should_cleanup_expired_queue_dedup_entries_during_runtime_sweep() 
     let dedup_store = Arc::new(crate::utils::idempotency::DedupStore::new(
         Duration::from_millis(1),
     ));
-    let sink = QueueDomain::new(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-        dedup_store.clone(),
-    );
+    let sink = QueueDomain::new(store, router, admin_read_model, dedup_store.clone());
     let dedup_key = crate::utils::idempotency::DedupKey {
         realm: "acme".to_string(),
         domain: crate::utils::idempotency::Domain::Queue,
@@ -286,12 +270,7 @@ pub(super) fn should_refresh_queue_admin_snapshot_with_live_queue_state() {
     router.register(worker_address.clone(), worker_mailbox.clone());
     router.register(watcher_address.clone(), watcher_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model.clone());
 
     // Act
     sink.deliver(Envelope::from_route(

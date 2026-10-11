@@ -76,8 +76,6 @@ pub(super) struct QueueFamilyState {
     pub(super) delivery_service_us: ServiceEstimateUs,
     /// Fitz storage facade over the current Midge engine.
     pub(super) store: crate::domains::queue::actor::recovery_store::QueueStore,
-    /// Commit policy for queue persistence on this runtime.
-    pub(super) queue_write_policy: crate::domains::WritePolicy,
     /// Deduplication store shared by warm actors created through this sink.
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     pub(super) actor_registry: QueueActorRegistry,
@@ -175,7 +173,7 @@ pub(crate) struct QueueDomain {
 #[derive(Clone)]
 pub(super) struct QueueDomainConfig {
     pub(super) store: crate::domains::queue::actor::recovery_store::QueueStore,
-    pub(super) queue_write_policy: crate::domains::WritePolicy,
+
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     pub(super) router: Arc<Router>,
     pub(super) projection: Arc<QueueAdminProjection>,
@@ -206,7 +204,7 @@ const QUEUE_ADMISSION_ASSUMED_SERVICE_US: u64 = 5_000;
 ///
 /// Queued concurrency adds no throughput: the actor serves deliveries one at a
 /// time, so admitting `n` requests commits the tail caller to `n x
-/// service_time`. At 20ms per synchronous commit, a fixed 64-deep window needs
+/// service_time`. At 20ms per delivery, a fixed 64-deep window needs
 /// 1.28s and exceeds the one-second admission latency target.
 ///
 /// The window is derived from observed service time instead, so the admitted

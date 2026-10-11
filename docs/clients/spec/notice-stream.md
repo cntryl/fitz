@@ -352,7 +352,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - **Session-Scoped**: Subscriptions tied to connection; lost on disconnect
 - **Acknowledgements & Retries**: `NOTIFY` frames are never acknowledged by clients and are never retried by the broker. Clients MUST NOT send acknowledgements for `NOTIFY` frames and MUST NOT expect guaranteed replay.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
-- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation, redelivery, and configurable durability. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
+- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation and redelivery with best-effort persistence. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
 
 ##### Pattern Matching & Precedence
 

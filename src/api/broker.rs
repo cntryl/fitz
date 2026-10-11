@@ -200,10 +200,9 @@ fn register_domains_stage(
     let options = domains::DomainSetupOptions {
         route_families: config.route_families.clone(),
         schedule_write_policy: config.schedule_write_policy(),
-        queue_write_policy: config.queue_write_policy(),
-        queue_recovery_write_policy: config.request_sync_write_policy(),
+
         queue_fast_flush_interval: config.queue_fast_flush_interval(),
-        queue_fast_local_wal: crate::boot::domains::queue_fast_local_wal(config),
+
         request_sync_write_policy: config.request_sync_write_policy(),
         request_buffered_write_policy: config.request_buffered_write_policy(),
         rpc_request_timeout: None,
@@ -253,7 +252,6 @@ async fn boot_with_shutdown_and_listeners(
 
     tracing::info!("Starting Fitz broker");
     config.validate()?;
-    runtime::warn_defaulted_fast_queue_policy(&config);
     if let Some(signal) = shutdown.requested() {
         tracing::info!(
             signal = signal.as_str(),

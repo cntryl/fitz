@@ -29,7 +29,7 @@ Use this guide to map symptoms to the canonical labels used by admin diagnostics
 
 The current troubleshooting surfaces are intentionally conservative:
 
-- queue dead letters are durable failure state with live retry pressure
+- queue dead letters are best-effort persisted failure state with live retry pressure
 - schedule overdue handoff is durable ownership state with live lateness
 - RPC and lease pressure are mostly live coordination state
 - queue backlog and stream lag can be mixed durable/live surfaces

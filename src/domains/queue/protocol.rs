@@ -80,7 +80,7 @@ pub enum QueueMessage {
     ///
     /// Route format: `queue://{realm}/{area}/{resource}`
     ///
-    /// Writes the message body according to the configured queue write policy and
+    /// Writes the message body with best-effort persistence and
     /// adds it to the ready queue.
     /// If `delay_seconds` is provided, message won't be visible until delay elapses.
     /// Returns the `MessageId` for tracking.
@@ -127,8 +127,8 @@ pub enum QueueMessage {
     /// Route format: `queue://{realm}/{area}/{resource}`
     ///
     /// Marks message as successfully processed and acknowledges delivery.
-    /// Removes inflight entry and deletes the queue record according to the
-    /// configured queue write policy.
+    /// Removes inflight entry and deletes the queue record with best-effort
+    /// persistence. A lost ACK may allow redelivery after a crash.
     /// Requires valid token. Fails if token mismatches or inflight entry expired.
     Ack {
         family_id: RouteFamily,

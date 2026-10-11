@@ -53,9 +53,7 @@ fn should_inventory_only_authoritative_non_empty_queue_rows() {
     let sink = new_queue_domain_sink(
         store,
         Arc::new(Router::new()),
-        crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
-    );
+        crate::control::admin::read_model::AdminReadModel::new(),);
 
     // Assert
     assert_eq!(sink.known_queue_count_for_tests(), 1);
@@ -75,15 +73,13 @@ fn should_mark_fast_flush_plus_admin_dirty_when_wildcard_poll_only_expires_work(
     };
     let clock = DlqSeedClock::new();
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
-    let mut actor = crate::domains::queue::QueueActor::with_clock_and_write_policy(
+    let mut actor = crate::domains::queue::QueueActor::with_clock(
         family,
         key.clone(),
         store.clone(),
         Box::new(clock.clone()),
         Some(1),
-        crate::utils::idempotency::default_dedup_store(),
-        crate::domains::WritePolicy::BestEffort,
-    );
+        crate::utils::idempotency::default_dedup_store(),);
     assert!(matches!(
         actor.handle_send(Bytes::from_static(b"expire"), None),
         crate::domains::queue::QueueResponse::Sent { .. }
@@ -100,9 +96,7 @@ fn should_mark_fast_flush_plus_admin_dirty_when_wildcard_poll_only_expires_work(
     let sink = new_queue_domain_sink(
         store,
         router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::BestEffort,
-    )
+        admin_read_model.clone(),)
     .with_fast_flush_interval(Some(Duration::from_millis(100)));
     sink.install_actor_for_tests(key, actor);
     sink.clear_dirty_fast_flush_for_tests();
@@ -141,9 +135,7 @@ fn should_route_queue_admin_refresh_through_family_actor() {
     let sink = new_queue_domain_sink(
         store,
         router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::BestEffort,
-    );
+        admin_read_model.clone(),);
     sink.deliver(queue_send_envelope(family, queue_route))
         .expect("enqueue queue message");
 
@@ -168,9 +160,7 @@ fn should_route_queue_live_counts_through_family_actor() {
     let sink = new_queue_domain_sink(
         store,
         router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    );
+        admin_read_model,);
     sink.deliver(queue_send_envelope(family, queue_route))
         .expect("enqueue queue message");
     assert_eq!(sink.counts().ready, 1);
@@ -200,9 +190,7 @@ fn should_bound_concrete_reserve_response_before_messages_become_inflight() {
     let sink = new_queue_domain_sink(
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
-        crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
-    );
+        crate::control::admin::read_model::AdminReadModel::new(),);
     let body = vec![0x5a; 1024];
     for _ in 0..100 {
         sink.deliver(Envelope::from_route(
@@ -263,9 +251,7 @@ fn should_route_queue_cleanup_through_family_actor() {
     let sink = new_queue_domain_sink(
         store,
         router,
-        admin_read_model,
-        crate::domains::WritePolicy::Buffered,
-    );
+        admin_read_model,);
     sink.deliver(Envelope::from_route(
         sender_address,
         queue_address.clone(),
@@ -335,9 +321,7 @@ fn should_route_queue_runtime_sweep_through_family_actor() {
     let sink = new_queue_domain_sink(
         store,
         router,
-        admin_read_model,
-        crate::domains::WritePolicy::BestEffort,
-    )
+        admin_read_model,)
     .with_fast_flush_interval(Some(Duration::from_millis(100)));
     sink.deliver(Envelope::from_route(
         sender_address,
@@ -370,9 +354,7 @@ fn should_coalesce_queue_runtime_sweeps_while_actor_is_busy() {
     let sink = new_queue_domain_sink(
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         Arc::new(Router::new()),
-        crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
-    );
+        crate::control::admin::read_model::AdminReadModel::new(),);
     let family = RouteFamily::new(1);
     let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
     let (release_tx, release_rx) = crossbeam_channel::bounded(1);
@@ -408,9 +390,7 @@ fn should_clear_runtime_sweep_pending_when_sweep_panics() {
     let sink = new_queue_domain_sink(
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         Arc::new(Router::new()),
-        crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
-    );
+        crate::control::admin::read_model::AdminReadModel::new(),);
     sink.panic_next_runtime_sweep_for_tests();
 
     // Act
@@ -442,9 +422,7 @@ fn should_route_queue_dead_letter_replay_through_family_actor() {
     let sink = new_queue_domain_sink(
         store.clone(),
         router,
-        admin_read_model,
-        crate::domains::WritePolicy::Buffered,
-    );
+        admin_read_model,);
     let actors_were_empty = sink.actors_are_empty_for_tests();
 
     // Act
@@ -479,9 +457,7 @@ fn should_wake_parked_long_poll_reserve_when_dead_letter_is_replayed() {
     let sink = new_queue_domain_sink(
         store,
         router,
-        crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
-    );
+        crate::control::admin::read_model::AdminReadModel::new(),);
     sink.deliver(Envelope::from_route(
         consumer_address,
         queue_address,
@@ -528,9 +504,7 @@ fn should_route_queue_dead_letter_purge_through_family_actor() {
     let sink = new_queue_domain_sink(
         store.clone(),
         router,
-        admin_read_model,
-        crate::domains::WritePolicy::Buffered,
-    );
+        admin_read_model,);
     let actors_were_empty = sink.actors_are_empty_for_tests();
 
     // Act
@@ -713,9 +687,7 @@ fn should_report_a_stopped_actor_rather_than_admission_backpressure() {
     let sink = new_queue_domain_sink(
         store,
         Arc::new(Router::new()),
-        admin_read_model,
-        crate::domains::WritePolicy::Buffered,
-    );
+        admin_read_model,);
     let family = RouteFamily::new(1);
     let window = crate::domains::queue::sink::model::queue_admission_window(
         sink.config.delivery_service_us[&family.id()]

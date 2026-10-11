@@ -662,6 +662,7 @@ dependencies = [
  "cntryl-lexkey",
  "cntryl-midge",
  "cntryl-stress",
+ "crc32c",
  "crossbeam-channel",
  "dashmap",
  "flate2",
