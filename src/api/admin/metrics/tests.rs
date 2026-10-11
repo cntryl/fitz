@@ -206,6 +206,8 @@ fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
     assert_metric_exported(&metrics, "fitz_stream_response_drops_total");
     assert_metric_exported(&metrics, "fitz_queue_notify_drops_total");
     assert_metric_exported(&metrics, "fitz_queue_fast_flush_failures_total");
+    assert_metric_exported(&metrics, "fitz_queue_l0_admission_retries_total");
+    assert_metric_exported(&metrics, "fitz_queue_admission_budget_exhausted_total");
     assert_metric_exported(&metrics, "fitz_kv_inventory_estimate_update_failures_total");
     assert_metric_exported(&metrics, "fitz_lease_response_drops_total");
     assert_metric_exported(&metrics, "fitz_lease_notify_drops_total");
@@ -273,4 +275,61 @@ fn should_export_type_metadata_for_every_metric_family() {
         .collect::<BTreeSet<_>>();
 
     assert!(untyped.is_empty(), "untyped metric families: {untyped:?}");
+}
+
+#[test]
+fn should_export_registered_queue_admission_counters_once() {
+    // Arrange
+    use crate::domains::queue::metrics::{
+        METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL, METRIC_L0_ADMISSION_RETRIES_TOTAL,
+    };
+    let names = [
+        METRIC_L0_ADMISSION_RETRIES_TOTAL,
+        METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL,
+    ];
+    let collector = crate::observability::metrics();
+    for name in names {
+        collector.counter_inc(name);
+    }
+    let runtime = Runtime::with_admin_read_model(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    // Act
+    let payload = generate_prometheus_metrics(&runtime);
+    let all_samples = structured_samples(&payload, None);
+    let family_samples = structured_samples(&payload, Some(1));
+    let counts = names.map(|name| {
+        let count_lines = |prefix: &str| {
+            payload
+                .lines()
+                .filter(|line| line.starts_with(prefix))
+                .count()
+        };
+        (
+            count_lines(&format!("# HELP {name} ")),
+            count_lines(&format!("# TYPE {name} ")),
+            count_lines(&format!("{name} ")),
+            all_samples
+                .iter()
+                .filter(|sample| sample.name == name)
+                .count(),
+            family_samples
+                .iter()
+                .filter(|sample| sample.name == name)
+                .count(),
+        )
+    });
+
+    // Assert
+    assert_eq!(
+        counts,
+        [(1, 1, 1, 1, 0); 2],
+        "HELP/TYPE/text/all/family counts for {names:?}"
+    );
+    assert!(all_samples
+        .iter()
+        .filter(|sample| names.contains(&sample.name.as_str()))
+        .all(|sample| sample.kind == "counter" && sample.labels.is_empty()));
 }

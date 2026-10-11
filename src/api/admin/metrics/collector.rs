@@ -1,4 +1,4 @@
-use crate::boot::observability;
+use crate::boot::{observability, Runtime};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -40,7 +40,7 @@ pub(super) fn append_observability_metrics(output: &mut String) {
         let mut emitted_types = emitted_types;
 
         result.push_str("# Observability metrics from MetricsCollector\n");
-        for (name, value) in metrics.export_counters() {
+        for (name, value) in Runtime::generic_observability_counters() {
             append_metric_metadata(
                 &mut result,
                 &mut emitted_types,

@@ -1,13 +1,14 @@
 use super::Runtime;
 use crate::domains::queue::metrics::{
-    METRIC_COMPLETE_TOTAL, METRIC_ENQUEUE_TOTAL, METRIC_EXTEND_TOTAL, METRIC_FAILURE_TOTAL,
+    METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL, METRIC_COMPLETE_TOTAL, METRIC_ENQUEUE_TOTAL,
+    METRIC_EXTEND_TOTAL, METRIC_FAILURE_TOTAL, METRIC_L0_ADMISSION_RETRIES_TOTAL,
     METRIC_RELEASE_TOTAL, METRIC_REQUESTS_TOTAL, METRIC_RESERVE_TOTAL, METRIC_SUCCESS_TOTAL,
 };
 use crate::domains::schedule::metrics::{
     METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
     METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
 };
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 fn metric_counter(name: &str) -> u64 {
     crate::observability::metrics().counter_get(name)
@@ -28,6 +29,15 @@ fn u64_to_usize_saturating(value: u64) -> usize {
 }
 
 impl Runtime {
+    /// Snapshot generic counters without the dedicated Queue admission exports.
+    #[must_use]
+    pub(crate) fn generic_observability_counters() -> BTreeMap<String, u64> {
+        let mut counters = crate::observability::metrics().export_counters();
+        counters.remove(METRIC_L0_ADMISSION_RETRIES_TOTAL);
+        counters.remove(METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL);
+        counters
+    }
+
     #[must_use]
     pub fn queue_messages_ready(&self) -> usize {
         self.domain_admins.read().as_ref().map_or_else(
@@ -190,6 +200,16 @@ impl Runtime {
     #[must_use]
     pub fn queue_fast_flush_failures_total(&self) -> u64 {
         metric_counter(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL)
+    }
+
+    #[must_use]
+    pub fn queue_l0_admission_retries_total(&self) -> u64 {
+        metric_counter(crate::domains::queue::metrics::METRIC_L0_ADMISSION_RETRIES_TOTAL)
+    }
+
+    #[must_use]
+    pub fn queue_admission_budget_exhausted_total(&self) -> u64 {
+        metric_counter(crate::domains::queue::metrics::METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL)
     }
 
     #[must_use]
