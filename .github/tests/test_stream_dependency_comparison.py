@@ -78,7 +78,7 @@ class StreamDependencyComparisonTests(unittest.TestCase):
             self.assertEqual((baseline / "src/lib.rs").read_text(), "pub fn unchanged() {}\n")
             self.assertEqual((baseline / "src/boundary_tests.rs").read_text(), "old test fixture\n")
 
-    def test_should_record_binary_equivalence_without_claiming_timing_samples(self):
+    def test_should_record_binary_equivalence_without_claiming_qualification_samples(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             campaign = SimpleNamespace(output=root, heads={"after": "candidate"},
@@ -91,7 +91,8 @@ class StreamDependencyComparisonTests(unittest.TestCase):
             campaign.measure.assert_not_called()
             result = json.loads((root / "acceptance.json").read_text())
             self.assertEqual(result["status"], "binary_equivalent")
-            self.assertIn("No timing samples", (root / "summary.md").read_text())
+            self.assertIn("No qualification or confirmation timing samples", (root / "summary.md").read_text())
+            self.assertIn("diagnostic build captures are retained", (root / "summary.md").read_text())
 
 
     def variants(self):
@@ -110,18 +111,16 @@ class StreamDependencyComparisonTests(unittest.TestCase):
         provenance, hashes = self.variants()
         self.assertTrue(perf.binary_equivalence("dependencies", provenance, hashes))
 
-    def test_should_reject_reused_binary_when_compiled_source_changed(self):
+    def test_should_measure_changed_compiled_source_with_equal_executables(self):
         provenance, hashes = self.variants()
         provenance["after"]["compiled_source_inputs"] = {"src/lib.rs": "changed"}
-        with self.assertRaisesRegex(AssertionError, "Source variants reused"):
-            perf.binary_equivalence("dependencies", provenance, hashes)
+        self.assertFalse(perf.binary_equivalence("dependencies", provenance, hashes))
 
-    def test_should_retain_source_comparison_alias_guard(self):
+    def test_should_measure_source_comparison_with_equal_executables(self):
         provenance, hashes = self.variants()
         for field in ("manifest_sha256", "lock_sha256", "dependencies"):
             provenance["after"][field] = provenance["before"][field]
-        with self.assertRaisesRegex(AssertionError, "Source variants reused"):
-            perf.binary_equivalence("source", provenance, hashes)
+        self.assertFalse(perf.binary_equivalence("source", provenance, hashes))
 
     def test_should_reject_normalized_dependency_comparison(self):
         provenance, hashes = self.variants()
@@ -199,15 +198,22 @@ class StreamDependencyComparisonTests(unittest.TestCase):
         self.assertFalse(perf.binary_equivalence("dependencies", provenance, hashes))
 
     def test_should_keep_both_predeclared_timing_runs_for_changed_artifacts(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            campaign = SimpleNamespace(output=root, heads={"after": "candidate"},
-                                       binary_equivalent=False, build=Mock(),
-                                       measure=Mock(return_value="passed"))
-            with patch.object(perf, "Campaign", return_value=campaign):
-                perf.main()
-            self.assertEqual([call.args[0] for call in campaign.measure.call_args_list],
-                             ["qualification", "confirmation"])
+        for qualification in ("passed", "budget_failure", "measurement_unstable"):
+            with self.subTest(qualification=qualification), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                campaign = SimpleNamespace(output=root, heads={"after": "candidate"},
+                                           binary_equivalent=False, build=Mock(),
+                                           measure=Mock(side_effect=[qualification, "passed"]))
+                with patch.object(perf, "Campaign", return_value=campaign):
+                    if qualification == "passed":
+                        perf.main()
+                    else:
+                        with self.assertRaisesRegex(AssertionError, qualification):
+                            perf.main()
+                self.assertEqual([call.args[0] for call in campaign.measure.call_args_list],
+                                 ["qualification", "confirmation"])
+                self.assertEqual(json.loads((root / "acceptance.json").read_text()),
+                                 {"qualification": qualification, "confirmation": "passed"})
 
     def test_should_require_fresh_benchmark_from_the_expected_source(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -286,6 +292,118 @@ class StreamDependencyComparisonTests(unittest.TestCase):
                 perf.compiled_source_inputs(source, log, "fitz-package")
             with self.assertRaisesRegex(AssertionError, "exact library"):
                 perf.compiled_source_inputs(source, log, "wrong-package")
+
+
+class StreamSourceArtifactComparisonTests(unittest.TestCase):
+    @contextmanager
+    def rebuilt_campaign(self, all_equal=False, alias=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = {phase: root / phase for phase in ("before", "after")}
+            targets = list(dict.fromkeys(target for target, _ in perf.GROUPS))
+            for phase, source in sources.items():
+                (source / "src").mkdir(parents=True)
+                value = 0 if all_equal or phase == "before" else 1
+                (source / "src/lib.rs").write_text(f"pub const VALUE: u8 = {value};\n")
+                (source / "benches").mkdir()
+                for target in targets:
+                    (source / "benches" / (target + ".rs")).write_text("fn main() {}\n")
+                for filename in ("Cargo.toml", "Cargo.lock"):
+                    (source / filename).write_text("unchanged " + filename)
+
+            def output(command, cwd=None, **_):
+                if command[:3] == ["git", "status", "--porcelain"]:
+                    return ""
+                if command[:3] == ["git", "rev-parse", "HEAD"]:
+                    return cwd.name + "-head"
+                if command[:2] == ["cargo", "metadata"]:
+                    return json.dumps({"resolve": {"root": "fitz-" + cwd.name},
+                                       "packages": []}).encode()
+                if command == ["rustc", "-Vv"]:
+                    return "fixture toolchain"
+                raise AssertionError("Unexpected command: " + repr(command))
+
+            def execute(phase, target, label, command, build=False):
+                self.assertTrue(build)
+                source = sources[phase]
+                library = source / ("libfitz-" + phase + ".rlib")
+                metadata = library.with_suffix(".rmeta")
+                library.write_text("same library" if all_equal else phase + " library")
+                metadata.write_text("same metadata" if all_equal else phase + " metadata")
+                library.with_suffix(".d").write_text(str(library) + ": src/lib.rs\n")
+                executable = source / target
+                executable.write_text(phase if target == targets[0] and not all_equal else "same")
+                executable.chmod(0o700)
+                library_source = source / "src/lib.rs"
+                benchmark_source = source / "benches" / (target + ".rs")
+                if phase == "after" and alias == "wrong_library_source":
+                    library_source = sources["before"] / "src/lib.rs"
+                if phase == "after" and alias == "wrong_benchmark_source":
+                    benchmark_source = sources["before"] / "benches" / (target + ".rs")
+                rows = [
+                    {"reason": "compiler-artifact", "package_id": "fitz-" + phase,
+                     "target": {"kind": ["lib"], "src_path": str(library_source)},
+                     "fresh": phase == "after" and alias == "cached_library",
+                     "filenames": [str(library), str(metadata)]},
+                    {"reason": "compiler-artifact", "package_id": "fitz-" + phase,
+                     "target": {"kind": ["bench"], "name": target,
+                                "src_path": str(benchmark_source)},
+                     "fresh": phase == "after" and alias == "cached_benchmark",
+                     "executable": str(executable)},
+                ]
+                destination = campaign.output / label
+                destination.mkdir()
+                (destination / "run.log").write_text("\n".join(json.dumps(row) for row in rows))
+
+            with patch.object(perf.Path, "cwd", return_value=sources["after"]), patch.dict(
+                    os.environ, STREAM_BASELINE=str(sources["before"]),
+                    STREAM_OUTPUT=str(root / "output"), STREAM_BASE_PRODUCTION="production",
+                    STREAM_COMPARISON_KIND="source"), patch.object(
+                        perf.subprocess, "check_output", side_effect=output), patch.object(
+                        perf.subprocess, "run") as clean:
+                campaign = perf.Campaign()
+                with patch.object(campaign, "execute", side_effect=execute):
+                    yield campaign, clean
+
+    def test_should_time_source_change_with_mixed_fresh_executable_hashes(self):
+        with self.rebuilt_campaign() as (campaign, clean), patch.object(
+                perf, "Campaign", return_value=campaign), patch.object(
+                    campaign, "measure", return_value="passed") as measure:
+            perf.main()
+            hashes = json.loads((campaign.output / "binary-hashes.json").read_text())
+            comparisons = [hashes["before"][target] == hashes["after"][target]
+                           for target in hashes["before"]]
+            self.assertIn(True, comparisons)
+            self.assertIn(False, comparisons)
+            self.assertFalse(campaign.binary_equivalent)
+            self.assertEqual(clean.call_count, 2)
+            self.assertEqual([call.args[0] for call in measure.call_args_list],
+                             ["qualification", "confirmation"])
+
+    def test_should_time_fully_equal_fresh_artifacts_in_source_mode(self):
+        with self.rebuilt_campaign(all_equal=True) as (campaign, _), patch.object(
+                perf, "Campaign", return_value=campaign), patch.object(
+                    campaign, "measure", return_value="passed") as measure:
+            perf.main()
+            provenance = json.loads((campaign.output / "provenance.json").read_text())
+            self.assertEqual(provenance["before"]["compiled_source_inputs"],
+                             provenance["after"]["compiled_source_inputs"])
+            self.assertEqual(provenance["before"]["compiled_library_sha256"],
+                             provenance["after"]["compiled_library_sha256"])
+            hashes = json.loads((campaign.output / "binary-hashes.json").read_text())
+            self.assertEqual(hashes["before"], hashes["after"])
+            self.assertFalse(campaign.binary_equivalent)
+            self.assertEqual(provenance["evidence_mode"], "timing_comparison")
+            self.assertEqual([call.args[0] for call in measure.call_args_list],
+                             ["qualification", "confirmation"])
+
+    def test_should_reject_cached_or_wrong_source_compiler_artifacts(self):
+        for alias in ("cached_library", "cached_benchmark",
+                      "wrong_library_source", "wrong_benchmark_source"):
+            with self.subTest(alias=alias), self.rebuilt_campaign(alias=alias) as (campaign, _):
+                with self.assertRaises(AssertionError):
+                    campaign.build()
+                self.assertFalse((campaign.output / "binary-hashes.json").exists())
 
 
 if __name__ == "__main__":

@@ -56,11 +56,13 @@ original Cargo manifest and lockfile. Both libraries and every benchmark must
 have fresh compiler artifacts from the expected source paths. If the compiler's
 release source inputs match and all emitted library artifacts and benchmark
 executables are byte-identical, the workflow records `binary_equivalent` with
-provenance and takes no timing samples. This records artifact equivalence, not a
-new measured performance
-result. Any different library artifact or executable requires both full timing
-runs and all existing budgets and controls. Reused binaries for changed compiled
-source remain an error.
+provenance. Diagnostic build captures are retained; qualification and confirmation
+timing samples are not collected. This records artifact equivalence, not a new
+measured performance result. Every other case requires both full timing runs and
+all existing budgets and controls, including source comparisons whose executables
+are unchanged. Fresh compiler artifacts from the expected library and benchmark
+source paths establish provenance; cached or wrong-source artifacts remain an
+error.
 Pair individual disk-size rows directly across source versions. The Stream
 qualification workflow also requires an unchanged-binary maximum-event control
 to stay within 5% for throughput and p95; retain failed comparisons.
