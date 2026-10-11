@@ -74,13 +74,16 @@ fn should_survive_sweep_when_redispatch_cleans_up_worker_with_collected_cancella
     );
     sink.register_registration_for_tests(test_rpc_worker(family, &legacy, 42));
     let received_at = Instant::now();
-    deliver_budgeted_request(&sink, &aware, 10, received_at);
-    deliver_budgeted_request(&sink, &legacy, 10, received_at);
-    deliver_budgeted_request(&sink, &legacy, 60_000, received_at);
+    let aware_id = deliver_budgeted_request(&sink, &aware, 10_000, received_at);
+    let legacy_id = deliver_budgeted_request(&sink, &legacy, 10_000, received_at);
+    let queued_id = deliver_budgeted_request(&sink, &legacy, 30_000, received_at);
+    assert_eq!(sink.pending_table_len_for_tests(), 2);
+    assert_eq!(sink.queued_request_count_for_tests(), 1);
+    assert_eq!(sink.pending_request_count(), 3);
     router.unregister(&worker_inbox);
 
     // Act
-    sink.expire_timed_out_requests_at(received_at + Duration::from_secs(1));
+    sink.expire_timed_out_requests_at(received_at + Duration::from_secs(11));
     let pending_after_sweep = sink.pending_request_count();
     let health = sink.family_health_snapshot();
 
@@ -88,5 +91,30 @@ fn should_survive_sweep_when_redispatch_cleans_up_worker_with_collected_cancella
     assert_eq!(health.panic_count, 0);
     assert_eq!(health.failed_families, []);
     assert_eq!(pending_after_sweep, 0);
-    assert_eq!(caller.frames.lock().len(), 3);
+    let frames = caller.frames.lock();
+    assert_eq!(frames.len(), 3);
+    let responses: std::collections::BTreeMap<_, _> = frames
+        .iter()
+        .map(|frame| (parse_forwarded_rpc_response(frame).correlation_id, frame))
+        .collect();
+    assert_eq!(responses.len(), 3);
+    for (id, code, message) in [
+        (
+            aware_id,
+            crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            RPC_TIMEOUT_ERROR,
+        ),
+        (
+            legacy_id,
+            crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            RPC_TIMEOUT_ERROR,
+        ),
+        (
+            queued_id,
+            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+            RPC_WORKER_NOT_FOUND_ERROR,
+        ),
+    ] {
+        assert_rpc_terminal_code_error(responses[&id], id, code, message);
+    }
 }
