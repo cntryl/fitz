@@ -55,10 +55,26 @@ call. A reconnect creates a new worker session and cannot inherit this identity.
 
 ## Deadlines
 
-API ingress stamps each request with a local monotonic receive time before it
-enters the family actor. The actor subtracts time spent in its queue from the
-remaining budget. It caps that budget to the configured broker request timeout
-(30 seconds by default) and stores the resulting monotonic deadline with the
+The transport stamps each complete frame with a local monotonic receive time.
+TCP captures it immediately after the socket read that completes the frame,
+before extracting or forwarding that read's batch; all frames completed by
+that read share the stamp. WebSocket captures it when the stream yields a
+binary message, before validation and session processing. This starts the
+broker's clock after transport receipt; it does not measure client-to-broker
+network transit or bytes still buffered before that receipt.
+
+All complete TLVs decoded from a frame keep its stamp, even when handling an
+earlier TLV waits. A TLV fragmented across frames uses the stamp of the frame
+that completes it. Session handoff queueing, authentication, authorization,
+ingress backpressure retries, and the family actor mailbox all consume the
+same RPC deadline. The mailbox admission retry budget starts separately when
+dispatch begins, so old transport frames do not prematurely exhaust another
+domain's admission retries. Direct callers of the compatible unstamped
+ingress/session APIs start their clock when those APIs are entered.
+
+The actor subtracts elapsed receive time from the remaining budget. It caps
+that budget to the configured broker request timeout (30 seconds by default)
+and stores the resulting monotonic deadline with the
 existing queued or pending request state. Queueing never renews the deadline.
 An already-expired request is rejected before worker credit or global pending
 capacity is claimed. A queued request that expires before dispatch gets one
@@ -116,12 +132,31 @@ broker sends best-effort cancellation only to workers that negotiated support.
 
 The cancellation grace defaults to 5,000 ms. Set
 `FITZ_RPC_CANCELLATION_GRACE_MS` to a value from 0 through 86,400,000 to change
-it. Invalid settings log a warning and use the five-second default. If a
-supporting worker has not acknowledged cleanup by expiry, the
-broker requests transport-level session close. Credit remains reserved until
+it. Invalid settings log a warning and use the five-second default.
+
+A session reads and processes inbound frames one at a time, so a worker's
+cleanup acknowledgment can wait behind a slow frame on the same connection,
+such as a Stream commit waiting on storage. The grace therefore runs only while
+the worker session's frame loop is free to read the acknowledgment: the TCP or
+WebSocket transport records how long the loop spends processing frames, and
+when the grace deadline passes the broker pushes it back by any busy time since
+the grace started or was last extended. Busy time can defer the close request
+up to the fixed ceiling below. Busy time is read from the live session inbox at
+the timeout sweep, so
+the deadline can be deferred repeatedly while one long frame stays in progress.
+Total deferral per cancellation is capped at 60 seconds
+(`RPC_MAX_CANCELLATION_GRACE_DEFERRAL`), matching the Stream client storage
+reply budget. The grace deadline is never extended beyond the nominal grace
+expiry plus 60 seconds, even if its frame loop never frees up or it never
+acknowledges. The ceiling is fixed and does not
+change with `FITZ_RPC_CANCELLATION_GRACE_MS`.
+When the next timeout sweep observes expiry with no deferral available and the
+worker has not acknowledged cleanup, the broker requests transport-level
+session close. Credit remains reserved until
 actual session cleanup removes that worker's pending calls. Failed close
-requests are retried every 250 ms. Grace expiry is a bound on broker cleanup,
-not proof that remote code or side effects have stopped.
+requests are retried every 250 ms. Grace expiry controls when the broker
+requests cleanup; actual session cleanup depends on transport finalization.
+Remote code and side effects require independent verification.
 
 Cancellation is never an automatic retry signal. Applications must decide
 whether a call can safely be repeated. Workers retain legacy behavior when the

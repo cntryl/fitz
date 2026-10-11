@@ -27,6 +27,20 @@ cleared even when they are absent from the artifact. A failure leaves earlier
 resource transactions committed; the error identifies completed routes. There
 is no cross-resource atomicity claim.
 
+Restore does not wait for client transactions. Before it mutates anything, it
+checks every target resource. If any target is still locked by an open
+read-write transaction, the whole restore is rejected with an error naming
+that route, and no other transaction is expired. Otherwise it expires the idle
+resource locks the same way a read-write `BEGIN` does and proceeds. Retry after
+that transaction commits, rolls back, or expires.
+
+After each resource transaction commits, restore routes one live KV watch
+notification for that resource route, the same way a client commit does. The
+mutation count is the number of rows the restore deleted plus the number it
+wrote; a resource with neither produces no notification. Like other KV
+notifications, these are live and ephemeral: watchers that are not connected
+during the restore do not receive them later.
+
 ## Stream
 
 Capture runs on the selected family actor. It records each selected resource's

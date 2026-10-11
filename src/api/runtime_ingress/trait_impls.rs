@@ -50,6 +50,26 @@ impl Ingress for RuntimeIngress {
         message_payload: Bytes,
         correlation: Option<std::num::NonZeroU64>,
     ) -> IngressDecision {
+        self.on_frame_received_at(
+            session_id,
+            channel_id,
+            msg_type,
+            message_payload,
+            correlation,
+            std::time::Instant::now(),
+        )
+        .await
+    }
+
+    async fn on_frame_received_at(
+        &self,
+        session_id: u64,
+        channel_id: ChannelId,
+        msg_type: crate::protocol::tlv::MessageType,
+        message_payload: Bytes,
+        correlation: Option<std::num::NonZeroU64>,
+        received_at: std::time::Instant,
+    ) -> IngressDecision {
         let _ingress_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_INGRESS_FRAME_TOTAL_LATENCY);
         // Record frame received counter
@@ -123,6 +143,7 @@ impl Ingress for RuntimeIngress {
                     msg_type,
                     DomainDispatchPayload::Shared(&message_payload),
                     correlation,
+                    received_at,
                 )
                 .await
             {
@@ -145,6 +166,7 @@ impl Ingress for RuntimeIngress {
                 msg_type,
                 DomainDispatchPayload::Owned(message_payload),
                 correlation,
+                received_at,
             )
             .await
         {

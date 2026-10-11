@@ -6,6 +6,10 @@ use bytes::Bytes;
 use std::time::Instant;
 use tracing::{trace, warn};
 
+#[cfg(test)]
+#[path = "session_receive_timestamps.rs"]
+mod receive_timestamps;
+
 pub(super) fn is_stale_session_frame_error(error: &SessionError) -> bool {
     matches!(
         error,
@@ -24,6 +28,24 @@ pub async fn process_session_frame(
     frame: Bytes,
     ingress: &dyn Ingress,
 ) -> Result<(), SessionError> {
+    process_session_frame_at(session, frame, ingress, Instant::now()).await
+}
+
+/// Decode a transport frame with the time its complete bytes were received.
+///
+/// Every complete TLV decoded from this frame keeps this stamp, including a TLV
+/// started in an earlier frame. Waiting for a previous TLV does not renew it.
+///
+/// # Errors
+///
+/// Returns the same decoding, backpressure, and close errors as
+/// [`process_session_frame`].
+pub async fn process_session_frame_at(
+    session: &mut Session,
+    frame: Bytes,
+    ingress: &dyn Ingress,
+    received_at: Instant,
+) -> Result<(), SessionError> {
     session.push_frame(&frame);
     let mut connected_in_frame = false;
 
@@ -38,12 +60,13 @@ pub async fn process_session_frame(
         let is_connect = message.msg_type == crate::protocol::tlv::MessageType::CONNECT;
         let ingress_start = Instant::now();
         let decision = ingress
-            .on_frame(
+            .on_frame_received_at(
                 session.info().session_id,
                 channel,
                 message.msg_type,
                 message.payload,
                 message.correlation,
+                received_at,
             )
             .await;
         crate::observability::hot_path_histogram_observe_us(
