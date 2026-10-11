@@ -133,7 +133,7 @@ impl StreamStore {
     }
 
     #[cfg(test)]
-    pub(super) fn with_clock_for_tests(
+    pub(crate) fn with_clock_for_tests(
         mut self,
         clock: Arc<dyn crate::runtime::clock::Clock>,
     ) -> Self {
