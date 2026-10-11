@@ -36,24 +36,47 @@ terminal; no diagnostic permits mutation retry or bypasses admission.
 
 Apply the identical pacing harness and diagnostic instrumentation to both
 comparison sources. Preserve older coarse-timer failures as historical evidence.
-A passing safety-guard diagnostic with `configured_window_completed=false`
-does not qualify the full configured active window, and ending below the intended
-message envelope does not qualify that envelope. The large-drain qualification
-and quarter-core/512 MiB survival/recovery qualification remain distinct gates.
+Only a completed configured window qualifies full-window survival: a safety-guard
+or broker-rejection stop with `configured_window_completed=false` fails that gate.
+The unchanged finite accepted-message drain remains a separate required gate.
+The large-drain qualification and quarter-core/512 MiB
+survival/recovery qualification remain distinct gates.
 
 The manual Tier 5 workflow's `queue_pressure` input selects matched 10k, 25k,
 and 100k campaigns on one Linux host. Both sources use the same corrected
 harness, locked dependency, and the initial benchmark-only instrumentation;
 later production optimizations are never copied onto the baseline. Actual
 diagnostic build campaigns finish before timing. The runner retains every failed
-capture and requires the full intended message count, reconciled known outcomes,
-verified ACKs, the 5 ms observed minimum, empty verification, recovery and cleanup
-for all six captures. It reports finite drain qualification separately from a
-completed 120-second active window and constrained-resource survival.
-Generator misses remain visible when a safety guard stops load. The existing 1%
-generator limit applies to completed active windows; a guard drain qualifies its
-verified accepted-message envelope only. It does not qualify the requested
-arrival rate or the broker's capacity, regardless of drain success.
+capture. Each of the six full-window captures must end with `configured_window` after the
+full 120-second active window, miss at most 1% of offered arrivals, accept at
+least 99% of the window's scheduled arrivals, reconcile known outcomes, verify
+every ACK, observe the 5 ms minimum pause, drain within 600 seconds, and pass
+empty verification, recovery and cleanup. Guard-stopped captures still appear in
+the step summary with their termination and missed arrivals, but they fail the
+full-window gate.
+
+Each capture's backlog guard (10k, 25k or 100k) fixes its offered rate at 80%
+of the guard spread over the window: 66, 166 and 666 arrivals per second, or
+7,920, 19,920 and 79,920 messages. Outstanding work can never exceed what was
+sent, so the guard cannot stop the window even if the consumer stalls. The one
+paced consumer drains roughly 186 messages per second on the Linux runner, so
+the three rates sit below, near and well above its capacity. The 100k capture
+leaves at most 79,920 messages to drain, about 430 seconds at that rate, inside
+the 600-second deadline. The earlier fixed 16,000 per second rate tripped every
+guard within seconds and never completed a window.
+
+Six additional captures retain #404's unchanged finite-drain envelope: 16,000
+arrivals per second, 120-second configured stages, 256 producers, the same 10k,
+25k and 100k outstanding-work guards, 500,000 attempt cap, 5 ms post-ACK pause,
+and 600-second drain deadline. Each must accept at least its guard's message
+count, verify every ID/payload and ACK, reconcile all known outcomes, finish
+empty, recover and clean up. Guard-stopped finite captures retain missed arrivals
+and do not establish a full window or arrival-rate qualification. A harness
+`offered_rate_not_met` termination always fails. All twelve captures must pass;
+the lower full-window rates never substitute for the original 100k drain.
+The manual job has a five-hour total budget for two build diagnostics and all
+twelve captures plus compilation and evidence upload. Each measured capture
+keeps its 120-second stage, 600-second drain and 1,000-second harness guard.
 
 ## Workload
 
@@ -160,6 +183,17 @@ may require increasing `STRESS_TIMEOUT_SECS`; a hard timeout is still a failed
 campaign. This row is opt-in and does not extend the seven-domain scheduled
 workflow matrix.
 
+The manual matched workflow compares the dispatched candidate against its
+`queue_baseline` input, which can be a commit, tag or branch. Left empty, it
+uses the merge base with `origin/develop`, which suits a feature branch. A
+dispatch on `develop` has no distinct merge base, so set `queue_baseline` to the
+develop commit before the change under test. The baseline receives the
+candidate's `Cargo.toml`, `Cargo.lock` and `benches`. A baseline that predates
+the benchmark-only Queue diagnostics (develop commit `1e3b18dd`) also receives
+that commit's own `src/domains/queue` diff and nothing later. The job fails
+before compiling if the prepared baseline and candidate have identical `src/`
+trees.
+
 Raw stage and partial evidence is atomically written under
 `target/fitz-stress/queue-pressure/`. Reports record scheduled, missed, sent,
 accepted, rejected and ACKed counts; consumer admission rejections; known
@@ -185,6 +219,27 @@ last completed rate and the first rejecting rate, retaining the same payload,
 consumer delay, storage, producer pool and stage duration. For generator or
 safety boundaries, change the limiting harness dimension explicitly and record
 that change; do not label it a broker failure.
+
+## Matched before/after comparison
+
+After all twelve captures, the workflow compares each matched 10k, 25k and 100k
+pair separately within the full-window and finite-envelope scopes. All six
+pairs must pass. The workflow fails when an after capture regresses beyond the same-host limits in
+[the performance loop](perf-loop.md):
+
+| Metric | Report source | Limit for after |
+| --- | --- | --- |
+| Accepted throughput | `accounting.accepted` / `active_elapsed_ns` | At least 90% of before |
+| Drain time | `drain_elapsed_ns` | At most 110% of before, or before plus 1 second |
+| ACK p99 | `consumer_timing.ack.distribution` | At most 110% of before |
+| Cycle p99 | `consumer_timing.cycle.distribution` | At most 110% of before |
+
+The 1-second drain allowance stops near-empty drains, which finish within a few
+10-millisecond drain polls, from failing on jitter. The p99 values are power-of-two
+histogram bucket upper bounds, so any move to a higher bucket fails. Each pair
+is a single sample: a failure is a regression signal to reproduce, not a
+measured regression size. The comparison is written to the step summary and to
+`comparison.json`. A pair with a failed capture or missing metrics is not compared and fails.
 
 ## Initial local evidence
 

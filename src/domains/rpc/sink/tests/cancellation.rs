@@ -5,6 +5,7 @@ use bytes::Bytes;
 
 mod frame_loop_grace;
 mod safety;
+mod sweep_disconnect;
 
 #[derive(Default)]
 struct CaptureRpcEndpoint {
