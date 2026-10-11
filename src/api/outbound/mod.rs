@@ -1,4 +1,5 @@
 mod domain_deliveries;
+mod frame_loop;
 
 use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
@@ -16,6 +17,7 @@ use tracing::{debug, trace, warn};
 pub struct SessionOutboundSink {
     tx: mpsc::Sender<Bytes>,
     close_signal: Option<tokio::sync::watch::Sender<Option<&'static str>>>,
+    frame_loop: frame_loop::FrameLoopClock,
 }
 
 impl SessionOutboundSink {
@@ -24,7 +26,13 @@ impl SessionOutboundSink {
         Self {
             tx,
             close_signal: None,
+            frame_loop: frame_loop::FrameLoopClock::default(),
         }
+    }
+
+    /// Marks this session's frame loop busy until the returned guard drops.
+    pub(crate) fn begin_frame(&self) -> frame_loop::FrameLoopBusy<'_> {
+        self.frame_loop.begin_frame(Instant::now())
     }
 }
 
@@ -39,6 +47,7 @@ impl SessionOutboundSink {
             Self {
                 tx,
                 close_signal: Some(close_signal),
+                frame_loop: frame_loop::FrameLoopClock::default(),
             },
             receiver,
         )
@@ -172,6 +181,10 @@ impl MailboxSink for SessionOutboundSink {
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         // Session transport has one lane; choose ordinary delivery explicitly.
         self.deliver(envelope)
+    }
+
+    fn frame_loop_busy_time(&self, now: Instant) -> Option<Duration> {
+        Some(self.frame_loop.busy_time(now))
     }
 }
 

@@ -170,6 +170,7 @@ pub(super) struct DomainDispatchRequest<'a> {
     /// Correlation the client attached to this request, echoed onto every
     /// frame answering it - including ingress-synthesized errors.
     pub(super) correlation: Option<std::num::NonZeroU64>,
+    pub(super) received_at: std::time::Instant,
 }
 
 #[derive(Clone, Debug)]
@@ -285,6 +286,30 @@ pub trait Ingress: Send + Sync {
         message_payload: Bytes,
         correlation: Option<std::num::NonZeroU64>,
     ) -> IngressDecision;
+
+    /// Called with the transport's monotonic receive time for this message.
+    ///
+    /// Existing implementations can keep implementing [`Self::on_frame`].
+    /// Transports use this hook to preserve the stamp through session queueing,
+    /// decoding, authentication, and retries.
+    async fn on_frame_received_at(
+        &self,
+        session_id: u64,
+        channel_id: ChannelId,
+        msg_type: crate::protocol::tlv::MessageType,
+        message_payload: Bytes,
+        correlation: Option<std::num::NonZeroU64>,
+        _received_at: std::time::Instant,
+    ) -> IngressDecision {
+        self.on_frame(
+            session_id,
+            channel_id,
+            msg_type,
+            message_payload,
+            correlation,
+        )
+        .await
+    }
 
     /// Get current session info for transports that need to observe auth-driven updates.
     fn get_session_info(&self, session_id: u64) -> Option<SessionInfo>;
