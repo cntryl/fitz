@@ -19,6 +19,14 @@ pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_queue_notify_drops_total";
 /// Queue writes are outliving the configured loss window without reaching disk.
 pub const METRIC_FAST_FLUSH_FAILURES_TOTAL: &str = "fitz_queue_fast_flush_failures_total";
 pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_queue_family_failed_closed_total";
+/// ENQUEUE/ACK commits restaged after Midge rejected them for a missing L0
+/// slot. A sustained rate means Queue writes are outpacing L0 compaction.
+pub const METRIC_L0_ADMISSION_RETRIES_TOTAL: &str = "fitz_queue_l0_admission_retries_total";
+/// ENQUEUE/ACK commits that failed because the shared 30-second storage
+/// admission budget ran out while Midge was still stalled or rejecting writes
+/// for a missing L0 slot.
+pub const METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL: &str =
+    "fitz_queue_admission_budget_exhausted_total";
 
 // Operation-specific counters
 pub const METRIC_ENQUEUE_TOTAL: &str = "fitz_queue_enqueue_total";
