@@ -6,6 +6,12 @@ on:
     paths:
       - Cargo.toml
       - Cargo.lock
+      - src/lib.rs
+      - src/auth/**
+      - src/boot/**
+      - src/control/**
+      - src/observability/**
+      - src/utils/**
       - src/domains/stream/**
       - src/domains/subscription_state.rs
       - src/storage/**
@@ -56,7 +62,8 @@ jobs:
         run: |
           compare=true
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]] &&
-            git diff --quiet "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock src/domains/stream src/domains/subscription_state.rs \
+            git diff --quiet "$BASE_SHA" HEAD -- Cargo.toml Cargo.lock src/lib.rs src/auth src/boot src/control \
+              src/observability src/utils src/domains/stream src/domains/subscription_state.rs \
               src/storage src/storage.rs src/snapshot src/snapshot.rs src/runtime src/dispatch src/session src/protocol \
               src/api src/benchkit src/testkit 'benches/tier4_stream*' benches/tier4_support.rs; then
             compare=false

@@ -104,7 +104,9 @@ class StreamPerformanceWorkflowTests(unittest.TestCase):
     def test_should_compare_when_shared_stream_dependencies_change(self):
         triggers, skip = comparison_paths()
         shared = {
+            "src/lib.rs", "src/auth", "src/boot", "src/control",
             "src/api", "src/dispatch", "src/runtime", "src/session",
+            "src/observability", "src/utils",
             "src/snapshot", "src/snapshot.rs", "src/storage", "src/storage.rs",
             "src/testkit",
         }
