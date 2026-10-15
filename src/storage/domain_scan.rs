@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_unrecognized_and_legacy_rows_for_validation() {
+    fn should_preserve_unrecognized_rows_for_validation() {
         // Arrange
         let expected = vec![
             b"\x05\0kv\0legacy".to_vec(),
