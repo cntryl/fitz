@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { click, queryState, submit, type } from "@askrjs/askr/testing";
+import { click, mockQuery, submit, type } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
 import { queueInventory, queueResource, queueResourceRow } from "./page-smoke/fixtures";
 
@@ -9,7 +9,7 @@ const mocks = pageSmokeMocks();
 describe("admin page smoke tests", () => {
   it("shows and sorts live subscription counts in queue inventory and scope rollups", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
-    mocks.queryStates.queueInventory = queryState.fresh(
+    mocks.queryStates.queueInventory = mockQuery(
       {
         ...queueInventory,
         realms: [
@@ -195,7 +195,7 @@ describe("admin page smoke tests", () => {
 
   it("renders progressive queue links for overview, realm, and area routes", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
-    mocks.queryStates.queueInventory = queryState.fresh(
+    mocks.queryStates.queueInventory = mockQuery(
       {
         ...queueInventory,
         realms: [
@@ -325,7 +325,7 @@ describe("admin page smoke tests", () => {
     expect(headers).toEqual(["Offset", "Body", "Action"]);
   });
   it("uses tables for queue message state and a list for timeline evidence", async () => {
-    mocks.queryStates.queueDeadLetters = queryState.fresh(
+    mocks.queryStates.queueDeadLetters = mockQuery(
       [
         {
           area: "ops",
@@ -340,7 +340,7 @@ describe("admin page smoke tests", () => {
       ],
       queryOptions(),
     );
-    mocks.queryStates.queueInflight = queryState.fresh(
+    mocks.queryStates.queueInflight = mockQuery(
       [
         {
           area: "ops",
@@ -356,7 +356,7 @@ describe("admin page smoke tests", () => {
       ],
       queryOptions(),
     );
-    mocks.queryStates.queueTimeline = queryState.fresh(
+    mocks.queryStates.queueTimeline = mockQuery(
       {
         ...queueResource.timeline,
         events: [
@@ -407,8 +407,8 @@ describe("admin page smoke tests", () => {
   });
   it("keeps queue backlog and dead-letter actions usable when the timeline fails", async () => {
     const timelineRetry = vi.fn(async () => undefined);
-    mocks.queryStates.queueResource = queryState.fresh(queueResource.detail, queryOptions());
-    mocks.queryStates.queueInflight = queryState.fresh(
+    mocks.queryStates.queueResource = mockQuery(queueResource.detail, queryOptions());
+    mocks.queryStates.queueInflight = mockQuery(
       [
         {
           area: "ops",
@@ -424,7 +424,7 @@ describe("admin page smoke tests", () => {
       ],
       queryOptions(),
     );
-    mocks.queryStates.queueDeadLetters = queryState.fresh(
+    mocks.queryStates.queueDeadLetters = mockQuery(
       [
         {
           area: "ops",
@@ -439,7 +439,7 @@ describe("admin page smoke tests", () => {
       ],
       queryOptions(),
     );
-    mocks.queryStates.queueTimeline = queryState.error(
+    mocks.queryStates.queueTimeline = mockQuery.error(
       new Error("Timeline read failed"),
       undefined,
       { refresh: timelineRetry },
@@ -468,7 +468,7 @@ describe("admin page smoke tests", () => {
   });
   it("opens an accessible queue dead-letter confirmation dialog", async () => {
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
-    mocks.queryStates.queueDeadLetters = queryState.fresh(
+    mocks.queryStates.queueDeadLetters = mockQuery(
       [
         {
           attempts: 2,

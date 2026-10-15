@@ -144,7 +144,9 @@ export function PureDomainResourceInventoryTable({
       onRowOpen={onRowOpen}
       onSearchChange={onSearchChange}
       primaryHeader="Route"
-      primaryText={(row) => formatFitzRoute(domain, row)}
+      primaryText={(row) =>
+        formatFitzRoute(domain, domain === "schedule" ? { ...row, operation: undefined } : row)
+      }
       rowHref={rowHref}
       rowKey={(row) => `${row.realm}:${row.area}:${row.resource}:${row.operation ?? ""}`}
       rows={rows}

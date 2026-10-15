@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { flush, queryState } from "@askrjs/askr/testing";
+import { flush, mockQuery } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
 import {
   activeSessions,
@@ -55,7 +55,7 @@ describe("admin page smoke tests", () => {
   it("lists one issue per domain signal with sentence-case titles and no freshness badge", async () => {
     // Arrange
     const { default: Home } = await import("@/pages/app/home");
-    mocks.queryStates.topology = queryState.fresh(
+    mocks.queryStates.topology = mockQuery(
       {
         ...topologyOverview,
         diagnostics: {
@@ -94,7 +94,7 @@ describe("admin page smoke tests", () => {
   it("renders the overview without redundant domain cards", async () => {
     const { default: Home } = await import("@/pages/app/home");
 
-    mocks.queryStates.topology = queryState.fresh(emptyTopology, queryOptions());
+    mocks.queryStates.topology = mockQuery(emptyTopology, queryOptions());
 
     const root = await mountRoute("/", "/", Home);
     const text = root.textContent ?? "";
@@ -109,8 +109,8 @@ describe("admin page smoke tests", () => {
   it("shows the generated time for the current overview snapshot", async () => {
     // Arrange
     const { default: Home } = await import("@/pages/app/home");
-    mocks.queryStates.topology = queryState.fresh(topologyOverview, queryOptions());
-    mocks.queryStates.system = queryState.fresh(systemOverview, queryOptions());
+    mocks.queryStates.topology = mockQuery(topologyOverview, queryOptions());
+    mocks.queryStates.system = mockQuery(systemOverview, queryOptions());
 
     // Act
     const root = await mountRoute("/", "/", Home);
@@ -157,8 +157,8 @@ describe("admin page smoke tests", () => {
       ],
     };
 
-    mocks.queryStates.system = queryState.fresh(healthySystem, queryOptions());
-    mocks.queryStates.topology = queryState.fresh(benignTopology, queryOptions());
+    mocks.queryStates.system = mockQuery(healthySystem, queryOptions());
+    mocks.queryStates.topology = mockQuery(benignTopology, queryOptions());
 
     const root = await mountRoute("/", "/", Home);
     const text = root.textContent ?? "";
@@ -208,8 +208,8 @@ describe("admin page smoke tests", () => {
         },
       },
     };
-    mocks.queryStates.system = queryState.fresh(cumulativeSystem, queryOptions());
-    mocks.queryStates.topology = queryState.fresh(
+    mocks.queryStates.system = mockQuery(cumulativeSystem, queryOptions());
+    mocks.queryStates.topology = mockQuery(
       { ...emptyTopology, diagnostics: healthyGlobalDiagnostics },
       queryOptions(),
     );
@@ -222,12 +222,12 @@ describe("admin page smoke tests", () => {
   });
   it("marks overview health incomplete when a required source is unavailable", async () => {
     const { default: Home } = await import("@/pages/app/home");
-    mocks.queryStates.system = queryState.error(
+    mocks.queryStates.system = mockQuery.error(
       new Error("system counters unavailable"),
       undefined,
       queryOptions(),
     );
-    mocks.queryStates.topology = queryState.fresh(
+    mocks.queryStates.topology = mockQuery(
       { ...emptyTopology, diagnostics: healthyGlobalDiagnostics },
       queryOptions(),
     );
@@ -319,7 +319,7 @@ describe("admin page smoke tests", () => {
   });
   it("labels current work as activity while keeping cumulative failures historical", async () => {
     const { default: MetricsPage } = await import("@/pages/app/metrics");
-    mocks.queryStates.metrics = queryState.fresh(completeMetricsSnapshot(4, 9), queryOptions());
+    mocks.queryStates.metrics = mockQuery(completeMetricsSnapshot(4, 9), queryOptions());
 
     const root = await mountRoute("/admin/1/metrics", "/admin/{family}/metrics", MetricsPage);
 
@@ -330,7 +330,7 @@ describe("admin page smoke tests", () => {
   });
   it("reports quiet when all required current gauges are observed at zero", async () => {
     const { default: MetricsPage } = await import("@/pages/app/metrics");
-    mocks.queryStates.metrics = queryState.fresh(completeMetricsSnapshot(0, 9), queryOptions());
+    mocks.queryStates.metrics = mockQuery(completeMetricsSnapshot(0, 9), queryOptions());
 
     const root = await mountRoute("/admin/1/metrics", "/admin/{family}/metrics", MetricsPage);
 
@@ -341,14 +341,14 @@ describe("admin page smoke tests", () => {
   it("renders metrics loading and error states", async () => {
     const { default: MetricsPage } = await import("@/pages/app/metrics");
 
-    mocks.queryStates.metrics = queryState.loading(queryOptions());
+    mocks.queryStates.metrics = mockQuery.loading(queryOptions());
     let root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
     expect(root.textContent).toContain("Loading metrics snapshot");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.metrics = queryState.error(
+    mocks.queryStates.metrics = mockQuery.error(
       new Error("metrics endpoint unavailable"),
       undefined,
       queryOptions(),
@@ -380,7 +380,7 @@ describe("admin page smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.activeSessions = queryState.fresh(
+    mocks.queryStates.activeSessions = mockQuery(
       {
         sessions: [
           {
@@ -406,7 +406,7 @@ describe("admin page smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.activeSessions = queryState.fresh({ sessions: [] }, queryOptions());
+    mocks.queryStates.activeSessions = mockQuery({ sessions: [] }, queryOptions());
     root = await mountRoute("/sessions", "/sessions", SessionsPage);
 
     expect(root.textContent).toContain("No active sessions");
@@ -415,14 +415,14 @@ describe("admin page smoke tests", () => {
   it("renders sessions loading and error states", async () => {
     const { default: SessionsPage } = await import("@/pages/app/sessions");
 
-    mocks.queryStates.activeSessions = queryState.loading(queryOptions());
+    mocks.queryStates.activeSessions = mockQuery.loading(queryOptions());
     let root = await mountRoute("/sessions", "/sessions", SessionsPage);
     expect(root.textContent).toContain("Loading active sessions");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.activeSessions = queryState.error(
+    mocks.queryStates.activeSessions = mockQuery.error(
       new Error("session endpoint unavailable"),
       undefined,
       queryOptions(),
@@ -433,7 +433,7 @@ describe("admin page smoke tests", () => {
   });
   it("mounts the dashboard loading and error states", async () => {
     const { default: Home } = await import("@/pages/app/home");
-    mocks.queryStates.currentSession = queryState.loading(queryOptions());
+    mocks.queryStates.currentSession = mockQuery.loading(queryOptions());
 
     let root = await mountRoute("/", "/", Home);
     expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
@@ -442,7 +442,7 @@ describe("admin page smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.currentSession = queryState.error(
+    mocks.queryStates.currentSession = mockQuery.error(
       new Error("Session lookup failed"),
       undefined,
       queryOptions(),
@@ -456,18 +456,18 @@ describe("admin page smoke tests", () => {
     document.body.innerHTML = "";
   });
   it("mounts queue loading, error, and empty states", async () => {
-    mocks.queryStates.currentSession = queryState.fresh({ username: "root" }, queryOptions());
+    mocks.queryStates.currentSession = mockQuery({ username: "root" }, queryOptions());
 
     const { default: QueuePage } = await import("@/pages/app/queue");
 
-    mocks.queryStates.queueInventory = queryState.loading(queryOptions());
+    mocks.queryStates.queueInventory = mockQuery.loading(queryOptions());
     let root = await mountRoute("/queue", "/queue", QueuePage);
     expect(root.textContent).toContain("Loading queue inventory");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.queueInventory = queryState.error(
+    mocks.queryStates.queueInventory = mockQuery.error(
       new Error("Queue inventory unavailable"),
       undefined,
       queryOptions(),
@@ -478,7 +478,7 @@ describe("admin page smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.queueInventory = queryState.fresh(
+    mocks.queryStates.queueInventory = mockQuery(
       {
         ...queueInventory,
         realms: [],
@@ -491,7 +491,7 @@ describe("admin page smoke tests", () => {
   it("keeps queue inventory content visible while refresh is in flight", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
 
-    mocks.queryStates.queueInventory = queryState.refreshing(queueInventory, queryOptions());
+    mocks.queryStates.queueInventory = mockQuery.refreshing(queueInventory, queryOptions());
 
     const root = await mountRoute("/queue", "/queue", QueuePage);
 

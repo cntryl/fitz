@@ -4,7 +4,7 @@ import {
   type DomainResourceMetricColumn,
 } from "@/components/shared/domain-resource-inventory-table";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-import { formatNumber, formatTimestamp } from "@/shared/format";
+import { formatNumber } from "@/shared/format";
 
 function maybeCount(value: number | undefined) {
   return value === undefined ? "--" : formatNumber(value);
@@ -21,17 +21,6 @@ export default function SchedulePage() {
       width: "16%",
       cell: (row) => maybeCount(row.pendingClaims),
       sortValue: (row) => row.pendingClaims,
-    },
-    {
-      id: "next-run",
-      rollup: "earliest",
-      header: "Next run",
-      width: "20%",
-      cell: (row) => (row.nextRun ? formatTimestamp(row.nextRun) : "--"),
-      sortValue: (row) => {
-        const parsed = row.nextRun ? Date.parse(row.nextRun) : Number.NaN;
-        return Number.isNaN(parsed) ? null : parsed;
-      },
     },
     {
       id: "enabled",

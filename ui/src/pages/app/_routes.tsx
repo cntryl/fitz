@@ -1,4 +1,5 @@
-import { group, lazy, route, type AuthRequirement, type RouteHandler } from "@askrjs/askr/router";
+import type { AuthRequirement } from "@askrjs/auth";
+import { group, lazy, route, type RouteHandler } from "@askrjs/askr/router";
 import Layout from "./_layout";
 import RouteFamilySelectorPage from "./route-family";
 import {

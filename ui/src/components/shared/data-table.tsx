@@ -11,7 +11,7 @@ export interface DataTableCellProps<Row> {
 }
 
 export interface DataTableColumn<Row> {
-  cellComponent: (props: DataTableCellProps<Row>) => JSXElement | JSX.Element | null;
+  cellComponent: (props: DataTableCellProps<Row>) => JSXElement | null;
   header: JSXElement | string;
   id: string;
   /** Secondary columns give way to a folded detail line when the table is narrow. */

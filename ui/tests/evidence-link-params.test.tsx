@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { queryState, submit, type } from "@askrjs/askr/testing";
+import { mockQuery, submit, type } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
 import { kvRows } from "./page-smoke/fixtures";
 
@@ -93,7 +93,7 @@ describe("evidence links keep the sections already on screen", () => {
   it("keeps inspected KV transactions when advancing rows", async () => {
     // Arrange
     const { default: KvResourcePage } = await import("@/pages/app/kv-resource");
-    mocks.queryStates.kvRows = queryState.fresh(
+    mocks.queryStates.kvRows = mockQuery(
       { ...kvRows, hasMore: true, nextCursor: "cursor-3" },
       queryOptions(),
     );

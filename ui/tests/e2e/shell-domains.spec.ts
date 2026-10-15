@@ -241,9 +241,9 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await expect(page.getByRole("heading", { name: /Schedule inventory/ })).toBeVisible();
   await page.locator('a[href="/admin/1/schedule/default"]').click();
   await page.locator('a[href="/admin/1/schedule/default/default"]').click();
-  // Schedule reports pending claims and next run per resource.
+  // Upper tiers summarize counts; timing belongs to individual schedules.
   await expect(page.getByRole("columnheader", { name: /Pending claims/ })).toBeVisible();
-  await expect(page.getByRole("columnheader", { name: /next run/i })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /next run/i })).toHaveCount(0);
   await page.locator('a[href="/admin/1/schedule/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/schedule/default/default/primary");
   await expect(page.getByRole("heading", { level: 1, name: "primary" })).toBeVisible();
