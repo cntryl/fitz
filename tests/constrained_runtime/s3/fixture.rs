@@ -8,7 +8,9 @@ use crate::fixtures::transport::{
     build_kv_begin, build_kv_get, build_kv_rollback, extract_kv_value, parse_kv_tx_id,
 };
 use cntryl_midge::__internal::wal::{
-    cloud_segment_object_key, encoding, frame, WalOpKind, WalRecord,
+    catalog::{CatalogEntry, WalPublicationCatalog},
+    segment::SegmentBuilder,
+    WalOpKind, WalRecord,
 };
 use cntryl_midge::{Engine, MemoryBudget, OpenOptions, TransactionMode, WriteOptions};
 use fitz::utils::storage_key::{self, DomainKeyspace};
@@ -44,36 +46,17 @@ pub(super) fn publish(campaign: &Campaign, records: u32) -> u64 {
         .unwrap();
     tx.commit(WriteOptions::cloud_strict()).unwrap();
     engine.flush_cf(&cf).unwrap();
-    let mut sequence = engine
-        .metrics()
-        .get_storage_layout()
-        .unwrap()
-        .manifest_last_persisted_sequence
-        + 1;
-    let mut segment_id = engine
-        .metrics()
-        .get_runtime_metrics()
-        .unwrap()
-        .wal_current_segment_id
-        + 1;
     engine.shutdown(Duration::from_secs(30)).unwrap();
     drop(engine);
 
     // No writer runs while this immutable synthetic fixture is published.
-    let mut catalog: serde_json::Value =
-        serde_json::from_slice(&campaign.download_object("wal/publication-catalog.v1.json"))
+    let mut catalog =
+        WalPublicationCatalog::decode(&campaign.download_object("wal/publication-catalog.v1.json"))
             .unwrap();
-    let epoch = catalog["fencing_epoch"].as_u64().unwrap();
-    let segments = catalog["segments"].as_object_mut().unwrap();
-    segment_id = segment_id.max(
-        segments
-            .keys()
-            .map(|id| id.parse::<u64>().unwrap())
-            .max()
-            .unwrap_or(0)
-            + 1,
-    );
-    let mut bytes = Vec::new();
+    let epoch = catalog.fencing_epoch();
+    let mut segment_id = catalog.next_segment_id();
+    let mut sequence = catalog.seq_floor().max(catalog.head().last_seq) + 1;
+    let mut builder = SegmentBuilder::new(segment_id, epoch, catalog.head()).first_seq(sequence);
     let mut actual_bytes = 0;
     for index in 0..records {
         let mut record = WalRecord::new(
@@ -81,27 +64,55 @@ pub(super) fn publish(campaign: &Campaign, records: u32) -> u64 {
             scoped_key(index).into(),
             Some(workload::body(index).into()),
             sequence,
-            epoch,
         );
         record.cf_id = cf.id();
-        frame::append_frame(&mut bytes, &encoding::encode(&record).unwrap()).unwrap();
+        builder = builder.record(&record);
         sequence += 1;
-        if bytes.len() >= 16 * 1024 * 1024 || index + 1 == records {
-            let object_key = cloud_segment_object_key(segment_id, epoch);
-            campaign.upload_object(&object_key, &bytes);
-            segments.insert(segment_id.to_string(), json!({
-                "segment_id": segment_id, "writer_epoch": epoch, "max_sequence": sequence - 1,
-                "size_bytes": bytes.len(), "content_crc32c": crc32c::crc32c(&bytes), "object_key": object_key,
-            }));
+        if builder.body_len() >= 16 * 1024 * 1024 || index + 1 == records {
+            let (bytes, link) = builder.seal();
+            let entry = CatalogEntry::from_sealed_bytes(&bytes).unwrap();
+            campaign.upload_object(&entry.object_key(), &bytes);
+            catalog.append(epoch, &[entry]).unwrap();
             actual_bytes += u64::try_from(bytes.len()).unwrap();
-            bytes.clear();
             segment_id += 1;
+            builder = SegmentBuilder::new(segment_id, epoch, link).first_seq(sequence);
         }
     }
-    let bytes = serde_json::to_vec(&catalog).unwrap();
+    let bytes = catalog.encode().unwrap();
     campaign.upload_object("wal/publication-catalog.v1.json", &bytes);
     campaign.upload_object("wal/publication-catalog.v1.mirror.json", &bytes);
     actual_bytes
+}
+
+#[test]
+#[ignore = "requires disposable Sqrzl and AWS CLI; see constrained-runtime.md"]
+fn should_recover_catalog_authorized_fixture_with_current_midge_format() {
+    // Arrange
+    let campaign = Campaign::new("fixture-format");
+    let published_bytes = publish(&campaign, 32);
+    let snapshot = campaign.snapshot("published");
+    let cache = tempfile::tempdir().unwrap();
+
+    // Act
+    let mut engine = Engine::open(
+        OpenOptions::cloud(cache.path(), campaign.location())
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
+    let tx = engine.begin_tx(1, TransactionMode::ReadOnly).unwrap();
+    let values: Vec<_> = (0..32)
+        .map(|index| tx.get(&scoped_key(index)).unwrap().unwrap())
+        .collect();
+    drop(tx);
+    engine.shutdown(Duration::from_secs(30)).unwrap();
+
+    // Assert
+    assert!(snapshot.catalog_bytes >= published_bytes);
+    assert_eq!(values.len(), 32);
+    for (index, value) in (0..32).zip(values) {
+        assert_eq!(value.as_ref(), workload::body(index));
+    }
 }
 
 pub(super) async fn verify(broker: &Broker, records: u32) {

@@ -77,9 +77,12 @@ recovery for cloud deployments. No logical export/import is required solely by
 this update. Verify that lease-loss storage errors remain terminal and do not
 become successful reads or automatic mutation retries.
 
-The 0.3.2 to 0.3.3 update follows the same procedure. Fitz pins Midge 0.3.3 to
-an untagged git rev; before release, confirm the pin matches a published 0.3.3
-tag or record why the release ships an untagged storage dependency.
+Fitz uses the official crates.io Midge 0.4.0 release. Confirm the lockfile uses
+the registry package and checksum. FORMAT 8 and cloud catalog v3 require a
+fresh store populated by logical migration from older versions; qualify reads,
+writes, shutdown, restart, and cloud fresh-cache recovery before release.
+Preserve the original store and broker for rollback. See the
+[migration guide](migration-guide.md#midge-040).
 
 ## Stream error envelope generation 2 release gate
 

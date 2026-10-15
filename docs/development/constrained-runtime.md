@@ -54,9 +54,8 @@ the local store before removing the disposable container. Docker CLI memory stat
 a working set; the container's hard memory limit includes file cache.
 
 The Queue optimization exposed a Midge SST index bug: an unsafe trie successor
-hint could hide an existing Stream epoch key after SST publication. Fitz pins
-the immutable upstream fix from Midge PR 775 until a registry release contains
-it. The Stream concurrency guard remains enforced. A focused actor regression
+hint could hide an existing Stream epoch key after SST publication. The official Midge 0.4.0 dependency includes the upstream fix from
+Midge PR 775. The Stream concurrency guard remains enforced. A focused actor regression
 also checks Stream writes after Fast Queue forces automatic SST publication.
 
 ## S3 WAL retention and crash recovery
@@ -139,11 +138,10 @@ cargo test --locked --features recovery-qualification --test constrained_runtime
 These campaigns qualify native S3 protocol behavior against an emulator. They
 do not qualify production AWS latency, an unmeasured historic backlog, or reuse
 of a Fitz 0.1.0 storage prefix. Fitz 0.1.0 resolved Midge 0.1.1; current develop
-pins Midge 0.3.3 revision `d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b`.
+uses the official crates.io Midge 0.4.0 release.
 Its streaming recovery checkpoints, exact delete/range-tombstone retirement,
 budgeted replay coverage and indexed SST candidate selection address concrete
 historical retention/recovery mechanisms. Residual recovery cost remains
-tracked in [Midge #754](https://github.com/cntryl/midge/issues/754), and the final
-published dependency and Fitz stable release remain gated by
+tracked in [Midge #754](https://github.com/cntryl/midge/issues/754), and the Fitz stable release remains gated by
 [Fitz #416](https://github.com/cntryl/fitz/issues/416). Follow the
 [migration guide](../operations/migration-guide.md) before any production cutover.

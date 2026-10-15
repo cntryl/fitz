@@ -2,9 +2,29 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## Midge 0.4.0
+
+Fitz now uses the official crates.io `cntryl-midge` 0.4.0 release. This replaces
+the 0.3.3 Git pin and introduces database FORMAT 8, SST V4, cloud WAL catalog v3,
+and cloud lease metadata version 3. Existing FORMAT 1–7 databases and older
+cloud catalogs are rejected; there is no in-place format migration.
+
+Stop writers, preserve the original database and cloud prefix, and export
+logical data with the previous broker while it can still read that data.
+Preserve application metadata needed to reconstruct TTL expiration. Import
+into a fresh database or cloud prefix using the new broker; do not copy old
+WAL, lease, catalog, or metadata files into it. Qualify reads, writes, shutdown,
+and restart recovery before cutover, including fresh-cache recovery for cloud
+storage. Rollback requires the preserved original store and previous broker;
+post-export writes require separate reconciliation.
+
+An unknown commit outcome is a terminal storage error: the write may have
+committed despite a failed acknowledgement. Reconcile after recovery instead
+of blindly retrying. See the [Midge 0.4.0 migration guide](https://github.com/cntryl/midge/blob/v0.4.0/docs/operations/migration-guide.md#032-to-040).
+
 ## Midge 0.3.2 to 0.3.3
 
-Fitz now embeds `cntryl-midge` 0.3.3, pinned to git rev
+The previous Fitz development version embedded `cntryl-midge` 0.3.3, pinned to git rev
 `d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b` because 0.3.3 is not yet tagged or
 published. Relative to 0.3.2, Midge FORMAT 4, SST V4, cloud control formats,
 and Fitz row encodings are unchanged, so no logical export/import is required.

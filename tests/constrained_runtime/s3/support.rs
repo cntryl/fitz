@@ -140,11 +140,11 @@ impl Campaign {
             &format!("{}wal/publication-catalog.v1.json", self.prefix),
             catalog_path.to_str().unwrap(),
         ]);
-        let catalog: Value =
-            serde_json::from_slice(&std::fs::read(&catalog_path).unwrap()).unwrap();
-        let segments = catalog["segments"]
-            .as_object()
-            .expect("authoritative WAL segments");
+        let catalog = cntryl_midge::__internal::wal::catalog::WalPublicationCatalog::decode(
+            &std::fs::read(&catalog_path).unwrap(),
+        )
+        .unwrap();
+        let segments = catalog.entries();
         let listing = self.aws(&[
             "s3api",
             "list-objects-v2",
@@ -166,13 +166,16 @@ impl Campaign {
             .expect("nonempty cloud store");
         let mut snapshot = Snapshot {
             catalog_bytes: segments
-                .values()
-                .map(|segment| segment["size_bytes"].as_u64().unwrap())
+                .iter()
+                .map(cntryl_midge::__internal::wal::catalog::CatalogEntry::size_bytes)
                 .sum(),
             remote_wal_bytes: 0,
             remote_wal_objects: 0,
             sst_objects: 0,
-            segment_ids: segments.keys().map(|id| id.parse().unwrap()).collect(),
+            segment_ids: segments
+                .iter()
+                .map(cntryl_midge::__internal::wal::catalog::CatalogEntry::id)
+                .collect(),
         };
         snapshot.segment_ids.sort_unstable();
         for object in objects {

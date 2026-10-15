@@ -115,9 +115,18 @@ same position. This is a clean client wire break; older CREATE payloads are
 rejected and there is no negotiation shim. New writes use versioned rows that
 persist the mode.
 
+## Midge 0.4 storage formats
+
+Fitz embeds the official crates.io `cntryl-midge` 0.4.0 release: database FORMAT 8,
+SST V4, cloud WAL catalog v3, and cloud lease metadata version 3. FORMAT 1–7 and
+older cloud catalogs are rejected with no in-place migration. Fitz row encodings
+are unchanged, but existing stores require logical export with the previous
+broker and import into a fresh store. Rollback uses the preserved original store
+and previous broker. See the [migration guide](../operations/migration-guide.md#midge-040).
+
 ## Midge 0.3 cloud storage metadata
 
-Fitz now embeds `cntryl-midge` 0.3.3 (git rev `d5bcb607`, not yet tagged). For
+The previous Midge 0.3 development dependency (git rev `d5bcb607`) used the following formats. For
 provider-backed cloud storage it commits immutable `FORMAT`, manifest, journal, and intent generations under
 `metadata/generations/`, fenced by a version 2 lease descriptor and a version 2
 DDL registry. It rejects the legacy lease and mutable metadata written by Midge
