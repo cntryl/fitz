@@ -1,6 +1,18 @@
 use super::*;
 use std::sync::Arc;
 
+#[test]
+fn should_preserve_unknown_commit_outcome_as_a_backend_error() {
+    // Arrange
+    let error = cntryl_midge::MidgeError::OutcomeUnknown("reconcile after recovery".into());
+
+    // Act
+    let mapped = KvStore::map_error(&error);
+
+    // Assert
+    assert!(matches!(mapped, KvError::BackendError(message) if message == error.to_string()));
+}
+
 fn local_store() -> (Arc<cntryl_midge::Engine>, KvStore, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let engine = Arc::new(

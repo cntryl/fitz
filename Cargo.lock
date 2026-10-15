@@ -366,8 +366,9 @@ dependencies = [
 
 [[package]]
 name = "cntryl-midge"
-version = "0.3.3"
-source = "git+https://github.com/cntryl/midge?rev=d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b#d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ceb09637cb5a72ea5c2ab0a12ddcf6fc4da2181ec883407d00673c4a92962e3"
 dependencies = [
  "arc-swap",
  "base64 0.23.1",
@@ -383,6 +384,7 @@ dependencies = [
  "hostname",
  "libc",
  "lz4_flex",
+ "md-5",
  "num_cpus",
  "parking_lot",
  "percent-encoding",
@@ -435,9 +437,9 @@ dependencies = [
 
 [[package]]
 name = "combine"
-version = "4.6.8"
+version = "4.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
+checksum = "4356eba6976435498d05a311ee9fc486da3bc81c200d3f0d7dd9703b41913f92"
 dependencies = [
  "bytes",
  "memchr",
@@ -1570,6 +1572,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "md-5"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
+dependencies = [
+ "cfg-if",
+ "digest",
 ]
 
 [[package]]

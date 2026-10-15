@@ -78,6 +78,7 @@ impl KvStore {
             | cntryl_midge::MidgeError::MemoryModeViolation(_)
             | cntryl_midge::MidgeError::Fenced(_)
             | cntryl_midge::MidgeError::LeaseIndeterminate(_)
+            | cntryl_midge::MidgeError::OutcomeUnknown(_)
             | cntryl_midge::MidgeError::LeaseEpochExhausted
             | cntryl_midge::MidgeError::ResourceLimit(_)
             | cntryl_midge::MidgeError::UnflushedDataPresent { .. } => {

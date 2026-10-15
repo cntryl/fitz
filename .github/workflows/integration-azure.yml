@@ -1,4 +1,4 @@
-name: Integration AZURE
+name: Integration Azure
 
 on:
   pull_request:
