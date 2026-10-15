@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { createQuery } from "@askrjs/askr/data";
-import { createQueryTestRegistry, queryState } from "@askrjs/askr/testing";
+import { createQueryTestRegistry, mockQuery } from "@askrjs/askr/testing";
 import { mountRoute } from "./page-smoke/harness";
 
 const ROUTED_QUERY_KEY = "test/page-smoke-runtime";
@@ -18,7 +18,7 @@ function RoutedQueryFixture() {
 describe("page smoke runtime", () => {
   it("injects query fixtures into routed renders", async () => {
     const registry = createQueryTestRegistry();
-    registry.set(ROUTED_QUERY_KEY, queryState.fresh({ source: "registry" }));
+    registry.set(ROUTED_QUERY_KEY, mockQuery({ source: "registry" }));
 
     const root = await mountRoute(
       "/runtime-fixture",

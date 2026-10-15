@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { click, queryState } from "@askrjs/askr/testing";
+import { click, mockQuery } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions, resetQueries } from "./page-smoke/harness";
 import {
   domainOverviews,
@@ -16,7 +16,7 @@ const mocks = pageSmokeMocks();
 
 describe("admin domain inventory smoke tests", () => {
   it("shows active subscription counts in the stream resource inventory", async () => {
-    mocks.queryStates.inventory = queryState.fresh(
+    mocks.queryStates.inventory = mockQuery(
       {
         ...inventory,
         realms: [
@@ -76,7 +76,7 @@ describe("admin domain inventory smoke tests", () => {
   it("renders domain overview error states with page-specific framing", async () => {
     for (const page of domainOverviews) {
       resetQueries();
-      mocks.queryStates[page.inventoryKey] = queryState.error(
+      mocks.queryStates[page.inventoryKey] = mockQuery.error(
         new Error(page.errorText),
         undefined,
         queryOptions(),
@@ -93,7 +93,7 @@ describe("admin domain inventory smoke tests", () => {
     }
   });
   it("shows scoped lease waiters without inferring root health from counters", async () => {
-    mocks.queryStates.inventory = queryState.fresh(
+    mocks.queryStates.inventory = mockQuery(
       {
         ...inventory,
         realms: [
@@ -127,7 +127,7 @@ describe("admin domain inventory smoke tests", () => {
   });
   it("shows dead-letter evidence in the queue inventory", async () => {
     // Arrange
-    mocks.queryStates.queueInventory = queryState.fresh(
+    mocks.queryStates.queueInventory = mockQuery(
       {
         ...queueInventory,
         realms: [
@@ -158,7 +158,7 @@ describe("admin domain inventory smoke tests", () => {
 
   it("omits the status reason until domain health loads", async () => {
     // Arrange
-    mocks.queryStates.kv = queryState.loading(queryOptions());
+    mocks.queryStates.kv = mockQuery.loading(queryOptions());
 
     // Act
     const { default: KvPage } = await import("@/pages/app/kv");
@@ -170,7 +170,7 @@ describe("admin domain inventory smoke tests", () => {
 
   it("keeps family-wide health off realm pages", async () => {
     // Arrange
-    mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
+    mocks.queryStates.inventory = mockQuery(inventory, queryOptions());
 
     // Act
     const { default: LeasePage } = await import("@/pages/app/lease");
@@ -183,7 +183,7 @@ describe("admin domain inventory smoke tests", () => {
 
   it("keeps health unavailable when the inventory exposes activity only", async () => {
     // Arrange
-    mocks.queryStates.lease = queryState.fresh(leaseOverview, queryOptions());
+    mocks.queryStates.lease = mockQuery(leaseOverview, queryOptions());
 
     // Act
     const { default: LeasePage } = await import("@/pages/app/lease");
@@ -216,7 +216,8 @@ describe("admin domain inventory smoke tests", () => {
     document.body.innerHTML = "";
     const { default: SchedulePage } = await import("@/pages/app/schedule");
     const schedule = await mountRoute("/schedule", "/schedule", SchedulePage);
-    expect(schedule.textContent).toContain("Next run");
+    expect(schedule.textContent).not.toContain("Next run");
+    expect(schedule.textContent).toContain("Enabled schedules");
     expect(schedule.querySelector(".domain-status-reason")).toBeNull();
   });
 
@@ -251,7 +252,7 @@ describe("admin domain inventory smoke tests", () => {
     expect(root.querySelector('a[href="/admin/1/kv/default/ops/primary"]')).not.toBeNull();
   });
   it("omits KV telemetry columns that the inventory did not report", async () => {
-    mocks.queryStates.inventory = queryState.fresh(
+    mocks.queryStates.inventory = mockQuery(
       {
         ...inventory,
         realms: [
@@ -284,7 +285,7 @@ describe("admin domain inventory smoke tests", () => {
       resetQueries();
 
       if (page.inventoryKey === "queueInventory") {
-        mocks.queryStates.queueInventory = queryState.fresh(
+        mocks.queryStates.queueInventory = mockQuery(
           {
             ...queueInventory,
             realms: [],
@@ -292,7 +293,7 @@ describe("admin domain inventory smoke tests", () => {
           queryOptions(),
         );
       } else {
-        mocks.queryStates.inventory = queryState.fresh(
+        mocks.queryStates.inventory = mockQuery(
           {
             ...inventory,
             realms: [],
@@ -314,7 +315,7 @@ describe("admin domain inventory smoke tests", () => {
     const { default: LeasePage } = await import("@/pages/app/lease");
     const { default: LeaseResourcePage } = await import("@/pages/app/lease-resource");
 
-    mocks.queryStates.inventory = queryState.fresh(
+    mocks.queryStates.inventory = mockQuery(
       {
         ...inventory,
         realms: [],
@@ -339,7 +340,7 @@ describe("admin domain inventory smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.leaseResourceRows = queryState.fresh(
+    mocks.queryStates.leaseResourceRows = mockQuery(
       {
         items: [],
         limit: 50,
@@ -359,7 +360,7 @@ describe("admin domain inventory smoke tests", () => {
     const { default: NoticePage } = await import("@/pages/app/notice");
     const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
 
-    mocks.queryStates.inventory = queryState.fresh(
+    mocks.queryStates.inventory = mockQuery(
       {
         ...inventory,
         realms: [],
@@ -381,7 +382,7 @@ describe("admin domain inventory smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.noticeResourceRows = queryState.fresh(
+    mocks.queryStates.noticeResourceRows = mockQuery(
       {
         ...noticeResourceRows,
         operations: [],
@@ -397,7 +398,7 @@ describe("admin domain inventory smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.noticeOperationRows = queryState.fresh(
+    mocks.queryStates.noticeOperationRows = mockQuery(
       {
         ...noticeOperationRows,
         observations: [],
@@ -415,7 +416,7 @@ describe("admin domain inventory smoke tests", () => {
   });
   it("renders lease ownership remaining time on the lease resource page", async () => {
     const leaseExpiresAt = new Date(Date.now() + 5000).toISOString();
-    mocks.queryStates.leaseResourceRows = queryState.fresh(
+    mocks.queryStates.leaseResourceRows = mockQuery(
       {
         items: [
           {
@@ -458,7 +459,7 @@ describe("admin domain inventory smoke tests", () => {
     expect(root.textContent).not.toContain("not crash-safe continuity");
   });
   it("keeps Notice delivery health unavailable without scoped drop evidence", async () => {
-    mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
+    mocks.queryStates.inventory = mockQuery(inventory, queryOptions());
 
     const { default: NoticePage } = await import("@/pages/app/notice");
     const root = await mountRoute("/notice", "/notice", NoticePage);

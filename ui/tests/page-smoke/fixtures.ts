@@ -616,7 +616,7 @@ export const domainOverviews = [
     errorText: "Schedule inventory unavailable",
     loadingText: "Loading schedule inventory...",
     resourceHref: "/admin/1/schedule/default/ops/primary",
-    statLabels: ["Pending claims", "Next run", "Enabled schedules"],
+    statLabels: ["Pending claims", "Enabled schedules"],
   },
   {
     assertText: "Stream inventory",

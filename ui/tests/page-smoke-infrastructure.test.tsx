@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { click, queryState, submit, type } from "@askrjs/askr/testing";
+import { click, mockQuery, submit, type } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
 import { diagnostics, systemOverview, topologyOverview } from "./page-smoke/fixtures";
 
@@ -56,14 +56,14 @@ describe("admin infrastructure smoke tests", () => {
       },
     };
 
-    mocks.queryStates.system = queryState.fresh(
+    mocks.queryStates.system = mockQuery(
       {
         ...systemOverview,
         diagnostics: diagnosticsWithSuggestion,
       },
       queryOptions(),
     );
-    mocks.queryStates.topology = queryState.fresh(
+    mocks.queryStates.topology = mockQuery(
       {
         ...topologyOverview,
         diagnostics: diagnosticsWithSuggestion,
@@ -113,12 +113,12 @@ describe("admin infrastructure smoke tests", () => {
   });
   it("marks diagnostics partial when secondary inputs fail", async () => {
     const { default: DiagnosticsPage } = await import("@/pages/app/diagnostics");
-    mocks.queryStates.metrics = queryState.error(
+    mocks.queryStates.metrics = mockQuery.error(
       new Error("metrics unavailable"),
       undefined,
       queryOptions(),
     );
-    mocks.queryStates.topology = queryState.error(
+    mocks.queryStates.topology = mockQuery.error(
       new Error("topology unavailable"),
       undefined,
       queryOptions(),
@@ -170,7 +170,7 @@ describe("admin infrastructure smoke tests", () => {
   it("keeps dashboard behavior visible while refresh is in flight", async () => {
     const { default: Home } = await import("@/pages/app/home");
 
-    mocks.queryStates.topology = queryState.refreshing(topologyOverview, queryOptions());
+    mocks.queryStates.topology = mockQuery.refreshing(topologyOverview, queryOptions());
 
     const root = await mountRoute("/", "/", Home);
     const text = root.textContent ?? "";

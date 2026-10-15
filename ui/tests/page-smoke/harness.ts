@@ -2,7 +2,7 @@ import { afterEach, beforeEach, vi } from "vite-plus/test";
 import { createRouteRegistry, route } from "@askrjs/askr/router";
 import type { DataRuntime, Query } from "@askrjs/askr/data";
 import type { RouteHandler } from "@askrjs/askr/router";
-import { queryState, renderRoute, type RenderResult } from "@askrjs/askr/testing";
+import { mockQuery, renderRoute, type RenderResult } from "@askrjs/askr/testing";
 
 type MutationState = {
   abort: ReturnType<typeof vi.fn>;
@@ -186,7 +186,7 @@ import {
 } from "./fixtures";
 
 export function resetQueries() {
-  mocks.queryStates.currentSession = queryState.fresh(
+  mocks.queryStates.currentSession = mockQuery(
     {
       authenticated: true,
       routeFamilies: ["1"],
@@ -195,11 +195,11 @@ export function resetQueries() {
     },
     queryOptions(),
   );
-  mocks.queryStates.activeSessions = queryState.fresh(activeSessions, queryOptions());
-  mocks.queryStates.system = queryState.fresh(systemOverview, queryOptions());
-  mocks.queryStates.topology = queryState.fresh(topologyOverview, queryOptions());
-  mocks.queryStates.metrics = queryState.fresh(metricsOverview, queryOptions());
-  mocks.queryStates.search = queryState.fresh(
+  mocks.queryStates.activeSessions = mockQuery(activeSessions, queryOptions());
+  mocks.queryStates.system = mockQuery(systemOverview, queryOptions());
+  mocks.queryStates.topology = mockQuery(topologyOverview, queryOptions());
+  mocks.queryStates.metrics = mockQuery(metricsOverview, queryOptions());
+  mocks.queryStates.search = mockQuery(
     {
       limit: 100,
       query: "orders",
@@ -235,55 +235,52 @@ export function resetQueries() {
     },
     queryOptions(),
   );
-  mocks.queryStates.queue = queryState.fresh(queueOverview, queryOptions());
-  mocks.queryStates.queueArea = queryState.fresh(queueAreaDetail, queryOptions());
-  mocks.queryStates.queueDeadLetters = queryState.fresh([], queryOptions());
-  mocks.queryStates.queueInventory = queryState.fresh(queueInventory, queryOptions());
-  mocks.queryStates.queueRealm = queryState.fresh(queueRealmDetail, queryOptions());
-  mocks.queryStates.queueResource = queryState.fresh(queueResource.detail, queryOptions());
-  mocks.queryStates.queueInflight = queryState.fresh(queueResource.inflight, queryOptions());
-  mocks.queryStates.queueTimeline = queryState.fresh(queueResource.timeline, queryOptions());
-  mocks.queryStates.kv = queryState.fresh(kvOverview, queryOptions());
-  mocks.queryStates.kvResourceDetail = queryState.fresh(kvResourceDetail, queryOptions());
-  mocks.queryStates.kvTransactions = queryState.fresh([], queryOptions());
-  mocks.queryStates.lease = queryState.fresh(leaseOverview, queryOptions());
-  mocks.queryStates.leaseRealm = queryState.fresh(leaseRealm, queryOptions());
-  mocks.queryStates.leaseArea = queryState.fresh(leaseArea, queryOptions());
-  mocks.queryStates.leaseResourceRows = queryState.fresh(
-    leaseResourceRowsFixture(),
-    queryOptions(),
-  );
-  mocks.queryStates.notice = queryState.fresh(noticeOverview, queryOptions());
-  mocks.queryStates.noticeRealm = queryState.fresh(noticeRealmInventory, queryOptions());
-  mocks.queryStates.noticeArea = queryState.fresh(noticeAreaInventory, queryOptions());
-  mocks.queryStates.noticeResourceRows = queryState.fresh(noticeResourceRows, queryOptions());
-  mocks.queryStates.noticeOperationRows = queryState.fresh(noticeOperationRows, queryOptions());
-  mocks.queryStates.rpc = queryState.fresh(rpcOverview, queryOptions());
-  mocks.queryStates.rpcRealm = queryState.fresh(rpcRealm, queryOptions());
-  mocks.queryStates.rpcArea = queryState.fresh(rpcArea, queryOptions());
-  mocks.queryStates.rpcResource = queryState.fresh(rpcResource, queryOptions());
-  mocks.queryStates.rpcOperation = queryState.fresh(rpcOperation, queryOptions());
-  mocks.queryStates.schedule = queryState.fresh(scheduleOverview, queryOptions());
-  mocks.queryStates.scheduleRealm = queryState.fresh(scheduleRealm, queryOptions());
-  mocks.queryStates.scheduleArea = queryState.fresh(scheduleArea, queryOptions());
-  mocks.queryStates.scheduleOperation = queryState.fresh(scheduleOperation, queryOptions());
-  mocks.queryStates.scheduleResource = queryState.fresh(scheduleResource, queryOptions());
-  mocks.queryStates.scheduleExecutionObservations = queryState.fresh(
+  mocks.queryStates.queue = mockQuery(queueOverview, queryOptions());
+  mocks.queryStates.queueArea = mockQuery(queueAreaDetail, queryOptions());
+  mocks.queryStates.queueDeadLetters = mockQuery([], queryOptions());
+  mocks.queryStates.queueInventory = mockQuery(queueInventory, queryOptions());
+  mocks.queryStates.queueRealm = mockQuery(queueRealmDetail, queryOptions());
+  mocks.queryStates.queueResource = mockQuery(queueResource.detail, queryOptions());
+  mocks.queryStates.queueInflight = mockQuery(queueResource.inflight, queryOptions());
+  mocks.queryStates.queueTimeline = mockQuery(queueResource.timeline, queryOptions());
+  mocks.queryStates.kv = mockQuery(kvOverview, queryOptions());
+  mocks.queryStates.kvResourceDetail = mockQuery(kvResourceDetail, queryOptions());
+  mocks.queryStates.kvTransactions = mockQuery([], queryOptions());
+  mocks.queryStates.lease = mockQuery(leaseOverview, queryOptions());
+  mocks.queryStates.leaseRealm = mockQuery(leaseRealm, queryOptions());
+  mocks.queryStates.leaseArea = mockQuery(leaseArea, queryOptions());
+  mocks.queryStates.leaseResourceRows = mockQuery(leaseResourceRowsFixture(), queryOptions());
+  mocks.queryStates.notice = mockQuery(noticeOverview, queryOptions());
+  mocks.queryStates.noticeRealm = mockQuery(noticeRealmInventory, queryOptions());
+  mocks.queryStates.noticeArea = mockQuery(noticeAreaInventory, queryOptions());
+  mocks.queryStates.noticeResourceRows = mockQuery(noticeResourceRows, queryOptions());
+  mocks.queryStates.noticeOperationRows = mockQuery(noticeOperationRows, queryOptions());
+  mocks.queryStates.rpc = mockQuery(rpcOverview, queryOptions());
+  mocks.queryStates.rpcRealm = mockQuery(rpcRealm, queryOptions());
+  mocks.queryStates.rpcArea = mockQuery(rpcArea, queryOptions());
+  mocks.queryStates.rpcResource = mockQuery(rpcResource, queryOptions());
+  mocks.queryStates.rpcOperation = mockQuery(rpcOperation, queryOptions());
+  mocks.queryStates.schedule = mockQuery(scheduleOverview, queryOptions());
+  mocks.queryStates.scheduleRealm = mockQuery(scheduleRealm, queryOptions());
+  mocks.queryStates.scheduleArea = mockQuery(scheduleArea, queryOptions());
+  mocks.queryStates.scheduleOperation = mockQuery(scheduleOperation, queryOptions());
+  mocks.queryStates.scheduleResource = mockQuery(scheduleResource, queryOptions());
+  mocks.queryStates.scheduleExecutionObservations = mockQuery(
     scheduleResource.executionObservations,
     queryOptions(),
   );
-  mocks.queryStates.scheduleMissedHandoffs = queryState.fresh(
+  mocks.queryStates.scheduleMissedHandoffs = mockQuery(
     scheduleOperation.missedHandoffs,
     queryOptions(),
   );
-  mocks.queryStates.stream = queryState.fresh(streamOverview, queryOptions());
-  mocks.queryStates.streamRealm = queryState.fresh(streamRealm, queryOptions());
-  mocks.queryStates.streamArea = queryState.fresh(streamArea, queryOptions());
-  mocks.queryStates.streamResource = queryState.fresh(streamResource.detail, queryOptions());
-  mocks.queryStates.streamRecords = queryState.fresh(streamResource.records, queryOptions());
-  mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
-  mocks.queryStates.kvRows = queryState.fresh(kvRows, queryOptions());
-  mocks.queryStates.kvValue = queryState.fresh(
+  mocks.queryStates.stream = mockQuery(streamOverview, queryOptions());
+  mocks.queryStates.streamRealm = mockQuery(streamRealm, queryOptions());
+  mocks.queryStates.streamArea = mockQuery(streamArea, queryOptions());
+  mocks.queryStates.streamResource = mockQuery(streamResource.detail, queryOptions());
+  mocks.queryStates.streamRecords = mockQuery(streamResource.records, queryOptions());
+  mocks.queryStates.inventory = mockQuery(inventory, queryOptions());
+  mocks.queryStates.kvRows = mockQuery(kvRows, queryOptions());
+  mocks.queryStates.kvValue = mockQuery(
     {
       area: "ops",
       found: true,

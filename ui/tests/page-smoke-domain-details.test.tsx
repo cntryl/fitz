@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { click, queryState } from "@askrjs/askr/testing";
+import { click, mockQuery } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions, resetQueries } from "./page-smoke/harness";
 import { inventory, scheduleResource } from "./page-smoke/fixtures";
 
@@ -8,7 +8,7 @@ const mocks = pageSmokeMocks();
 
 describe("admin domain detail smoke tests", () => {
   it("shows pending schedule claims without interpreting family counters as health", async () => {
-    mocks.queryStates.inventory = queryState.fresh(
+    mocks.queryStates.inventory = mockQuery(
       {
         ...inventory,
         realms: [
@@ -35,6 +35,7 @@ describe("admin domain detail smoke tests", () => {
     expect(text).toContain("Realms");
     expect(text).toContain("Claims pending");
     expect(text).toContain("Pending claims");
+    expect(text).not.toContain("Next run");
     expect(root.querySelector(".domain-status-reason")).toBeNull();
     expect(root.querySelector('a[href="/admin/1/schedule/default"]')).toBeTruthy();
   });
@@ -43,6 +44,7 @@ describe("admin domain detail smoke tests", () => {
     const realmRoot = await mountRoute("/schedule/default", "/schedule/{realm}", SchedulePage);
     expect(realmRoot.textContent).toContain("Schedule realm");
     expect(realmRoot.textContent).toContain("Areas");
+    expect(realmRoot.textContent).not.toContain("Next run");
     expect(realmRoot.querySelector('a[href="/admin/1/schedule/default/ops"]')).toBeTruthy();
     cleanupApp(realmRoot);
     document.body.innerHTML = "";
@@ -62,7 +64,7 @@ describe("admin domain detail smoke tests", () => {
       Array.from(areaRoot.querySelectorAll("#schedule-inventory-table th")).map((th) =>
         th.textContent?.trim(),
       ),
-    ).toEqual(["Route", "Pending claims", "Next run", "Enabled schedules"]);
+    ).toEqual(["Route", "Pending claims", "Enabled schedules"]);
     cleanupApp(areaRoot);
     document.body.innerHTML = "";
 
@@ -124,9 +126,45 @@ describe("admin domain detail smoke tests", () => {
     expect(text).not.toContain("No live listeners visible");
     expect(text).not.toContain("Back to schedule area");
   });
+  it("labels schedule resources without borrowing an operation from inventory", async () => {
+    // Arrange
+    mocks.queryStates.inventory = mockQuery(
+      {
+        ...inventory,
+        realms: [
+          {
+            realm: "default",
+            areas: [
+              {
+                area: "ops",
+                resources: ["primary"],
+                resourceEntries: [
+                  { resource: "primary", operation: "handoff", schedulesActive: 2 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      queryOptions(),
+    );
+    const { default: SchedulePage } = await import("@/pages/app/schedule");
+
+    // Act
+    const root = await mountRoute(
+      "/schedule/default/ops",
+      "/schedule/{realm}/{area}",
+      SchedulePage,
+    );
+
+    // Assert
+    const link = root.querySelector('a[href="/admin/1/schedule/default/ops/primary"]');
+    expect(link?.textContent).toBe("schedule://default/ops/primary");
+    expect(root.textContent).not.toContain("handoff");
+  });
   it("keeps next-run evidence in the schedule rows without a duplicate single-stat block", async () => {
     // Arrange
-    mocks.queryStates.scheduleResource = queryState.fresh(
+    mocks.queryStates.scheduleResource = mockQuery(
       {
         ...scheduleResource,
         executionObservations: { ...scheduleResource.executionObservations, has_more: true },
@@ -148,7 +186,7 @@ describe("admin domain detail smoke tests", () => {
   });
 
   it("links to the next schedule operation page when more rows exist", async () => {
-    mocks.queryStates.scheduleResource = queryState.fresh(
+    mocks.queryStates.scheduleResource = mockQuery(
       {
         ...scheduleResource,
         executionObservations: {
@@ -192,7 +230,7 @@ describe("admin domain detail smoke tests", () => {
   });
 
   it("keeps operation schedule status off the resource page", async () => {
-    mocks.queryStates.scheduleResource = queryState.fresh(
+    mocks.queryStates.scheduleResource = mockQuery(
       {
         ...scheduleResource,
         detail: {
@@ -226,7 +264,7 @@ describe("admin domain detail smoke tests", () => {
     expect(formatScheduleTiming("not-a-timestamp", reference)).toBe("not-a-timestamp");
   });
   it("keeps Stream consumer progress unavailable without consumer positions", async () => {
-    mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
+    mocks.queryStates.inventory = mockQuery(inventory, queryOptions());
 
     const { default: StreamPage } = await import("@/pages/app/stream");
     const root = await mountRoute("/stream", "/stream", StreamPage);
@@ -283,7 +321,7 @@ describe("admin domain detail smoke tests", () => {
 
     for (const page of cases) {
       resetQueries();
-      mocks.queryStates[page.key] = queryState.error(
+      mocks.queryStates[page.key] = mockQuery.error(
         new Error(`${page.key} unavailable`),
         undefined,
         queryOptions(),
@@ -339,7 +377,7 @@ describe("admin domain detail smoke tests", () => {
     ).toEqual(["Offset", "Body", "Action"]);
   });
   it("keeps RPC route health unavailable at the family scope", async () => {
-    mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
+    mocks.queryStates.inventory = mockQuery(inventory, queryOptions());
 
     const { default: RpcPage } = await import("@/pages/app/rpc");
     const root = await mountRoute("/rpc", "/rpc", RpcPage);
@@ -415,7 +453,7 @@ describe("admin domain detail smoke tests", () => {
     expect(calls?.textContent).toContain("worker-1");
   });
   it("does not repeat resource totals above route-level RPC rows", async () => {
-    mocks.queryStates.rpcResource = queryState.fresh(
+    mocks.queryStates.rpcResource = mockQuery(
       {
         area: "ops",
         operations: [
@@ -455,7 +493,7 @@ describe("admin domain detail smoke tests", () => {
     expect(root.textContent).toContain("Handled by live workers");
   });
   it("does not double count wildcard RPC workers or invent handled totals", async () => {
-    mocks.queryStates.rpcResource = queryState.fresh(
+    mocks.queryStates.rpcResource = mockQuery(
       {
         area: "ops",
         operations: [

@@ -2,8 +2,8 @@ import type { JSXElement } from "@askrjs/askr/foundations/structures";
 import { Block, Section, Text } from "@askrjs/themes/components";
 
 export interface DomainDataSectionProps {
-  actions?: JSXElement | JSX.Element | null;
-  children: JSXElement | JSX.Element;
+  actions?: JSXElement | null;
+  children: JSXElement;
   class?: string;
   description?: string;
   id: string;
