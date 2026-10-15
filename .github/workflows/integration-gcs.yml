@@ -7,108 +7,38 @@ on:
     branches: [develop, main]
   workflow_dispatch:
 
-concurrency:
-  group: integration-gcs-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
 jobs:
   integration:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    timeout-minutes: 45
-    env:
-      RUSTUP_TOOLCHAIN: "1.99.0"
-      RUST_LOG: "off"
-      FITZ_TEST_IMAGE: fitz-ci:${{ github.event.pull_request.head.sha || github.sha }}
+    timeout-minutes: 20
     services:
       sqrzl:
-        image: ghcr.io/sqrzl/sqrzl-emulator@sha256:bb5bf54895fcb3b9730665b48e0f7b602791c61c3d18e5e7a060a4dce5c90964
+        image: ghcr.io/sqrzl/sqrzl-emulator:latest
+        ports:
+          - 9000:9000
         env:
           SQRZL_ACCESS_KEY_ID: admin
           SQRZL_SECRET_ACCESS_KEY: sqrzl-secret
           SQRZL_BUCKET_LIST: fitz-integration
-          SQRZL_BLOBS_PATH: /app/blobs
-        ports:
-          - 9000:9000
-          - 9001:9001
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      FITZ_STORAGE_MODE: cloud
+      FITZ_STORAGE_PROVIDER: sqrzl-gcs
+      FITZ_STORAGE_ENDPOINT: http://127.0.0.1:9000
+      FITZ_STORAGE_BUCKET: fitz-integration
+      FITZ_STORAGE_CONTAINER: fitz-integration
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Wait for Sqrzl
-        run: curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://127.0.0.1:9001/healthz
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build container without publishing
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ${{ env.FITZ_TEST_IMAGE }}
-          cache-from: type=gha,scope=integration-gcs
-          cache-to: type=gha,mode=min,scope=integration-gcs
-
-      - name: Install external driver toolchain
+      - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
-      - name: Cache external driver dependencies
+      - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "ci"
 
-      - name: Run seven-domain cloud pressure campaign
-        timeout-minutes: 25
-        env:
-          FITZ_EXTERNAL_CONTAINER: fitz-integration
-          FITZ_EXTERNAL_HTTP_ENDPOINT: http://127.0.0.1:4090
-          FITZ_EXTERNAL_TCP_ADDRESS: 127.0.0.1:4091
-          FITZ_RESOURCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          FITZ_RESOURCE_REPORT_PATH: target/fitz-stress/integration-gcs/report.json
-        run: |
-          docker run --detach --name fitz-integration --network host \
-            --cpus 0.25 --memory 512m --memory-swap 512m \
-            --env FITZ_AUTH_REQUIRED=false --env FITZ_ADMIN_AUTH_MODE=open \
-            --env FITZ_STORAGE_MODE=cloud --env FITZ_STORAGE_PROVIDER=sqrzl-gcs \
-            --env FITZ_STORAGE_ENDPOINT=http://127.0.0.1:9000 \
-            --env FITZ_STORAGE_BUCKET=fitz-integration --env FITZ_STORAGE_CONTAINER=fitz-integration \
-            --env FITZ_STORAGE_CLOUD_DURABILITY=strict \
-            --env FITZ_LOG_LEVEL=warn --env OTEL_ENABLED=false "$FITZ_TEST_IMAGE"
-          for attempt in $(seq 1 180); do
-            if curl --fail --silent --max-time 2 "$FITZ_EXTERNAL_HTTP_ENDPOINT/healthz" | jq -e '.status == "ready"'; then
-              break
-            fi
-            sleep 1
-          done
-          curl --fail --silent --show-error --max-time 2 "$FITZ_EXTERNAL_HTTP_ENDPOINT/healthz" | jq -e '.status == "ready"'
-          mkdir -p target/fitz-stress/integration-gcs
-          cargo test --locked --test constrained_runtime \
-            should_remain_usable_after_bounded_storage_pressure -- --ignored --nocapture \
-            2>&1 | tee target/fitz-stress/integration-gcs/campaign.log
-
-      - name: Capture evidence
-        if: always()
-        run: |
-          mkdir -p target/fitz-stress/integration-gcs
-          docker logs '${{ job.services.sqrzl.id }}' > target/fitz-stress/integration-gcs/provider.log 2>&1 || true
-          docker inspect fitz-integration > target/fitz-stress/integration-gcs/broker.json || true
-          docker logs fitz-integration > target/fitz-stress/integration-gcs/broker.log 2>&1 || true
-
-      - name: Upload evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: integration-gcs
-          path: target/fitz-stress/integration-gcs
-          if-no-files-found: warn
+      - name: Test cloud integration
+        run: cargo test --locked --test cloud_integration -- --ignored

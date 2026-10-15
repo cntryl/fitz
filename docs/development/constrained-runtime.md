@@ -7,10 +7,9 @@ qualification can also target native Linux ARM64. This is a survival and
 correctness qualification, not a throughput promise or a maximum-capacity claim.
 The CI workflow runs backend and frontend validation. Separate
 `integration-s3.yml`, `integration-azure.yml`, and `integration-gcs.yml` workflows
-run on pull requests and pushes to develop/main, or manually. Each uses Sqrzl as
-an Actions service. S3 runs the retention/recovery campaigns below; Azure and GCS
-run the seven-domain pressure campaign against their respective cloud protocols.
-The local-disk campaign remains a manual qualification.
+run a focused Rust KV/Stream commit and fresh-cache recovery test against a
+Sqrzl Actions service. The resource qualification campaigns described here are
+manual and require a separately built runtime image.
 
 The campaign probes all seven domains, enqueues 16,384 uniquely identified 4KiB
 Queue messages through 64 connections, verifies every delivery and ACK, checks
@@ -62,7 +61,7 @@ also checks Stream writes after Fast Queue forces automatic SST publication.
 
 ## S3 WAL retention and crash recovery
 
-Four process-level campaigns run in `integration-s3.yml` against the same native runtime image
+Four manual process-level campaigns run against the same native runtime image
 at 0.25 CPU / 512MiB / no additional swap. A digest-pinned Sqrzl container and
 the external driver run outside the broker's resource limit. Fitz uses its native
 S3-compatible provider with best-effort Queue persistence and strict durability
