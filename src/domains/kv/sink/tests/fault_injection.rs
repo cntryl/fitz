@@ -201,7 +201,6 @@ fn should_release_kv_resource_lock_after_commit() {
     .expect("commit KV transaction");
     let _ = receive_envelope(&mailbox, "commit ack envelope");
 
-
     // Assert
     assert!(sink.resource_locks_are_empty_for_tests());
     assert_eq!(sink.active_transaction_count(), 0);
