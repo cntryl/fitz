@@ -116,6 +116,27 @@ impl TestServer {
         .await
     }
 
+    /// Start a transport test server using an explicit storage backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if storage, runtime, or listeners cannot be initialized.
+    pub async fn start_with_storage(
+        storage_mode: crate::boot::runtime::StorageMode,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options(
+            false,
+            None,
+            storage_mode,
+            false,
+            crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
+        )
+        .await
+    }
+
     /// Start a benchmark-only memory server with capacity for fixed-duration write loops.
     ///
     /// Ordinary tests keep Midge's default memory configuration. Tier 4 write benchmarks

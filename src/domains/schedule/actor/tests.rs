@@ -672,3 +672,7 @@ fn should_delete_pending_occurrence_given_cancel_after_due_claim() {
 include!("tests/more.rs");
 
 mod cache_retention;
+
+mod invariants;
+
+mod state_model;

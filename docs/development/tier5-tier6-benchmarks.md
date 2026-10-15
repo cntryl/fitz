@@ -255,19 +255,21 @@ or workload artifacts; dynamic values must not change measurement identity.
 - [Tier 6 workflow](../../.github/workflows/bench-tier6.yml): monthly on the first
   day at 07:00 UTC, or manually dispatched.
 
-Each workflow uses seven independent domain jobs with `fail-fast: false`, a
-90-minute job limit, a 60-second progress watchdog, and a 4,500-second framework
-hard timeout. They follow Midge's workload-matrix layout, with one wildcard Cargo
-command per job and concurrency per branch that queues overlapping campaigns.
-The target startup defaults prevent warmup or repeated samples from multiplying
-the owned hour. These workflows do not run on pushes
-or pull requests and do not change the existing benchmark performance gates.
+Each workflow uses one benchmark job with an independent workload matrix and
+`fail-fast: false`. Tier 5 includes seven domain concurrency workloads and six
+fixed Queue drain workloads; Tier 6 includes seven domain soak workloads.
+Each job checks out the repository, installs Rust, runs its Cargo benchmark,
+and uploads both artifact directories, including after failure.
 
-Artifact uploads run even after failure and include both artifact directories.
-Names include the tier, workload, commit SHA, run ID, and attempt. The benchmark
-command's exit status is preserved when its output is copied to a log. Interpret
-partial evidence alongside the failure and elapsed window; uploading artifacts
-does not turn an interrupted run into a pass.
+Manual profiles select 60-second smoke, 600-second standard, or 3,600-second
+extended active windows. Scheduled domain campaigns retain the full hour.
+Fixed Queue drains retain their fixed message counts regardless of profile.
+Jobs use a 90-minute limit and a 60-second progress watchdog, with framework
+hard timeouts of 960, 1,500, or 4,500 seconds respectively. Artifact names
+include the tier, target where needed, workload, and commit SHA. An artifact
+upload does not turn an interrupted or failed campaign into a pass.
+These workflows run manually or on their existing schedules, never on pushes
+or pull requests.
 
 The opt-in [Queue offered-rate pressure campaign](queue-pressure-campaign.md)
 adds an independently scheduled producer workload with a fixed consumer,

@@ -1,7 +1,8 @@
 //! Queue domain advanced tests
 //!
-//! Tests multi-consumer scenarios, crash recovery with in-flight messages,
-//! and atomicity guarantees across process restarts.
+//! Tests multi-consumer scenarios and actor reconstruction over a retained
+//! in-memory engine. These cases do not prove process-crash durability; the
+//! local-process flush/reopen cases live in the Queue actor fast-flush tests.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -127,9 +128,9 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     assert_eq!(all_ids.len(), 30, "Should have 30 unique message IDs");
 }
 
-/// Test crash recovery: in-flight messages are automatically redelivered
+/// Recreating the actor releases reservations over retained engine state.
 #[test]
-fn should_redeliver_messages_after_crash() {
+fn should_redeliver_messages_after_actor_recreation() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(
@@ -172,8 +173,8 @@ fn should_redeliver_messages_after_crash() {
         }
 
         // At this point:
-        // - 5 messages in inflight (in-memory, will be lost)
-        // - 5 messages in ready queue (will be persisted)
+        // - 5 messages in inflight (actor-local, discarded with the actor)
+        // - 5 messages in the retained engine's ready index
         assert_eq!(actor.ready_len(), 5);
         assert_eq!(actor.inflight.len(), 5);
     }
@@ -191,12 +192,12 @@ fn should_redeliver_messages_after_crash() {
     assert_eq!(
         actor.ready_len(),
         10,
-        "All 10 messages should be in ready queue after restart"
+        "All 10 messages should be in ready queue after actor reconstruction"
     );
     assert_eq!(
         actor.inflight.len(),
         0,
-        "Inflight map should be empty after restart"
+        "Inflight map should be empty after actor reconstruction"
     );
 
     // Verify recovery can deliver all original messages
@@ -228,9 +229,9 @@ fn should_redeliver_messages_after_crash() {
     );
 }
 
-/// Test crash recovery preserves FIFO order across multi-digit IDs.
+/// Actor reconstruction preserves ready-index order across multi-digit IDs.
 #[test]
-fn should_preserve_fifo_order_after_recovery() {
+fn should_preserve_fifo_order_after_actor_recreation() {
     // Arrange
     let reference_store = Arc::new(
         cntryl_midge::Engine::open(
@@ -326,9 +327,9 @@ fn should_preserve_fifo_order_after_recovery() {
     assert_eq!(recovered_bodies, expected_order);
 }
 
-/// Test delayed message visibility survives crash (V-002: time semantics fix)
+/// Delayed visibility remains intact when an actor reloads retained engine state.
 #[test]
-fn should_preserve_delayed_visibility_across_restart() {
+fn should_preserve_delayed_visibility_after_actor_recreation() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(
@@ -385,9 +386,9 @@ fn should_preserve_delayed_visibility_across_restart() {
     }
 }
 
-/// Test atomic batch enqueue: no ID collisions after crash (V-001: atomicity fix)
+/// Actor reconstruction reserves new IDs after the previous allocation range.
 #[test]
-fn should_prevent_id_collisions_across_crash() {
+fn should_prevent_id_collisions_after_actor_recreation() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(
@@ -585,7 +586,7 @@ fn should_dlq_message_after_max_attempts() {
 
     let replayed = recovered
         .replay_dead_letter(msg_id)
-        .expect("replay retained dead letter after restart");
+        .expect("replay retained dead letter after actor reconstruction");
     assert!(replayed);
 
     match recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {

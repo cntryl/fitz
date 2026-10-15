@@ -258,3 +258,35 @@ fn make_queued_request(
         expires_at,
     )
 }
+
+#[test]
+fn should_isolate_queued_rpc_expiration_with_shared_uuid_domain_invariant() {
+    // Arrange
+    let mut table = RpcPendingTable::new();
+    let correlation_id = uuid::Uuid::new_v4();
+    let now = Instant::now();
+    for (family, seconds) in [(RouteFamily::new(1), 1), (RouteFamily::new(2), 60)] {
+        let queued = make_queued_request(
+            family,
+            &Route::new("rpc://realm/app/work"),
+            correlation_id,
+            now + Duration::from_secs(seconds),
+        );
+        table.track_queued_for_family(family, correlation_id, queued);
+    }
+
+    // Act
+    let expired = table
+        .next_expired_queued_key(now + Duration::from_secs(2))
+        .expect("first family deadline");
+    let removed = table.remove_queued_for_family(expired.family, &expired.correlation_id);
+    let next = table.next_expired_queued_key(now + Duration::from_secs(2));
+
+    // Assert
+    assert_eq!(expired.family, RouteFamily::new(1));
+    assert!(removed.is_some());
+    assert_eq!(next, None);
+    assert_eq!(table.live_len(), 1);
+    assert!(!table.contains_correlation_in_family(RouteFamily::new(1), &correlation_id));
+    assert!(table.contains_correlation_in_family(RouteFamily::new(2), &correlation_id));
+}

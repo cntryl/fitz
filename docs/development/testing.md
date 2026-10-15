@@ -9,7 +9,9 @@ Use Rust's normal split between unit and integration tests.
 - Unit tests live next to the module they exercise under `src/`.
 - Integration tests live under `tests/`.
 - Domain end-to-end flows use `tests/*_e2e.rs`.
-- Semantic boundary checks live under `tests/semantic_boundaries.rs`.
+- Cross-domain semantic boundary checks live under `tests/multi_domain_e2e.rs`.
+- [Domain behavior coverage](domain-behavior-coverage.md) maps invariants to actor,
+  transport, and recovery tests.
 
 Cover backend behavior in Rust and UI behavior in TypeScript. Use the existing
 test runners; do not add Python files or standalone scripts to reproduce or
@@ -38,6 +40,13 @@ The complete CI correctness pass is:
 ```bash
 cargo test --locked --workspace
 ```
+
+Queue's generated reservation model checks token/session ownership, visibility,
+expiry, extension and disconnect after every transition. Schedule's generated
+model checks definitions and live/persisted claims through upserts, cancellation,
+ACK and reconstruction over a retained engine. RPC's generated cleanup-order
+model checks cancellation credit against stale and unauthorized acknowledgements.
+These are bounded state-machine tests, not exhaustive interleaving proofs.
 
 Midge continues to own WAL, manifest, corruption, low-level writer fencing,
 and storage failpoint coverage. Fitz owns the domain contract at its actor,

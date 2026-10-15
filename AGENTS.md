@@ -58,6 +58,11 @@ Right:
 - When editing UI tooling, prefer ESM and `.js` over `.mjs` for repo-owned files.
 - When `public/openapi.yml` or the UI client changes, regenerate adapters with `npm run gen:adapters` from `ui/`.
 
+## Workflow Changes
+- Create, edit, delete, rename, or restore files in `.github/workflows/` only when the user explicitly requests workflow changes. Requests for code, tests, dependencies, releases, or general cleanup do not implicitly authorize workflow changes.
+- Keep authorized workflow changes within the requested scope. Do not restore removed workflows unless explicitly requested.
+- Keep all workflows simple. Add complexity only when a concrete requirement makes it necessary.
+
 ## Jev (TypeSafe Judgments)
 - Jev is TypeSafe's judgment model, called with `POST https://api.typesafe.ai/v1/systemone` and `model: "jev-latest"`.
 - Read the bearer key from `~/.config/typesafe/jev.key`; never print, commit, or pass the key as a command-line argument.

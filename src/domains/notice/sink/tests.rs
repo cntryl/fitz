@@ -217,3 +217,5 @@ fn refresh_notice_admin_snapshot(sink: &NoticeDomain) {
 mod delivery_and_limits;
 mod fault_injection;
 mod lifecycle_and_admin;
+
+mod invariants;

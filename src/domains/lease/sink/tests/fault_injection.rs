@@ -209,3 +209,40 @@ fn should_reject_previous_fencing_token_after_same_owner_reacquires_expired_leas
     assert_eq!(current_leases.len(), 1);
     assert_eq!(current_leases[0].fencing_token, new_token);
 }
+
+#[test]
+fn should_reject_stale_lease_renewal_after_reacquire_domain_invariant() {
+    // Arrange
+    let route = "lease://acme/locks/resource";
+    let frames = [
+        (400, encode_lease_acquire(route, "owner", 30)),
+        (402, encode_lease_release(route, "owner", 1)),
+        (400, encode_lease_acquire(route, "owner", 30)),
+        (401, encode_lease_extend(route, "owner", 1, 60)),
+        (401, encode_lease_extend(route, "owner", 2, 60)),
+    ];
+
+    // Act
+    for prepared in [false, true] {
+        let responses = lease_response_payloads(prepared, &frames);
+
+        // Assert
+        let encode = crate::dispatch::protocol::lease_codec::encode_domain_response;
+        assert_eq!(
+            responses[0].as_ref(),
+            encode(&LeaseResponse::Acquired { fencing_token: 1 })
+        );
+        assert_eq!(
+            responses[2].as_ref(),
+            encode(&LeaseResponse::Acquired { fencing_token: 2 })
+        );
+        assert_eq!(
+            responses[3].as_ref(),
+            encode(&LeaseResponse::Fenced { current_token: 2 })
+        );
+        assert_eq!(
+            responses[4].as_ref(),
+            encode(&LeaseResponse::Extended { fencing_token: 2 })
+        );
+    }
+}

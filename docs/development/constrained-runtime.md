@@ -1,9 +1,15 @@
 # Constrained runtime qualification
 
-Fitz must remain usable with a fraction of a CPU and 512MiB RAM. CI qualifies a
-specific local-disk envelope on native Linux AMD64 and ARM64: 0.25 CPU, 512MiB
-RAM, swap disabled, and an external load generator. This is a survival and
-correctness gate, not a throughput promise or a maximum-capacity claim.
+Fitz must remain usable with a fraction of a CPU and 512MiB RAM. The campaigns
+qualify a specific envelope: 0.25 CPU, 512MiB RAM, swap disabled, and an
+external load generator. Automated workflows use native Linux AMD64; manual
+qualification can also target native Linux ARM64. This is a survival and
+correctness qualification, not a throughput promise or a maximum-capacity claim.
+The CI workflow runs backend and frontend validation. Separate
+`integration-s3.yml`, `integration-azure.yml`, and `integration-gcs.yml` workflows
+run a focused Rust KV/Stream commit and fresh-cache recovery test against a
+Sqrzl Actions service. The resource qualification campaigns described here are
+manual and require a separately built runtime image.
 
 The campaign probes all seven domains, enqueues 16,384 uniquely identified 4KiB
 Queue messages through 64 connections, verifies every delivery and ACK, checks
@@ -43,8 +49,8 @@ cargo test --locked --test constrained_runtime \
 Wait for `/healthz` to report `ready` before starting the driver. The driver
 checks the actual Docker limits before and after the campaign and writes its
 accounting, health timings, container state, and supplied source SHA to the
-report. CI also retains Docker stats and logs; on failure it retains the local
-store before removing its disposable container. Docker CLI memory stats report
+report. Capture Docker stats and logs alongside the report; on failure, retain
+the local store before removing the disposable container. Docker CLI memory stats report
 a working set; the container's hard memory limit includes file cache.
 
 The Queue optimization exposed a Midge SST index bug: an unsafe trie successor
@@ -55,7 +61,7 @@ also checks Stream writes after Fast Queue forces automatic SST publication.
 
 ## S3 WAL retention and crash recovery
 
-CI also runs four process-level campaigns against the same native runtime image
+Four manual process-level campaigns run against the same native runtime image
 at 0.25 CPU / 512MiB / no additional swap. A digest-pinned Sqrzl container and
 the external driver run outside the broker's resource limit. Fitz uses its native
 S3-compatible provider with best-effort Queue persistence and strict durability
@@ -109,9 +115,26 @@ Reports retain the supplied source SHA, resolved runtime image ID, provider
 digest, actual Docker resource limits, authoritative WAL catalog and remote
 object inventories, readiness timings, container lifecycle, broker logs and
 Docker memory samples. The driver requires Docker and AWS CLI v2. Run the
-ignored `s3::` tests in `constrained_runtime` with
-`--features recovery-qualification` and one test thread; `ci.yml`
-contains the complete disposable provider setup and required environment.
+ignored `s3::` tests against the exact source checkout used to build the image:
+
+```sh
+export FITZ_TEST_IMAGE=fitz-resource-local
+export FITZ_S3_PROVIDER_IMAGE=ghcr.io/sqrzl/sqrzl-emulator@sha256:bb5bf54895fcb3b9730665b48e0f7b602791c61c3d18e5e7a060a4dce5c90964
+export FITZ_S3_TEST_ENDPOINT=http://127.0.0.1:9000
+export FITZ_S3_NETWORK=fitz-s3-qualification
+export FITZ_S3_REPORT_DIR=target/fitz-stress/s3-recovery
+export FITZ_RESOURCE_SOURCE_SHA="$(git rev-parse HEAD)"
+docker network create "$FITZ_S3_NETWORK"
+docker run --detach --name fitz-s3-provider --network "$FITZ_S3_NETWORK" \
+  --publish 127.0.0.1:9000:9000 --publish 127.0.0.1:9001:9001 \
+  --env SQRZL_ACCESS_KEY_ID=admin --env SQRZL_SECRET_ACCESS_KEY=easy-peasy \
+  --env SQRZL_BLOBS_PATH=/app/blobs "$FITZ_S3_PROVIDER_IMAGE"
+curl --fail --retry 30 --retry-delay 1 --retry-all-errors \
+  http://127.0.0.1:9001/healthz
+mkdir -p "$FITZ_S3_REPORT_DIR"
+cargo test --locked --features recovery-qualification --test constrained_runtime s3:: \
+  -- --ignored --nocapture --test-threads=1
+```
 
 These campaigns qualify native S3 protocol behavior against an emulator. They
 do not qualify production AWS latency, an unmeasured historic backlog, or reuse
