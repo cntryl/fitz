@@ -59,7 +59,9 @@ remote WAL payloads to at most 128 MiB within two minutes of the last write.
 During active writes the catalog must remain below the incident's 8,702,002
 serialized bytes; after maintenance catches up it must be at most 1 MiB.
 These are explicit workload acceptance limits. Both an orderly restart and a SIGKILL followed by complete cache loss
-must recover all 32,768 exact event bodies. The broker retains the same CPU,
+must recover all 32,768 exact event bodies. SIGKILL and cache loss happen first,
+before any driver-requested checkpoint can rescue unflushed data. The orderly
+restart follows the complete cold readback. The broker retains the same CPU,
 RAM, swap and readiness limits as the catalog case. One 3,600-second deadline
 covers writes, maintenance, both restarts and full readback. This window bounds
 the complete load campaign, not a throughput SLA; readiness remains 180 seconds

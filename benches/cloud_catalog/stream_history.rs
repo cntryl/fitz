@@ -165,11 +165,6 @@ async fn qualify(
         serde_json::to_value(retire(campaign, &original, &broker).await).unwrap();
     report["before_restart"] = inspect_container(&broker.name);
     campaign.report(report);
-    broker.checkpoint();
-    broker.restart();
-    report["orderly_ready_seconds"] = json!(broker.ready().await);
-    report["verified_after_orderly_restart"] = json!(io::verify(broker.address(), progress).await);
-    campaign.report(report);
     let crash = Instant::now();
     broker.crash();
     report["frozen"] = serde_json::to_value(campaign.snapshot("stream-frozen")).unwrap();
@@ -187,6 +182,11 @@ async fn qualify(
     );
     report["verified_after_cold_restart"] = json!(verified);
     report["verified_payload_bytes"] = json!(verified * u64::from(io::BODY_BYTES));
+    campaign.report(report);
+    broker.checkpoint();
+    broker.restart();
+    report["orderly_ready_seconds"] = json!(broker.ready().await);
+    report["verified_after_orderly_restart"] = json!(io::verify(broker.address(), progress).await);
     campaign.report(report);
     broker.checkpoint();
     broker.remove();
