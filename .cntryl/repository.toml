@@ -12,6 +12,7 @@ exclude_paths = ["skills", "ui"]
 
 [benchmarks]
 documentation = [
+  "docs/development/cloud-catalog-pressure.md",
   "docs/development/benchmarks.md",
   "docs/development/bench-targets.md",
   "docs/operations/performance-tuning.md",
@@ -27,6 +28,7 @@ additional_workflows = [
 not_pr_gate_phrase = "not a pull-request performance gate"
 
 [benchmarks.manual_targets]
+tier5_cloud_catalog = "Resource-capped cloud catalog recovery requires a disposable S3 provider and an explicit immutable broker image"
 queue_pressure = "Bounded Queue diagnostic requires an explicit resource envelope"
 queue_drain_latency = "Finite Queue RESERVE and ACK timing diagnostic requires explicit invocation"
 schedule_pressure = "Forced-clock Schedule diagnostic requires an explicit resource envelope"

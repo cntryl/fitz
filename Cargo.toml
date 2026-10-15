@@ -370,6 +370,12 @@ required-features = ["benchkit"]
 
 # Tier 5: Full TCP concurrency/saturation sweeps.
 [[bench]]
+name = "tier5_cloud_catalog"
+harness = false
+path = "benches/tier5_cloud_catalog.rs"
+required-features = ["benchkit", "stress-soak", "recovery-qualification"]
+
+[[bench]]
 name = "tier5_queue_drains"
 harness = false
 path = "benches/tier5_queue_drains.rs"

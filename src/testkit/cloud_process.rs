@@ -1,3 +1,5 @@
+//! External resource-capped broker lifecycle and disposable S3 evidence helpers.
+//! Only compiled for the opt-in recovery driver; not a production API.
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -19,7 +21,8 @@ fn command(program: &str, args: &[&str]) -> Vec<u8> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct Snapshot {
+pub struct Snapshot {
+    pub serialized_catalog_bytes: u64,
     pub catalog_bytes: u64,
     pub remote_wal_bytes: u64,
     pub remote_wal_objects: usize,
@@ -27,7 +30,7 @@ pub(super) struct Snapshot {
     pub segment_ids: Vec<u64>,
 }
 
-pub(super) struct Campaign {
+pub struct Campaign {
     pub id: String,
     pub directory: PathBuf,
     bucket: String,
@@ -37,6 +40,7 @@ pub(super) struct Campaign {
 
 impl Campaign {
     #[cfg(feature = "recovery-qualification")]
+    #[must_use]
     pub fn location(&self) -> cntryl_midge::CloudStorageLocation {
         cntryl_midge::CloudStorageLocation::new(
             cntryl_midge::CloudProviderConfig::s3_compatible_static(
@@ -50,6 +54,11 @@ impl Campaign {
     }
 
     #[cfg(feature = "recovery-qualification")]
+    /// Read and retain an object from the disposable provider.
+    ///
+    /// # Panics
+    /// Panics if the CLI request, temporary file, or local read fails.
+    #[must_use]
     pub fn download_object(&self, key: &str) -> Vec<u8> {
         let file = tempfile::NamedTempFile::new().unwrap();
         self.aws(&[
@@ -65,6 +74,10 @@ impl Campaign {
     }
 
     #[cfg(feature = "recovery-qualification")]
+    /// Publish an offline fixture object to the disposable provider.
+    ///
+    /// # Panics
+    /// Panics if the temporary file or CLI upload fails.
     pub fn upload_object(&self, key: &str, bytes: &[u8]) {
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), bytes).unwrap();
@@ -80,6 +93,25 @@ impl Campaign {
         ]);
     }
 
+    /// Upload an offline fixture using the CLI's bounded concurrent transfers.
+    ///
+    /// # Panics
+    /// Panics if the directory path is not Unicode or a CLI transfer fails.
+    pub fn upload_directory(&self, directory: &std::path::Path) {
+        self.aws(&[
+            "s3",
+            "sync",
+            directory.to_str().unwrap(),
+            &format!("s3://{}/{}", self.bucket, self.prefix),
+            "--only-show-errors",
+        ]);
+    }
+
+    /// Create an isolated provider bucket and evidence directory.
+    ///
+    /// # Panics
+    /// Panics on missing configuration, a non-loopback endpoint, or setup failure.
+    #[must_use]
     pub fn new(phase: &str) -> Self {
         let endpoint = std::env::var("FITZ_S3_TEST_ENDPOINT").expect("loopback Sqrzl endpoint");
         assert!(
@@ -129,6 +161,10 @@ impl Campaign {
         result.stdout
     }
 
+    /// Save and decode catalog authority alongside the remote object inventory.
+    ///
+    /// # Panics
+    /// Panics if inventory, catalog decoding, or evidence persistence fails.
     pub fn snapshot(&self, phase: &str) -> Snapshot {
         let catalog_path = self.directory.join(format!("{phase}-catalog.json"));
         self.aws(&[
@@ -165,6 +201,7 @@ impl Campaign {
             .as_array()
             .expect("nonempty cloud store");
         let mut snapshot = Snapshot {
+            serialized_catalog_bytes: std::fs::metadata(&catalog_path).unwrap().len(),
             catalog_bytes: segments
                 .iter()
                 .map(cntryl_midge::__internal::wal::catalog::CatalogEntry::size_bytes)
@@ -201,6 +238,10 @@ impl Campaign {
         snapshot
     }
 
+    /// Persist a workload report with runtime source and provider identity.
+    ///
+    /// # Panics
+    /// Panics on missing identity configuration or evidence serialization/write failure.
     pub fn report(&self, measurements: &Value) {
         let report = json!({
             "source_sha": std::env::var("FITZ_RESOURCE_SOURCE_SHA").expect("source SHA"),
@@ -215,7 +256,7 @@ impl Campaign {
     }
 }
 
-pub(super) struct Broker {
+pub struct Broker {
     pub name: String,
     http: String,
     tcp: SocketAddr,
@@ -227,6 +268,11 @@ pub(super) struct Broker {
 }
 
 impl Broker {
+    /// Start an isolated broker under the declared CPU, memory and swap limits.
+    ///
+    /// # Panics
+    /// Panics on missing configuration, Docker failure, or incorrect container limits.
+    #[must_use]
     pub fn start(campaign: &Campaign) -> Self {
         let name = format!("fitz-s3-{}-{}", campaign.id, uuid::Uuid::new_v4());
         let image = std::env::var("FITZ_TEST_IMAGE").expect("exact source runtime image");
@@ -296,15 +342,17 @@ impl Broker {
             removed: false,
             readiness_started,
         };
-        super::super::inspect_container(&broker.name);
+        let _ = inspect_container(&broker.name);
         broker.sample_memory();
         broker
     }
 
+    #[must_use]
     pub fn address(&self) -> SocketAddr {
         self.tcp
     }
 
+    #[must_use]
     pub fn endpoint(&self) -> String {
         self.http.clone()
     }
@@ -354,16 +402,30 @@ impl Broker {
         }
     }
 
+    /// Wait for strict readiness, measured from this container's startup attempt.
+    ///
+    /// # Panics
+    /// Panics if the broker exits, evidence capture fails, or readiness exceeds 180 seconds.
     pub async fn ready(&mut self) -> f64 {
         self.ready_since(self.readiness_started).await
     }
 
+    /// Wait for strict readiness against an existing crash/start timestamp.
+    ///
+    /// # Panics
+    /// Panics on invalid responses, process exit, evidence failure, or the 180-second deadline.
     pub async fn ready_since(&mut self, started: Instant) -> f64 {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
             .unwrap();
         loop {
+            let state: Vec<Value> =
+                serde_json::from_slice(&command("docker", &["inspect", &self.name])).unwrap();
+            if state[0]["State"]["Running"] != true {
+                self.capture();
+                panic!("broker exited before readiness: {}", state[0]["State"]);
+            }
             let mut ready = false;
             if let Ok(response) = client.get(format!("{}/healthz", self.http)).send().await {
                 if response.status().is_success() {
@@ -386,6 +448,10 @@ impl Broker {
         }
     }
 
+    /// Prepare an explicitly persisted fixture through orderly broker shutdown.
+    ///
+    /// # Panics
+    /// Panics if shutdown does not exit successfully without an OOM kill.
     pub fn checkpoint(&mut self) {
         // Explicit fixture preparation, not an enqueue durability guarantee.
         self.capture();
@@ -404,6 +470,10 @@ impl Broker {
         self.capture();
     }
 
+    /// Abruptly stop the broker and verify SIGKILL rather than an OOM kill.
+    ///
+    /// # Panics
+    /// Panics on Docker/evidence failure or an unexpected exit status.
     pub fn crash(&mut self) {
         self.capture();
         command("docker", &["kill", "--signal", "KILL", &self.name]);
@@ -415,6 +485,10 @@ impl Broker {
         self.capture();
     }
 
+    /// Restart the retained container and original cache volume.
+    ///
+    /// # Panics
+    /// Panics on Docker failure or invalid published endpoint addresses.
     pub fn restart(&mut self) {
         self.readiness_started = Instant::now();
         command("docker", &["start", &self.name]);
@@ -432,12 +506,34 @@ impl Broker {
         self.sample_memory();
     }
 
+    /// Capture evidence and remove this broker and its anonymous cache volume.
+    ///
+    /// # Panics
+    /// Panics if evidence capture or Docker removal fails.
     pub fn remove(&mut self) {
         self.capture();
         self.stop_sampler();
         command("docker", &["rm", "--force", "--volumes", &self.name]);
         self.removed = true;
     }
+}
+
+/// Verify the deployed resource envelope and absence of an OOM or automatic restart.
+///
+/// # Panics
+/// Panics if Docker inspection fails or any declared resource/lifecycle invariant differs.
+#[must_use]
+pub fn inspect_container(name: &str) -> Value {
+    let containers: Vec<Value> =
+        serde_json::from_slice(&command("docker", &["inspect", name])).unwrap();
+    let container = containers.into_iter().next().expect("broker container");
+    assert_eq!(container["HostConfig"]["NanoCpus"], 250_000_000);
+    assert_eq!(container["HostConfig"]["Memory"], 536_870_912);
+    assert_eq!(container["HostConfig"]["MemorySwap"], 536_870_912);
+    assert_eq!(container["State"]["Running"], true);
+    assert_eq!(container["State"]["OOMKilled"], false);
+    assert_eq!(container["RestartCount"], 0);
+    container
 }
 
 impl Drop for Broker {

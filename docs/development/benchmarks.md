@@ -229,6 +229,11 @@ accepts correctness and liveness evidence without claiming statistical quality.
 
 ## CI and Local Workflows
 
+The manual Tier 5 [`tier5_cloud_catalog`](cloud-catalog-pressure.md) workload
+qualifies catalog-heavy cold recovery and cloud-strict publication in a separate
+broker capped at 0.25 CPU / 512 MiB. It requires a disposable local S3 provider
+and an immutable runtime image; it is independent of the seven-domain sweeps.
+
 Benchmark workflows are scheduled or manually dispatched and are not a pull-request performance gate.
 
 Each tier has a dedicated workflow:

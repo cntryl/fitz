@@ -2,8 +2,7 @@
 #[cfg(feature = "recovery-qualification")]
 #[path = "s3/fixture.rs"]
 mod fixture;
-#[path = "s3/support.rs"]
-mod support;
+use fitz::testkit::cloud_process as support;
 #[path = "s3/workload.rs"]
 mod workload;
 
