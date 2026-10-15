@@ -150,10 +150,9 @@ impl Runtime {
             &crate::boot::domains::DomainSetupOptions {
                 route_families: vec![1, 2, 3, 4, 5, 6, 7],
                 schedule_write_policy: crate::domains::WritePolicy::BestEffort,
-                queue_write_policy: crate::domains::WritePolicy::BestEffort,
-                queue_recovery_write_policy: crate::domains::WritePolicy::Sync,
+
                 queue_fast_flush_interval: Some(Duration::from_millis(100)),
-                queue_fast_local_wal: false,
+
                 request_sync_write_policy: crate::domains::WritePolicy::Sync,
                 request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
                 rpc_request_timeout: None,

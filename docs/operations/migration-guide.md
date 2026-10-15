@@ -413,3 +413,17 @@ respectively.
 1. Execute smoke tests for each domain.
 2. Verify metrics continuity.
 3. Record upgrade notes and any required mitigations.
+
+## Queue persistence is always best effort
+
+Remove `FITZ_QUEUE_WRITE_POLICY=buffered` or `strict` before upgrading; those
+settings now fail startup. The legacy value `fast` is accepted, and leaving the
+setting unset selects the same unconditional best-effort behavior. Queue skips
+WAL in both local and cloud storage and persists in the background.
+
+An enqueue or ACK response does not guarantee crash recovery. Unpersisted
+mutations and ID reservations can be lost, lost ACKs can cause redelivery, and
+unpersisted IDs can be reused after a crash. Producers must regenerate missing
+work and consumers must tolerate duplicates. `FITZ_QUEUE_LOSS_WINDOW_MS` sets a
+target flush interval, not a durability deadline. Strict cloud durability for
+other domains does not change Queue acceptance.

@@ -9,7 +9,7 @@ Durability in Fitz depends on domain behavior, storage configuration, and commit
 | Notice | none; live fanout only |
 | Stream | committed history survives according to write mode |
 | KV | committed current state survives according to write mode |
-| Queue | backlog survives according to queue write policy |
+| Queue | best-effort persistence; only persisted backlog can recover |
 | RPC | none; workers and pending calls are live only |
 | Lease | none; ownership is live only |
 | Schedule | definitions and pending fire claims survive restart |
@@ -19,7 +19,7 @@ Durability in Fitz depends on domain behavior, storage configuration, and commit
 - In-memory storage does not provide crash survivability.
 - Local and blob/object-backed storage depend on backend characteristics and selected write policy.
 - Interpret acknowledgment timing in the context of the domain and operation.
-- Queue `fast` mode can lose accepted recent mutations before the background flush window closes.
+- Queue persistence is always best effort. Accepted enqueues, ACKs, and ID reservations can be lost before background persistence completes. Lost ACKs can cause redelivery; lost ID reservations can allow IDs to be reused. The flush interval is a target, not a durability deadline.
 - Stream and KV durability apply to committed data only; open sessions or transactions do not recover.
 - Notice, RPC, and Lease are deliberately ephemeral.
 

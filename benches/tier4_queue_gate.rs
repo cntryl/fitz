@@ -5,48 +5,46 @@ mod tier4_support;
 
 use crate::tier4_queue_support::{
     dimensions, measure_direct_lifecycle, measure_encoded_lifecycle, measure_transport_lifecycle,
-    QueueWriteMode, CANONICAL_PAYLOAD_SIZE,
+    CANONICAL_PAYLOAD_SIZE,
 };
 use crate::tier4_support::{LayerKind, StorageProfile, TransportKind};
 use cntryl_stress::{stress, StressContext};
 
 #[stress(tier = 4)]
-fn should_measure_memory_direct_sync_lifecycle(ctx: &mut StressContext) {
+fn should_measure_memory_direct_best_effort_lifecycle(ctx: &mut StressContext) {
     measure_direct_lifecycle(
         ctx,
         dimensions(
             "enqueue_reserve_ack_lifecycle",
             StorageProfile::Memory,
             LayerKind::Direct,
-            "sync",
+            "best_effort",
             CANONICAL_PAYLOAD_SIZE,
             1,
             "enqueue_reserve_ack",
             "queue_lifecycle",
             "regression_gate",
         ),
-        QueueWriteMode::Sync,
-        "memory_direct_sync_queue_lifecycle",
+        "memory_direct_best_effort_queue_lifecycle",
     );
 }
 
 #[stress(tier = 4)]
-fn should_measure_local_disk_encoded_sync_lifecycle(ctx: &mut StressContext) {
+fn should_measure_local_disk_encoded_best_effort_lifecycle(ctx: &mut StressContext) {
     measure_encoded_lifecycle(
         ctx,
         dimensions(
             "enqueue_reserve_ack_lifecycle",
             StorageProfile::LocalDisk,
             LayerKind::Encoded,
-            "sync",
+            "best_effort",
             CANONICAL_PAYLOAD_SIZE,
             1,
             "enqueue_reserve_ack",
             "queue_lifecycle",
             "regression_gate",
         ),
-        QueueWriteMode::Sync,
-        "local_disk_encoded_sync_queue_lifecycle",
+        "local_disk_encoded_best_effort_queue_lifecycle",
     );
 }
 

@@ -52,3 +52,75 @@ hint could hide an existing Stream epoch key after SST publication. Fitz pins
 the immutable upstream fix from Midge PR 775 until a registry release contains
 it. The Stream concurrency guard remains enforced. A focused actor regression
 also checks Stream writes after Fast Queue forces automatic SST publication.
+
+## S3 WAL retention and crash recovery
+
+CI also runs four process-level campaigns against the same native runtime image
+at 0.25 CPU / 512MiB / no additional swap. A digest-pinned Sqrzl container and
+the external driver run outside the broker's resource limit. Fitz uses its native
+S3-compatible provider with best-effort Queue persistence and strict durability
+for KV and other durable-domain writes. Provider
+failure fails the campaign; these tests never silently skip.
+
+The retention campaign prepares a catalog-authorized 64MiB historical KV
+WAL fixture before boot, then runs four enqueue/ACK cycles of 4,096 deterministic
+16KiB messages, totaling 256MiB of accepted Queue payload. It uses the ordinary automatic
+memtable and maintenance settings. Within 120 seconds of the final ACK, the
+catalog segments captured before boot must retire, SST objects
+must exist, and both
+catalog-authorized WAL and actual remote WAL objects must total at most 128MiB.
+Every accepted message ID and payload is verified before ACK, each cycle ends
+with an empty queue, and all 4,096 historical KV values are verified after
+retirement to reject premature deletion. This measures a fixed resource/workload envelope;
+it does not assert that every possible database has a universal WAL size cap.
+
+Two separate restart campaigns enqueue 4,096 best-effort 16KiB messages,
+allow a quiet background flush interval, finish orderly storage shutdown, restart, then send
+SIGKILL and verify exit 137 without an OOM kill. The frozen crash state must
+contain published SST objects. These tests recover a persisted 64MiB fixture;
+an enqueue response or orderly shutdown alone does not promise crash survival. The fixture preparation is
+included in the unchanged 1,200-second whole-case limit. The separate 640MiB
+KV fixture qualifies WAL-volume pressure.
+
+Each campaign either restarts with the same cache or removes the container and
+its anonymous data volume before creating a replacement with a fresh cache.
+Strict `/healthz` must report ready within 180 seconds measured from the crash
+attempt, including evidence capture, cache lifecycle, container startup and the
+configured 59-second crashed-writer lease. All checkpointed IDs and exact payloads
+must recover, be ACKed and leave the queue empty. The seven-domain smoke probe
+must also pass after recovery. Each whole campaign has a fixed 1,200-second
+deadline.
+
+The large-WAL campaign constructs a separate catalog-authorized 640MiB backlog
+with the pinned Midge frame/record codecs, then opens the ordinary Fitz image
+with a completely empty cache. This backlog exceeds the broker's entire hard
+memory limit. Readiness has the same 180-second deadline, and 40,960 exact KV
+values must be readable through Fitz afterward. Fixture construction runs
+outside the resource cap and occurs with no active writer. It qualifies large
+WAL recovery; the two Queue campaigns separately prove recovery of explicitly
+checkpointed Queue state. They do not qualify durability of unflushed Queue acceptance. Only the external driver enables the
+`recovery-qualification` feature; the production image uses its normal features.
+
+Startup validation and inventory consume storage rows incrementally so Queue,
+Stream, and Schedule do not retain unrelated KV payloads while selecting their
+own rows. This avoids copying the fixture's entire KV state into a startup scan.
+
+Reports retain the supplied source SHA, resolved runtime image ID, provider
+digest, actual Docker resource limits, authoritative WAL catalog and remote
+object inventories, readiness timings, container lifecycle, broker logs and
+Docker memory samples. The driver requires Docker and AWS CLI v2. Run the
+ignored `s3::` tests in `constrained_runtime` with
+`--features recovery-qualification` and one test thread; `ci.yml`
+contains the complete disposable provider setup and required environment.
+
+These campaigns qualify native S3 protocol behavior against an emulator. They
+do not qualify production AWS latency, an unmeasured historic backlog, or reuse
+of a Fitz 0.1.0 storage prefix. Fitz 0.1.0 resolved Midge 0.1.1; current develop
+pins Midge 0.3.3 revision `d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b`.
+Its streaming recovery checkpoints, exact delete/range-tombstone retirement,
+budgeted replay coverage and indexed SST candidate selection address concrete
+historical retention/recovery mechanisms. Residual recovery cost remains
+tracked in [Midge #754](https://github.com/cntryl/midge/issues/754), and the final
+published dependency and Fitz stable release remain gated by
+[Fitz #416](https://github.com/cntryl/fitz/issues/416). Follow the
+[migration guide](../operations/migration-guide.md) before any production cutover.

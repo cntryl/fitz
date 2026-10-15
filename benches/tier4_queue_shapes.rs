@@ -5,7 +5,7 @@ mod tier4_support;
 
 use crate::tier4_queue_support::{
     dimensions, measure_direct_lifecycle, measure_encoded_lifecycle, measure_transport_lifecycle,
-    QueueWriteMode, CANONICAL_PAYLOAD_SIZE,
+    CANONICAL_PAYLOAD_SIZE,
 };
 use crate::tier4_support::{LayerKind, StorageProfile, TransportKind};
 use cntryl_stress::{stress, StressContext};
@@ -13,14 +13,13 @@ use cntryl_stress::{stress, StressContext};
 fn direct_dimensions(
     storage: StorageProfile,
     layer: LayerKind,
-    write_mode: QueueWriteMode,
     payload_size: usize,
 ) -> crate::tier4_support::Tier4Dimensions<'static> {
     dimensions(
         "enqueue_reserve_ack_shape",
         storage,
         layer,
-        write_mode.label(),
+        "best_effort",
         payload_size,
         1,
         "enqueue_reserve_ack",
@@ -30,62 +29,41 @@ fn direct_dimensions(
 }
 
 #[stress(tier = 4)]
-fn should_characterize_local_disk_direct_sync_lifecycle(ctx: &mut StressContext) {
+fn should_characterize_local_disk_direct_best_effort_lifecycle(ctx: &mut StressContext) {
     measure_direct_lifecycle(
         ctx,
         direct_dimensions(
             StorageProfile::LocalDisk,
             LayerKind::Direct,
-            QueueWriteMode::Sync,
             CANONICAL_PAYLOAD_SIZE,
         ),
-        QueueWriteMode::Sync,
-        "local_disk_direct_sync_queue_lifecycle",
+        "local_disk_direct_best_effort_queue_lifecycle",
     );
 }
 
 #[stress(tier = 4)]
-fn should_characterize_memory_encoded_sync_lifecycle(ctx: &mut StressContext) {
+fn should_characterize_memory_encoded_best_effort_lifecycle(ctx: &mut StressContext) {
     measure_encoded_lifecycle(
         ctx,
         direct_dimensions(
             StorageProfile::Memory,
             LayerKind::Encoded,
-            QueueWriteMode::Sync,
             CANONICAL_PAYLOAD_SIZE,
         ),
-        QueueWriteMode::Sync,
-        "memory_encoded_sync_queue_lifecycle",
+        "memory_encoded_best_effort_queue_lifecycle",
     );
 }
 
 #[stress(tier = 4)]
-fn should_characterize_local_disk_direct_buffered_lifecycle(ctx: &mut StressContext) {
-    measure_direct_lifecycle(
-        ctx,
-        direct_dimensions(
-            StorageProfile::LocalDisk,
-            LayerKind::Direct,
-            QueueWriteMode::Buffered,
-            CANONICAL_PAYLOAD_SIZE,
-        ),
-        QueueWriteMode::Buffered,
-        "local_disk_direct_buffered_queue_lifecycle",
-    );
-}
-
-#[stress(tier = 4)]
-fn should_characterize_local_disk_encoded_buffered_lifecycle(ctx: &mut StressContext) {
+fn should_characterize_local_disk_encoded_best_effort_lifecycle(ctx: &mut StressContext) {
     measure_encoded_lifecycle(
         ctx,
         direct_dimensions(
             StorageProfile::LocalDisk,
             LayerKind::Encoded,
-            QueueWriteMode::Buffered,
             CANONICAL_PAYLOAD_SIZE,
         ),
-        QueueWriteMode::Buffered,
-        "local_disk_encoded_buffered_queue_lifecycle",
+        "local_disk_encoded_best_effort_queue_lifecycle",
     );
 }
 
@@ -95,13 +73,7 @@ macro_rules! payload_row {
         fn $name(ctx: &mut StressContext) {
             measure_direct_lifecycle(
                 ctx,
-                direct_dimensions(
-                    StorageProfile::Memory,
-                    LayerKind::Direct,
-                    QueueWriteMode::Sync,
-                    $payload_size,
-                ),
-                QueueWriteMode::Sync,
+                direct_dimensions(StorageProfile::Memory, LayerKind::Direct, $payload_size),
                 $measurement,
             );
         }
@@ -109,13 +81,13 @@ macro_rules! payload_row {
 }
 
 payload_row!(
-    should_characterize_memory_direct_sync_64b,
-    "memory_direct_sync_queue_lifecycle_64b",
+    should_characterize_memory_direct_best_effort_64b,
+    "memory_direct_best_effort_queue_lifecycle_64b",
     64
 );
 payload_row!(
-    should_characterize_memory_direct_sync_16k,
-    "memory_direct_sync_queue_lifecycle_16k",
+    should_characterize_memory_direct_best_effort_16k,
+    "memory_direct_best_effort_queue_lifecycle_16k",
     16 * 1_024
 );
 

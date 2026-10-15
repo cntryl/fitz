@@ -18,7 +18,6 @@ impl QueueActorRegistry {
         key: &QueueKey,
         store: &crate::domains::queue::actor::recovery_store::QueueStore,
         dedup_store: &Arc<crate::utils::idempotency::DedupStore>,
-        write_policy: crate::domains::WritePolicy,
         operation: impl FnOnce(&mut QueueActor) -> R,
     ) -> Result<(R, bool), String> {
         let now = Instant::now();
@@ -28,13 +27,12 @@ impl QueueActorRegistry {
                 Ok((operation(&mut entry.get_mut().actor), false))
             }
             Entry::Vacant(entry) => {
-                let actor = QueueActor::try_new_with_write_policy(
+                let actor = QueueActor::try_new(
                     key.family,
                     key.clone(),
                     store.clone(),
                     None,
                     dedup_store.clone(),
-                    write_policy,
                 )?;
                 let warm_actor = entry.insert(WarmQueueActor {
                     actor,

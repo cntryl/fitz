@@ -265,14 +265,15 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("stream validation failed: family={family} begin_tx: {e:?}"))?;
-        let iter = txn
-            .scan(&cntryl_midge::Query::new())
-            .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
+        let iter = crate::storage::domain_scan::scan_domain_rows(
+            &txn,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        )
+        .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
 
-        for (key, value) in iter
-            .try_collect()
-            .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?
-        {
+        for row in iter {
+            let (key, value) =
+                row.map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
             let validation = Self::validate_persisted_row(&key, &value);
             if let Err((category, error)) = validation {
                 return Err(format!(
@@ -543,8 +544,11 @@ impl StreamStore {
             KeyPrefix::PayloadBlob as u8,
         ];
 
-        let query = cntryl_midge::Query::new();
-        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
+        let iter = crate::storage::domain_scan::scan_domain_rows(
+            txn,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        )
+        .map_err(|e| format!("scan error: {e:?}"))?;
         for entry in iter {
             let (key, _value) = entry.map_err(|e| format!("scan error: {e:?}"))?;
             let suffix = crate::domains::stream::storage::stream_key_suffix(&key);

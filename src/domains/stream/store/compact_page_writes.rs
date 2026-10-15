@@ -10,7 +10,7 @@ use super::{
     CompressedCompactRealmPageValue, DiscriminatorWriteRowsParams, EventPayload, PostingEntry,
     PostingPageValue, PromotionCommitFailure, PromotionFrontierWriteRowsParams,
     PromotionTransactionFailure, PromotionWriteFailure, RealmCounterValue, ResourceMetaValue,
-    StreamStore, StreamWriteMode, GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
+    StreamStore, GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
@@ -134,22 +134,6 @@ impl StreamStore {
                 RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
             })?;
         Ok(actual == expected)
-    }
-
-    fn ensure_current_writer_epoch(
-        &self,
-        family: u64,
-        expected: u64,
-        epoch_key: &[u8],
-    ) -> Result<(), PromotionWriteFailure> {
-        if self
-            .verify_current_writer_epoch(family, expected, epoch_key)
-            .map_err(PromotionWriteFailure::Other)?
-        {
-            Ok(())
-        } else {
-            Err(PromotionWriteFailure::WriterFenced)
-        }
     }
 
     pub(super) fn build_global_page_records(
@@ -512,61 +496,70 @@ impl StreamStore {
             }
         };
         let end_global_offset = plan.last_global_offset.saturating_add(1);
-        let mut txn = match self.write_promotion_frontier_batch_rows(&params, &plan) {
-            Ok(txn) => txn,
-            Err(PromotionWriteFailure::WriterFenced) => {
-                self.resolve_global_range(
-                    params.family,
-                    params.first_global_offset,
-                    end_global_offset,
-                )
-                .map_err(PromotionCommitFailure::Resolved)?;
-                return Err(PromotionCommitFailure::Resolved(
-                    "ERR_STREAM_WRITER_FENCED".to_string(),
-                ));
-            }
-            Err(PromotionWriteFailure::ScopeConflict) => {
-                return Err(PromotionCommitFailure::ScopeConflict);
-            }
-            Err(PromotionWriteFailure::Other(error)) => {
-                return Err(PromotionCommitFailure::Retryable(error));
-            }
-        };
-        let resource_meta_after =
-            Self::persist_promotion_frontier_counters_and_metadata(&mut txn, &params, &plan)
-                .map_err(PromotionCommitFailure::Retryable)?;
-        match self.commit_promotion_frontier_tx(txn, params.family, params.mode) {
-            Ok(()) => {}
-            Err(PromotionTransactionFailure::WriteConflict) => {
-                let epoch_key = encode_family_writer_epoch_key();
-                match self.verify_current_writer_epoch(
-                    params.family,
-                    params.writer_epoch,
-                    &epoch_key,
-                ) {
-                    Ok(true) => {
-                        return Err(PromotionCommitFailure::ScopeConflict);
-                    }
-                    Ok(false) => {
-                        self.resolve_global_range(
-                            params.family,
-                            params.first_global_offset,
-                            end_global_offset,
-                        )
-                        .map_err(PromotionCommitFailure::Resolved)?;
-                        return Err(PromotionCommitFailure::Resolved(
-                            "ERR_STREAM_WRITER_FENCED".to_string(),
-                        ));
-                    }
-                    Err(error) => {
-                        return Err(PromotionCommitFailure::Retryable(error));
+        let admission = super::write_admission::StreamWriteAdmission::new(params.family);
+        let resource_meta_after = loop {
+            let mut txn = match self.write_promotion_frontier_batch_rows(&params, &plan) {
+                Ok(txn) => txn,
+                Err(PromotionWriteFailure::WriterFenced) => {
+                    self.resolve_global_range(
+                        params.family,
+                        params.first_global_offset,
+                        end_global_offset,
+                    )
+                    .map_err(PromotionCommitFailure::Resolved)?;
+                    return Err(PromotionCommitFailure::Resolved(
+                        "ERR_STREAM_WRITER_FENCED".to_string(),
+                    ));
+                }
+                Err(PromotionWriteFailure::ScopeConflict) => {
+                    return Err(PromotionCommitFailure::ScopeConflict);
+                }
+                Err(PromotionWriteFailure::Other(error)) => {
+                    return Err(PromotionCommitFailure::Retryable(error));
+                }
+            };
+            let resource_meta_after =
+                Self::persist_promotion_frontier_counters_and_metadata(&mut txn, &params, &plan)
+                    .map_err(PromotionCommitFailure::Retryable)?;
+            match self.commit_promotion_frontier_tx(txn, params.family, params.mode) {
+                Ok(()) => break resource_meta_after,
+                Err(PromotionTransactionFailure::AdmissionRejected) => {
+                    admission.rejected();
+                    admission
+                        .wait(&self.db)
+                        .map_err(PromotionCommitFailure::Retryable)?;
+                }
+                Err(PromotionTransactionFailure::WriteConflict) => {
+                    let epoch_key = encode_family_writer_epoch_key();
+                    match self.verify_current_writer_epoch(
+                        params.family,
+                        params.writer_epoch,
+                        &epoch_key,
+                    ) {
+                        Ok(true) => {
+                            return Err(PromotionCommitFailure::ScopeConflict);
+                        }
+                        Ok(false) => {
+                            self.resolve_global_range(
+                                params.family,
+                                params.first_global_offset,
+                                end_global_offset,
+                            )
+                            .map_err(PromotionCommitFailure::Resolved)?;
+                            return Err(PromotionCommitFailure::Resolved(
+                                "ERR_STREAM_WRITER_FENCED".to_string(),
+                            ));
+                        }
+                        Err(error) => {
+                            return Err(PromotionCommitFailure::Retryable(error));
+                        }
                     }
                 }
+                Err(PromotionTransactionFailure::Other(error)) => {
+                    return Err(PromotionCommitFailure::Retryable(error));
+                }
             }
-            Err(PromotionTransactionFailure::Other(error)) => {
-                return Err(PromotionCommitFailure::Retryable(error));
-            }
-        }
+        };
         self.queue_committed_maintenance_buckets(&params, &plan);
         self.resolve_durable_global_range(
             params.family,
@@ -677,7 +670,11 @@ impl StreamStore {
             self.advance_family_writer_epoch(params.family)
                 .map_err(PromotionWriteFailure::Other)?;
         }
-        self.ensure_current_writer_epoch(params.family, params.writer_epoch, &epoch_key)?;
+        // The assertion validates the frozen epoch and rejects any later
+        // epoch change at Midge's serialized commit boundary. A separate
+        // read-only transaction here cannot close that race and duplicates
+        // the point read on every healthy append. Recheck only after conflict
+        // to distinguish writer fencing from a broad-scope conflict.
 
         self.reserve_broad_scope_ranges(&mut txn, params, plan)?;
 
@@ -889,58 +886,6 @@ impl StreamStore {
         .map_err(|e| format!("txn put failed: {e:?}"))?;
 
         Ok(resource_meta_after)
-    }
-
-    fn commit_promotion_frontier_tx(
-        &self,
-        txn: cntryl_midge::Transaction,
-        family: u64,
-        mode: StreamWriteMode,
-    ) -> Result<(), PromotionTransactionFailure> {
-        let write_options = match mode {
-            StreamWriteMode::Sync => self.sync_write_options,
-            StreamWriteMode::Buffered => self.buffered_write_options,
-        };
-        #[cfg(not(test))]
-        let _ = family;
-        #[cfg(test)]
-        {
-            let delay_ms = self
-                .delay_next_promotion_frontier_commit_ms
-                .swap(0, Ordering::AcqRel);
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            let should_fail = self
-                .fail_next_promotion_frontier_commit
-                .swap(false, Ordering::AcqRel);
-
-            if should_fail {
-                return Err(PromotionTransactionFailure::Other(
-                    "Injected stream commit failure".to_string(),
-                ));
-            }
-            if self
-                .fence_next_promotion_frontier_commit
-                .swap(false, Ordering::AcqRel)
-            {
-                self.advance_family_writer_epoch(family)
-                    .map_err(PromotionTransactionFailure::Other)?;
-                return Err(PromotionTransactionFailure::WriteConflict);
-            }
-            if self
-                .conflict_next_promotion_frontier_commit
-                .swap(false, Ordering::AcqRel)
-            {
-                return Err(PromotionTransactionFailure::WriteConflict);
-            }
-        }
-        txn.commit(write_options).map_err(|error| match error {
-            cntryl_midge::MidgeError::WriteConflict(_) => {
-                PromotionTransactionFailure::WriteConflict
-            }
-            other => PromotionTransactionFailure::Other(format!("midge commit error: {other:?}")),
-        })?;
-
-        Ok(())
     }
 
     fn build_promotion_frontier_commit_response(

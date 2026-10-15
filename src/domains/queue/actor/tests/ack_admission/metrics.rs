@@ -81,6 +81,8 @@ fn stored_rows(actor: &QueueActor) -> Vec<(Bytes, Bytes)> {
         .expect("read stored Queue state")
         .scan_all()
         .expect("scan stored Queue state")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read stored Queue rows")
 }
 
 #[test]

@@ -187,39 +187,54 @@ impl StreamStore {
     ) -> Result<GlobalReservation, String> {
         let guard = self.family_sequence_guard(family);
         let _lock = guard.lock();
-        let mut txn = self
-            .db
-            .begin_tx(
-                family_to_storage_partition(family),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
-            .map_err(|error| format!("begin global reservation tx failed: {error:?}"))?;
-        let key = encode_global_counter_key();
-        let writer_epoch = txn
-            .get(&encode_family_writer_epoch_key())
-            .map_err(|error| format!("read family writer epoch failed: {error:?}"))?
-            .map_or(Ok(0), |bytes| {
-                RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
-            })?;
-        let first = txn
-            .get(&key)
-            .map_err(|error| format!("read global counter failed: {error:?}"))?
-            .map_or(Ok(0), |bytes| {
-                RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
-            })?;
-        let count =
-            u64::try_from(batch_size).map_err(|_| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
-        let next = first
-            .checked_add(count)
-            .ok_or_else(|| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
-        txn.put(key, RealmCounterValue { next_offset: next }.encode(), None)
-            .map_err(|error| format!("write global counter failed: {error:?}"))?;
-        txn.commit(self.sync_write_options)
-            .map_err(|error| format!("commit global reservation failed: {error:?}"))?;
-        Ok(GlobalReservation {
-            first_offset: first,
-            writer_epoch,
-        })
+        let admission = super::write_admission::StreamWriteAdmission::new(family);
+        loop {
+            let mut txn = self
+                .db
+                .begin_tx(
+                    family_to_storage_partition(family),
+                    cntryl_midge::TransactionMode::ReadWrite,
+                )
+                .map_err(|error| format!("begin global reservation tx failed: {error:?}"))?;
+            let key = encode_global_counter_key();
+            let writer_epoch = txn
+                .get(&encode_family_writer_epoch_key())
+                .map_err(|error| format!("read family writer epoch failed: {error:?}"))?
+                .map_or(Ok(0), |bytes| {
+                    RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
+                })?;
+            let first = txn
+                .get(&key)
+                .map_err(|error| format!("read global counter failed: {error:?}"))?
+                .map_or(Ok(0), |bytes| {
+                    RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
+                })?;
+            let count =
+                u64::try_from(batch_size).map_err(|_| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+            let next = first
+                .checked_add(count)
+                .ok_or_else(|| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+            txn.put(key, RealmCounterValue { next_offset: next }.encode(), None)
+                .map_err(|error| format!("write global counter failed: {error:?}"))?;
+            match Self::commit_storage_transaction(txn, self.sync_write_options) {
+                Ok(()) => {
+                    return Ok(GlobalReservation {
+                        first_offset: first,
+                        writer_epoch,
+                    })
+                }
+                Err(error)
+                    if crate::storage::write_admission::is_l0_admission_rejection(
+                        &error,
+                        family_to_storage_partition(family),
+                    ) =>
+                {
+                    admission.rejected();
+                    admission.wait(&self.db)?;
+                }
+                Err(error) => return Err(format!("commit global reservation failed: {error:?}")),
+            }
+        }
     }
 
     #[cfg(test)]
@@ -356,16 +371,15 @@ impl StreamStore {
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
-        let resource_meta_query = cntryl_midge::Query::new();
-        let resource_meta_iter = txn
-            .scan(&resource_meta_query)
-            .map_err(|e| format!("scan error: {e:?}"))?;
+        let resource_meta_iter = crate::storage::domain_scan::scan_domain_rows(
+            &txn,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        )
+        .map_err(|e| format!("scan error: {e:?}"))?;
 
         let mut values = Vec::new();
-        for (key, value) in resource_meta_iter
-            .try_collect()
-            .map_err(|e| format!("scan error: {e:?}"))?
-        {
+        for row in resource_meta_iter {
+            let (key, value) = row.map_err(|e| format!("scan error: {e:?}"))?;
             let Ok((realm, area, resource)) = Self::resource_identity_from_key(
                 crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8,
                 &key,

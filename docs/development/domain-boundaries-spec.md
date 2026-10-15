@@ -42,7 +42,7 @@ These rules apply to every domain in this document:
 | Notice | Live fanout to connected subscribers | None | subscriptions and delivery state | Client re-subscribes |
 | Stream | Durable append and replay | committed records, offsets, watermarks | append sessions and live subscriptions | Client resumes from its own offsets |
 | KV | Current authoritative state | committed values | open transactions and live locks | Broker recovers committed state; client restarts transactions |
-| Queue | Work delivery with reservation and redelivery | messages and indexes that reached durable storage under the selected write policy | inflight ownership, tokens, warm actors | Broker recovers durable backlog; client handles redelivery |
+| Queue | Work delivery with reservation and redelivery | messages and indexes persisted in the background on a best-effort basis | inflight ownership, tokens, warm actors, unpersisted mutations | Broker recovers persisted backlog; client handles loss and redelivery |
 | RPC | Live request and response dispatch | None | workers, pending requests, reply routing | Caller and worker retry explicitly |
 | Lease | Single-broker ownership coordination | None | ownership, fencing tokens, waiters | Client reacquires |
 | Schedule | Durable timing intent (except explicit memory mode) | definitions and pending fire claims when persistence is enabled | live subscriptions | Broker reloads timing intent; client rebuilds subscriptions |
@@ -64,7 +64,7 @@ KV provides transactional storage for current authoritative state. It is the sys
 
 ### Queue
 
-Queue provides competing-consumer work delivery with configurable durability, reservation, retry, redelivery, and optional dead-letter handling. It exists to manage work backlog and work lifecycle, not to expose durable history or live request-response semantics.
+Queue provides competing-consumer work delivery with best-effort persistence, reservation, retry, redelivery, and optional dead-letter handling. It exists to manage work backlog and work lifecycle, not to expose durable history or live request-response semantics.
 
 ### RPC
 
@@ -122,9 +122,9 @@ These rules deliberately keep Schedule responsible only for *when* an
 occurrence becomes due. Waiting for a subscriber would turn temporary absence
 into a backlog and would require retry deadlines, cancellation and upsert rules,
 restart recovery, and consumer acknowledgement semantics. Queue already owns
-that durable-work contract. Applications that require eventual processing
-should schedule a durable Queue operation rather than treat a Schedule
-subscription as one.
+that work-lifecycle contract. Applications that use Queue for eventual processing
+must regenerate work lost before persistence; a Schedule subscription does not
+provide that recovery mechanism.
 
 ## 2. Primary Use Cases
 
@@ -367,20 +367,16 @@ KV does NOT guarantee:
 
 Queue guarantees:
 
-- durable backlog according to the selected write policy
-- at-least-once delivery semantics
+- best-effort persistence of backlog, independently of local or cloud durability settings
+- at-least-once delivery of retained work; crash loss can remove accepted work or resurrect ACKed work
 - exclusive live reservation per active inflight token
-- retry and redelivery after lease expiry
+- retry and redelivery after inflight expiry
 - optional dead-letter transition when retry policy is exhausted
-- `FITZ_QUEUE_WRITE_POLICY=fast` may lose accepted recent queue mutations before the `FITZ_QUEUE_LOSS_WINDOW_MS` background persistence window closes
-- local-disk fast queues append mutations to an unsynced WAL and synchronize it
-  on the configured background timer; an individual ENQUEUE or ACK response does
-  not wait for that sync. SST publication follows storage maintenance pressure,
-  rather than being forced by each timer tick. Cloud-backed and memory fast
-  queues retain their existing flush path; memory storage remains non-durable.
-- fast-policy startup durably discards incomplete split message remnants from that
-  loss window and rebuilds the affected queue indexes; buffered and strict
-  policies fail closed on the same incomplete authoritative state
+- Queue mutations skip WAL and are flushed in the background; the
+  `FITZ_QUEUE_LOSS_WINDOW_MS` interval is a target, not a durability deadline
+- incomplete split message remnants are discarded on startup with best-effort
+  writes and affected indexes are rebuilt; other malformed authoritative state
+  fails closed. Repair can repeat after another crash
 
 Queue does NOT guarantee:
 
@@ -388,6 +384,7 @@ Queue does NOT guarantee:
 - strict global FIFO under competing consumers
 - durable continuation of live lease ownership after restart
 - stream-style immutable replay
+- continuity of unpersisted message ID reservations across crashes
 - live request-response semantics
 
 ### RPC
@@ -502,7 +499,7 @@ Schedule does NOT guarantee:
 
 ### Queue + RPC
 
-- Queue distributes work that becomes durable according to the configured queue write policy.
+- Queue distributes work with unconditional best-effort persistence.
 - RPC executes work that a live worker must answer now.
 - Queue must not become RPC with hidden backlog.
 - RPC must not become a durable retry system.
@@ -559,7 +556,7 @@ If you need one of these, do NOT choose the adjacent domain:
 
 - replay -> not Notice -> use Stream
 - retries -> not RPC -> use Queue
-- durability for messages -> not Notice -> use Stream or Queue depending on whether the problem is history or work
+- durable message history -> Stream; work delivery with best-effort persistence -> Queue
 - current authoritative state -> not Stream -> use KV
 - coordination or fencing -> not Queue -> use Lease
 - durable future intent -> not Notice or RPC -> use Schedule
@@ -703,7 +700,7 @@ Place a new feature in the domain that owns its primary guarantee:
 - if it requires replay -> Stream
 - if it requires durable ordering of committed history -> Stream
 - if it requires current authoritative state -> KV
-- if it requires retries or backlog with a defined durability policy -> Queue
+- if it requires retries or backlog with best-effort persistence -> Queue
 - if it requires live request execution -> RPC
 - if it requires ownership or fencing -> Lease
 - if it requires timing intent -> Schedule

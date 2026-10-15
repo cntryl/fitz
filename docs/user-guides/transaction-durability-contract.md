@@ -1,6 +1,8 @@
 # Transaction Durability Contract
 
-This page defines the compact external contract for transaction durability behavior.
+This page defines the external contract for KV and Stream transaction durability.
+Queue operations always use best-effort persistence; their success responses are
+not durability confirmations. See [durability.md](durability.md).
 
 ## Contract Summary
 

@@ -18,8 +18,8 @@ procedures in their own environment.
 - No sustained growth in delivery failures.
 - Mailbox depth and pending queue metrics remain bounded.
 - Authentication failures remain near expected baseline.
-- Queue write-policy and cloud durability settings match the operator's loss-window expectations.
-- `fitz_queue_fast_flush_failures_total` stays flat. Any sustained increase means fast-mode Queue writes are not reaching disk within the loss window; check disk space and storage health.
+- Queue persistence is always best effort; producers can regenerate lost work and consumers tolerate redelivery after lost ACKs.
+- `fitz_queue_fast_flush_failures_total` stays flat. Any sustained increase means Queue background persistence is failing; check disk space and storage health. The flush interval does not guarantee a maximum loss window.
 - `fitz_queue_l0_admission_retries_total` stays low. It counts Queue ENQUEUE/ACK commits that Midge rejected before WAL submission for a missing L0 slot and that the actor restaged inside the same 30-second admission budget. A sustained rate means Queue writes are outpacing L0 compaction; check compaction progress and disk throughput.
 - `fitz_queue_admission_budget_exhausted_total` stays flat. It counts Queue ENQUEUE/ACK commits that failed because the shared 30-second storage-admission budget ran out while Midge was still stalled or still rejecting the write for a missing L0 slot. Clients received an error for those operations; treat any increase as storage saturation.
 - `fitz_kv_inventory_estimate_update_failures_total` stays flat. Increases mean admin KV estimates are being repaired by rescan; user data is unaffected.

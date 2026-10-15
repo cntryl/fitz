@@ -36,52 +36,14 @@ dev secret `dev-test-secret`. When you add `compose.jwks.yml`, use the secret
 `fitz-jwks-dev-secret`, include `iss=https://fitz.mock/`, and set the JWT
 header `kid` to `dev-hs256`.
 
-You can mint a local token without extra dependencies:
+Mint a local token with the repository's Rust example:
 
 ```sh
-python3 - <<'PY'
-import base64
-import hashlib
-import hmac
-import json
-import time
-
-secret = b"dev-test-secret"
-issuer = None
-kid = None
-
-def b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode().rstrip("=")
-
-header = {"alg": "HS256", "typ": "JWT"}
-if kid:
-    header["kid"] = kid
-
-payload = {
-    "sub": "local-dev",
-    "aud": "fitz",
-    "exp": int(time.time()) + 3600,
-    "tid": "dev",
-    "permissions": ["notice://dev/**#read"],
-}
-if issuer:
-    payload["iss"] = issuer
-
-parts = [
-    b64url(json.dumps(header, separators=(",", ":"), sort_keys=True).encode()),
-    b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()),
-]
-signing_input = ".".join(parts).encode()
-signature = hmac.new(secret, signing_input, hashlib.sha256).digest()
-print(".".join(parts + [b64url(signature)]))
-PY
+cargo run --locked --example local_token
 ```
 
-For `compose.jwks.yml`, change the snippet values to:
-
-- `secret = b"fitz-jwks-dev-secret"`
-- `issuer = "https://fitz.mock/"`
-- `kid = "dev-hs256"`
+For `compose.jwks.yml`, use `cargo run --locked --example local_token -- --jwks`.
+It selects the fixture secret, issuer and key ID described above.
 
 Configure `FITZ_ROUTE_FAMILY_MAP`, such as `FITZ_ROUTE_FAMILY_MAP=xyz=2`,
 to translate the verified identity claim value to a provisioned route family.

@@ -1,6 +1,11 @@
-### Queue Domain (Durable At-Least-Once Delivery)
+### Queue Domain (Work Delivery With Best-Effort Persistence)
 
 **Purpose:** FIFO-ish message queues with leasing and visibility timeouts.
+
+Persistence is always best effort. Accepted enqueues, ACKs, and ID reservations
+can be lost in a crash; lost ACKs can cause redelivery and lost reservations can
+permit ID reuse. Only persisted backlog can recover. Producers must regenerate
+missing work, and consumers must tolerate duplicates.
 
 #### Message Types
 
@@ -76,7 +81,7 @@ use that route for EXTEND and COMPLETE. Wildcard reservation supports `*` and
 The broker bounds each RESERVE response to one TLV value. If a queued message
 cannot fit in an otherwise empty response using the requested concrete or
 wildcard item encoding, the broker moves it to dead-letter state with reason
-`reserve_response_too_large` under the configured Queue write policy and
+`reserve_response_too_large` with best-effort persistence and
 continues reserving later work. A message that fits an empty response but not
 the remaining bytes of a partial
 batch stays ready for the next RESERVE response.
@@ -268,12 +273,12 @@ Every operation includes route:
 #### Semantics
 
 - **Route-Carrying Operations**: Every request includes its selector or concrete queue route. Wildcard RESERVE items also return their matched concrete route; concrete RESERVE items retain the established route-less response and use the request route. The broker still maintains live lease ownership in memory for the running process
-- **Wildcard Reservation**: RESERVE accepts exact routes and whole-segment `*`/`**` patterns capable of matching a concrete three-segment queue route. Matching is isolated by `RouteFamily` and durable queue routes are discovered after broker restart.
+- **Wildcard Reservation**: RESERVE accepts exact routes and whole-segment `*`/`**` patterns capable of matching a concrete three-segment queue route. Matching is isolated by `RouteFamily` and persisted queue routes are discovered after broker restart.
 - **At-Least-Once**: Messages delivered until completed; expired inflight reservations requeue them
 - **FIFO-ish**: Generally delivered in enqueue order; leasing can cause out-of-order
 - **Visibility Timeout**: Reserved messages are invisible to other consumers until expiry
 - **Token Binding**: Complete/Extend require both message_id and inflight_token
-- **Durability Split**: Queue data survives restart according to `FITZ_QUEUE_WRITE_POLICY`; the default fast policy can lose accepted recent mutations before the flush window closes. Live inflight reservations and inflight tokens do not survive restart.
+- **Persistence**: Queue persistence is always best effort. Accepted enqueues, ACKs, and other mutations can be lost before background persistence completes; lost ACKs can cause redelivery. The flush interval is a target, not a durability deadline. Live inflight reservations and tokens do not survive restart. Unpersisted ID reservations can also be lost, so an ID accepted before a crash can be reused afterward.
 
 ##### Opaque Server-Generated IDs
 

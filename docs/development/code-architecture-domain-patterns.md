@@ -96,7 +96,7 @@ and fencing tokens are ephemeral process-local coordination state.
 flowchart LR
     subgraph STORAGEBACKED["Storage-backed domains"]
         KV["KV<br/>Midge transactions"]
-        QUEUE["Queue<br/>durable backlog by write policy"]
+        QUEUE["Queue<br/>best-effort persisted backlog"]
         STREAM["Stream<br/>committed history and watermarks"]
         SCHEDULE["Schedule<br/>timing intent and pending claims"]
     end
