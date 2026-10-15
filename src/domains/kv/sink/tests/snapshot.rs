@@ -469,7 +469,7 @@ fn should_reject_kv_restore_while_open_transaction_locks_target_resource() {
             8,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -570,7 +570,7 @@ fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_ro
             7,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(idle_route, 1, 0),
+            encode_kv_begin(idle_route, 1),
             family,
         ),
     ))
@@ -583,7 +583,7 @@ fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_ro
             8,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(locked_route, 1, 0),
+            encode_kv_begin(locked_route, 1),
             family,
         ),
     ))
