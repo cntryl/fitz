@@ -34,7 +34,7 @@ impl KvDriver {
     }
 
     async fn begin(&mut self, mode: u8) -> Result<Vec<u8>, BenchFailure> {
-        request(&mut self.client, &build_kv_begin(&self.route, mode, 1), 100).await
+        request(&mut self.client, &build_kv_begin(&self.route, mode), 100).await
     }
 
     fn transaction(body: &[u8]) -> Result<u64, BenchFailure> {
@@ -65,8 +65,12 @@ impl KvDriver {
         )
         .await?;
         empty_success(&put, "KV PUT")?;
-        let committed =
-            request(&mut self.client, &build_kv_commit(tx_id, &self.route), 101).await?;
+        let committed = request(
+            &mut self.client,
+            &build_kv_commit(tx_id, &self.route, 1),
+            101,
+        )
+        .await?;
         empty_success(&committed, "KV COMMIT")?;
         self.expected[slot] = Some(expected);
         self.verify_slot(slot).await?;

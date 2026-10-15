@@ -110,7 +110,8 @@ lease immediately; it does not wait for the TTL.
 Schedule uses this policy for server-selected durable writes. KV and Stream
 still honor client-selected buffered versus sync intent, translated to
 cloud-compatible commits: buffered intent uses asynchronous cloud durability,
-while sync intent follows `FITZ_STORAGE_CLOUD_DURABILITY`. Notice, RPC, and
+while sync intent always waits for CloudStrict, including in background mode.
+Both KV and Stream require this explicit choice on COMMIT. Notice, RPC, and
 Lease remain live or ephemeral as defined by their domain contracts.
 
 Queue persistence is always best effort, independently of

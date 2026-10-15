@@ -456,14 +456,8 @@ pub enum StreamCoordinationMessage {
     BatchCommitted(BatchCommitted),
 }
 
-/// Write mode for stream commits
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StreamWriteMode {
-    /// Buffered: throughput-first, may lose recent events on crash
-    Buffered,
-    /// Sync: correctness-first, writes are committed synchronously
-    Sync,
-}
+/// Explicit persistence choice on Stream COMMIT, shared with KV.
+pub use crate::domains::CommitPersistence as StreamWriteMode;
 
 /// Batch committed notification from `StreamActor` to `AreaActor`
 #[derive(Debug, Clone)]

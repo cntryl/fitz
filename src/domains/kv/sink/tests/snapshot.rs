@@ -11,7 +11,6 @@ fn commit_value(
     let KvResponse::BeginOk { tx_id } = actor.handle(crate::domains::kv::KvMessage::Begin {
         scope: scope.clone(),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Sync,
     }) else {
         panic!("begin KV transaction");
     };
@@ -25,7 +24,11 @@ fn commit_value(
         KvResponse::PutOk
     ));
     assert!(matches!(
-        actor.handle(crate::domains::kv::KvMessage::Commit { tx_id, scope }),
+        actor.handle(crate::domains::kv::KvMessage::Commit {
+            tx_id,
+            scope,
+            persistence: crate::domains::CommitPersistence::Sync,
+        }),
         KvResponse::CommitOk
     ));
 }
@@ -388,7 +391,6 @@ fn should_capture_atomic_commits_without_partial_rows_during_concurrent_writes()
                 actor.handle(crate::domains::kv::KvMessage::Begin {
                     scope: scope.clone(),
                     mode: crate::domains::kv::TxMode::ReadWrite,
-                    write_options: crate::domains::WritePolicy::Sync,
                 })
             else {
                 panic!("begin concurrent KV transaction");
@@ -405,7 +407,11 @@ fn should_capture_atomic_commits_without_partial_rows_during_concurrent_writes()
                 ));
             }
             assert!(matches!(
-                actor.handle(crate::domains::kv::KvMessage::Commit { tx_id, scope }),
+                actor.handle(crate::domains::kv::KvMessage::Commit {
+                    tx_id,
+                    scope,
+                    persistence: crate::domains::CommitPersistence::Sync,
+                }),
                 KvResponse::CommitOk
             ));
         });
@@ -463,7 +469,7 @@ fn should_reject_kv_restore_while_open_transaction_locks_target_resource() {
             8,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -564,7 +570,7 @@ fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_ro
             7,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(idle_route, 1, 0),
+            encode_kv_begin(idle_route, 1),
             family,
         ),
     ))
@@ -577,7 +583,7 @@ fn should_reject_multi_resource_restore_without_expiring_idle_lock_on_earlier_ro
             8,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(locked_route, 1, 0),
+            encode_kv_begin(locked_route, 1),
             family,
         ),
     ))

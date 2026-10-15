@@ -79,6 +79,7 @@ fn should_reject_kv_commit_given_any_scope_component_mismatch() {
     let response = actor.handle(KvMessage::Commit {
         tx_id,
         scope: KvResourceScope::new(RouteFamily::new(1), "other", "area", "table"),
+        persistence: crate::domains::CommitPersistence::Buffered,
     });
 
     // Assert

@@ -6,12 +6,16 @@ use crate::domains::kv::{KvError, KvResourceScope, KvResponse, TxMode};
 use std::time::{Duration, Instant};
 
 impl KvActor {
-    pub(super) fn handle_begin(
-        &mut self,
-        scope: KvResourceScope,
-        mode: TxMode,
-        write_policy: crate::domains::WritePolicy,
-    ) -> KvResponse {
+    pub(crate) fn with_write_policies(
+        mut self,
+        sync: crate::domains::WritePolicy,
+        buffered: crate::domains::WritePolicy,
+    ) -> Self {
+        self.cloud_persistence = sync.is_cloud() || buffered.is_cloud();
+        self
+    }
+
+    pub(super) fn handle_begin(&mut self, scope: KvResourceScope, mode: TxMode) -> KvResponse {
         if validate_realm_format(&scope.realm).is_err() {
             return KvResponse::Error {
                 error: KvError::InvalidRealm,
@@ -43,7 +47,6 @@ impl KvActor {
                         column_family,
                         tx,
                         mode,
-                        write_policy,
                         mutation_count: 0,
                         last_activity: Instant::now(),
                         inventory_delta: KvInventoryDelta::default(),
@@ -55,7 +58,12 @@ impl KvActor {
         }
     }
 
-    pub(super) fn handle_commit(&mut self, tx_id: u64, scope: &KvResourceScope) -> KvResponse {
+    pub(super) fn handle_commit(
+        &mut self,
+        tx_id: u64,
+        scope: &KvResourceScope,
+        persistence: crate::domains::CommitPersistence,
+    ) -> KvResponse {
         let Some(active) = self.transactions.get(&tx_id) else {
             return KvResponse::Error {
                 error: KvError::InvalidTxId,
@@ -73,8 +81,9 @@ impl KvActor {
         let inventory_scope = active.scope.clone();
         let inventory_column_family = active.column_family;
         let inventory_delta = std::mem::take(&mut active.inventory_delta);
-        let inventory_write_policy = Self::inventory_write_policy(active.write_policy);
-        match active.tx.commit(active.write_policy) {
+        let write_policy = persistence.storage_policy(self.cloud_persistence);
+        let inventory_write_policy = Self::inventory_write_policy(write_policy);
+        match active.tx.commit(write_policy) {
             Ok(()) => {
                 if let Err(error) = Self::apply_inventory_delta(
                     &self.store,

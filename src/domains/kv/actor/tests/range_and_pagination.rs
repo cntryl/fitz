@@ -108,7 +108,6 @@ fn should_cap_scan_when_client_omits_limit() {
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     }) else {
         panic!("transaction should begin");
     };

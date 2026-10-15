@@ -122,12 +122,6 @@ impl KvDomain {
     }
 
     #[must_use]
-    #[cfg(test)]
-    pub fn with_sync_write_policy(self, write_policy: crate::domains::WritePolicy) -> Self {
-        self.with_write_policies(write_policy, write_policy.buffered_companion())
-    }
-
-    #[must_use]
     pub fn with_write_policies(
         mut self,
         sync_write_policy: crate::domains::WritePolicy,

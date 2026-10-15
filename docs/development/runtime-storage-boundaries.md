@@ -15,19 +15,22 @@ lane, while single-lane sinks such as session outbound transport explicitly
 forward to `deliver`. The trait provides no automatic priority fallback. Code
 requiring reserved control capacity must use an implementation that provides it.
 
-## KV write policy
+## KV and Stream commit persistence
 
-`KvMessage::Begin` carries `domains::WritePolicy`, a Fitz-owned guarantee type.
-The wire codec produces `Buffered` for flag 0 and `Sync` for flag 1. The domain
-sink maps those requests to the broker's configured local or cloud policies;
-explicit `BestEffort`, `CloudAsync`, and `CloudStrict` requests retain their
-meaning. No policy has a default. The wire inventory and configuration resolver
-live together in `domains/kv/write_policy.rs`; the codec and sink share them.
+KV BEGIN selects scope and transaction mode without a persistence choice.
+KV and Stream COMMIT require `domains::CommitPersistence`: flag 0 is Buffered,
+and flag 1 is Sync. Missing, unknown, and trailing values are rejected. There
+is no default choice or begin-time policy stored on a KV transaction.
 
-Conversion to Midge `WriteOptions` lives in `src/storage/write_policy.rs`.
-Boot configuration and domain setup expose only Fitz policies. Domain stores
-convert the resolved policy when committing engine transactions. Midge remains
-the concrete storage engine behind those adapters.
+The configured storage backend fixes the mapping: local commits use Buffered
+or Sync; cloud commits use CloudAsync or CloudStrict. Background cloud durability
+does not weaken an explicit Sync choice. Client COMMIT accepts only these two
+choices, rather than internal BestEffort or cloud policy variants.
+
+Conversion from the resolved Fitz policy to Midge `WriteOptions` lives in
+`src/storage/write_policy.rs`. Domain stores use that resolved policy when
+committing engine transactions. Midge remains the concrete storage engine
+behind those adapters. Queue persistence is always best effort.
 
 ## Queue recovery
 

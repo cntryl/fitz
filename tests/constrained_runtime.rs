@@ -154,11 +154,11 @@ async fn smoke(address: SocketAddr, suffix: &str) {
     let readback = request(&mut client, &build_stream_read(&route, 0), 604).await;
     assert!(readback.windows(body.len()).any(|bytes| bytes == body));
 
-    let started = request(&mut client, &build_kv_begin(KV, 1, 1), 100).await;
+    let started = request(&mut client, &build_kv_begin(KV, 1), 100).await;
     let id = parse_kv_tx_id(&started).unwrap();
     request(&mut client, &build_kv_put(id, KV, body, body), 104).await;
-    request(&mut client, &build_kv_commit(id, KV), 101).await;
-    let started = request(&mut client, &build_kv_begin(KV, 0, 1), 100).await;
+    request(&mut client, &build_kv_commit(id, KV, 1), 101).await;
+    let started = request(&mut client, &build_kv_begin(KV, 0), 100).await;
     let id = parse_kv_tx_id(&started).unwrap();
     let readback = request(&mut client, &build_kv_get(id, KV, body), 103).await;
     assert_eq!(extract_kv_value(&readback).unwrap(), body);

@@ -6,6 +6,7 @@ pub(super) fn test_actor() -> KvActor {
     KvActor::new(store)
 }
 
+mod commit_persistence;
 mod conflict_and_error_paths;
 mod inventory;
 mod lifecycle;
@@ -20,7 +21,6 @@ pub(super) fn begin_with_scope(actor: &mut KvActor, scope: KvResourceScope) -> u
     let response = actor.handle(KvMessage::Begin {
         scope,
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = response else {
         panic!("expected transaction begin, got {response:?}");

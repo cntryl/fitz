@@ -40,7 +40,6 @@ fn begin_transaction(
             resource,
         ),
         mode,
-        write_options: fitz::domains::WritePolicy::Buffered,
     });
 
     match response {
@@ -130,6 +129,7 @@ fn should_scan_1000_committed_keys(ctx: &mut StressContext) {
         actor.handle(KvMessage::Commit {
             tx_id,
             scope: scope.clone(),
+            persistence: fitz::domains::CommitPersistence::Buffered,
         }),
         KvResponse::CommitOk
     ));

@@ -1,34 +1,13 @@
-//! BEGIN write-option rewriting from broker configuration.
-//!
-//! Production delivery and the test-only `ApplyWriteOptions` family probe
-//! both call this single policy function.
-
+//! Test probe for the same commit choice resolution used by KV actors.
 use super::state::KvFamilyRuntime;
-use crate::domains::kv::write_policy::resolve_policy;
 
 impl KvFamilyRuntime<'_> {
-    pub(super) fn apply_write_options(
+    pub(super) fn resolve_commit_persistence(
         &self,
-        message: crate::domains::kv::KvMessage,
-    ) -> crate::domains::kv::KvMessage {
-        match message {
-            crate::domains::kv::KvMessage::Begin {
-                scope,
-                mode,
-                write_options,
-            } => {
-                let write_options = resolve_policy(
-                    write_options,
-                    self.core.buffered_write_policy,
-                    self.core.sync_write_policy,
-                );
-                crate::domains::kv::KvMessage::Begin {
-                    scope,
-                    mode,
-                    write_options,
-                }
-            }
-            message => message,
-        }
+        persistence: crate::domains::CommitPersistence,
+    ) -> crate::domains::WritePolicy {
+        persistence.storage_policy(
+            self.core.sync_write_policy.is_cloud() || self.core.buffered_write_policy.is_cloud(),
+        )
     }
 }

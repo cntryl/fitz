@@ -39,7 +39,6 @@ struct ActiveKvTx {
     column_family: u32,
     tx: super::store::KvTransaction,
     mode: TxMode,
-    write_policy: crate::domains::WritePolicy,
     mutation_count: u64,
     last_activity: Instant,
     inventory_delta: KvInventoryDelta,
@@ -48,6 +47,7 @@ struct ActiveKvTx {
 /// Session-scoped KV transaction state.
 pub struct KvActor {
     store: super::store::KvStore,
+    cloud_persistence: bool,
     transactions: HashMap<u64, ActiveKvTx>,
     next_tx_id: u64,
     /// Resources whose post-commit inventory estimate update failed; the sink
@@ -61,6 +61,7 @@ impl KvActor {
     pub fn new(store: impl Into<super::store::KvStore>) -> Self {
         Self {
             store: store.into(),
+            cloud_persistence: false,
             transactions: HashMap::new(),
             next_tx_id: 1,
             inventory_repairs: Vec::new(),
@@ -69,12 +70,12 @@ impl KvActor {
 
     pub fn handle(&mut self, message: KvMessage) -> KvResponse {
         match message {
-            KvMessage::Begin {
+            KvMessage::Begin { scope, mode } => self.handle_begin(scope, mode),
+            KvMessage::Commit {
+                tx_id,
                 scope,
-                mode,
-                write_options,
-            } => self.handle_begin(scope, mode, write_options),
-            KvMessage::Commit { tx_id, scope } => self.handle_commit(tx_id, &scope),
+                persistence,
+            } => self.handle_commit(tx_id, &scope, persistence),
             KvMessage::Rollback { tx_id, scope } => self.handle_rollback(tx_id, &scope),
             KvMessage::Get { tx_id, scope, key } => self.handle_get(tx_id, &scope, &key),
             KvMessage::Put {

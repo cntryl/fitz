@@ -497,7 +497,7 @@ async fn should_cleanup_real_kv_transaction_on_close() {
     first_session.route_family = family;
     ingress.on_open(first_session).await.unwrap();
 
-    let first_begin = crate::benchkit::build_kv_begin(kv_route, 1, 0);
+    let first_begin = crate::benchkit::build_kv_begin(kv_route, 1);
     let (first_begin_msg_type, first_begin_payload) =
         crate::benchkit::extract_single_tlv_field(&first_begin);
     kv_sink
@@ -530,7 +530,7 @@ async fn should_cleanup_real_kv_transaction_on_close() {
     // Assert
     wait_for_kv_active_transaction_count(&kv_sink, 0);
 
-    let second_begin = crate::benchkit::build_kv_begin(kv_route, 1, 0);
+    let second_begin = crate::benchkit::build_kv_begin(kv_route, 1);
     let (second_begin_msg_type, second_begin_payload) =
         crate::benchkit::extract_single_tlv_field(&second_begin);
     kv_sink

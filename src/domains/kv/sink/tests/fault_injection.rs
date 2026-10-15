@@ -79,7 +79,7 @@ fn should_notify_remaining_watchers_when_one_watcher_mailbox_is_full() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -108,7 +108,7 @@ fn should_notify_remaining_watchers_when_one_watcher_mailbox_is_full() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, kv_route),
+            encode_kv_commit(tx_id, kv_route, 0),
             family,
         ),
     ))
@@ -168,7 +168,7 @@ fn begin_read_write_tx(
             session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin("kv://acme/app/resource", 1, 0),
+            encode_kv_begin("kv://acme/app/resource", 1),
             family,
         ),
     ))
@@ -194,7 +194,7 @@ fn should_release_kv_resource_lock_after_commit() {
             7,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, "kv://acme/app/resource"),
+            encode_kv_commit(tx_id, "kv://acme/app/resource", 0),
             family,
         ),
     ))
@@ -257,7 +257,7 @@ fn should_reject_retried_commit_after_transaction_is_forgotten() {
             7,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, "kv://acme/app/resource"),
+            encode_kv_commit(tx_id, "kv://acme/app/resource", 0),
             family,
         ),
     ))
@@ -275,7 +275,7 @@ fn should_reject_retried_commit_after_transaction_is_forgotten() {
             7,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, "kv://acme/app/resource"),
+            encode_kv_commit(tx_id, "kv://acme/app/resource", 0),
             family,
         ),
     ))
@@ -316,7 +316,6 @@ fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
             actor.handle(crate::domains::kv::KvMessage::Begin {
                 scope: scope.clone(),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: crate::domains::WritePolicy::Buffered,
             })
         else {
             panic!("transaction should begin");
@@ -331,6 +330,7 @@ fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
         actor.handle(crate::domains::kv::KvMessage::Commit {
             tx_id,
             scope: scope.clone(),
+            persistence: crate::domains::CommitPersistence::Buffered,
         });
         runtime.collect_inventory_repairs(8);
         let pending_before_retry = runtime.core.pending_inventory_repairs.len();
