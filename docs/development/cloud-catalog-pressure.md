@@ -49,7 +49,8 @@ The catalog case qualifies catalog-heavy cold recovery and publication.
 The separate `should_recover_gib_stream_history_after_complete_cache_loss`
 workload writes 1 GiB of deterministic, incompressible Stream event payloads
 through real TCP sessions and cloud-strict commits. Four concurrent writers
-populate 16 streams with 1,024 events of 64 KiB each. It checks readiness after
+populate 16 streams with 2,048 events of 32 KiB each. Individual read pages
+contain one event to fit the protocol's 16-bit TLV length. It checks readiness after
 each commit and samples the provider catalog during growth.
 
 Before requesting an orderly checkpoint, ordinary maintenance must retire all
@@ -57,7 +58,7 @@ WAL segments observed after the first commit, leave SST objects, and reduce
 remote WAL payloads to at most 128 MiB within two minutes of the last write.
 The catalog must remain at most 1 MiB. These are explicit workload acceptance
 limits. Both an orderly restart and a SIGKILL followed by complete cache loss
-must recover all 16,384 exact event bodies. The broker retains the same CPU,
+must recover all 32,768 exact event bodies. The broker retains the same CPU,
 RAM, swap and readiness limits as the catalog case. One 1,200-second deadline
 covers writes, maintenance, both restarts and full readback. A successful
 completion counts verified records after cold recovery, never sent writes.

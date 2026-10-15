@@ -12,9 +12,10 @@ use std::sync::{
 };
 
 pub(super) const STREAMS: u32 = 16;
-pub(super) const EVENTS: u32 = 1024;
-pub(super) const BODY_BYTES: u32 = 64 * 1024;
+pub(super) const EVENTS: u32 = 2048;
+pub(super) const BODY_BYTES: u32 = 32 * 1024;
 const BATCH: u32 = 16;
+const READ_BATCH: u32 = 1;
 
 fn route(stream: u32) -> String {
     format!("stream://test/gib/history-{stream}")
@@ -121,7 +122,7 @@ fn verify_page(payload: &[u8], stream: u32, offset: u32) -> u32 {
     assert!(outer.is_complete());
     let mut decoder = PayloadDecoder::new(&data);
     let count = decoder.get_u32().unwrap();
-    assert!(count > 0 && count <= BATCH && offset + count <= EVENTS);
+    assert!(count > 0 && count <= READ_BATCH && offset + count <= EVENTS);
     for index in offset..offset + count {
         assert_eq!(decoder.get_string_ref().unwrap(), route(stream));
         assert_eq!(decoder.get_u8().unwrap(), 0);
@@ -149,7 +150,11 @@ pub(super) async fn verify(address: SocketAddr, progress: &ProgressHandle) -> u6
         while offset < EVENTS {
             let page = request(
                 &mut client,
-                &build_stream_read_with_limit(&route(stream), u64::from(offset), u64::from(BATCH)),
+                &build_stream_read_with_limit(
+                    &route(stream),
+                    u64::from(offset),
+                    u64::from(READ_BATCH),
+                ),
                 604,
             )
             .await;
