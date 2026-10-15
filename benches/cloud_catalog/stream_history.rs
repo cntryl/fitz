@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 const TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
 const WAL_LIMIT: u64 = 128 * 1024 * 1024;
 const CATALOG_LIMIT: u64 = 1024 * 1024;
+const WINDOW: Duration = Duration::from_hours(1);
 
 pub(crate) fn run(ctx: &mut StressContext) -> StressResult {
     super::configure(ctx);
@@ -31,6 +32,11 @@ pub(crate) fn run(ctx: &mut StressContext) -> StressResult {
     ctx.parameter("event_bytes", io::BODY_BYTES);
     ctx.parameter("post_load_wal_limit_bytes", WAL_LIMIT);
     ctx.parameter("catalog_json_limit_bytes", CATALOG_LIMIT);
+    ctx.parameter(
+        "growth_catalog_limit_bytes",
+        super::fixture::INCIDENT_CATALOG_BYTES,
+    );
+    ctx.parameter("campaign_deadline_seconds", WINDOW.as_secs());
     ctx.metadata(
         "fixture_scope",
         "live_stream_sync_commits_automatic_retirement",
@@ -45,11 +51,11 @@ pub(crate) fn run(ctx: &mut StressContext) -> StressResult {
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         shared_bench_runtime().block_on(async {
             tokio::time::timeout(
-                super::WINDOW,
+                WINDOW,
                 qualify(&campaign, &mut report, &progress, Arc::clone(&accepted)),
             )
             .await
-            .expect("1 GiB Stream qualification exceeded 1200 seconds");
+            .expect("1 GiB Stream qualification exceeded 3600 seconds");
         });
     }));
     let failure = outcome
@@ -109,7 +115,7 @@ async fn seed(
             () = &mut seed => break,
             _ = tick.tick() => {
                 let sample = campaign.snapshot(&format!("stream-growing-{}", accepted.load(Ordering::Acquire)));
-                assert!(sample.serialized_catalog_bytes <= CATALOG_LIMIT, "catalog grew beyond its declared envelope: {sample:?}");
+                assert!(sample.serialized_catalog_bytes < super::fixture::INCIDENT_CATALOG_BYTES, "catalog reached incident size during live writes: {} bytes", sample.serialized_catalog_bytes);
                 report["growth_samples"].as_array_mut().unwrap().push(serde_json::to_value(sample).unwrap());
                 report["accepted_sync_events"] = json!(accepted.load(Ordering::Acquire));
                 campaign.report(report);

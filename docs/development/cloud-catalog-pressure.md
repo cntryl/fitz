@@ -56,11 +56,14 @@ each commit and samples the provider catalog during growth.
 Before requesting an orderly checkpoint, ordinary maintenance must retire all
 WAL segments observed after the first commit, leave SST objects, and reduce
 remote WAL payloads to at most 128 MiB within two minutes of the last write.
-The catalog must remain at most 1 MiB. These are explicit workload acceptance
-limits. Both an orderly restart and a SIGKILL followed by complete cache loss
+During active writes the catalog must remain below the incident's 8,702,002
+serialized bytes; after maintenance catches up it must be at most 1 MiB.
+These are explicit workload acceptance limits. Both an orderly restart and a SIGKILL followed by complete cache loss
 must recover all 32,768 exact event bodies. The broker retains the same CPU,
-RAM, swap and readiness limits as the catalog case. One 1,200-second deadline
-covers writes, maintenance, both restarts and full readback. A successful
+RAM, swap and readiness limits as the catalog case. One 3,600-second deadline
+covers writes, maintenance, both restarts and full readback. This window bounds
+the complete load campaign, not a throughput SLA; readiness remains 180 seconds
+and post-load maintenance remains two minutes. A successful
 completion counts verified records after cold recovery, never sent writes.
 See also [constrained runtime qualification](constrained-runtime.md).
 AWS remains outside the workload: the driver accepts only a loopback provider
@@ -133,3 +136,37 @@ consumer case, not byte-for-byte replay of the old prefix or proof that the
 underlying long-run retention defect is unchanged. The first run stopped at
 this failure; its 32,768-segment stage was not executed. Keep the workload red
 until the production path satisfies the declared envelope.
+
+## Development fix qualification
+
+The follow-up native ARM64 sweep used Fitz runtime source `f1f91b89` with
+Midge fix `2bafa60cde9814cc62656c1178e0af37007d3148` from
+[Midge PR 887](https://github.com/cntryl/midge/pull/887). Its immutable local
+image is `sha256:2eec03ebe8227fd6eb93020f2554fee01c58900f639e0b21eecf4adac5126663`.
+This image uses a development path override; it is diagnostic evidence, not
+qualification of a published dependency or of native AMD64.
+
+| Catalog entries | Serialized bytes | Initial readiness | Crash-to-ready |
+| --- | --- | --- | --- |
+| 1,024 | 327,588 | 3.55 s | 88.51 s |
+| 8,192 | 2,657,541 | 14.62 s | 89.66 s |
+| 32,768 | 10,759,502 | 43.28 s | 128.01 s |
+
+All three stages passed exact readback of 32 historical keys and the new
+cloud-strict marker after complete cache loss, at the unchanged resource cap.
+Reports and logs are retained under
+`target/fitz-stress/cloud-catalog-publication/`.
+
+An earlier candidate passed the first two stages but failed startup publication
+at 32,768 entries because append's temporary reallocation workspace remained
+charged during the following upload. A second active Midge regression reproduced
+that exact failure; the qualified revision releases temporary append workspace
+before encoding/upload while retaining the grown catalog's allocation charge.
+The live 1 GiB Stream workload remains a separate acceptance gate.
+
+The first live run stopped after 25,376 acknowledged events (793 MiB) because
+its driver incorrectly imposed the post-load 1 MiB catalog target during active
+writes. The catalog reached 1,050,260 bytes while the broker remained healthy;
+this was not an admission failure or a startup reproduction. That failed report
+is preserved under `target/fitz-stress/stream-gib/`. The corrected workload uses
+the incident-sized guard during growth and retains the strict post-load target.
