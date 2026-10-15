@@ -15,7 +15,7 @@ This document defines the contract for Tier 2 through Tier 6 benchmarks using th
 - All setup (actor creation, subscriptions, pre-population, payload construction) goes **OUTSIDE** `ctx.measure`.
 - Only the operation being measured goes **INSIDE** `ctx.measure`.
 - Correctness counters must reflect the **actual number of meaningful operations** inside the measure block.
-- Use the `cntryl_stress` default profile for Fitz documentation and CI. Local sample-count or duration overrides are diagnostic only and must not become committed workflow defaults.
+- Use the `cntryl_stress` default profile for Fitz documentation and CI. Manual smoke and extended workflow profiles are diagnostic; standard and scheduled runs use the default profile.
 - Every scenario must exercise **real actor logic** — no `black_box` on counters, no fake loops, no measuring `pending_count()`.
 - If testing fanout, actually subscribe real sinks and publish real messages.
 - If testing scan_and_fire, schedules must actually be due to fire — bypass or reset the dedup window so fires actually occur.

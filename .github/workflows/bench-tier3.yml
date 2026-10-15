@@ -2,6 +2,12 @@ name: Benchmark Tier 3
 
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Measurement intensity
+        type: choice
+        options: [smoke, standard, extended]
+        default: standard
   schedule:
     - cron: "0 5 * * *"
 
@@ -14,35 +20,43 @@ concurrency:
 
 jobs:
   bench:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        bench:
+          - tier3_system_kv
+          - tier3_system_lease
+          - tier3_system_notice
+          - tier3_system_queue
+          - tier3_system_rpc
+          - tier3_system_stream
+          - tier3_system_stream_admin
     env:
       RUSTUP_TOOLCHAIN: "1.99.0"
       CARGO_INCREMENTAL: "0"
       RUST_LOG: "off"
       FITZ_LOG_LEVEL: "off"
       OTEL_ENABLED: "false"
+      STRESS_PROFILE: ${{ inputs.profile == 'smoke' && 'smoke' || inputs.profile == 'extended' && 'lab' || 'default' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Install verified Rust toolchain
+      - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "bench"
-
-      - name: Run registered Tier 3 targets
-        run: cargo bench --locked --bench 'tier3_*' --quiet --features benchkit
+      - name: Run benchmarks
+        run: cargo bench --locked --bench '${{ matrix.bench }}' --features benchkit
 
       - name: Upload benchmark reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: bench-tier3-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: target/stress/**
-          if-no-files-found: warn
-          retention-days: 90
+          name: bench-tier3-${{ matrix.bench }}-${{ github.sha }}
+          path: |
+            target/stress/**
+            target/fitz-stress/**
+          if-no-files-found: ignore

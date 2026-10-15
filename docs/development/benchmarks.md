@@ -56,8 +56,10 @@ same-host runs are stable and baseline-backed.
 Fitz uses the stress default profile for documented and CI Tier 1 through Tier 4
 commands. The default profile is their acceptance surface even when the
 summary reports `authoritative: false`; do not switch docs or CI to a release
-or lab profile just to force an authoritative flag. Do not pass `--profile` in
-Tier 1 through Tier 4 workflow or documentation commands.
+or lab profile just to force an authoritative flag. Manual workflows offer
+`smoke`, `standard`, and `extended`, mapped to the harness's `smoke`, `default`,
+and `lab` profiles. Standard remains the default acceptance measurement;
+smoke and extended runs provide additional diagnostics.
 
 Tier 5 and Tier 6 own long active windows and deliberately execute one measured
 invocation with `--profile smoke --samples 1 --warmup-samples 0 --cooldown-samples 0`.
