@@ -16,9 +16,7 @@ pub fn build_troubleshooting_snapshot(runtime: &Runtime) -> TroubleshootingSnaps
 }
 
 pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
-    let snapshot = runtime
-        .admin_read_model()
-        .bounded_snapshot(None, usize::MAX);
+    let snapshot = runtime.refreshed_admin_snapshot(None, usize::MAX);
     build_runtime_diagnostics_with_schedule(
         runtime,
         &snapshot,
