@@ -9,7 +9,9 @@ Use Rust's normal split between unit and integration tests.
 - Unit tests live next to the module they exercise under `src/`.
 - Integration tests live under `tests/`.
 - Domain end-to-end flows use `tests/*_e2e.rs`.
-- Semantic boundary checks live under `tests/semantic_boundaries.rs`.
+- Cross-domain semantic boundary checks live under `tests/multi_domain_e2e.rs`.
+- [Domain behavior coverage](domain-behavior-coverage.md) maps invariants to actor,
+  transport, and recovery tests.
 
 Cover backend behavior in Rust and UI behavior in TypeScript. Use the existing
 test runners; do not add Python files or standalone scripts to reproduce or

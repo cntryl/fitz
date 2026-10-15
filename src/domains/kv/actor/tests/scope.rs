@@ -69,31 +69,82 @@ fn should_reject_operation_with_area_mismatching_transaction_without_mutation() 
 }
 
 #[test]
-fn should_reject_kv_commit_given_any_scope_component_mismatch() {
+fn should_preserve_kv_writes_after_mismatched_commit_domain_invariant() {
     // Arrange
-    let mut actor = test_actor();
-    let scope = KvResourceScope::new(RouteFamily::new(1), "realm", "area", "table");
-    let tx_id = begin_with_scope(&mut actor, scope.clone());
+    for (case, rejected_scope) in [
+        KvResourceScope::new(RouteFamily::new(2), "realm", "area", "table"),
+        KvResourceScope::new(RouteFamily::new(1), "other", "area", "table"),
+        KvResourceScope::new(RouteFamily::new(1), "realm", "other", "table"),
+        KvResourceScope::new(RouteFamily::new(1), "realm", "area", "other"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut actor = test_actor();
+        let scope = KvResourceScope::new(RouteFamily::new(1), "realm", "area", "table");
+        let tx_id = begin_with_scope(&mut actor, scope.clone());
+        assert!(matches!(
+            actor.handle(KvMessage::Put {
+                tx_id,
+                scope: scope.clone(),
+                key: Bytes::from_static(b"key"),
+                value: Bytes::from_static(b"retained")
+            }),
+            KvResponse::PutOk
+        ));
 
-    // Act
-    let response = actor.handle(KvMessage::Commit {
-        tx_id,
-        scope: KvResourceScope::new(RouteFamily::new(1), "other", "area", "table"),
-        persistence: crate::domains::CommitPersistence::Buffered,
-    });
+        // Act
+        let rejected = actor.handle(KvMessage::Commit {
+            tx_id,
+            scope: rejected_scope,
+            persistence: crate::domains::CommitPersistence::Buffered,
+        });
+        let count = actor.transaction_count();
+        let accepted = actor.handle(KvMessage::Commit {
+            tx_id,
+            scope: scope.clone(),
+            persistence: crate::domains::CommitPersistence::Buffered,
+        });
+        let read_id = begin_with_scope(&mut actor, scope.clone());
+        let read = actor.handle(KvMessage::Get {
+            tx_id: read_id,
+            scope,
+            key: Bytes::from_static(b"key"),
+        });
 
-    // Assert
-    assert!(matches!(
-        response,
-        KvResponse::Error {
-            error: KvError::RealmMismatch
+        // Assert
+        match (case, rejected) {
+            (
+                0,
+                KvResponse::Error {
+                    error: KvError::InvalidRouteFamily,
+                },
+            )
+            | (
+                1,
+                KvResponse::Error {
+                    error: KvError::RealmMismatch,
+                },
+            )
+            | (
+                2 | 3,
+                KvResponse::Error {
+                    error: KvError::TxScopeViolation { .. },
+                },
+            ) => {}
+            other => panic!("unexpected commit scope rejection: {other:?}"),
         }
-    ));
-    assert_eq!(actor.transaction_count(), 1);
-    assert!(matches!(
-        actor.handle(KvMessage::Rollback { tx_id, scope }),
-        KvResponse::RollbackOk
-    ));
+        assert_eq!(count, 1);
+        assert!(matches!(accepted, KvResponse::CommitOk));
+        let KvResponse::GetResult {
+            found: true,
+            value: Some(value),
+        } = read
+        else {
+            panic!("staged value lost after rejected commit")
+        };
+        assert_eq!(value.as_ref(), b"retained");
+    }
 }
 
 #[test]
