@@ -1,11 +1,16 @@
 # Constrained runtime qualification
 
-Fitz must remain usable with a fraction of a CPU and 512MiB RAM. The opt-in campaigns qualify a
-specific local-disk envelope on native Linux AMD64 and ARM64: 0.25 CPU, 512MiB
-RAM, swap disabled, and an external load generator. This is a survival and
+Fitz must remain usable with a fraction of a CPU and 512MiB RAM. The campaigns
+qualify a specific envelope: 0.25 CPU, 512MiB RAM, swap disabled, and an
+external load generator. Automated workflows use native Linux AMD64; manual
+qualification can also target native Linux ARM64. This is a survival and
 correctness qualification, not a throughput promise or a maximum-capacity claim.
-The CI workflow runs backend and frontend validation; these container campaigns
-run separately.
+The CI workflow runs backend and frontend validation. Separate
+`integration-s3.yml`, `integration-azure.yml`, and `integration-gcs.yml` workflows
+run on pull requests and pushes to develop/main, or manually. Each uses Sqrzl as
+an Actions service. S3 runs the retention/recovery campaigns below; Azure and GCS
+run the seven-domain pressure campaign against their respective cloud protocols.
+The local-disk campaign remains a manual qualification.
 
 The campaign probes all seven domains, enqueues 16,384 uniquely identified 4KiB
 Queue messages through 64 connections, verifies every delivery and ACK, checks
@@ -57,7 +62,7 @@ also checks Stream writes after Fast Queue forces automatic SST publication.
 
 ## S3 WAL retention and crash recovery
 
-Four opt-in process-level campaigns run against the same native runtime image
+Four process-level campaigns run in `integration-s3.yml` against the same native runtime image
 at 0.25 CPU / 512MiB / no additional swap. A digest-pinned Sqrzl container and
 the external driver run outside the broker's resource limit. Fitz uses its native
 S3-compatible provider with best-effort Queue persistence and strict durability
