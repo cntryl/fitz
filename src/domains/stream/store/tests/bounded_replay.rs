@@ -190,30 +190,71 @@ checksum_test!(should_validate_selected_global_blob_checksum, Global);
 #[test]
 fn should_validate_filter_excluded_blob_in_examined_range() {
     // Arrange
-    let (store, _) = fixture();
-    delete_blob(&store, 31);
-    let filter = StreamFilterSet {
-        clauses: vec![StreamFilterClause::Equals("OtherKind".into())],
-    };
+    for scope in [Scope::Resource, Scope::Area, Scope::Realm, Scope::Global] {
+        for corrupt_checksum in [false, true] {
+            let (store, _) = fixture();
+            if corrupt_checksum {
+                let mut txn = store
+                    .db
+                    .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+                    .unwrap();
+                let key = encode_payload_blob_key(31);
+                let mut blob = txn.get(&key).unwrap().unwrap().to_vec();
+                *blob.last_mut().unwrap() ^= 1;
+                txn.put(key, blob, None).unwrap();
+                txn.commit(cntryl_midge::WriteOptions::sync()).unwrap();
+            } else {
+                delete_blob(&store, 31);
+            }
+            let filter = StreamFilterSet {
+                clauses: vec![StreamFilterClause::Equals("OtherKind".into())],
+            };
 
-    // Act
-    let result = store.read_resource_with_filter(
-        &ReadResourceParams {
-            family: 1,
-            realm: "north",
-            area: "orders",
-            resource: "created",
-            from_offset: 31,
-            limit: 1,
-            max_bytes: None,
-        },
-        Some(&filter),
-    );
+            // Act
+            let result = match scope {
+                Scope::Resource => store.read_resource_with_filter(
+                    &ReadResourceParams {
+                        family: 1,
+                        realm: "north",
+                        area: "orders",
+                        resource: "created",
+                        from_offset: 31,
+                        limit: 1,
+                        max_bytes: None,
+                    },
+                    Some(&filter),
+                ),
+                Scope::Area => store.read_area_with_filter(
+                    &crate::domains::stream::store::ReadAreaParams {
+                        family: 1,
+                        realm: "north",
+                        area: "orders",
+                        from_offset: 31,
+                        limit: 1,
+                        max_bytes: None,
+                    },
+                    Some(&filter),
+                ),
+                Scope::Realm => {
+                    store.read_realm_with_filter(1, "north", 31, 1, None, Some(&filter))
+                }
+                Scope::Global => store.read_global(1, 31, 1, None, Some(&filter)),
+            };
 
-    // Assert
-    assert!(result
-        .expect_err("examined filtered payload must still be validated")
-        .contains("missing payload blob"));
+            // Assert
+            let error = result.expect_err(
+                "filtered records in the examined range still require integrity validation",
+            );
+            assert!(
+                error.contains(if corrupt_checksum {
+                    "checksum"
+                } else {
+                    "missing payload blob"
+                }),
+                "{error}"
+            );
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

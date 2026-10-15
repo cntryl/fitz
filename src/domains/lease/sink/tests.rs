@@ -925,3 +925,5 @@ fn should_carry_the_acquirers_correlation_onto_a_deferred_lease_grant() {
         .expect("waiter grant frame");
     assert_eq!(frame.correlation, correlation);
 }
+
+mod waiter_lifecycle;

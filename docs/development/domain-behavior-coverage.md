@@ -44,7 +44,7 @@ durable delivery, or ordering between subscribers.
 | Storage state agrees with a generated oracle across reopening, expiration, and compaction | `store/tests/model_based.rs`: `should_match_reference_model_through_reopen_expiration_plus_compaction` |
 | Ordered offsets and committed resource/area/realm visibility survive failures and restart | `store/tests/offsets_and_reads.rs`, `store/tests/sessions_layout_and_watermarks.rs`, `sink/tests/watermark_wiring.rs`; `tests/stream_e2e/restart_storage.rs` |
 | Sync in background-cloud mode waits for cloud WAL acknowledgement | `store/tests/commit_persistence.rs`: `should_acknowledge_cloud_wal_before_sync_stream_commit_returns_in_background_mode` |
-| Examined replay data is integrity-checked, including filtered records; limits bound blob hydration | `store/tests/bounded_replay.rs`; `store/tests/compacted_locator_cache.rs` |
+| Examined replay data is integrity-checked, including filtered records; limits bound blob hydration | `store/tests/bounded_replay.rs` covers missing and checksum-invalid blobs excluded by filters at resource, area, realm and global scope; `store/tests/compacted_locator_cache.rs` |
 | Live subscriptions do not become replay cursors or recover after disconnect | `tests/stream_e2e/subscriptions_disconnect.rs` |
 | Foreign owner/session finalization cannot consume staged work or publish it | `actor/tests/invariants.rs`: `should_preserve_stream_session_after_foreign_finalization_domain_invariant`, both Buffered and Sync, followed by the real owner's commit and exact readback |
 
@@ -62,6 +62,7 @@ durable delivery, or ordering between subscribers.
 
 | Invariant | Executable evidence |
 | --- | --- |
+| Generated reservation ownership and visibility across ACK, extension, expiry and disconnect | `actor/tests/state_model.rs`: `should_match_queue_reservation_reference_state_model`, 256 bounded sequences with checks after every transition |
 | Exclusive reservation, token checks, expiration, extension, delayed visibility, redelivery, and dead-letter transition | `actor/tests/inflight_and_delivery.rs`, `actor/tests/recovery_and_storage.rs`; `tests/queue_e2e.rs` |
 | Failed ACK/redelivery persistence retains recoverable live state; ambiguous outcomes are not silently retried | `actor/tests/recovery_and_storage.rs`; `actor/tests/ack_admission.rs` |
 | Incomplete split records are reconciled; malformed authoritative data fails closed; families stay isolated | `actor/tests/startup_reconciliation.rs`; `actor/tests/storage_index_and_core.rs` |
@@ -80,13 +81,15 @@ it does not promise recovery of unflushed writes.
 | --- | --- |
 | Correlation ownership, ordered streaming chunks, terminal cleanup, and undeliverable response handling | `sink/tests/response_sequence.rs`, `sink/tests/cleanup_and_worker_errors.rs` |
 | Bounded credit, route-local FIFO, wildcard credit sharing, fair rotation, and family isolation | `sink/tests/wildcard_registrations.rs`, `sink/tests/timeouts_and_capacity.rs` |
+| Generated cleanup order preserves credit until the assigned worker acknowledges; repeated/stale/wrong-family/wrong-worker ACKs and late terminal responses cannot release another invocation | `sink/tests/cancellation/safety/state_model.rs`: `should_preserve_rpc_credit_across_cleanup_order_state_model`, 256 bounded sequences |
 | Cancellation retains dispatched credit until cleanup acknowledgement; stale cleanup cannot affect reused correlation | `sink/tests/cancellation/safety.rs`; `sink/tests/cancellation/frame_loop_grace.rs`; `tests/rpc_e2e/cancellation.rs` |
 | Restart drops pending requests and requires worker registration again | `tests/rpc_e2e/restart.rs` |
 | Queued expiration for one family cannot remove an identical UUID in another family | `sink/state_model/pending_table/tests.rs`: `should_isolate_queued_rpc_expiration_with_shared_uuid_domain_invariant` |
 
-RPC's production `sink/state_model/` directory is not a generated reference-model
-test. Its coverage comes from behavior tests driving the real dispatcher,
-pending table, sinks, and transports. Cancellation does not prove side-effect
+RPC's production `sink/state_model/` directory is distinct from generated tests
+under `sink/tests/cancellation/safety/state_model.rs`. The generated test drives
+the real dispatcher and sinks, with an independent credit-ownership oracle.
+Cancellation does not prove side-effect
 rollback or retry safety.
 
 ## Lease
@@ -94,6 +97,7 @@ rollback or retry safety.
 | Invariant | Executable evidence |
 | --- | --- |
 | One holder, session ownership, stale-token rejection, release, and expiry | `sink/tests/fault_injection.rs`, `sink/tests/correctness.rs`; `tests/lease_e2e/core.rs` |
+| A disconnected queued waiter cannot receive ownership when the holder expires; the surviving waiter advances | `sink/tests/waiter_lifecycle.rs`: `should_skip_disconnected_waiter_when_holder_expires`, using explicit expiry and confirmed session cleanup |
 | Waiter ordering and failed grant delivery do not leak ownership | `sink/tests.rs`: `should_promote_next_waiter_when_prior_waiter_cannot_receive_grant`; `tests/lease_e2e/waiters.rs` |
 | Observation is family/session isolated; cursor misuse, TTL, snapshot memory and wire budgets are bounded | `sink/tests/list.rs`; `tests/lease_e2e/list.rs` and `subscriptions.rs` |
 | Disconnect and restart destroy ownership | `tests/lease_e2e/core.rs`: `should_remove_session_owned_leases_when_client_disconnects_*`, `should_lose_all_leases_on_broker_restart_*` |
@@ -107,6 +111,7 @@ is not supported.
 
 | Invariant | Executable evidence |
 | --- | --- |
+| Generated definition/claim lifecycle agrees with an independent oracle through create/upsert, cancel, scan, ACK, forward time and actor reconstruction | `actor/tests/state_model.rs`: `should_match_schedule_claim_reference_state_model`, 128 bounded sequences; live definitions and live/persisted claims checked after every transition |
 | Due-time safety under forward/backward clock changes; overdue schedules skip forward | `tests/schedule_advanced.rs`; `actor/tests.rs`: `should_normalize_overdue_persisted_schedule_forward_on_preload` |
 | Durable definitions preload before traffic; pending claims persist without age-based expiry | `tests/schedule_e2e.rs`: `should_recover_schedule_definitions_before_accepting_schedule_traffic`; `store/tests.rs`; `sink/tests/recovery_and_claims.rs` |
 | Failed create/upsert/cancel/claim/ACK persistence does not advance live state or duplicate same-broker publication | `actor/tests/more.rs`; `sink/tests/recovery_and_claims.rs`: `should_retry_ack_without_republishing_given_same_broker_ack_persist_failure` |
@@ -128,11 +133,12 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```
 
-The generated actor reference models cover bounded KV and Stream operation
-sequences. Stream also has a generated storage model for reopening, expiration,
-and compaction. Other domains currently use deterministic scenario and fault tests;
-this map does not claim generated state-machine coverage for them. A passing
-bounded model does not prove all schedules or concurrency interleavings.
+The generated models cover bounded KV, Stream, Queue and Schedule operation
+sequences, plus RPC cancellation/cleanup ordering. Stream also has a generated
+storage model for reopening, expiration and compaction. Notice and Lease use
+deterministic scenario and fault tests. These models do not prove every
+concurrency interleaving; Schedule reconstruction retains the same engine and
+is not process-crash qualification.
 
 External resource-capped and S3 qualification remains separate:
 `tests/constrained_runtime.rs` documents its prerequisites and ignored cases;
@@ -146,3 +152,19 @@ This audit retains the existing Midge dependency revision. It does not qualify
 or replace the pending official Midge 0.4.0 release. Rerun the correctness gates
 and the relevant real-provider recovery qualification after adopting that
 release; do not infer that result from tests against the current revision.
+
+## Queue attempt-count contract follow-up
+
+During model development, `Send -> Reserve(session 2) -> Disconnect(session 2)
+-> Reserve(session 1)` returned attempt 1 on both deliveries. Expiry-driven
+redelivery advances the reported count. Immediate session cleanup returns work
+to ready without advancing the stored retry counter. The internal record comment
+currently describes increments on successful inflight assignment, while the
+canonical domain contract does not specify the disconnect case.
+
+The new Queue oracle checks ownership, visibility, fresh tokens, token/session
+rejection, retention and successful ACK, without inventing attempt-count or
+retry-budget semantics for disconnect. Define the intended attempt-count and
+dead-letter-budget behavior for disconnect and failed handoff explicitly before
+changing that policy. This observation does not establish crash-safe attempt
+counting or a production durability guarantee.

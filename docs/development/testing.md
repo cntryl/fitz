@@ -41,6 +41,13 @@ The complete CI correctness pass is:
 cargo test --locked --workspace
 ```
 
+Queue's generated reservation model checks token/session ownership, visibility,
+expiry, extension and disconnect after every transition. Schedule's generated
+model checks definitions and live/persisted claims through upserts, cancellation,
+ACK and reconstruction over a retained engine. RPC's generated cleanup-order
+model checks cancellation credit against stale and unauthorized acknowledgements.
+These are bounded state-machine tests, not exhaustive interleaving proofs.
+
 Midge continues to own WAL, manifest, corruption, low-level writer fencing,
 and storage failpoint coverage. Fitz owns the domain contract at its actor,
 sink, codec, session, and broker-process boundaries.

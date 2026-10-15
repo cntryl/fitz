@@ -520,3 +520,5 @@ fn should_retry_failed_worker_close_without_releasing_cancelled_capacity() {
     assert_eq!(endpoint.capture.close_reasons.lock().len(), 1);
     assert_eq!(h.capacity(), 0);
 }
+
+mod state_model;
