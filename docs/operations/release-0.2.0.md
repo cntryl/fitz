@@ -1,6 +1,7 @@
 # Fitz 0.2.0 qualification record
 
-Status: candidate; stable publication and deployment have not occurred.
+Status: qualified candidate; the maintainer signed off 0.2.0 as stable on
+2026-10-16. Publication and deployment remain separate operations.
 The release blocker is [#416](https://github.com/cntryl/fitz/issues/416).
 
 ## Storage and recovery
@@ -116,6 +117,12 @@ for the recorded runs above. Original raw-median budgets were unchanged, and
 failed captures were preserved. No baseline was refreshed. The passed
 qualification alone does not satisfy the two-run publication policy.
 
+On 2026-10-16 the maintainer accepted 0.2.0 as stable and deferred further work
+to 0.2.1 and later. This is release-specific acceptance of the recorded noisy
+WebSocket append p95 confirmation miss, not a passing confirmation verdict or
+a change to future performance budgets. The production recovery and migration
+qualification passed. No further timing campaign is required for 0.2.0.
+
 Standard/default hosted Tier 4 run
 [38936485262](https://github.com/cntryl/fitz/actions/runs/38936485262) passed all
 24 jobs. All 14 primary release rows passed correctness with acceptable quality,
@@ -124,13 +131,12 @@ does not replace the outstanding full confirmation requirement.
 
 ## Remaining publication gates
 
-- Acceptance of the missed full-confirmation WebSocket append p95 budget.
-  A standard Tier 4 workflow alone does not satisfy the full policy in
-  [Performance Loop](../development/perf-loop.md).
-- Review of application migration scope and rollback/reconciliation instructions.
 - Exact-head promotion checks, merge `develop` into `main` with a merge commit,
   successful main checks, then the existing Publish workflow and immutable
   multi-architecture manifest/source-tag readback.
 
 AWS access and deployment are outside this qualification. Publication must not
 be reported as deployment or as validation of an existing 0.1.0 prefix.
+Deployment still requires application migration-scope review and the documented
+rollback/reconciliation plan; representative broker rehearsal does not migrate
+an application's live data.
