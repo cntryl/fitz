@@ -2,6 +2,9 @@
 
 Use this checklist before approving a Fitz release.
 
+For the 0.2.0 candidate, track evidence and remaining gates in the
+[qualification record](release-0.2.0.md).
+
 ## Build and Test
 
 1. All CI checks green.
