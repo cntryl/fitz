@@ -77,12 +77,16 @@ recovery for cloud deployments. No logical export/import is required solely by
 this update. Verify that lease-loss storage errors remain terminal and do not
 become successful reads or automatic mutation retries.
 
-Fitz uses the official crates.io Midge 0.4.0 release. Confirm the lockfile uses
+Fitz uses the official crates.io Midge 0.4.1 release. Confirm the lockfile uses
 the registry package and checksum. FORMAT 8 and cloud catalog v3 require a
 fresh store populated by logical migration from older versions; qualify reads,
 writes, shutdown, restart, and cloud fresh-cache recovery before release.
 Preserve the original store and broker for rollback. See the
-[migration guide](migration-guide.md#midge-040).
+[migration guide](migration-guide.md#midge-041). Qualify the final published-crate
+broker image with the catalog-pressure and live 1 GiB Stream recovery workloads
+at 0.25 CPU, 512 MiB RAM, no extra swap, and the unchanged 180-second readiness
+deadline. Record native ARM64 and AMD64 evidence separately. See the
+[qualification report](../development/cloud-catalog-pressure.md).
 
 ## Stream error envelope generation 2 release gate
 

@@ -2,10 +2,26 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## Midge 0.4.1
+
+Fitz uses the published crates.io `cntryl-midge` 0.4.1 package. This patch
+fixes cloud catalog memory admission during recovery, publication, retirement,
+and salvage. Relative to 0.4.0, FORMAT 8, SST V4, catalog v3, lease metadata v3,
+and Fitz row encodings are unchanged; this patch alone requires no logical
+export/import.
+
+Stop writers, complete orderly shutdown, preserve a verified store and cloud
+prefix copy, and qualify reads, writes, shutdown, and recovery with the new
+broker at the deployment's actual resource limits. Include complete local-cache
+loss for cloud storage. Rollback to a 0.4.0 broker is format-compatible after
+clean shutdown, but restores the catalog admission defects and is unsuitable
+for affected stores. Pre-0.4 stores still require the logical migration below;
+never open the deployed Fitz 0.1.0 prefix directly with the new broker.
+
 ## Midge 0.4.0
 
-Fitz now uses the official crates.io `cntryl-midge` 0.4.0 release. This replaces
-the 0.3.3 Git pin and introduces database FORMAT 8, SST V4, cloud WAL catalog v3,
+The official crates.io `cntryl-midge` 0.4.0 release replaced
+the 0.3.3 Git pin and introduced database FORMAT 8, SST V4, cloud WAL catalog v3,
 and cloud lease metadata version 3. Existing FORMAT 1–7 databases and older
 cloud catalogs are rejected; there is no in-place format migration.
 

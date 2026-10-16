@@ -254,3 +254,13 @@ under load and no OOM kills. Reports are retained under
 results, not throughput or statistical performance claims. They establish the
 locked develop code's behavior on native ARM64; the fixed published dependency,
 final release image, native AMD64 and migration gates remain separate.
+
+## Published dependency adoption
+
+Midge 0.4.1 was published from
+`1bfa5c32e9300c4486c4969c386ca7dbc7622b24` after main CI, S3, Azure, GCS, and
+fuzz qualification passed. Fitz now resolves the registry package 0.4.1 with
+checksum `f2ef64491bd05e19d8f8c580470422ce25f64e8b599b126ac597eb2a48955f32`.
+The develop-pin results above remain prior evidence; qualification of the final
+published-crate image is pending and is required before closing the incident
+release gate.
