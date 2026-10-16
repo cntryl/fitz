@@ -212,5 +212,45 @@ traversed Stream payload history. The regression
 `should_skip_foreign_family_scoped_stream_payloads` fails before the fix and
 passes after recognizing the leading separator as an empty realm. Companion
 tests retain owned Stream payloads and unknown/legacy rows. The fix changes no
-readiness deadline or resource cap; constrained image qualification is still
-required.
+readiness deadline or resource cap. The resulting image was qualified below.
+
+## Locked develop qualification
+
+The native ARM64 production image built from Fitz
+`1cfe2cc865d62d294b1822a454cef54af419564c` locks Midge develop to
+`5305a5a178c8db6c82fa7a8b89bc5a2201cb1bfb`, without a path override. Its
+immutable identity is
+`sha256:6cde0c911703c8161dc0219e9cfc1601cd897e41c32b29e9f46b46550aaa199f`.
+It includes the empty-realm foreign-domain scan fix described above.
+
+| Catalog entries | Serialized bytes | Initial readiness | Crash-to-ready |
+| --- | --- | --- | --- |
+| 1,024 | 327,408 | 5.75 s | 88.82 s |
+| 8,192 | 2,656,455 | 16.71 s | 85.40 s |
+| 32,768 | 10,757,128 | 46.60 s | 122.05 s |
+
+All three stages passed exact historical readback and recovery of the new
+strict commit after SIGKILL and complete cache removal. The independent live
+Stream campaign also passed: all 32,768 acknowledged 32 KiB events, totaling
+1,073,741,824 bytes, were verified exactly after both restarts. Cold
+crash-to-ready was 101.15 seconds; orderly readiness was 16.42 seconds. Before
+any forced checkpoint, automatic retirement reached a 274,791-byte catalog,
+77,263,009 remote WAL bytes and 245 SST objects within the two-minute limit.
+The full live campaign completed in 1,294.64 seconds.
+
+All five existing S3 qualification tests also passed against this image:
+supported-format fixture recovery; empty-cache recovery of 674,005,451 WAL
+bytes with exact KV readback; warm and cold recovery/drain of 4,096 persisted
+16 KiB Queue messages; and retirement of 67,400,735 historical WAL bytes during
+16,384 enqueue/ACK operations (256 MiB of Queue payload). The churn case
+verified all 4,096 historical KV values, finished with three remote WAL objects
+totaling 1,094 bytes, and remained ready across 158 health samples.
+
+Docker inspections confirm 0.25 CPU, 512 MiB RAM, no extra swap, zero restarts
+under load and no OOM kills. Reports are retained under
+`target/fitz-stress/midge-develop-catalog/`,
+`target/fitz-stress/midge-develop-stream-gib/` and
+`target/fitz-stress/midge-develop-s3/`. These are bounded smoke qualification
+results, not throughput or statistical performance claims. They establish the
+locked develop code's behavior on native ARM64; the fixed published dependency,
+final release image, native AMD64 and migration gates remain separate.
