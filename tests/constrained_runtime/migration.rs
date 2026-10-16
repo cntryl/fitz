@@ -76,6 +76,7 @@ fn preserved_objects(campaign: &Campaign, phase: &str) -> BTreeMap<String, Strin
             "--no-cli-pager",
             "s3api",
             "list-objects-v2",
+            "--no-paginate",
             "--bucket",
             campaign.bucket(),
             "--prefix",
