@@ -188,6 +188,12 @@ do not establish another catalog-admission failure or its root cause.
 
 A separate active Midge regression found that repeated publication across the
 32,768-entry vector-capacity boundary still exceeds upload admission after
-PR 887. Claude owns follow-up draft
-[Midge PR 888](https://github.com/cntryl/midge/pull/888); overlapping local Midge
-work is paused. Keep the engine fix and Fitz cold-start acceptance gates open.
+PR 887. Codex completed Claude's follow-up
+[Midge PR 888](https://github.com/cntryl/midge/pull/888), merged into develop as
+`5305a5a178c8db6c82fa7a8b89bc5a2201cb1bfb`. Adversarial review also reproduced
+and fixed cache eviction on temporary decode admission refusal and uncharged
+nested retirement evidence. Active native-provider regressions cover repeated
+publication across the capacity boundary, startup salvage at 32,768 and 32,769
+entries, and retirement refusal followed by safe retry when pressure clears.
+Final consumer qualification requires the fixed published crate and a rebuilt
+Fitz image. The cold-start acceptance gate above remains open.
