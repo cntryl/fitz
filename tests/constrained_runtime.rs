@@ -1,5 +1,8 @@
 //! External driver: the broker must be capped independently of this process.
 mod fixtures;
+#[path = "constrained_runtime/migration.rs"]
+#[cfg(feature = "recovery-qualification")]
+mod migration;
 #[path = "constrained_runtime/s3.rs"]
 #[cfg(feature = "recovery-qualification")]
 mod s3;
