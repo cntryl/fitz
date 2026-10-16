@@ -90,10 +90,41 @@ Both broker images use the same 0.25 CPU / 512 MiB / no-extra-swap limits. The
 driver writes logical exports, cloud object copies and hash inventories alongside
 container identities, limits and restart timings under `FITZ_S3_REPORT_DIR`.
 
+## Local performance qualification
+
+The full local qualification against the original Midge 0.4.0 baseline
+`f1f91b891617e4326a422979927e0a1d640c19bc` passed all 32 workloads, all eight
+budgets and both unchanged-binary controls. The predeclared full confirmation
+passed both controls and seven budgets, but missed WebSocket append p95:
+72.31 microseconds versus 63.69 microseconds, ratio 1.1354 against the 1.10 limit.
+Throughput retained 95.996% of baseline. Candidate latency captures were marked
+noisy; a Teams renderer reached 175% CPU in the affected capture's host snapshot.
+That observation does not prove the cause or waive the missed budget.
+
+Both runs used the same archived executables, default sampling, three
+alternating pairs per workload, identical fixture parameters and original
+baseline manifest/lockfile. All native captures exited successfully, exact
+correctness passed, and no compiler activity was observed in host snapshots.
+The candidate source was `2c95b7a04dd9fe3885458c17742472441f449c25`.
+Raw artifacts, executable hashes, plans, host snapshots and comparisons are
+preserved in `/tmp/fitz-020-performance-quiet/` on the qualification Mac.
+
+Two earlier full runs in `/tmp/fitz-020-performance/` were invalidated by
+compiler interference. They also used an optional native baseline comparison
+that rejected diagnostic-trusted latency baselines; this setup error was removed
+for the recorded runs above. Original raw-median budgets were unchanged, and
+failed captures were preserved. No baseline was refreshed. The passed
+qualification alone does not satisfy the two-run publication policy.
+
+Standard/default hosted Tier 4 run
+[38936485262](https://github.com/cntryl/fitz/actions/runs/38936485262) passed all
+24 jobs. All 14 primary release rows passed correctness with acceptable quality,
+and the artifact-backed Rust release-row acceptance test passed. This evidence
+does not replace the outstanding full confirmation requirement.
+
 ## Remaining publication gates
 
-- Benchmark release rows and the required same-host Stream performance
-  qualification, including unchanged-binary controls and the confirmation run.
+- Acceptance of the missed full-confirmation WebSocket append p95 budget.
   A standard Tier 4 workflow alone does not satisfy the full policy in
   [Performance Loop](../development/perf-loop.md).
 - Review of application migration scope and rollback/reconciliation instructions.
