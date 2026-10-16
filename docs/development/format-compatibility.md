@@ -117,12 +117,13 @@ persist the mode.
 
 ## Midge 0.4 storage formats
 
-Fitz embeds the official crates.io `cntryl-midge` 0.4.0 release: database FORMAT 8,
+Fitz embeds the official crates.io `cntryl-midge` 0.4.1 release: database FORMAT 8,
 SST V4, cloud WAL catalog v3, and cloud lease metadata version 3. FORMAT 1–7 and
 older cloud catalogs are rejected with no in-place migration. Fitz row encodings
 are unchanged, but existing stores require logical export with the previous
 broker and import into a fresh store. Rollback uses the preserved original store
-and previous broker. See the [migration guide](../operations/migration-guide.md#midge-040).
+and previous broker. These formats are unchanged from Midge 0.4.0. See the
+[migration guide](../operations/migration-guide.md#midge-041).
 
 ## Midge 0.3 cloud storage metadata
 

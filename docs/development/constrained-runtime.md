@@ -138,7 +138,7 @@ cargo test --locked --features recovery-qualification --test constrained_runtime
 These campaigns qualify native S3 protocol behavior against an emulator. They
 do not qualify production AWS latency, an unmeasured historic backlog, or reuse
 of a Fitz 0.1.0 storage prefix. Fitz 0.1.0 resolved Midge 0.1.1; current develop
-uses the official crates.io Midge 0.4.0 release.
+uses the official crates.io Midge 0.4.1 release.
 Its streaming recovery checkpoints, exact delete/range-tombstone retirement,
 budgeted replay coverage and indexed SST candidate selection address concrete
 historical retention/recovery mechanisms. Residual recovery cost remains

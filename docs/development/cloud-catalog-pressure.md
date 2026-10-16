@@ -14,7 +14,7 @@ Fixture construction and upload run outside the broker's resource cap with
 no active writer. The final stage must reach at least the incident's serialized
 catalog size. This is an offline history fixture, not a claim that ordinary
 rotation necessarily generates these segment sizes or that the deployed
-0.1.0 prefix can be opened by Midge 0.4.0.
+0.1.0 prefix can be opened by Midge 0.4.
 
 Each stage starts the ordinary immutable Fitz image at 0.25 CPU, 512 MiB RAM,
 and no additional swap. It must become strictly ready within 180 seconds,
@@ -198,7 +198,7 @@ entries, and retirement refusal followed by safe retry when pressure clears.
 Final consumer qualification requires the fixed published crate and a rebuilt
 Fitz image. The cold-start acceptance gate above remains open.
 
-Fitz now resolves Midge's `develop` branch through `Cargo.lock` to that exact
+At this qualification stage, Fitz resolved Midge's `develop` branch through `Cargo.lock` to that exact
 `5305a5a` commit. The ordinary production Dockerfile builds without a path
 override. A diagnostic cold start against a copy of the preserved 1 GiB store
 opened Midge successfully but failed Schedule's 120-second preload deadline.
@@ -261,6 +261,45 @@ Midge 0.4.1 was published from
 `1bfa5c32e9300c4486c4969c386ca7dbc7622b24` after main CI, S3, Azure, GCS, and
 fuzz qualification passed. Fitz now resolves the registry package 0.4.1 with
 checksum `f2ef64491bd05e19d8f8c580470422ce25f64e8b599b126ac597eb2a48955f32`.
-The develop-pin results above remain prior evidence; qualification of the final
-published-crate image is pending and is required before closing the incident
-release gate.
+The develop-pin results above remain prior evidence. The final registry-crate
+runtime image was built with the ordinary production Dockerfile from Fitz
+`a6fdcd15de4b552b5a465f58ae561ab987696046` without an engine override:
+`sha256:22266460c886cb34bf4e71c7ffe9a77908d028eeb26dd2e83d43114efe26fbae`.
+
+The complete native ARM64 catalog sweep passed:
+
+| Catalog entries | Serialized bytes | Initial readiness | Crash-to-ready |
+| --- | --- | --- | --- |
+| 1,024 | 327,700 | 3.34 s | 90.14 s |
+| 8,192 | 2,656,435 | 29.95 s | 96.20 s |
+| 32,768 | 10,757,966 | 44.53 s | 125.03 s |
+
+Every stage recovered all 32 exact historical values and a subsequent strict
+commit after SIGKILL and complete cache loss. The largest catalog exceeds the
+incident's inferred 8,702,002-byte size. Reports are retained under
+`target/fitz-stress/midge-041-catalog/`.
+
+The fresh live Stream campaign acknowledged all 32,768 Sync events (exactly
+1 GiB). Before any forced checkpoint, automatic retirement reached a
+337,151-byte catalog, 101,775,830 remote WAL bytes, and 242 SST objects within
+the unchanged two-minute limit. Cold readiness passed in 126.71 seconds, but the
+first Stream read timed out at the unchanged 60-second request limit. Full cold
+readback and orderly restart did not complete; this campaign failed. Evidence
+is retained under
+`target/fitz-stress/midge-041-stream-gib/stream-gib-7f95a184-5b56-448a-89a5-a85100a65098/`.
+
+Logs show the startup Stream admin metadata refresh timed out before readiness,
+then the first Stream request timed out behind the family actor. Resource
+metadata enumeration scans all Stream rows, including payload blobs it ignores;
+maintenance discovery does the same before filtering for compactable fragments.
+The follow-up selects row kinds with range seeks, preserving full persisted-row
+validation and payload read checks. Its focused metadata regression fails with
+the previous scan and passes with the new scan. Replacement-image qualification
+is tracked in [Fitz PR 486](https://github.com/cntryl/fitz/pull/486); the failed
+campaign remains a negative control, regardless of its readiness result.
+
+These are bounded local emulator smoke results at 0.25 CPU, 512 MiB RAM and no
+extra swap, with the unchanged 180-second readiness limit. Native AMD64,
+remaining final-dependency release checks and migration acceptance remain
+separate gates; these results do not qualify production AWS latency or direct
+reuse of the Fitz 0.1.0 prefix.

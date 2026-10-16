@@ -232,9 +232,10 @@ fn scan_maintenance_buckets(
         )
         .map_err(|error| format!("begin Stream maintenance scan failed: {error:?}"))?;
     let mut buckets: BTreeMap<Vec<u8>, Vec<Fragment>> = BTreeMap::new();
-    for row in crate::storage::domain_scan::scan_domain_rows(
+    for row in crate::storage::domain_scan::scan_domain_marker_rows(
         &txn,
         crate::utils::storage_key::DomainKeyspace::Stream,
+        |marker| compactable_plane(marker).is_some(),
     )
     .map_err(|error| format!("scan Stream maintenance rows failed: {error:?}"))?
     {
