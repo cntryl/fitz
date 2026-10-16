@@ -4,14 +4,33 @@ use crate::utils::storage_key::{prefix_range_end, strip_domain_prefix, DomainKey
 use bytes::Bytes;
 use cntryl_midge::{MidgeResult, Query, Transaction};
 
+/// Scan selected owned row kinds while preserving unknown/legacy namespaces.
+/// Non-selected owned kinds are skipped with a range seek, not row filtering.
+pub(crate) fn scan_domain_marker_rows<'a>(
+    transaction: &'a Transaction,
+    domain: DomainKeyspace,
+    include_marker: impl Fn(u8) -> bool + 'a,
+) -> MidgeResult<impl Iterator<Item = MidgeResult<(Bytes, Bytes)>> + 'a> {
+    scan_rows(transaction, domain, include_marker)
+}
+
 /// Scan owned and unrecognized rows from one transaction snapshot.
 ///
-/// Unrecognized and binary-leading rows remain visible for legacy/corruption
-/// validation. Ordinary foreign realm/domain ranges cost one row and a seek.
+/// Unrecognized and legacy binary-leading rows remain visible for corruption
+/// validation. Foreign realm/domain ranges, including the empty internal
+/// realm used by Stream payload blobs, cost one row and a seek.
 pub(crate) fn scan_domain_rows(
     transaction: &Transaction,
     domain: DomainKeyspace,
 ) -> MidgeResult<impl Iterator<Item = MidgeResult<(Bytes, Bytes)>> + '_> {
+    scan_rows(transaction, domain, |_| true)
+}
+
+fn scan_rows<'a>(
+    transaction: &'a Transaction,
+    domain: DomainKeyspace,
+    include_marker: impl Fn(u8) -> bool + 'a,
+) -> MidgeResult<impl Iterator<Item = MidgeResult<(Bytes, Bytes)>> + 'a> {
     let mut rows = Some(transaction.scan(&Query::new())?);
     Ok(std::iter::from_fn(move || loop {
         let row = rows.as_mut()?.next()?;
@@ -22,11 +41,13 @@ pub(crate) fn scan_domain_rows(
                 return Some(Err(error));
             }
         };
-        let Some(end) = foreign_domain_end(&key, domain) else {
+        let end = foreign_domain_end(&key, domain)
+            .or_else(|| unselected_marker_end(&key, domain, &include_marker));
+        let Some(end) = end else {
             return Some(Ok((key, value)));
         };
-        // The first foreign row identifies its realm/domain range. Seek past
-        // the whole range instead of materializing every foreign payload.
+        // An unwanted row identifies its domain or row-kind range. Seek past
+        // that range instead of materializing every irrelevant payload.
         drop(value);
         rows = None;
         match transaction.scan(&Query::new().start_key(Bytes::from(end))) {
@@ -36,11 +57,30 @@ pub(crate) fn scan_domain_rows(
     }))
 }
 
+fn unselected_marker_end(
+    key: &[u8],
+    domain: DomainKeyspace,
+    include_marker: &impl Fn(u8) -> bool,
+) -> Option<Vec<u8>> {
+    let first = *key.first()?;
+    if first != lexkey::LexKey::SEPARATOR && !first.is_ascii_graphic() {
+        return None;
+    }
+    let suffix = strip_domain_prefix(key, domain)?;
+    if include_marker(*suffix.first()?) {
+        return None;
+    }
+    Some(prefix_range_end(&key[..=key.len() - suffix.len()]))
+}
+
 fn foreign_domain_end(key: &[u8], domain: DomainKeyspace) -> Option<Vec<u8>> {
     // Legacy Stream keys begin with a raw control or high-byte marker. Their
     // binary suffix can resemble a realm/domain prefix by coincidence. Keep
     // them visible; non-ASCII realm prefixes conservatively use the full scan.
-    if !key.first()?.is_ascii_graphic() {
+    // A leading separator is the empty realm, not a legacy Stream marker.
+    // Stream uses it for family-scoped payload blobs and ordering metadata.
+    let first = *key.first()?;
+    if first != lexkey::LexKey::SEPARATOR && !first.is_ascii_graphic() {
         return None;
     }
     for other in [
@@ -82,6 +122,88 @@ mod tests {
     }
 
     #[test]
+    fn should_scan_stream_metadata_without_payload_ranges_across_realms() {
+        // Arrange
+        let marker = crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8;
+        let expected = vec![
+            prefixed_key("a", DomainKeyspace::Stream, &[marker, 0]),
+            prefixed_key("z", DomainKeyspace::Stream, &[marker, 255]),
+        ];
+        let mut keys = expected.clone();
+        keys.extend([
+            crate::domains::stream::storage::encode_payload_blob_key(0),
+            crate::domains::stream::storage::encode_payload_blob_key(1),
+            prefixed_key("a", DomainKeyspace::Stream, &[marker - 1, 255]),
+            prefixed_key("a", DomainKeyspace::Stream, &[marker + 1, 0]),
+            prefixed_key("b", DomainKeyspace::Kv, b"other-domain"),
+        ]);
+        let engine = seeded_engine(&keys);
+        let tx = engine.begin_tx(1, TransactionMode::ReadOnly).unwrap();
+
+        // Act
+        let actual = scan_domain_marker_rows(&tx, DomainKeyspace::Stream, |value| value == marker)
+            .unwrap()
+            .map(|row| row.unwrap().0.to_vec())
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn should_scan_selected_stream_fragment_kinds_without_payload_blobs() {
+        // Arrange
+        let markers = [
+            crate::domains::stream::storage::KeyPrefix::CompactAreaPage as u8,
+            crate::domains::stream::storage::KeyPrefix::CompactResourcePage as u8,
+        ];
+        let expected = vec![
+            prefixed_key("a", DomainKeyspace::Stream, &[markers[0], 0]),
+            prefixed_key("a", DomainKeyspace::Stream, &[markers[1], 255]),
+        ];
+        let mut keys = expected.clone();
+        keys.push(crate::domains::stream::storage::encode_payload_blob_key(0));
+        let engine = seeded_engine(&keys);
+        let tx = engine.begin_tx(1, TransactionMode::ReadOnly).unwrap();
+
+        // Act
+        let actual = scan_domain_marker_rows(&tx, DomainKeyspace::Stream, |value| {
+            markers.contains(&value)
+        })
+        .unwrap()
+        .map(|row| row.unwrap().0.to_vec())
+        .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn should_preserve_unrecognized_rows_in_marker_scan() {
+        // Arrange
+        let expected = vec![
+            b"\0unknown\0row".to_vec(),
+            b"\x05\0st\0legacy".to_vec(),
+            b"realm\0st\0".to_vec(),
+            b"realm\0unknown\0row".to_vec(),
+            b"\xea\0st\0legacy".to_vec(),
+        ];
+        let engine = seeded_engine(&expected);
+        let tx = engine.begin_tx(1, TransactionMode::ReadOnly).unwrap();
+
+        // Act
+        let actual = scan_domain_marker_rows(&tx, DomainKeyspace::Stream, |value| {
+            value == crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8
+        })
+        .unwrap()
+        .map(|row| row.unwrap().0.to_vec())
+        .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn should_scan_owned_rows_across_realms_without_foreign_domain_rows() {
         // Arrange
         let expected = vec![
@@ -111,9 +233,46 @@ mod tests {
     }
 
     #[test]
+    fn should_skip_foreign_family_scoped_stream_payloads() {
+        // Arrange
+        let expected = vec![prefixed_key("app", DomainKeyspace::Schedule, b"definition")];
+        let mut keys = expected.clone();
+        keys.push(crate::domains::stream::storage::encode_payload_blob_key(0));
+        let engine = seeded_engine(&keys);
+        let tx = engine.begin_tx(1, TransactionMode::ReadOnly).unwrap();
+
+        // Act
+        let actual = scan_domain_rows(&tx, DomainKeyspace::Schedule)
+            .unwrap()
+            .map(|row| row.unwrap().0.to_vec())
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn should_preserve_owned_family_scoped_stream_payloads() {
+        // Arrange
+        let expected = vec![crate::domains::stream::storage::encode_payload_blob_key(0)];
+        let engine = seeded_engine(&expected);
+        let tx = engine.begin_tx(1, TransactionMode::ReadOnly).unwrap();
+
+        // Act
+        let actual = scan_domain_rows(&tx, DomainKeyspace::Stream)
+            .unwrap()
+            .map(|row| row.unwrap().0.to_vec())
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn should_preserve_unrecognized_rows_for_validation() {
         // Arrange
         let expected = vec![
+            b"\0unknown\0row".to_vec(),
             b"\x05\0kv\0legacy".to_vec(),
             b"realm\0unknown\0row".to_vec(),
             b"\xea\0kv\0legacy".to_vec(),

@@ -148,10 +148,10 @@ External resource-capped and S3 qualification remains separate:
 cases as passes. Simulated-cloud unit tests do not qualify real provider outages
 or large cold-cache WAL recovery.
 
-This audit retains the existing Midge dependency revision. It does not qualify
-or replace the pending official Midge 0.4.0 release. Rerun the correctness gates
-and the relevant real-provider recovery qualification after adopting that
-release; do not infer that result from tests against the current revision.
+This audit did not qualify a later dependency release. Fitz now resolves the
+published Midge 0.4.1 crate; its correctness and constrained recovery evidence
+is recorded separately in the [cloud catalog qualification report](cloud-catalog-pressure.md).
+Do not infer provider recovery qualification from the stateful models alone.
 
 ## Queue attempt-count contract follow-up
 

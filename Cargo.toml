@@ -42,7 +42,7 @@ base64 = "0.23.1"
 brotli = "9"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-cntryl-midge = "0.4.0"
+cntryl-midge = "0.4.1"
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"
 flate2 = "1"
@@ -369,6 +369,12 @@ path = "benches/tier4_stream_compacted.rs"
 required-features = ["benchkit"]
 
 # Tier 5: Full TCP concurrency/saturation sweeps.
+[[bench]]
+name = "tier5_cloud_catalog"
+harness = false
+path = "benches/tier5_cloud_catalog.rs"
+required-features = ["benchkit", "stress-soak", "recovery-qualification"]
+
 [[bench]]
 name = "tier5_queue_drains"
 harness = false

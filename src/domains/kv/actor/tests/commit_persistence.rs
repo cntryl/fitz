@@ -6,7 +6,7 @@ use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 
-fn commit_with_policy(policy: CommitPersistence) -> (u64, u64) {
+fn commit_with_policy(policy: CommitPersistence) -> (u64, u64, Vec<cntryl_midge::WriteOptions>) {
     let directory = tempfile::tempdir().unwrap();
     let engine = Arc::new(
         cntryl_midge::Engine::open(
@@ -19,7 +19,10 @@ fn commit_with_policy(policy: CommitPersistence) -> (u64, u64) {
         .unwrap(),
     );
     let family = engine.create_column_family("tenant_default").unwrap();
-    let mut actor = KvActor::new(engine.clone());
+    let observed = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let store = crate::domains::kv::store::KvStore::new(engine.clone())
+        .with_commit_observer(Arc::clone(&observed));
+    let mut actor = KvActor::new(store);
     let (tx_id, scope) = stage_transaction(&mut actor, family.id());
     let before = engine.metrics().get_runtime_metrics().unwrap();
     assert!(matches!(
@@ -33,9 +36,11 @@ fn commit_with_policy(policy: CommitPersistence) -> (u64, u64) {
     let after = engine.metrics().get_runtime_metrics().unwrap();
     drop(actor);
     crate::testkit::midge::shutdown_test_engine(engine);
+    let options = observed.lock().clone();
     (
         after.wal_append_count - before.wal_append_count,
         after.wal_fsync_count - before.wal_fsync_count,
+        options,
     )
 }
 
@@ -98,11 +103,16 @@ fn should_use_buffered_wal_when_kv_commit_selects_buffered() {
     let policy = CommitPersistence::Buffered;
 
     // Act
-    let (appends, syncs) = commit_with_policy(policy);
+    let (appends, _syncs, options) = commit_with_policy(policy);
 
     // Assert
     assert!(appends > 0);
-    assert_eq!(syncs, 0);
+    // Background group commit can fsync after Buffered is acknowledged.
+    // Observe the actual engine arguments rather than a wall-clock window.
+    assert_ne!(options, [] as [cntryl_midge::WriteOptions; 0]);
+    assert!(options
+        .iter()
+        .all(|options| *options == cntryl_midge::WriteOptions::buffered()));
 }
 
 #[test]
@@ -111,9 +121,10 @@ fn should_wait_for_synced_wal_when_kv_commit_selects_sync() {
     let policy = CommitPersistence::Sync;
 
     // Act
-    let (appends, syncs) = commit_with_policy(policy);
+    let (appends, syncs, options) = commit_with_policy(policy);
 
     // Assert
     assert!(appends > 0);
     assert!(syncs > 0);
+    assert!(options.contains(&cntryl_midge::WriteOptions::sync()));
 }

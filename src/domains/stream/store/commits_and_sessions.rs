@@ -371,9 +371,10 @@ impl StreamStore {
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
-        let resource_meta_iter = crate::storage::domain_scan::scan_domain_rows(
+        let resource_meta_iter = crate::storage::domain_scan::scan_domain_marker_rows(
             &txn,
             crate::utils::storage_key::DomainKeyspace::Stream,
+            |marker| marker == crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8,
         )
         .map_err(|e| format!("scan error: {e:?}"))?;
 

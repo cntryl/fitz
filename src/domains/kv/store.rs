@@ -11,9 +11,14 @@ mod write_admission;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) type CommitObserver = Arc<parking_lot::Mutex<Vec<cntryl_midge::WriteOptions>>>;
+
 #[derive(Clone)]
 pub(crate) struct KvStore {
     engine: crate::storage::FitzStorageEngine,
+    #[cfg(test)]
+    commit_observer: Option<CommitObserver>,
 }
 
 pub(crate) struct KvTransaction {
@@ -21,13 +26,23 @@ pub(crate) struct KvTransaction {
     engine: crate::storage::FitzStorageEngine,
     family: u32,
     has_mutations: bool,
+    #[cfg(test)]
+    commit_observer: Option<CommitObserver>,
 }
 
 impl KvStore {
     pub(crate) fn new(engine: Arc<cntryl_midge::Engine>) -> Self {
         Self {
             engine: crate::storage::FitzStorageEngine::new(engine),
+            #[cfg(test)]
+            commit_observer: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_commit_observer(mut self, observer: CommitObserver) -> Self {
+        self.commit_observer = Some(observer);
+        self
     }
 
     pub(crate) fn begin(&self, column_family: u32, mode: TxMode) -> Result<KvTransaction, KvError> {
@@ -42,6 +57,8 @@ impl KvStore {
                 engine: self.engine.clone(),
                 family: column_family,
                 has_mutations: false,
+                #[cfg(test)]
+                commit_observer: self.commit_observer.clone(),
             })
             .map_err(|error| Self::map_error(&error))
     }
@@ -160,8 +177,13 @@ impl KvTransaction {
         if self.has_mutations {
             self.wait_for_write_admission()?;
         }
+        let options = policy.into();
+        #[cfg(test)]
+        if let Some(observer) = &self.commit_observer {
+            observer.lock().push(options);
+        }
         self.inner
-            .commit(policy.into())
+            .commit(options)
             .map_err(|error| KvStore::map_error(&error))
     }
 }
