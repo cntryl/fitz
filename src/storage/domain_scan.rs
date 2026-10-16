@@ -6,8 +6,9 @@ use cntryl_midge::{MidgeResult, Query, Transaction};
 
 /// Scan owned and unrecognized rows from one transaction snapshot.
 ///
-/// Unrecognized and binary-leading rows remain visible for legacy/corruption
-/// validation. Ordinary foreign realm/domain ranges cost one row and a seek.
+/// Unrecognized and legacy binary-leading rows remain visible for corruption
+/// validation. Foreign realm/domain ranges, including the empty internal
+/// realm used by Stream payload blobs, cost one row and a seek.
 pub(crate) fn scan_domain_rows(
     transaction: &Transaction,
     domain: DomainKeyspace,
@@ -40,7 +41,10 @@ fn foreign_domain_end(key: &[u8], domain: DomainKeyspace) -> Option<Vec<u8>> {
     // Legacy Stream keys begin with a raw control or high-byte marker. Their
     // binary suffix can resemble a realm/domain prefix by coincidence. Keep
     // them visible; non-ASCII realm prefixes conservatively use the full scan.
-    if !key.first()?.is_ascii_graphic() {
+    // A leading separator is the empty realm, not a legacy Stream marker.
+    // Stream uses it for family-scoped payload blobs and ordering metadata.
+    let first = *key.first()?;
+    if first != lexkey::LexKey::SEPARATOR && !first.is_ascii_graphic() {
         return None;
     }
     for other in [
@@ -111,9 +115,46 @@ mod tests {
     }
 
     #[test]
+    fn should_skip_foreign_family_scoped_stream_payloads() {
+        // Arrange
+        let expected = vec![prefixed_key("app", DomainKeyspace::Schedule, b"definition")];
+        let mut keys = expected.clone();
+        keys.push(crate::domains::stream::storage::encode_payload_blob_key(0));
+        let engine = seeded_engine(&keys);
+        let tx = engine.begin_tx(1, TransactionMode::ReadOnly).unwrap();
+
+        // Act
+        let actual = scan_domain_rows(&tx, DomainKeyspace::Schedule)
+            .unwrap()
+            .map(|row| row.unwrap().0.to_vec())
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn should_preserve_owned_family_scoped_stream_payloads() {
+        // Arrange
+        let expected = vec![crate::domains::stream::storage::encode_payload_blob_key(0)];
+        let engine = seeded_engine(&expected);
+        let tx = engine.begin_tx(1, TransactionMode::ReadOnly).unwrap();
+
+        // Act
+        let actual = scan_domain_rows(&tx, DomainKeyspace::Stream)
+            .unwrap()
+            .map(|row| row.unwrap().0.to_vec())
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn should_preserve_unrecognized_rows_for_validation() {
         // Arrange
         let expected = vec![
+            b"\0unknown\0row".to_vec(),
             b"\x05\0kv\0legacy".to_vec(),
             b"realm\0unknown\0row".to_vec(),
             b"\xea\0kv\0legacy".to_vec(),

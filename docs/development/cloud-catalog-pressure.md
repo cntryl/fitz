@@ -197,3 +197,20 @@ publication across the capacity boundary, startup salvage at 32,768 and 32,769
 entries, and retirement refusal followed by safe retry when pressure clears.
 Final consumer qualification requires the fixed published crate and a rebuilt
 Fitz image. The cold-start acceptance gate above remains open.
+
+Fitz now resolves Midge's `develop` branch through `Cargo.lock` to that exact
+`5305a5a` commit. The ordinary production Dockerfile builds without a path
+override. A diagnostic cold start against a copy of the preserved 1 GiB store
+opened Midge successfully but failed Schedule's 120-second preload deadline.
+This copied store had an expired lease and prior background compaction, so it
+does not substitute for the complete live-write/crash/cache-loss campaign.
+
+The diagnostic exposed a Fitz domain-scan bug: Stream's family-scoped payload
+blobs use an empty internal realm, but the foreign-domain skip helper treated
+every binary-leading key as legacy data. Queue and Schedule consequently
+traversed Stream payload history. The regression
+`should_skip_foreign_family_scoped_stream_payloads` fails before the fix and
+passes after recognizing the leading separator as an empty realm. Companion
+tests retain owned Stream payloads and unknown/legacy rows. The fix changes no
+readiness deadline or resource cap; constrained image qualification is still
+required.
