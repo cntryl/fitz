@@ -463,7 +463,6 @@ export const sprint16Routes: RouteScenario[] = [
         page,
         "lease",
         parseRouteResourceScope("/admin/1/lease/default/ops/primary"),
-        { now: new Date("2026-06-23T18:30:00.000Z").valueOf() },
       ),
     title: "primary",
   },
@@ -473,6 +472,7 @@ export const sprint16Routes: RouteScenario[] = [
     setup: (page) =>
       mockResourceDetailApis(page, "lease", {
         area: "ops",
+        routeFamily: 5,
         realm: "default",
         resource: "primary",
       }),

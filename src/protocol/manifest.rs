@@ -263,6 +263,13 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestAuthorization::SessionOwned,
         ManifestDecoder::Rpc,
     ),
+    client(
+        304,
+        "rpc",
+        None,
+        ManifestAuthorization::SessionOwned,
+        ManifestDecoder::Rpc,
+    ),
     server(305, "rpc", Some("rpc"), ManifestDecoder::Rpc),
     client(
         400,
@@ -475,9 +482,6 @@ pub fn entry(message_type: MessageType) -> Option<&'static MessageManifestEntry>
 pub fn client_entry(
     message_type: MessageType,
 ) -> Result<&'static MessageManifestEntry, &'static str> {
-    if message_type.as_u16() == 304 {
-        return Err("invalid message type: unsupported rpc operation");
-    }
     let Some(entry) = entry(message_type) else {
         return Err("unsupported message type");
     };

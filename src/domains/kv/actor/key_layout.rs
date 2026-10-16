@@ -57,6 +57,22 @@ impl KvActor {
         encoder.into_vec()
     }
 
+    pub(crate) fn inventory_realm_prefix(realm: &str) -> Vec<u8> {
+        storage_key::domain_marker_encoder(realm, DomainKeyspace::Kv, KV_INVENTORY_SCOPE_MARKER, 0)
+            .into_vec()
+    }
+
+    pub(crate) fn inventory_area_prefix(realm: &str, area: &str) -> Vec<u8> {
+        let mut encoder = storage_key::domain_marker_encoder(
+            realm,
+            DomainKeyspace::Kv,
+            KV_INVENTORY_SCOPE_MARKER,
+            area.len() + 1,
+        );
+        storage_key::encode_bytes_segment_into(&mut encoder, area.as_bytes());
+        encoder.into_vec()
+    }
+
     pub(crate) fn parse_inventory_metadata_key(key: &[u8]) -> Option<(String, String, String)> {
         let (realm, suffix) = storage_key::split_domain_key(key, DomainKeyspace::Kv)?;
         if suffix.first().copied()? != KV_INVENTORY_SCOPE_MARKER {

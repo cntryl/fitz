@@ -6,6 +6,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 mod lease_lifecycle;
+mod write_admission;
 
 fn write_marker(engine: &cntryl_midge::Engine, cf_id: u32, key: &[u8], value: &[u8]) {
     write_marker_with_options(engine, cf_id, key, value, WriteOptions::buffered());

@@ -12,5 +12,5 @@ use crate::boot::Runtime;
 use crate::runtime::routing::RouteFamily;
 use hyper::StatusCode;
 pub use routing::handle_request;
-use routing::{AdminFamilyScope, AdminFeaturesResponse, RuntimeDrainResponse};
+use routing::{AdminFamilyScope, AdminFeaturesResponse};
 use std::convert::Infallible;

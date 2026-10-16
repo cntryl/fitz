@@ -4,9 +4,7 @@ import { Alert, Button, Block } from "@askrjs/themes/components";
 import DomainHeader from "./domain-header";
 import type { DomainHeaderProps } from "./domain-header";
 import DomainPageFrame from "./domain-page-frame";
-import DomainSummaryStrip from "./domain-summary-strip";
 import DomainScopeInventoryTable from "./domain-scope-inventory-table";
-import { aggregateDomainMetricRows } from "./domain-inventory-rollup";
 import DomainResourceInventoryTable, {
   decodeRouteParam,
   domainResourceInventoryRows,
@@ -18,7 +16,6 @@ import DomainResourceInventoryTable, {
 } from "./domain-resource-inventory-table";
 import { QueryErrorState, QueryLoadingState, QueryRefreshingState } from "./query-state";
 import { formatUnknownError } from "@/shared/errors/format";
-import { formatNumber } from "@/shared/format";
 import { domainTitleForSegment, type DomainSegment } from "@/shared/navigation/domains";
 
 export interface DomainInventoryQuery<TInventory extends DomainResourceInventory> {
@@ -30,14 +27,7 @@ export interface DomainInventoryQuery<TInventory extends DomainResourceInventory
   stale?: boolean;
 }
 
-export interface DomainInventoryStat {
-  caption?: string;
-  label: string;
-  value: string | number;
-}
-
 export interface DomainInventoryPageProps<TInventory extends DomainResourceInventory> {
-  description: string;
   domain: DomainSegment;
   emptyDescription: string;
   errorTitle: string;
@@ -45,13 +35,10 @@ export interface DomainInventoryPageProps<TInventory extends DomainResourceInven
   inventory: DomainInventoryQuery<TInventory>;
   loadingDescription: string;
   metricColumns?: readonly DomainResourceMetricColumn[];
-  /** One sentence: why the status badge reads as it does and where to look next. */
-  reason?: string;
   refreshing?: boolean;
   refreshers?: Array<() => unknown>;
   refreshLabel: string;
   refreshingDescription: string;
-  stats?: readonly DomainInventoryStat[];
   status?: DomainHeaderProps["status"];
   tableTitle: string;
   title: string;
@@ -64,12 +51,7 @@ function refreshAll(refreshers: Array<() => unknown>) {
 }
 
 /** Only primitive cells can be summarised; a cell rendering markup is skipped. */
-function statValue(value: unknown): string | number | null {
-  return typeof value === "number" || typeof value === "string" ? value : null;
-}
-
 export default function DomainInventoryPage<TInventory extends DomainResourceInventory>({
-  description,
   domain,
   emptyDescription,
   errorTitle,
@@ -77,12 +59,10 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
   inventory,
   loadingDescription,
   metricColumns = [],
-  reason,
   refreshing,
   refreshers,
   refreshLabel,
   refreshingDescription,
-  stats = [],
   status,
   tableTitle,
   title,
@@ -94,40 +74,11 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
   const domainTitle = domainTitleForSegment(domain);
   const allRows = domainResourceInventoryRows(inventory.data);
   const scopedRows = scopeDomainResourceInventoryRows(allRows, { area, realm });
-  const scopedRealm = inventory.data?.realms.find((entry) => entry.realm === realm);
   const pageTitle = area ?? realm ?? title;
   const pageEyebrow = area ? `${domainTitle} area` : realm ? `${domainTitle} realm` : eyebrow;
-  const pageDescription = area
-    ? `Resources in ${realm} / ${area}.`
-    : realm
-      ? `Areas in the ${realm} realm.`
-      : description;
   const onRefresh = () => refreshAll(refreshers ?? [inventory.refresh]);
   const isRefreshing = refreshing ?? inventory.refreshing;
   const hasScopedInventory = Boolean(realm || area);
-  // A scoped tier summarises exactly what its table rolls up, so the strip and the
-  // rows never disagree about the scope the operator is standing in.
-  const scopeRollup = hasScopedInventory ? aggregateDomainMetricRows(scopedRows) : null;
-  const scopeStats: DomainInventoryStat[] = scopeRollup
-    ? [
-        ...(area
-          ? []
-          : [
-              {
-                label: "Areas",
-                value: formatNumber(scopedRealm?.areas.length ?? 0),
-              },
-            ]),
-        { label: "Resources", value: formatNumber(scopedRows.length) },
-        ...metricColumns
-          .map((column) => ({
-            label: column.header,
-            value: statValue(column.cell(scopeRollup)),
-          }))
-          .filter((stat): stat is DomainInventoryStat => stat.value !== null),
-      ]
-    : [];
-  const visibleStats = hasScopedInventory ? scopeStats : stats;
   const freshness = isRefreshing
     ? "Refreshing"
     : !inventory.data && inventory.loading
@@ -141,13 +92,14 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
             : inventory.data
               ? "Live"
               : undefined;
-  // Domain health describes the whole Route Family, so a scoped tier badges only
-  // abnormal freshness of its own rows; live data needs no badge.
-  const scopedStatus: DomainHeaderProps["status"] =
+  const freshnessBadge =
     freshness && freshness !== "Live"
       ? {
           label: freshness,
-          tone: freshness === "Refreshing" || freshness === "Loading" ? "info" : "warning",
+          tone:
+            freshness === "Refreshing" || freshness === "Loading"
+              ? ("info" as const)
+              : ("warning" as const),
         }
       : undefined;
 
@@ -155,20 +107,18 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
+          compact={true}
           eyebrow={pageEyebrow}
           title={pageTitle}
-          description={pageDescription}
+          freshness={freshnessBadge}
           primaryAction={{
             busy: isRefreshing,
             disabled: isRefreshing,
             label: refreshLabel,
             onPress: onRefresh,
           }}
-          status={hasScopedInventory ? scopedStatus : status}
+          status={hasScopedInventory ? undefined : status}
         />
-        <Show when={!hasScopedInventory && reason}>
-          <p class="domain-status-reason">{reason}</p>
-        </Show>
 
         <Show when={!inventory.data && inventory.loading}>
           <QueryLoadingState description={loadingDescription} />
@@ -193,13 +143,6 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
                     Retry
                   </Button>
                 }
-              />
-            </Show>
-            <Show when={visibleStats.length > 0}>
-              <DomainSummaryStrip
-                ariaLabel={`${pageTitle} key stats`}
-                class="domain-inventory-summary"
-                items={visibleStats}
               />
             </Show>
             <Show

@@ -92,18 +92,16 @@ pub(super) fn event_records(items: Vec<StreamReadItem>) -> Vec<StreamRecord> {
 pub(super) fn should_commit_stream_and_watermarks_with_background_cloud_write_options() {
     // Arrange
     let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
-    let engine = Arc::new(
-        cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::cloud_simulated(
-                tempdir.path(),
-                "fitz-stream-writes",
-                "background",
-            )
-            .build()
-            .expect("build cloud-simulated options"),
-        )
-        .expect("open cloud-simulated engine"),
-    );
+    let options = cntryl_midge::OpenOptions::cloud_simulated(
+        tempdir.path(),
+        "fitz-stream-writes",
+        "background",
+    )
+    .build()
+    .expect("build cloud-simulated options");
+    let shutdown_budget = options.runtime_response_timeout();
+    let engine =
+        Arc::new(cntryl_midge::Engine::open(options).expect("open cloud-simulated engine"));
     engine
         .create_column_family("tenant_default")
         .expect("create route-family column family");
@@ -142,7 +140,10 @@ pub(super) fn should_commit_stream_and_watermarks_with_background_cloud_write_op
         "cloud realm-watermark commit failed: {realm_watermark:?}"
     );
     drop(store);
-    crate::testkit::midge::shutdown_test_engine(engine);
+    // CloudAsync shutdown publishes the active WAL and final checkpoint. Keep
+    // this functional write-policy test within the fixture's configured
+    // enclosing runtime response budget rather than the local two-second one.
+    crate::testkit::midge::shutdown_test_engine_with_timeout(engine, shutdown_budget);
 }
 
 #[test]

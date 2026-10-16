@@ -285,6 +285,7 @@ impl From<String> for PromotionWriteFailure {
 }
 
 enum PromotionTransactionFailure {
+    AdmissionRejected,
     WriteConflict,
     Other(String),
 }
@@ -518,6 +519,8 @@ pub struct StreamStore {
     #[cfg(test)]
     fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool,
     #[cfg(test)]
+    delay_next_promotion_frontier_commit_ms: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
     fence_next_promotion_frontier_commit: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     conflict_next_promotion_frontier_commit: std::sync::atomic::AtomicBool,
@@ -542,9 +545,16 @@ impl StreamDomainStorage {
         sync: crate::domains::WritePolicy,
         buffered: crate::domains::WritePolicy,
     ) -> Arc<StreamStore> {
+        let cloud = sync.is_cloud() || buffered.is_cloud();
         Arc::new(
-            StreamStore::with_storage_layout(self.engine, layout)
-                .with_write_options(sync.into(), buffered.into()),
+            StreamStore::with_storage_layout(self.engine, layout).with_write_options(
+                crate::domains::CommitPersistence::Sync
+                    .storage_policy(cloud)
+                    .into(),
+                crate::domains::CommitPersistence::Buffered
+                    .storage_policy(cloud)
+                    .into(),
+            ),
         )
     }
 }
@@ -786,7 +796,7 @@ fn collect_filtered_read_page_items<
     R,
     I,
     FLoadDiscriminator,
-    FRecordBytes,
+    FHydrateAndMeasure,
     FUpdateCursor,
     FFilteredItem,
     FEventItem,
@@ -794,7 +804,7 @@ fn collect_filtered_read_page_items<
     records: I,
     state: &mut ReadPageState<'_>,
     mut load_discriminator: FLoadDiscriminator,
-    mut record_bytes: FRecordBytes,
+    mut hydrate_and_measure: FHydrateAndMeasure,
     mut update_cursor: FUpdateCursor,
     mut filtered_item: FFilteredItem,
     mut event_item: FEventItem,
@@ -802,16 +812,16 @@ fn collect_filtered_read_page_items<
 where
     I: IntoIterator<Item = (u64, R)>,
     FLoadDiscriminator: FnMut(u64, &R) -> Result<Option<String>, String>,
-    // Returns the wire cost of the item this record becomes, given whether
-    // it passed the read filter.
-    FRecordBytes: FnMut(&R, bool) -> usize,
+    // Hydrates an examined record and returns its wire cost, including
+    // validation when the record becomes a filter-excluded marker.
+    FHydrateAndMeasure: FnMut(&mut R, bool) -> Result<usize, String>,
     FUpdateCursor: FnMut(&mut ReadCursorState, u64, &R),
     FFilteredItem: FnMut(u64, &R) -> StreamReadItem,
     FEventItem: FnMut(u64, R) -> StreamReadItem,
 {
     let mut stop_scan = false;
 
-    for (offset, record) in records {
+    for (offset, mut record) in records {
         if offset < state.from_offset {
             continue;
         }
@@ -841,7 +851,9 @@ where
         // that had nothing oversized to deliver in the first place.
         let matches_filter =
             StreamStore::record_matches_filter(state.filter, discriminator.as_deref());
-        let item_bytes = record_bytes(&record, matches_filter);
+        // Offset, visibility, and item-limit checks precede payload hydration.
+        // The byte budget needs the hydrated size of the next examined item.
+        let item_bytes = hydrate_and_measure(&mut record, matches_filter)?;
         match charge_wire_budget(
             offset,
             item_bytes,
@@ -873,6 +885,7 @@ mod compact_page_writes;
 mod config_and_layout;
 mod global_recovery;
 mod maintenance;
+mod write_admission;
 #[cfg(test)]
 pub(super) use maintenance::MaintenanceFailureStage;
 pub use maintenance::StreamMaintenanceResult;

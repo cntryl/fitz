@@ -4,8 +4,19 @@ use super::{
     GLOBAL_PAGE_RECORD_LIMIT,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 
-pub(super) type GlobalFragmentCache = HashMap<u64, (u64, CompactGlobalPageValue)>;
+#[derive(Default)]
+pub(super) struct GlobalFragmentCache {
+    pub(super) parent_hints: HashMap<u64, (u64, Arc<CompactGlobalPageValue>)>,
+    decoded_buckets: HashMap<u64, Arc<CompactGlobalPageValue>>,
+}
+
+impl GlobalFragmentCache {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+}
 
 pub(super) fn page_slot_offset(page_start: u64, slot: usize) -> u64 {
     page_start.saturating_add(usize_to_u64_saturating(slot))
@@ -68,24 +79,42 @@ pub(super) fn load_global_locator_record(
     {
         return Err("ERR_STREAM_CORRUPT_LOCATOR: global offset outside parent bucket".to_string());
     }
-    let (actual_start, page) = match cache.entry(parent_fragment_start) {
-        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-        std::collections::hash_map::Entry::Vacant(entry) => {
-            let direct = txn
-                .get(&encode_compact_global_page_key(parent_fragment_start))
-                .map_err(|error| format!("read locator parent fragment failed: {error:?}"))?;
-            let loaded = if let Some(value) = direct {
-                (
-                    parent_fragment_start,
-                    CompactGlobalPageValue::try_decode(&value)?,
-                )
+    let bucket_start = global_offset / GLOBAL_PAGE_RECORD_LIMIT * GLOBAL_PAGE_RECORD_LIMIT;
+    let (actual_start, page) = if let Some(loaded) = cache.parent_hints.get(&parent_fragment_start)
+    {
+        loaded.clone()
+    } else {
+        // A decoded bucket is not a checked parent hint, even when its key
+        // matches that hint. Always check a previously unseen direct parent.
+        let direct = txn
+            .get(&encode_compact_global_page_key(parent_fragment_start))
+            .map_err(|error| format!("read locator parent fragment failed: {error:?}"))?;
+        let loaded = if let Some(value) = direct {
+            (
+                parent_fragment_start,
+                Arc::new(CompactGlobalPageValue::try_decode(&value)?),
+            )
+        } else {
+            let cached = cache.decoded_buckets.get(&bucket_start).filter(|page| {
+                global_offset - bucket_start < usize_to_u64_saturating(page.records.len())
+            });
+            if let Some(page) = cached {
+                (bucket_start, page.clone())
             } else {
-                find_compacted_global_fragment(txn, global_offset, parent_fragment_start)?
-            };
-            entry.insert(loaded)
+                let (first, page) =
+                    find_compacted_global_fragment(txn, global_offset, parent_fragment_start)?;
+                (first, Arc::new(page))
+            }
+        };
+        if loaded.0 == bucket_start {
+            cache.decoded_buckets.insert(bucket_start, loaded.1.clone());
         }
+        cache
+            .parent_hints
+            .insert(parent_fragment_start, loaded.clone());
+        loaded
     };
-    let index = usize::try_from(global_offset.saturating_sub(*actual_start)).unwrap_or(usize::MAX);
+    let index = usize::try_from(global_offset.saturating_sub(actual_start)).unwrap_or(usize::MAX);
     let mut record = page.records.get(index).cloned().ok_or_else(|| {
         "ERR_STREAM_CORRUPT_LOCATOR: global offset outside parent fragment".to_string()
     })?;

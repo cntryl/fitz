@@ -12,12 +12,28 @@ exclude_paths = ["skills", "ui"]
 
 [benchmarks]
 documentation = [
+  "docs/development/cloud-catalog-pressure.md",
   "docs/development/benchmarks.md",
   "docs/development/bench-targets.md",
   "docs/operations/performance-tuning.md",
 ]
-workflow = ".github/workflows/bench.yml"
+workflow = ".github/workflows/bench-tier1.yml"
+additional_workflows = [
+  ".github/workflows/bench-tier2.yml",
+  ".github/workflows/bench-tier3.yml",
+  ".github/workflows/bench-tier4.yml",
+  ".github/workflows/bench-tier5.yml",
+  ".github/workflows/bench-tier6.yml",
+]
 not_pr_gate_phrase = "not a pull-request performance gate"
+
+[benchmarks.manual_targets]
+tier5_cloud_catalog = "Resource-capped cloud catalog recovery requires a disposable S3 provider and an explicit immutable broker image"
+queue_pressure = "Bounded Queue diagnostic requires an explicit resource envelope"
+queue_drain_latency = "Finite Queue RESERVE and ACK timing diagnostic requires explicit invocation"
+schedule_pressure = "Forced-clock Schedule diagnostic requires an explicit resource envelope"
+kv_pressure = "Bounded KV cardinality diagnostic requires an explicit resource envelope"
+lease_pressure = "Bounded Lease contender diagnostic requires an explicit resource envelope"
 
 [module_sizes]
 warn_lines = 1200

@@ -180,11 +180,7 @@ impl QueueActor {
         }
 
         let update_start = Instant::now();
-        if let Err(error) = Self::commit_transaction(
-            txn,
-            self.persistence.write_options(),
-            QueueCommit::Redelivery,
-        ) {
+        if let Err(error) = Self::commit_transaction(txn, QueueCommit::Redelivery) {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),

@@ -29,14 +29,8 @@ impl QueueActor {
     /// Returns an error when persisted queue state cannot be validated or reconciled.
     pub(crate) fn prepare_persisted_state_for_existing_families(
         store: impl Into<super::recovery_store::QueueStore>,
-        queue_write_policy: crate::domains::WritePolicy,
-        recovery_write_policy: crate::domains::WritePolicy,
     ) -> Result<(), String> {
         let store = store.into();
-        if queue_write_policy != crate::domains::WritePolicy::BestEffort {
-            return Self::validate_persisted_state_for_existing_families(store);
-        }
-
         let families = store
             .family_ids()
             .map_err(|error| format!("list queue column families failed: {error}"))?;
@@ -45,7 +39,7 @@ impl QueueActor {
             if family == 0 {
                 continue;
             }
-            Self::reconcile_fast_persisted_state_for_family(&store, family, recovery_write_policy)?;
+            Self::reconcile_fast_persisted_state_for_family(&store, family)?;
         }
 
         Ok(())
@@ -117,7 +111,12 @@ impl QueueActor {
         })?;
         let mut scan = QueueValidationScan::default();
 
-        for (key, value) in iter {
+        for row in iter {
+            let (key, value) = row.map_err(|error| {
+                format!(
+                    "queue validation failed: family={family} key_category=scan error={error:?}"
+                )
+            })?;
             let Some(suffix) = storage_key::strip_domain_prefix(&key, DomainKeyspace::Queue) else {
                 continue;
             };
@@ -197,7 +196,6 @@ impl QueueActor {
     fn reconcile_fast_persisted_state_for_family(
         store: &super::recovery_store::QueueStore,
         family: u32,
-        recovery_write_policy: crate::domains::WritePolicy,
     ) -> Result<(), String> {
         let mut txn = store
             .begin(family, super::recovery_store::QueueTransactionMode::ReadWrite)
@@ -223,17 +221,6 @@ impl QueueActor {
         if incomplete_rows.is_empty() {
             return Ok(());
         }
-        if !matches!(
-            recovery_write_policy,
-            crate::domains::WritePolicy::Sync
-                | crate::domains::WritePolicy::CloudAsync
-                | crate::domains::WritePolicy::CloudStrict
-        ) {
-            return Err(format!(
-                "queue reconciliation failed: family={family} key_category=reconciliation error=durable recovery write policy required"
-            ));
-        }
-
         let mut affected_queues = HashSet::new();
         for row in &incomplete_rows {
             txn.delete(row.key.clone()).map_err(|error| {
@@ -255,7 +242,7 @@ impl QueueActor {
             }
         }
 
-        txn.commit(recovery_write_policy).map_err(|error| {
+        txn.commit().map_err(|error| {
             format!(
                 "queue reconciliation failed: family={family} key_category=commit error={error:?}"
             )

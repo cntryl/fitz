@@ -69,6 +69,17 @@ pub struct SessionPermissions {
 }
 
 impl SessionPermissions {
+    /// Stable authority identity for process-local control-plane cursors.
+    pub(crate) fn authority_fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut permissions = self
+            .compiled
+            .iter()
+            .map(|permission| format!("{:?}:{:?}", permission.pattern, permission.access))
+            .collect::<Vec<_>>();
+        permissions.sort();
+        hex::encode(Sha256::digest(permissions.join("\n")))
+    }
     #[must_use]
     pub fn new(map: HashMap<String, String>) -> Self {
         Self::from_parts(map, Vec::new())

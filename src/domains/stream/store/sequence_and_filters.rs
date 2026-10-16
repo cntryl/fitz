@@ -146,6 +146,19 @@ impl StreamStore {
         usize_to_u64_saturating(total_bytes)
     }
 
+    /// Sidecar data is only needed when the caller supplies a read filter.
+    pub(super) fn load_filtered_discriminator(
+        txn: &cntryl_midge::Transaction,
+        filter: Option<&StreamFilterSet>,
+        key: impl FnOnce() -> Vec<u8>,
+    ) -> Result<Option<String>, String> {
+        if filter.is_some() {
+            Self::load_optional_discriminator(txn, &key())
+        } else {
+            Ok(None)
+        }
+    }
+
     pub(super) fn load_optional_discriminator(
         txn: &cntryl_midge::Transaction,
         key: &[u8],

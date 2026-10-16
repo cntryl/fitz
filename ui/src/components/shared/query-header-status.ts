@@ -10,15 +10,19 @@ export interface QueryPresentationState {
   stale?: boolean;
 }
 
-export interface QueryHeaderStatusCopy {
-  loading: string;
-  ready: string;
-  unavailable: string;
-}
-
 export interface QueryReadyStatus {
   label?: string;
   tone?: QueryHeaderStatus["tone"];
+}
+
+type QueryFreshnessStatus = NonNullable<QueryHeaderStatus["freshness"]>;
+
+function queryFreshnessBadge(query: QueryPresentationState): QueryFreshnessStatus | undefined {
+  if (query.refreshing) return { label: "Refreshing", tone: "info" };
+  if (query.error) return { label: "Update unavailable", tone: "warning" };
+  if (query.stale) return { label: "Stale", tone: "warning" };
+  if (query.loading) return { label: "Updating", tone: "info" };
+  return undefined;
 }
 
 function hasQueryData(query: QueryPresentationState) {
@@ -27,51 +31,32 @@ function hasQueryData(query: QueryPresentationState) {
 
 export function queryHeaderStatus(
   query: QueryPresentationState,
-  copy: QueryHeaderStatusCopy,
   ready: QueryReadyStatus = {},
 ): QueryHeaderStatus | undefined {
   const hasData = hasQueryData(query);
 
-  if (query.refreshing) {
-    return {
-      detail: hasData ? copy.ready : copy.loading,
-      label: "Refreshing",
-      tone: "info",
-    };
+  if (hasData) {
+    const freshness = queryFreshnessBadge(query);
+
+    if (ready.label || freshness) {
+      return {
+        ...(ready.label ? { label: ready.label, tone: ready.tone ?? "success" } : {}),
+        ...(freshness ? { freshness } : {}),
+      };
+    }
+
+    return undefined;
   }
 
-  if (query.error) {
+  if (query.loading || query.refreshing) {
     return {
-      detail: copy.unavailable,
-      label: hasData ? "Update unavailable" : "Unavailable",
-      tone: "warning",
-    };
-  }
-
-  if (query.stale) {
-    return {
-      detail: hasData ? copy.ready : copy.unavailable,
-      label: "Stale",
-      tone: "warning",
-    };
-  }
-
-  if (query.loading || !hasData) {
-    return {
-      detail: copy.loading,
       label: "Loading",
       tone: "info",
     };
   }
 
-  // Fresh data is the normal case; the badge slot is reserved for a real status.
-  if (!ready.label) return undefined;
-
-  return {
-    detail: copy.ready,
-    label: ready.label,
-    tone: ready.tone ?? "success",
-  };
+  if (query.error) return { label: "Unavailable", tone: "warning" };
+  return undefined;
 }
 
 export function queryFreshness(query: QueryPresentationState) {

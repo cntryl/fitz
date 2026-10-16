@@ -1,6 +1,8 @@
 use super::segments_cache::SegmentsCache;
 use super::*;
 
+mod suffix;
+
 fn route(s: &str) -> Route {
     Route::new(s)
 }

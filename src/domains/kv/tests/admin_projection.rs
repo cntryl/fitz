@@ -42,7 +42,7 @@ fn should_record_projection_latency_by_operation_kind() {
 }
 
 #[test]
-fn should_bound_latency_projection_resources_and_evict_oldest_entry() {
+fn should_evict_oldest_latency_projection_at_resource_limit() {
     // Arrange
     let projection = KvAdminProjection::new(AdminReadModel::new());
     let keys = (0..=super::super::admin_projection::KV_LATENCY_RESOURCE_LIMIT)

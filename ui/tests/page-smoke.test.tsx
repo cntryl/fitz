@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { queryState } from "@askrjs/askr/testing";
+import { mockQuery } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions, resetQueries } from "./page-smoke/harness";
 import {
   domainOverviews,
@@ -212,7 +212,7 @@ describe("admin page smoke tests", () => {
           expect(text).toContain(statLabel);
         }
         expect(text).toContain("Refresh");
-        expect(text).toMatch(/Healthy|Idle|Active|Ready|Pressure|Attention/);
+        expect(text).toMatch(/unavailable|Waiters present|Claims pending|Dead letters/i);
         expect(root.querySelector('[data-slot="table"]')).toBeTruthy();
         expect(root.querySelector(`a[href="/admin/1${page.path}/default"]`)).toBeTruthy();
         expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeNull();
@@ -267,13 +267,13 @@ describe("admin page smoke tests", () => {
     const { default: NoticePage } = await import("@/pages/app/notice");
     const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
 
-    mocks.queryStates.inventory = queryState.loading(queryOptions());
+    mocks.queryStates.inventory = mockQuery.loading(queryOptions());
     const noticeOverviewRoot = await mountRoute("/notice", "/notice", NoticePage);
     expect(noticeOverviewRoot.textContent).toContain("Loading notice inventory...");
     cleanupApp(noticeOverviewRoot);
     document.body.innerHTML = "";
 
-    mocks.queryStates.inventory = queryState.error(
+    mocks.queryStates.inventory = mockQuery.error(
       new Error("Notice inventory unavailable"),
       undefined,
       queryOptions(),
@@ -283,7 +283,7 @@ describe("admin page smoke tests", () => {
     cleanupApp(noticeOverviewError);
     document.body.innerHTML = "";
 
-    mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
+    mocks.queryStates.inventory = mockQuery(inventory, queryOptions());
     const noticeRealmRoot = await mountRoute("/notice/default", "/notice/{realm}", NoticePage);
     expect(noticeRealmRoot.textContent).toContain("Notice realm");
     expect(noticeRealmRoot.textContent).toContain("Areas");
@@ -302,7 +302,7 @@ describe("admin page smoke tests", () => {
     cleanupApp(noticeAreaRoot);
     document.body.innerHTML = "";
 
-    mocks.queryStates.noticeResourceRows = queryState.loading(queryOptions());
+    mocks.queryStates.noticeResourceRows = mockQuery.loading(queryOptions());
     const noticeResourceRoot = await mountRoute(
       "/notice/default/ops/primary",
       "/notice/{realm}/{area}/{resource}",
@@ -312,8 +312,8 @@ describe("admin page smoke tests", () => {
     cleanupApp(noticeResourceRoot);
     document.body.innerHTML = "";
 
-    mocks.queryStates.noticeResourceRows = queryState.fresh(noticeResourceRows, queryOptions());
-    mocks.queryStates.noticeOperationRows = queryState.loading(queryOptions());
+    mocks.queryStates.noticeResourceRows = mockQuery(noticeResourceRows, queryOptions());
+    mocks.queryStates.noticeOperationRows = mockQuery.loading(queryOptions());
     const noticeOperationRoot = await mountRoute(
       "/notice/default/ops/primary/GetStatus",
       "/notice/{realm}/{area}/{resource}/{operation}",
@@ -323,16 +323,16 @@ describe("admin page smoke tests", () => {
     cleanupApp(noticeOperationRoot);
     document.body.innerHTML = "";
 
-    mocks.queryStates.notice = queryState.fresh(noticeOverview, queryOptions());
-    mocks.queryStates.noticeRealm = queryState.fresh(noticeRealmInventory, queryOptions());
-    mocks.queryStates.noticeArea = queryState.fresh(noticeAreaInventory, queryOptions());
-    mocks.queryStates.noticeResourceRows = queryState.fresh(noticeResourceRows, queryOptions());
-    mocks.queryStates.noticeOperationRows = queryState.fresh(noticeOperationRows, queryOptions());
+    mocks.queryStates.notice = mockQuery(noticeOverview, queryOptions());
+    mocks.queryStates.noticeRealm = mockQuery(noticeRealmInventory, queryOptions());
+    mocks.queryStates.noticeArea = mockQuery(noticeAreaInventory, queryOptions());
+    mocks.queryStates.noticeResourceRows = mockQuery(noticeResourceRows, queryOptions());
+    mocks.queryStates.noticeOperationRows = mockQuery(noticeOperationRows, queryOptions());
   });
   it("renders domain overview loading states consistently", async () => {
     for (const page of domainOverviews) {
       resetQueries();
-      mocks.queryStates[page.inventoryKey] = queryState.loading(queryOptions());
+      mocks.queryStates[page.inventoryKey] = mockQuery.loading(queryOptions());
 
       const { default: Component } = await page.module();
       const root = await mountRoute(page.path, page.routePath, Component);

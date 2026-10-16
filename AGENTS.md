@@ -22,7 +22,7 @@
 - Keep `src/session/`, `src/runtime/`, `src/protocol/`, and `src/domains/` synchronous.
 - Sessions are ephemeral. Disconnect creates a new session.
 - Do not imply durability, replay, exactly-once delivery, recovery, or ownership continuity unless storage and docs explicitly support it.
-- Preserve the domain meanings: Notice = live ephemeral fanout, Stream = durable history/replay, KV = current authoritative state, Queue = durable work delivery, RPC = live request/response, Lease = ephemeral ownership coordination, Schedule = durable timing intent.
+- Preserve the domain meanings: Notice = live ephemeral fanout, Stream = durable history/replay, KV = current authoritative state, Queue = work delivery with best-effort persistence, RPC = live request/response, Lease = ephemeral ownership coordination, Schedule = durable timing intent.
 - If semantics change, update the relevant docs in the same change.
 
 ## Realm vs RouteFamily
@@ -53,8 +53,15 @@ Right:
 - Optimize for simplicity. Complexity, DRY, and clarity are mandatory design constraints.
 - Avoid adding async constructs to core Rust code outside transport (`.await`, `tokio::spawn`, `tokio::sync`, async locks).
 - Do not create a top-level `scripts/` directory or repo-owned standalone shell scripts. Put automation in Rust tests or tools, package scripts, or explicit workflow steps.
+- Cover backend behavior with idiomatic Rust tests and UI behavior with idiomatic TypeScript tests. Do not add Python files or standalone scripts as substitutes for tests.
+- Test observable behavior and semantic invariants. Do not assert source-file strings, implementation spelling, or file layout as substitutes for behavior tests.
 - When editing UI tooling, prefer ESM and `.js` over `.mjs` for repo-owned files.
 - When `public/openapi.yml` or the UI client changes, regenerate adapters with `npm run gen:adapters` from `ui/`.
+
+## Workflow Changes
+- Create, edit, delete, rename, or restore files in `.github/workflows/` only when the user explicitly requests workflow changes. Requests for code, tests, dependencies, releases, or general cleanup do not implicitly authorize workflow changes.
+- Keep authorized workflow changes within the requested scope. Do not restore removed workflows unless explicitly requested.
+- Keep all workflows simple. Add complexity only when a concrete requirement makes it necessary.
 
 ## Jev (TypeSafe Judgments)
 - Jev is TypeSafe's judgment model, called with `POST https://api.typesafe.ai/v1/systemone` and `model: "jev-latest"`.
@@ -66,9 +73,12 @@ Right:
 - Do not send credentials or private/customer data in `state`.
 
 ## Validation
+
+- Test structure and module sizes: `cntryl-tools validate-tests`, `cntryl-tools check-module-sizes`. Keep these checks in the shared tooling; do not duplicate them in repository tests.
 - Rust: `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic`.
 - UI: run from `ui/` with `npm run test`, `npm run lint`, `npm run type-check`, and `npm run build`.
 - Benchmarks: use direct `cargo bench` commands for the relevant tier or target, then run `cntryl-tools summarize-benchmarks` when a report is needed.
+- Model performance, saturation, and soak workloads in the benchmark tiers with `cntryl-stress`. Do not wrap benchmark campaigns in ignored integration tests or repository-owned orchestration scripts.
 
 ## Test Rules
 - Use `should_*` names for Rust tests.

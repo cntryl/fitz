@@ -87,6 +87,12 @@ impl RpcDomain {
         self.family_runtime.is_running()
     }
 
+    /// Pool availability uses the existing aggregate flags without copying family health rows.
+    pub(crate) fn has_usable_family(&self) -> bool {
+        self.family_runtime.is_running()
+    }
+
+    #[cfg(test)]
     pub(crate) fn family_health_snapshot(
         &self,
     ) -> crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {
@@ -176,6 +182,26 @@ impl RpcDomain {
     #[cfg(test)]
     pub(super) fn pending_table_len_for_tests(&self) -> usize {
         self.inspect_primary_state_for_tests(|state| state.pending.len())
+    }
+
+    #[cfg(test)]
+    pub(super) fn worker_correlation_for_tests(
+        &self,
+        family: RouteFamily,
+        caller_id: uuid::Uuid,
+    ) -> uuid::Uuid {
+        self.inspect_family_for_tests(family, move |state| {
+            state
+                .state
+                .pending
+                .pending_for_key(&super::state_model::RpcCorrelationKey {
+                    family,
+                    correlation_id: caller_id,
+                })
+                .map_or(caller_id, |pending| {
+                    pending.dispatch_info.worker_correlation_id
+                })
+        })
     }
 
     #[cfg(test)]

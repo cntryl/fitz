@@ -170,12 +170,6 @@ pub(super) fn should_create_default_boot_config() {
     assert_eq!(config.max_connections, 10_000);
     assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
     assert_eq!(config.storage_memtable, StorageMemtableConfig::Auto);
-    assert_eq!(config.queue_write_policy, QueueWritePolicy::Fast);
-    assert_eq!(
-        config.queue_write_policy_source,
-        QueueWritePolicySource::Defaulted
-    );
-    assert!(config.queue_write_policy_defaulted_fast());
     assert_eq!(config.queue_loss_window_ms, DEFAULT_QUEUE_LOSS_WINDOW_MS);
     assert_eq!(
         config.schedule_preload_timeout(),
@@ -203,20 +197,17 @@ pub(super) fn should_create_default_boot_config() {
 
 #[test]
 #[serial]
-fn should_distinguish_explicit_queue_fast_policy_from_defaulted_fast() {
+fn should_accept_legacy_fast_queue_setting_as_best_effort() {
     with_storage_env(&[(ENV_QUEUE_WRITE_POLICY, "fast")], || {
         // Arrange
-
-        // Act
         let config = BootConfig::default();
 
+        // Act
+        let policy = config.queue_write_policy();
+
         // Assert
-        assert_eq!(config.queue_write_policy, QueueWritePolicy::Fast);
-        assert_eq!(
-            config.queue_write_policy_source,
-            QueueWritePolicySource::Explicit
-        );
-        assert!(!config.queue_write_policy_defaulted_fast());
+        assert!(config.queue_write_policy_error.is_none());
+        assert_eq!(policy, crate::domains::WritePolicy::BestEffort);
     });
 }
 

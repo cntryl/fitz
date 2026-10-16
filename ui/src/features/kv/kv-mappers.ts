@@ -5,6 +5,9 @@ import type {
   KvPrefixScanResponse,
   KvRowsResponse,
   KvStats,
+  KvTransaction as KvTransactionDto,
+  KvTransactionsList,
+  KvResourceDetail as KvResourceDetailDto,
   RealmEntry,
 } from "@/adapters";
 import type {
@@ -16,6 +19,8 @@ import type {
   KvRealmSummary,
   KvRowsResult,
   KvStatsSummary,
+  KvTransaction,
+  KvResourceDetail,
 } from "./kv-models";
 
 export function mapKvRealm(dto: RealmEntry): KvRealmSummary {
@@ -39,6 +44,34 @@ export function mapKvOverview(realms: RealmEntry[], stats: KvStats): KvOverview 
     realms: realms.map(mapKvRealm),
     stats: mapKvStats(stats),
   };
+}
+
+export function mapKvResourceDetail(dto: KvResourceDetailDto): KvResourceDetail {
+  return {
+    estimatedRecordCount: dto.estimated_record_count,
+    estimatedStorageBytes: dto.estimated_storage_bytes,
+    estimateComplete: dto.estimate_complete,
+    measurementsAvailable: dto.route_family !== undefined && dto.route_family !== null,
+    readLatencyAvgMs: dto.read_latency_avg_ms,
+    readLatencyP95Ms: dto.read_latency_p95_ms,
+    transactionsActive: dto.transactions_active,
+    writeLatencyAvgMs: dto.write_latency_avg_ms,
+    writeLatencyP95Ms: dto.write_latency_p95_ms,
+  };
+}
+
+function mapKvTransaction(dto: KvTransactionDto): KvTransaction {
+  return {
+    idleSeconds: dto.idle_seconds,
+    mode: dto.mode,
+    operationsCount: dto.operations_count,
+    startedAt: dto.started_at,
+    txId: dto.tx_id,
+  };
+}
+
+export function mapKvTransactions(dto: KvTransactionsList): KvTransaction[] {
+  return dto.transactions.map(mapKvTransaction);
 }
 
 export function mapKvByteValue(dto: KvByteValueDto): KvByteValue {

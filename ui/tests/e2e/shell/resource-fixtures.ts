@@ -1,9 +1,11 @@
 import type { DiagnosticSnapshot } from "@/adapters";
+import { scenarioNow, scenarioTime } from "./api-fixtures";
 
 export type ResourceScope = {
   area: string;
   realm: string;
   resource: string;
+  routeFamily?: number;
 };
 
 export type ResourceDomain = "kv" | "lease" | "notice" | "rpc" | "schedule" | "stream";
@@ -26,11 +28,16 @@ export function parseResourceScope(segments: string[]): ResourceScope | null {
 
 export function parseRouteResourceScope(path: string): ResourceScope {
   let parts = path.split("?")[0].split("/").filter(Boolean);
+  let routeFamily: number | undefined;
   if (parts[0] === "admin") {
+    routeFamily = Number(parts[1]) || undefined;
     parts = parts.slice(2);
+  } else {
+    routeFamily = Number(parts[0]) || undefined;
   }
 
   return {
+    routeFamily,
     area: decodeURIComponent(parts[2] ?? ""),
     realm: decodeURIComponent(parts[1] ?? ""),
     resource: decodeURIComponent(parts[3] ?? ""),
@@ -40,13 +47,13 @@ export function parseRouteResourceScope(path: string): ResourceScope {
 export function leaseSearchRowsFixture(
   scope: ResourceScope,
   expiresOffsetSeconds = 120,
-  now = Date.now(),
+  now = scenarioNow,
 ) {
   return {
     area: scope.area,
     items: [
       {
-        acquired_at: "2026-05-21T13:00:00.000Z",
+        acquired_at: scenarioTime(-45_000),
         area: scope.area,
         expires_at: new Date(now + expiresOffsetSeconds * 1000).toISOString(),
         owner_id: "owner-lease-primary",
@@ -61,7 +68,7 @@ export function leaseSearchRowsFixture(
     limit: 50,
     realm: scope.realm,
     resource: scope.resource,
-    route_family: 7,
+    route_family: scope.routeFamily ?? 1,
   };
 }
 
@@ -135,7 +142,7 @@ export function resourceDetailFixture(
       diagnostics,
       enabled: true,
       executions_total: 42,
-      next_run: "2026-05-21T13:01:00.000Z",
+      next_run: scenarioTime(60_000),
       realm: scope.realm,
       resource: scope.resource,
     };
@@ -167,7 +174,7 @@ export function resourceTimelineFixture(domain: string, scope: ResourceScope) {
         domain,
         kind: "observation",
         message_id: 100,
-        observed_at: "2026-05-21T13:00:00.000Z",
+        observed_at: scenarioTime(-5_000),
         operation: "GetStatus",
         owner_session: "session-1",
         realm: scope.realm,
@@ -195,13 +202,13 @@ export function scheduleExecutionObservationsFixture(scope: ResourceScope) {
         cron: "*/5 * * * *",
         delivery_mode: "broadcast",
         executions_total: 42,
-        last_run: "2026-05-21T13:00:00.000Z",
-        next_run: "2026-05-21T13:05:00.000Z",
+        last_run: scenarioTime(-5 * 60_000),
+        next_run: scenarioTime(60_000),
         operation: "handoff",
         pending_handoffs: 1,
         realm: scope.realm,
         resource: scope.resource,
-        route_family: 7,
+        route_family: scope.routeFamily ?? 1,
         status: "observed",
       },
       {
@@ -210,18 +217,18 @@ export function scheduleExecutionObservationsFixture(scope: ResourceScope) {
         delivery_mode: "single",
         executions_total: 3,
         last_run: null,
-        next_run: "2026-05-21T14:00:00.000Z",
+        next_run: scenarioTime(60 * 60_000),
         operation: "cleanup",
         pending_handoffs: 0,
         realm: scope.realm,
         resource: scope.resource,
-        route_family: 7,
+        route_family: scope.routeFamily ?? 1,
         status: "scheduled",
       },
     ],
     realm: scope.realm,
     resource: scope.resource,
-    route_family: 7,
+    route_family: scope.routeFamily ?? 1,
   };
 }
 
@@ -232,18 +239,18 @@ export function scheduleMissedHandoffsFixture(scope: ResourceScope) {
       {
         age_seconds: 90,
         area: scope.area,
-        claimed_at: "2026-05-21T12:59:30.000Z",
+        claimed_at: scenarioTime(-30_000),
         delivery_mode: "broadcast",
-        fire_at: "2026-05-21T12:59:00.000Z",
-        fire_ms: 1780001940000,
+        fire_at: scenarioTime(-90_000),
+        fire_ms: scenarioNow - 90_000,
         operation: "handoff",
         realm: scope.realm,
         resource: scope.resource,
-        route_family: 7,
+        route_family: scope.routeFamily ?? 1,
         status: "pending",
       },
     ],
-    route_family: 7,
+    route_family: scope.routeFamily ?? 1,
   };
 }
 
@@ -253,6 +260,7 @@ export function rpcCallsFixture(options: {
   operation?: string | null;
   realm: string;
   resource: string;
+  routeFamily?: number;
 }) {
   const operation = options.operation ?? "GetStatus";
 
@@ -265,12 +273,12 @@ export function rpcCallsFixture(options: {
         correlation_id: "corr-rpc-1",
         operation,
         realm: options.realm,
-        request_submitted_at: "2026-05-21T13:00:00.000Z",
+        request_submitted_at: scenarioTime(-12_000),
         requests_handled: 7,
         resource: options.resource,
-        route_family: 7,
+        route_family: options.routeFamily ?? 1,
         state: "worker_registered",
-        worker_registered_at: "2026-05-21T12:59:00.000Z",
+        worker_registered_at: scenarioTime(-60_000),
         worker_session_id: "worker-1",
       },
       {
@@ -279,16 +287,16 @@ export function rpcCallsFixture(options: {
         correlation_id: "corr-rpc-2",
         operation,
         realm: options.realm,
-        request_submitted_at: "2026-05-21T13:00:10.000Z",
+        request_submitted_at: scenarioTime(-2_000),
         requests_handled: null,
         resource: options.resource,
-        route_family: 7,
+        route_family: options.routeFamily ?? 1,
         state: "pending",
         worker_registered_at: null,
         worker_session_id: null,
       },
     ],
-    route_family: 7,
+    route_family: options.routeFamily ?? 1,
   };
 }
 
@@ -297,6 +305,7 @@ export function streamRecordsFixture(options: {
   limit: number;
   realm: string;
   resource: string;
+  routeFamily?: number;
 }) {
   return {
     area: options.area,
@@ -306,19 +315,19 @@ export function streamRecordsFixture(options: {
       {
         area: options.area,
         body: { base64: "eyJvayI6dHJ1ZX0=", len_bytes: 11, utf8: '{"ok":true}' },
-        created_at_ms: 1780000000000,
+        created_at_ms: scenarioNow - 1_000,
         discriminator: null,
         metadata: null,
         realm: options.realm,
         realm_offset: 0,
         resource: options.resource,
         resource_offset: 0,
-        route_family: 7,
+        route_family: options.routeFamily ?? 1,
       },
     ],
     realm: options.realm,
     resource: options.resource,
-    route_family: 7,
+    route_family: options.routeFamily ?? 1,
     from_offset: 0,
   };
 }

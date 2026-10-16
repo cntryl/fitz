@@ -2,6 +2,8 @@
 
 #[path = "tier4_stream_direct.rs"]
 mod tier4_stream_direct;
+#[path = "tier4_stream_replay.rs"]
+mod tier4_stream_replay;
 #[path = "tier4_stream_support.rs"]
 mod tier4_stream_support;
 #[path = "tier4_stream_transport.rs"]
@@ -373,14 +375,17 @@ payload_row!(
     StreamWriteMode::Sync,
     "payload_size_sync_write"
 );
-payload_row!(
-    should_characterize_disk_sync_write_max_event,
-    "disk_sync_write_max_event",
-    StorageProfile::LocalDisk,
-    MAX_EVENT_SIZE,
-    StreamWriteMode::Sync,
-    "payload_size_sync_write"
-);
+#[stress(tier = 4, max_regression_pct = 5)]
+fn should_characterize_disk_sync_write_max_event(ctx: &mut StressContext) {
+    measure_direct_write(
+        ctx,
+        StorageProfile::LocalDisk,
+        MAX_EVENT_SIZE,
+        StreamWriteMode::Sync,
+        "payload_size_sync_write",
+        "disk_sync_write_max_event",
+    );
+}
 
 payload_row!(
     should_characterize_disk_buffered_commit,

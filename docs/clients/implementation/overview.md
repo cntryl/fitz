@@ -80,7 +80,7 @@ const tx = await client.kv.begin("kv://prod/users", {
   durability: "Sync",
 });
 await tx.put("user:123", "alice");
-await tx.commit();
+await tx.commit(CommitPersistence.Sync);
 ```
 
 ### 4. Make Durability Explicit
@@ -94,7 +94,7 @@ let tx = client.begin("kv://prod/users");
 **Good API:**
 ```rust
 // ✅ Caller chooses durability
-let tx = client.begin("kv://prod/users", Durability::Sync);
+let tx = client.begin("kv://prod/users");
 ```
 
 ### 5. Fail Fast, Fail Clear

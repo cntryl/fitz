@@ -101,6 +101,35 @@ impl QueueActor {
             .collect()
     }
 
+    pub(crate) fn admin_dead_letter(
+        &self,
+        id: MessageId,
+    ) -> Result<Option<QueueDeadLetterSnapshot>, String> {
+        let record = if let Some(record) = self.records.get(&id).cloned() {
+            record
+        } else {
+            match self.load_record_metadata_from_store(id) {
+                Ok(record) => record,
+                Err(error) if error == format!("Message {id} disappeared from storage") => {
+                    return Ok(None)
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        if !matches!(record.state, QueueState::Dlq) {
+            return Ok(None);
+        }
+        Ok(Some(QueueDeadLetterSnapshot {
+            message_id: id.as_u64(),
+            dead_lettered_at_epoch_ms: record
+                .dead_lettered_at_ms
+                .or_else(|| self.persisted_dlq.get(&id).copied())
+                .unwrap_or(record.first_enqueued_at_ms),
+            attempts: usize::try_from(record.attempts).unwrap_or(usize::MAX),
+            reason: record.dlq_reason.map_or("unknown", DlqReason::as_str),
+        }))
+    }
+
     #[must_use]
     pub fn admin_dead_letters(&self) -> Vec<QueueDeadLetterSnapshot> {
         let mut dead_letters: Vec<_> = self

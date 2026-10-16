@@ -3,9 +3,8 @@ use crate::api::admin::ResourcePath;
 use chrono::{DateTime, Utc};
 
 use super::{
-    kv_resource_diagnostics, parse_rfc3339, rfc3339, route_quad, route_triplet, DiagnosticSnapshot,
-    KvTransaction, ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind,
-    TimelineCandidate,
+    kv_resource_diagnostics, parse_rfc3339, rfc3339, route_quad, DiagnosticSnapshot, KvTransaction,
+    ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind, TimelineCandidate,
 };
 
 pub(crate) fn build_resource_timeline(
@@ -58,32 +57,17 @@ pub(crate) fn matches_resource_path(
     path.realm == realm && path.area == area && path.resource == resource
 }
 
-#[derive(Clone)]
-pub(crate) struct OwnedRpcOperation {
-    pub(super) realm: String,
-    pub(super) area: String,
-    pub(super) resource: String,
-    pub(super) operation: String,
-}
-
-impl OwnedRpcOperation {
-    pub(super) fn matches_resource_path(&self, path: &ResourcePath<'_>) -> bool {
-        self.realm == path.realm && self.area == path.area && self.resource == path.resource
-    }
-}
-
 pub(crate) fn matches_resource_route(route: &str, path: &ResourcePath<'_>) -> bool {
-    route_triplet(route)
-        .is_some_and(|parts| matches_resource_path(path, parts.realm, parts.area, parts.resource))
+    crate::api::admin::list::matches_resource_route(route, path)
 }
 
-pub(crate) fn parse_rpc_operation(route: &str) -> Option<OwnedRpcOperation> {
-    route_quad(route).map(|parts| OwnedRpcOperation {
-        realm: parts.realm.to_string(),
-        area: parts.area.to_string(),
-        resource: parts.resource.to_string(),
-        operation: parts.operation.to_string(),
-    })
+pub(crate) fn parse_rpc_operation(route: &str) -> Option<String> {
+    route_quad(route)
+        .filter(|parts| {
+            !parts.operation.contains('*')
+                && ![parts.realm, parts.area, parts.resource].contains(&"**")
+        })
+        .map(|parts| parts.operation.to_string())
 }
 
 pub(crate) fn kv_resource_timeline(

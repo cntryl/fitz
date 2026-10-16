@@ -89,7 +89,7 @@ fn submit_request(
 /// worker's slot is released so a following request can use it again -
 /// exercised here by proving a second request reaches the same worker.
 #[test]
-fn should_release_worker_slot_and_pending_when_immediate_dispatch_hits_mailbox_full() {
+fn should_recover_worker_credit_after_immediate_dispatch_hits_mailbox_full() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
@@ -132,26 +132,22 @@ fn should_release_worker_slot_and_pending_when_immediate_dispatch_hits_mailbox_f
     let response = parse_forwarded_rpc_response(&response);
     let (code, _) = crate::dispatch::protocol::rpc_codec::decode_error_body(&response.body)
         .expect("RPC error body");
-
-    // Assert
-    // The failed dispatch left no pending entry and told the caller.
-    assert_eq!(
-        code,
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE
-    );
-    assert_eq!(sink.pending_request_count(), 0);
-    assert_eq!(
-        sink.worker_count(),
-        1,
-        "worker registration must survive a full mailbox"
-    );
-
-    // Act
+    let pending_after_rejection = sink.pending_request_count();
+    let workers_after_rejection = sink.worker_count();
     // A second request must be able to claim the same worker's slot,
     // proving the failed attempt released its credit instead of leaking it.
     submit_request(&sink, family, &route, 8);
 
     // Assert
+    assert_eq!(
+        code,
+        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE
+    );
+    assert_eq!(pending_after_rejection, 0);
+    assert_eq!(
+        workers_after_rejection, 1,
+        "worker registration must survive a full mailbox"
+    );
     assert_eq!(sink.pending_request_count(), 1);
     assert_eq!(worker_sink.delivered.lock().len(), 1);
 }

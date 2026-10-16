@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn should_project_exact_and_wildcard_stream_subscriptions_until_session_cleanup() {
+fn should_project_stream_subscription_lifecycle() {
     // Arrange
     let context = setup_test_context();
     let known_route = "stream://bench/events/orders";
@@ -55,4 +55,40 @@ fn should_project_exact_and_wildcard_stream_subscriptions_until_session_cleanup(
     assert_eq!(after_unsubscribe[0].subscriptions_active, 2);
     assert_eq!(after_cleanup.len(), 1);
     assert_eq!(after_cleanup[0].subscriptions_active, 0);
+}
+
+#[test]
+fn should_enforce_stream_registration_quotas_per_session() {
+    // Arrange
+    let exact_context = setup_test_context();
+    let subscribe = |context: &TestContext, route: &str| {
+        let frame = build_stream_subscribe(route);
+        let (message_type, payload) = extract_single_tlv_field(&frame);
+        request(context, route, message_type, payload)
+    };
+    for index in 0..crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION {
+        let route = format!("stream://bench/events/resource-{index}");
+        assert_eq!(subscribe(&exact_context, &route)[0], 0);
+    }
+    let wildcard_context = setup_test_context();
+    for index in 0..crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION {
+        let route = format!("stream://bench/area{index}/*");
+        assert_eq!(subscribe(&wildcard_context, &route)[0], 0);
+    }
+
+    // Act
+    let exact_overflow = subscribe(&exact_context, "stream://bench/events/overflow");
+    let wildcard_overflow = subscribe(&wildcard_context, "stream://bench/overflow/*");
+
+    // Assert
+    assert_ne!(exact_overflow[0], 0);
+    assert_ne!(wildcard_overflow[0], 0);
+    assert_eq!(
+        exact_context.sink.subscription_count(),
+        crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION
+    );
+    assert_eq!(
+        wildcard_context.sink.subscription_count(),
+        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+    );
 }

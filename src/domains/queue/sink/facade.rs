@@ -29,7 +29,7 @@ impl QueueFamilyState {
             route_family: family,
             delivery_service_us: config.delivery_service_us[&family.id()].clone(),
             store: config.store.clone(),
-            queue_write_policy: config.queue_write_policy,
+
             dedup_store: config.dedup_store.clone(),
             actor_registry: QueueActorRegistry::default(),
             reservation_book: ReservationBook::new(
@@ -59,17 +59,14 @@ impl QueueFamilyState {
                 config.fast_flush_interval,
             ),
             dirty_fast_flush_families: HashSet::new(),
+            fast_flush_client: config.fast_flush_client.clone(),
+            in_flight_fast_flushes: HashMap::new(),
         }
     }
 }
 
 impl QueueDomain {
     /// Constructs a queue sink over a raw Midge engine after preparing persisted queue state.
-    ///
-    /// The recovery write policy is explicit because startup reconciliation can write before the
-    /// sink starts handling queue traffic. Cloud-backed engines must receive a cloud-compatible
-    /// recovery policy such as [`crate::domains::WritePolicy::CloudAsync`] or
-    /// [`crate::domains::WritePolicy::CloudStrict`].
     ///
     /// # Errors
     ///
@@ -80,40 +77,26 @@ impl QueueDomain {
         store: impl Into<crate::domains::queue::actor::recovery_store::QueueStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
-        recovery_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
-        Self::try_new_with_storage(
-            store,
-            router,
-            admin_read_model,
-            queue_write_policy,
-            recovery_write_policy,
-            dedup_store,
-        )
+        Self::try_new_with_storage(store, router, admin_read_model, dedup_store)
     }
 
     pub(crate) fn try_new_with_storage(
         store: impl Into<crate::domains::queue::actor::recovery_store::QueueStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
-        recovery_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
         let store = store.into();
         crate::domains::queue::QueueActor::prepare_persisted_state_for_existing_families(
             store.clone(),
-            queue_write_policy,
-            recovery_write_policy,
         )?;
         let known_queue_keys = QueueFamilyState::inventory_existing_queue_keys(&store)?;
         Ok(Self::new_with_storage_and_inventory(
             store,
             router,
             admin_read_model,
-            queue_write_policy,
             dedup_store,
             known_queue_keys,
             None,
@@ -125,23 +108,15 @@ impl QueueDomain {
         store: impl Into<crate::domains::queue::actor::recovery_store::QueueStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        Self::new_with_storage(
-            store,
-            router,
-            admin_read_model,
-            queue_write_policy,
-            dedup_store,
-        )
+        Self::new_with_storage(store, router, admin_read_model, dedup_store)
     }
 
     pub(crate) fn new_with_storage(
         store: impl Into<crate::domains::queue::actor::recovery_store::QueueStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
         let store = store.into();
@@ -161,7 +136,6 @@ impl QueueDomain {
             store,
             router,
             admin_read_model,
-            queue_write_policy,
             dedup_store,
             known_queue_keys,
             inventory_error,
@@ -173,7 +147,6 @@ impl QueueDomain {
         store: crate::domains::queue::actor::recovery_store::QueueStore,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
         known_queue_keys: HashSet<crate::domains::queue::QueueKey>,
         inventory_error: Option<String>,
@@ -208,13 +181,14 @@ impl QueueDomain {
         );
         let config = QueueDomainConfig {
             store,
-            queue_write_policy,
+
             dedup_store,
             router,
             projection,
             metrics: None,
             active: active.clone(),
             fast_flush_interval: None,
+            fast_flush_client: None,
             known_queue_keys: Arc::new(known_queue_keys),
             inventory_error,
             delivery_service_us,
@@ -227,6 +201,7 @@ impl QueueDomain {
             family_runtime,
             route_families,
             inflight_client_deliveries: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            fast_flush_worker: None,
         }
     }
 
@@ -251,6 +226,15 @@ impl QueueDomain {
 
     fn rebuild_actor(&mut self) {
         self.family_runtime.stop();
+        if let Some(worker) = self.fast_flush_worker.as_ref() {
+            if let Err(error) = worker.wait_until_idle() {
+                tracing::error!(
+                    domain = "queue",
+                    error,
+                    "Queue fast flush worker did not drain before actor rebuild"
+                );
+            }
+        }
         self.family_runtime =
             Self::spawn_family_runtime(&self.config, self.active.clone(), &self.route_families);
     }
@@ -277,10 +261,38 @@ impl QueueDomain {
     ///
     /// # Panics
     ///
-    /// Panics if a family runtime retains its core after the runtime has stopped.
+    /// Panics if a family runtime retains its core after the runtime has stopped,
+    /// or if the Queue flush worker cannot be started.
     pub fn with_fast_flush_interval(mut self, interval: Option<Duration>) -> Self {
         self.family_runtime.stop();
+        self.config.fast_flush_client = None;
+        drop(self.fast_flush_worker.take());
         self.config.fast_flush_interval = interval;
+        if interval.is_some() {
+            let (worker, client) =
+                super::fast_flush::FastFlushWorker::spawn(self.config.store.clone())
+                    .expect("spawn Queue fast flush worker");
+            self.fast_flush_worker = Some(worker);
+            self.config.fast_flush_client = Some(client);
+        }
+        self.rebuild_actor();
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_fast_flush_worker_for_tests(
+        mut self,
+        interval: Duration,
+        flush: impl Fn(u32) -> super::fast_flush::FlushResult + Send + 'static,
+    ) -> Self {
+        self.family_runtime.stop();
+        self.config.fast_flush_client = None;
+        drop(self.fast_flush_worker.take());
+        self.config.fast_flush_interval = Some(interval);
+        let (worker, client) = super::fast_flush::FastFlushWorker::spawn_with(flush)
+            .expect("spawn test Queue fast flush worker");
+        self.fast_flush_worker = Some(worker);
+        self.config.fast_flush_client = Some(client);
         self.rebuild_actor();
         self
     }
@@ -288,12 +300,27 @@ impl QueueDomain {
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
         self.family_runtime.stop();
+        if let Some(worker) = self.fast_flush_worker.as_ref() {
+            if let Err(error) = worker.wait_until_idle() {
+                tracing::error!(
+                    domain = "queue",
+                    error,
+                    "Queue fast flush worker did not drain during shutdown"
+                );
+            }
+        }
     }
 
     pub(crate) fn is_active(&self) -> bool {
         self.active.load(Ordering::Relaxed)
     }
 
+    /// Pool availability uses the existing aggregate flags without copying family health rows.
+    pub(crate) fn has_usable_family(&self) -> bool {
+        self.family_runtime.is_running()
+    }
+
+    #[cfg(test)]
     pub(crate) fn family_health_snapshot(
         &self,
     ) -> crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {
@@ -678,6 +705,24 @@ impl QueueDomain {
             }
         }
         enqueued
+    }
+
+    pub(crate) fn inspect_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<Option<crate::domains::queue::projection::QueueDeadLetterSnapshot>, String> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.family_runtime
+            .try_enqueue(
+                key.family,
+                crate::runtime::FamilyActorLane::Control,
+                QueueDomainCommand::InspectDeadLetter(key.clone(), id, reply_tx),
+            )
+            .map_err(|error| format!("Queue point inspection could not be admitted: {error}"))?;
+        reply_rx
+            .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
+            .map_err(|error| format!("Queue point inspection did not complete: {error}"))?
     }
 
     /// Replays a dead-lettered message back into its queue.

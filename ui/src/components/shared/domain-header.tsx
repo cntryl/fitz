@@ -1,8 +1,9 @@
 import { RefreshCwIcon } from "@askrjs/lucide";
-import { Block, Button, PageHeader, Text } from "@askrjs/themes/components";
-import { Badge } from "@askrjs/themes/components";
+import { Badge, Block, Button, PageHeader, Text } from "@askrjs/themes/components";
 
 export interface DomainHeaderProps {
+  compact?: boolean;
+  description?: string;
   eyebrow?: string;
   domain?: string;
   primaryAction?: {
@@ -19,19 +20,29 @@ export interface DomainHeaderProps {
     label: string;
     onPress: () => void;
   };
-  status?: {
-    detail?: string;
+  freshness?: {
     label: string;
     tone?: "default" | "info" | "success" | "warning" | "danger";
   };
+  status?: {
+    detail?: string;
+    freshness?: {
+      label: string;
+      tone?: "default" | "info" | "success" | "warning" | "danger";
+    };
+    label?: string;
+    tone?: "default" | "info" | "success" | "warning" | "danger";
+  };
   title: string;
-  description: string;
   onRefresh?: () => void;
 }
 
 export default function DomainHeader({
   eyebrow,
+  compact = false,
+  description,
   domain: _domain,
+  freshness,
   primaryAction,
   secondaryAction,
   status,
@@ -57,9 +68,18 @@ export default function DomainHeader({
         title={
           <span class="domain-header-title-row">
             <span>{title}</span>
-            {status ? (
+            {status?.label ? (
               <Badge role="status" aria-live="polite" variant={status.tone ?? "info"}>
                 {status.label}
+              </Badge>
+            ) : null}
+            {freshness || status?.freshness ? (
+              <Badge
+                role="status"
+                aria-live="polite"
+                variant={(freshness ?? status?.freshness)?.tone ?? "info"}
+              >
+                {(freshness ?? status?.freshness)?.label}
               </Badge>
             ) : null}
           </span>
@@ -98,6 +118,16 @@ export default function DomainHeader({
           ) : undefined
         }
       />
+      {!compact && description ? (
+        <Text as="p" class="domain-header-description" tone="muted">
+          {description}
+        </Text>
+      ) : null}
+      {!compact && status?.detail ? (
+        <Text as="p" class="domain-header-detail" tone="muted">
+          {status.detail}
+        </Text>
+      ) : null}
     </header>
   );
 }

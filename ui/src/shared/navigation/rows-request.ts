@@ -20,3 +20,22 @@ export function hasRowsRequest(query: QueryReader, pagingParams: readonly string
 export function rowsRequestQuery() {
   return new URLSearchParams({ [ROWS_REQUEST_PARAM]: "1" });
 }
+
+interface QuerySnapshot {
+  toJSON(): Record<string, string | string[]>;
+}
+
+/**
+ * Builds a link that reveals one more section while keeping every param already on
+ * the URL, so asking for transitions or transactions does not unload loaded rows.
+ */
+export function revealSectionHref(path: string, current: QuerySnapshot, param: string) {
+  const query = new URLSearchParams();
+
+  for (const [name, value] of Object.entries(current.toJSON())) {
+    for (const item of Array.isArray(value) ? value : [value]) query.append(name, item);
+  }
+  query.set(param, "1");
+
+  return `${path}?${query.toString()}`;
+}

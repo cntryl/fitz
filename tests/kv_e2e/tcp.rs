@@ -214,14 +214,14 @@ async fn should_rollback_transaction_successfully_tcp() {
 }
 
 #[tokio::test]
-async fn should_handle_empty_key_and_value_tcp() {
+async fn should_accept_empty_kv_entry_tcp() {
     // Arrange
     let server = TestServer::start()
         .await
         .expect("failed to start test server");
 
     // Act
-    should_handle_empty_key_and_value::<TcpConnector>(&server).await;
+    should_accept_empty_kv_entry::<TcpConnector>(&server).await;
 
     // Assert
     // (assertions are in the helper)
@@ -313,6 +313,7 @@ async fn should_deliver_kv_watch_notification_after_committed_put_tcp() {
 
 #[tokio::test]
 async fn should_unregister_tcp_inbox_route_on_disconnect() {
+    // Arrange
     let server = TestServer::start()
         .await
         .expect("failed to start test server");
@@ -328,8 +329,10 @@ async fn should_unregister_tcp_inbox_route_on_disconnect() {
         .await
         .expect("route registration");
 
+    // Act
     drop(client);
 
+    // Assert
     server
         .wait_for_session_count(0)
         .await
@@ -341,14 +344,14 @@ async fn should_unregister_tcp_inbox_route_on_disconnect() {
 }
 
 #[tokio::test]
-async fn should_put_and_get_same_key_in_transaction_tcp() {
+async fn should_read_own_transaction_writes_tcp() {
     // Arrange
     let server = TestServer::start()
         .await
         .expect("failed to start test server");
 
     // Act
-    should_put_and_get_same_key_in_transaction::<TcpConnector>(&server).await;
+    should_read_own_transaction_writes::<TcpConnector>(&server).await;
 
     // Assert
     // (assertions are in the helper)

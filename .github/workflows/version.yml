@@ -20,7 +20,8 @@ jobs:
       semver: ${{ steps.package-version.outputs.semver }}
 
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
       - name: Read package version from Cargo.toml
         id: package-version

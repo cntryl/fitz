@@ -100,8 +100,11 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 **Then:**
 
 - Notifications contain the matching identifier and exact concrete three-segment Queue route
-- Duplicate original registration strings are idempotent and checked before the 128-wildcard cap
-- Exact registration succeeds at the cap; the 129th distinct wildcard returns 4011
+- Duplicate original registration strings are idempotent and checked before
+  either limit
+- The 1,025th distinct exact registration returns 4011; below the total cap,
+  exact registration succeeds at the wildcard cap
+- The 129th distinct wildcard returns 4011
 - Wrong schemes, empty segments, partial wildcards, and impossible depths return 4010 on TCP and WebSocket
 - Matching and disconnect cleanup remain isolated by `RouteFamily`
 - ENQUEUE, EXTEND, and COMPLETE continue to require concrete routes
@@ -228,7 +231,7 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
   **Notes:**
 - Fitz notices are **best-effort, non-durable signals**. Clients **MUST NOT** assume guaranteed delivery, ordering across reconnects, or replay after disconnect.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
-- **Usage constraint:** Notices **MUST NOT** be used for workflow coordination, acknowledgement, or durability guarantees; use RPC or Queue for those needs.
+- **Usage constraint:** Notices **MUST NOT** be used for acknowledgement or durability guarantees. Use Queue for reservation and redelivery with best-effort persistence, RPC for live request/response, and Stream for committed durable history.
 
 ## RPC Domain
 
@@ -246,7 +249,8 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 - Whole-segment `*` and `**` are accepted in any registration segment, including realm
 - Credit belongs to the registration and is shared across every concrete route it matches
 - Overlapping exact and wildcard registrations are equal, independent candidates
-- A session may hold at most 128 wildcard RPC registrations; duplicate registration is idempotent
+- A session may hold at most 1,024 total and 128 wildcard RPC registrations;
+  duplicate registration is idempotent and checked before either limit
 
 ### AC-RPC-002: RPC Call and Response
 
@@ -472,9 +476,8 @@ whole-segment `*`/`**` selector such as `lease://acme/renderers/*`
   extra segments return 5010 for SUBSCRIBE and UNSUBSCRIBE on TCP and
   WebSocket; whole-segment `*`/`**` selectors that can match a three-segment
   route are accepted
-- Wildcard Lease registrations share the 128-per-session wildcard quota with
-  every other wildcard-capable domain; exact registrations do not count
-  against it
+- Lease retains at most 1,024 total and 128 wildcard registrations per session;
+  duplicate registration is checked before both limits
 - Observing a route through a wildcard subscription never grants, renews, or
   releases it — only exact ACQUIRE/EXTEND/RELEASE change ownership
 

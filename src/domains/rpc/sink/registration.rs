@@ -16,6 +16,7 @@ impl RpcFamilyRuntime<'_> {
         meta: &crate::runtime::ClientFrameMeta,
         worker_addr: crate::runtime::routing::RouteAddress,
         max_concurrent: usize,
+        supports_cancellation: bool,
     ) -> DeliveryOutcome {
         let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
             session_inbox_address(*envelope.destination().family(), meta.session_id)
@@ -31,14 +32,14 @@ impl RpcFamilyRuntime<'_> {
                         meta.session_id,
                         max_concurrent,
                     )
+                    .with_cancellation_support(supports_cancellation),
                 ),
-                RpcWorkerRegistration::WildcardLimit
+                RpcWorkerRegistration::WildcardLimit | RpcWorkerRegistration::TotalLimit
             ) {
                 return (
                     Some(RpcClientResponseBody::CodeError {
                         code: crate::dispatch::protocol::error_codes::rpc::ERR_SUBSCRIPTION_LIMIT,
-                        message: "wildcard subscription limit exceeded (128 per session)"
-                            .to_string(),
+                        message: "RPC registration limit exceeded".to_string(),
                     }),
                     Some(false),
                     false,

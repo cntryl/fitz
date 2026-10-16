@@ -188,8 +188,10 @@ The domains are `notice`, `stream`, `kv`, `queue`, `rpc`, `lease`, and
 `schedule`. Each domain also exports
 `fitz_{domain}_registration_threshold_{128|1024|10000}_total`; each counter
 increments once when that domain's process total first reaches the threshold.
-These metrics describe usage only and do not reject registrations. The
-existing per-session wildcard limit and Notice total limit remain independent.
+These metrics describe usage only and do not make admission decisions. Each
+domain enforces a 1,024-registration total per session, counting exact and
+wildcard registrations, plus a separate 128-wildcard cap. Notice's existing
+total cap now shares that common limit.
 
 ---
 

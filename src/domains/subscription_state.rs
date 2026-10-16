@@ -6,12 +6,36 @@ use std::sync::OnceLock;
 
 /// Per-session wildcard registration cap shared by every wildcard-capable domain.
 pub(crate) const MAX_WILDCARD_REGISTRATIONS_PER_SESSION: usize = 128;
+/// Per-session total registration cap shared by every registration domain.
+pub(crate) const MAX_TOTAL_REGISTRATIONS_PER_SESSION: usize = 1_024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RegistrationLimit {
+    Total,
+    Wildcard,
+}
 
 pub(crate) fn wildcard_registration_limit_reached(
     pattern: &Pattern,
     current_wildcard_count: usize,
 ) -> bool {
     pattern.is_wildcard() && current_wildcard_count >= MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+}
+
+pub(crate) fn registration_limit_for_counts(
+    current_total_count: usize,
+    pattern: &Pattern,
+    current_wildcard_count: usize,
+) -> Option<RegistrationLimit> {
+    // The wildcard limit predates the total cap; reporting it first keeps the
+    // original wildcard error for every wildcard request that reaches it.
+    if wildcard_registration_limit_reached(pattern, current_wildcard_count) {
+        Some(RegistrationLimit::Wildcard)
+    } else if current_total_count >= MAX_TOTAL_REGISTRATIONS_PER_SESSION {
+        Some(RegistrationLimit::Total)
+    } else {
+        None
+    }
 }
 
 pub(crate) trait RoutedSubscription {
@@ -113,12 +137,13 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
             .unwrap_or(0)
     }
 
-    pub(crate) fn wildcard_registration_limit_reached(
+    pub(crate) fn registration_limit_for_session(
         &self,
         session_id: u64,
         pattern: &Pattern,
-    ) -> bool {
-        wildcard_registration_limit_reached(
+    ) -> Option<RegistrationLimit> {
+        registration_limit_for_counts(
+            self.subscription_count_for_session(session_id),
             pattern,
             self.wildcard_subscription_count_for_session(session_id),
         )
@@ -379,8 +404,32 @@ mod tests {
         }
     }
 
+    struct LimitTestSubscription {
+        pattern: Pattern,
+        session_id: u64,
+        subscription_id: u64,
+    }
+
+    impl RoutedSubscription for LimitTestSubscription {
+        fn metric_domain() -> &'static str {
+            "subscription_limit_test"
+        }
+
+        fn pattern(&self) -> &Pattern {
+            &self.pattern
+        }
+
+        fn session_id(&self) -> u64 {
+            self.session_id
+        }
+
+        fn subscription_id(&self) -> u64 {
+            self.subscription_id
+        }
+    }
+
     #[test]
-    fn should_report_aggregate_registration_high_water_threshold_and_cleanup() {
+    fn should_preserve_registration_high_water_after_cleanup() {
         // Arrange
         let metrics = crate::observability::metrics();
         let domain = TestSubscription::metric_domain();
@@ -418,5 +467,66 @@ mod tests {
             metrics.counter_get(&format!("fitz_{domain}_registration_threshold_128_total")),
             1
         );
+    }
+
+    #[test]
+    fn should_reclaim_total_registration_capacity_after_removal() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 42;
+        let mut registrations = RoutedSubscriptionSet::new();
+        for id in 1..=MAX_TOTAL_REGISTRATIONS_PER_SESSION as u64 {
+            let route = format!("queue://acme/orders/{id}");
+            registrations.insert(
+                family,
+                LimitTestSubscription {
+                    pattern: Pattern::new(&route),
+                    session_id,
+                    subscription_id: id,
+                },
+            );
+        }
+        let next_pattern = Pattern::new("queue://acme/orders/next");
+
+        // Act
+        let at_limit = registrations.registration_limit_for_session(session_id, &next_pattern);
+        registrations.remove_session_pattern(family, session_id, "queue://acme/orders/1");
+        let after_remove = registrations.registration_limit_for_session(session_id, &next_pattern);
+
+        // Assert
+        assert_eq!(at_limit, Some(RegistrationLimit::Total));
+        assert_eq!(after_remove, None);
+    }
+
+    #[test]
+    fn should_keep_wildcard_limit_separate_from_total_registration_limit() {
+        // Arrange
+        let wildcard = Pattern::new("queue://acme/orders/*");
+
+        // Act
+        let result = registration_limit_for_counts(
+            MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+            &wildcard,
+            MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+        );
+
+        // Assert
+        assert_eq!(result, Some(RegistrationLimit::Wildcard));
+    }
+
+    #[test]
+    fn should_report_wildcard_limit_before_total_limit_when_both_are_reached() {
+        // Arrange
+        let wildcard = Pattern::new("schedule://acme/jobs/*/run");
+
+        // Act
+        let result = registration_limit_for_counts(
+            MAX_TOTAL_REGISTRATIONS_PER_SESSION,
+            &wildcard,
+            MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+        );
+
+        // Assert
+        assert_eq!(result, Some(RegistrationLimit::Wildcard));
     }
 }

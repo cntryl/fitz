@@ -25,6 +25,10 @@ pedantic = "deny"
 bench-no-snapshot = []
 # Compile benchmark-only library adapters that intentionally bypass transport.
 benchkit = []
+# Opt in to long-running saturation and endurance benchmark targets.
+stress-soak = []
+# Expose pinned Midge fixture codecs only to the external recovery driver.
+recovery-qualification = ["cntryl-midge/internal-testing"]
 
 [profile.release]
 lto = true
@@ -38,7 +42,7 @@ base64 = "0.23.1"
 brotli = "9"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-cntryl-midge = "0.3.1"
+cntryl-midge = "0.4.1"
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"
 flate2 = "1"
@@ -52,6 +56,7 @@ hyper-tungstenite = "0.30"
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 lexkey = { package = "cntryl-lexkey", version = "0.1.0" }
+libc = "0.2"
 lz4_flex = "0.14.0"
 num-traits = "0.2"
 once_cell = "1.21"
@@ -62,7 +67,7 @@ parking_lot = "0.12"
 percent-encoding = "2"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rustc-hash = "2.1.3"
-schemars = { version = "1.2.2", features = ["chrono04"] }
+schemars = { version = "1.2.3", features = ["chrono04"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha1 = "0.11"
@@ -71,6 +76,7 @@ socket2 = "0.6"
 smallvec = "1.16"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 tokio-tungstenite = "0.30"
 tracing = "0.1"
 tracing-opentelemetry = "0.34"
@@ -78,11 +84,12 @@ tracing-subscriber = { version = "0.3", features = ["ansi", "env-filter", "fmt",
 tungstenite = "0.30"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
-rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "=3.5.1", default-features = false, features = ["client", "server", "transport-child-process", "transport-io", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
 
 [dev-dependencies]
-cntryl-stress = "0.5.0"
-jsonschema = { version = "0.58.4", default-features = false }
+crc32c = "0.6"
+cntryl-stress = "0.5.1"
+jsonschema = { version = "0.58.6", default-features = false }
 proptest = "1"
 serial_test = "4.0.1"
 tokio = { version = "1", features = ["test-util"] }
@@ -354,3 +361,65 @@ path = "benches/tier4_stream_mixed.rs"
 name = "tier4_stream_shapes"
 harness = false
 path = "benches/tier4_stream_shapes.rs"
+
+[[bench]]
+name = "tier4_stream_compacted"
+harness = false
+path = "benches/tier4_stream_compacted.rs"
+required-features = ["benchkit"]
+
+# Tier 5: Full TCP concurrency/saturation sweeps.
+[[bench]]
+name = "tier5_cloud_catalog"
+harness = false
+path = "benches/tier5_cloud_catalog.rs"
+required-features = ["benchkit", "stress-soak", "recovery-qualification"]
+
+[[bench]]
+name = "tier5_queue_drains"
+harness = false
+path = "benches/tier5_queue_drains.rs"
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "tier5_saturation"
+harness = false
+path = "benches/tier5_saturation.rs"
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "queue_pressure"
+harness = false
+path = "benches/queue_pressure.rs"
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "schedule_pressure"
+harness = false
+path = "benches/schedule_pressure.rs"
+required-features = ["benchkit", "stress-soak"]
+
+# Tier 6: Full TCP endurance with bounded workload state.
+[[bench]]
+name = "tier6_endurance"
+harness = false
+path = "benches/tier6_endurance.rs"
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "kv_pressure"
+path = "benches/kv_pressure.rs"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "lease_pressure"
+path = "benches/lease_pressure.rs"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "queue_drain_latency"
+path = "benches/queue_drain_latency.rs"
+harness = false
+required-features = ["benchkit", "stress-soak"]

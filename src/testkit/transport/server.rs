@@ -11,6 +11,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, timeout};
 
+#[cfg(test)]
+mod shutdown_tests;
+
 use super::{
     TestClient, TestWebSocketClient, TEST_AUDIENCE, TEST_ISSUER, TEST_RUNTIME_AUTH_SECRET,
 };
@@ -85,6 +88,15 @@ pub struct TestServer {
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 impl TestServer {
+    /// Return an observer for bounded benchmark storage snapshots.
+    ///
+    /// This does not retain an additional owning `Arc<Engine>`.
+    #[cfg(feature = "benchkit")]
+    #[must_use]
+    pub fn storage_metrics(&self) -> cntryl_midge::EngineMetrics {
+        self.store.metrics()
+    }
+
     /// Start a test server with auth disabled (backward compatible)
     ///
     /// # Errors
@@ -95,6 +107,27 @@ impl TestServer {
             false,
             None,
             crate::boot::runtime::StorageMode::Memory,
+            false,
+            crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
+        )
+        .await
+    }
+
+    /// Start a transport test server using an explicit storage backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if storage, runtime, or listeners cannot be initialized.
+    pub async fn start_with_storage(
+        storage_mode: crate::boot::runtime::StorageMode,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options(
+            false,
+            None,
+            storage_mode,
             false,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
@@ -368,8 +401,7 @@ impl TestServer {
             },
             storage_lease_ttl_seconds: 30,
             storage_lease_ttl_error: None,
-            queue_write_policy: crate::boot::runtime::QueueWritePolicy::Fast,
-            queue_write_policy_source: crate::boot::runtime::QueueWritePolicySource::Explicit,
+            queue_write_policy_error: None,
             queue_loss_window_ms: 100,
             queue_loss_window_error: None,
             kv_idle_transaction_ttl_seconds: 300,
@@ -399,7 +431,6 @@ impl TestServer {
 
         // Step 3: Register domain actors
         let schedule_write_policy = boot_config.schedule_write_policy();
-        let queue_write_policy = boot_config.queue_write_policy();
         let domains = crate::boot::domains::setup(
             &router,
             &store,
@@ -407,9 +438,9 @@ impl TestServer {
             &crate::boot::domains::DomainSetupOptions {
                 route_families: boot_config.route_families.clone(),
                 schedule_write_policy,
-                queue_write_policy,
-                queue_recovery_write_policy: boot_config.request_sync_write_policy(),
+
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
+
                 request_sync_write_policy: boot_config.request_sync_write_policy(),
                 request_buffered_write_policy: boot_config.request_buffered_write_policy(),
                 rpc_request_timeout,
@@ -721,6 +752,7 @@ impl TestServer {
                     "test server shutdown".to_string(),
                 ))
                 .await;
+            ingress.drain_session_cleanups().await;
             drop(ingress);
         }
 

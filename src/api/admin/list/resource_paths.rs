@@ -45,6 +45,7 @@ impl ResourceRef {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn matches_path(&self, path: &ResourcePath<'_>) -> bool {
         path.matches(&self.realm, &self.area, &self.resource)
     }
@@ -90,6 +91,7 @@ impl IntoResourceRef for ScheduleInfo {
     }
 }
 
+#[cfg(test)]
 impl RpcOperationPath<'_> {
     pub(super) fn matches(&self, realm: &str, area: &str, resource: &str, operation: &str) -> bool {
         self.realm == realm
@@ -99,11 +101,8 @@ impl RpcOperationPath<'_> {
     }
 }
 
+#[cfg(test)]
 impl OwnedRpcOperation {
-    pub(super) fn matches_resource_path(&self, path: &ResourcePath<'_>) -> bool {
-        path.matches(&self.realm, &self.area, &self.resource)
-    }
-
     pub(super) fn matches_operation_path(&self, path: &RpcOperationPath<'_>) -> bool {
         path.matches(&self.realm, &self.area, &self.resource, &self.operation)
     }

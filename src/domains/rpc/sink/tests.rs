@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 mod state_metrics_and_timeouts;
 use state_metrics_and_timeouts::*;
 mod backpressure;
+mod cancellation;
 mod cleanup_and_worker_errors;
 mod correctness;
 mod fault_injection;
@@ -17,3 +18,5 @@ mod timeouts_and_capacity;
 mod wildcard_registrations;
 
 mod stale_cleanup_eviction;
+
+mod deadline_budgets;

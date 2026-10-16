@@ -58,7 +58,12 @@ pub(in crate::api::admin::topology) fn lease_lane(
             format!("{} / {} owner", lease.area, lease.resource),
             TopologyState::Flowing,
             scope_with_session(
-                scope_for_resource(&lease.realm, &lease.area, &lease.resource, None),
+                scope_for_resource(
+                    &lease.realm,
+                    &lease.area,
+                    &lease.resource,
+                    Some(lease.route_family),
+                ),
                 lease.owner_session_id.clone(),
             ),
             vec![
@@ -92,7 +97,12 @@ fn top_lease_resources(leases: &[LeaseInfo]) -> Vec<TopologyScopedResource> {
                 format!("{} / {} / {}", lease.realm, lease.area, lease.resource),
                 TopologyState::Flowing,
                 scope_with_session(
-                    scope_for_resource(&lease.realm, &lease.area, &lease.resource, None),
+                    scope_for_resource(
+                        &lease.realm,
+                        &lease.area,
+                        &lease.resource,
+                        Some(lease.route_family),
+                    ),
                     lease.owner_session_id.clone(),
                 ),
                 counters,

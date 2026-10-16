@@ -84,7 +84,7 @@
 **Given:** Authenticated session with `kv://**#write` permission  
 **When:**
 
-1. Client sends `Begin(read_write, buffered)`
+1. Client sends `Begin(read_write)`
 2. Server responds with `tx_id`
 3. Client sends `Put(tx_id, key, value)`
 4. Client sends `Commit(tx_id)`
@@ -216,8 +216,12 @@ wildcard-realm KV patterns capable of matching three segments
 **Then:**
 
 - Exact and overlapping registrations remain independent and notifications carry the exact concrete KV route
-- Duplicate original registration strings return the existing identifier, including at the 128-wildcard cap
-- Exact registrations still succeed at that cap; the 129th distinct wildcard returns 1013
+- Duplicate original registration strings return the existing identifier,
+  including at either registration cap
+- Exact registrations count toward the 1,024-total cap; the 1,025th distinct
+  exact registration returns 1013
+- Below the total cap, exact registrations remain allowed at the 128-wildcard
+  cap; the 129th distinct wildcard returns 1013
 - Wrong schemes, empty segments, partial wildcards, and impossible depths return 1012 on both TCP and WebSocket
 - Matching and cleanup remain isolated by `RouteFamily`, and disconnect removes the session's registrations
 - KV mutations continue to reject wildcard routes
@@ -417,8 +421,10 @@ patterns capable of matching a three-segment Stream route
 **Then:**
 
 - Notifications contain the matching identifier and exact concrete Stream route
-- Duplicate registration is idempotent and is checked before the 128-wildcard limit
-- Exact registration succeeds at the wildcard cap; the 129th distinct wildcard returns 2011
+- Duplicate registration is idempotent and is checked before either limit
+- The 1,025th distinct exact registration returns 2011; below the total cap,
+  exact registration succeeds at the wildcard cap
+- The 129th distinct wildcard registration returns 2011
 - Invalid subscribe and unsubscribe patterns return 2010 on TCP and WebSocket
 - Matching and disconnect cleanup stay isolated by `RouteFamily`
 - Stream writes stay concrete; READ retains its separately documented pattern support

@@ -4,8 +4,8 @@
 //! # Architecture
 //!
 //! The KV domain provides a thin, strict wrapper over Midge transactions.
-//! Committed reads and writes persist according to the Fitz `WritePolicy` selected
-//! at `begin`. Open `tx_id` handles, uncommitted writes, and resource-lock
+//! Committed writes persist according to the explicit `CommitPersistence` selected
+//! at `commit`. Open `tx_id` handles, uncommitted writes, and resource-lock
 //! coordination are live broker-local state only and disappear on disconnect or
 //! broker restart.
 //!
@@ -13,7 +13,8 @@
 //! - All operations execute within a transaction
 //! - Transactions are scoped to a single resource (table)
 //! - Explicit `RouteFamily` -> `ColumnFamily` mapping (no default CF)
-//! - Direct exposure of Midge semantics (no buffering, retries, caching)
+//! - Original Midge transaction and snapshot retained during bounded write
+//!   admission; submitted commits are not retried
 //!
 //! # Routes
 //!
@@ -37,7 +38,8 @@
 //! Clients can watch KV resources for committed mutations:
 //! - `KvDomain` owns ephemeral watch state for the current broker process
 //! - Watches target `kv://{realm}/{area}/{resource}` and wildcard resource patterns
-//! - Notifications are emitted only after a transaction commits at least one mutating operation
+//! - Notifications are emitted only after a transaction commits at least one mutating operation,
+//!   or after a snapshot restore replaces a resource with at least one row deleted or written
 //! - Uncommitted writes, empty commits, disconnect cleanup, and broker restart do not replay notifications
 //!
 //! # Column Family Mapping
@@ -64,7 +66,6 @@ pub(crate) mod admin {
 }
 mod store;
 mod watch_registry;
-pub(crate) mod write_policy;
 
 pub(crate) use actor::KvActor;
 pub use protocol::{

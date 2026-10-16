@@ -35,6 +35,7 @@ export interface LeaseAreaResourceRows {
 }
 
 export type LeaseSearchState = "owned" | "waiting" | "contention";
+export type LeaseOwnershipRowState = "owned" | "owned_with_waiters" | "waiting";
 
 export interface LeaseSearchRequest {
   area?: string;
@@ -60,7 +61,7 @@ export interface LeaseOwnershipSearchRow {
   realm: string;
   resource: string;
   routeFamily: number;
-  state: LeaseSearchState;
+  state: LeaseOwnershipRowState;
 }
 
 export interface LeaseRemainingLifetime {

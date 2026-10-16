@@ -79,7 +79,7 @@ fn should_notify_remaining_watchers_when_one_watcher_mailbox_is_full() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin(kv_route, 1, 0),
+            encode_kv_begin(kv_route, 1),
             family,
         ),
     ))
@@ -108,7 +108,7 @@ fn should_notify_remaining_watchers_when_one_watcher_mailbox_is_full() {
             writer_session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, kv_route),
+            encode_kv_commit(tx_id, kv_route, 0),
             family,
         ),
     ))
@@ -168,7 +168,7 @@ fn begin_read_write_tx(
             session_id,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
-            encode_kv_begin("kv://acme/app/resource", 1, 0),
+            encode_kv_begin("kv://acme/app/resource", 1),
             family,
         ),
     ))
@@ -178,54 +178,49 @@ fn begin_read_write_tx(
 }
 
 #[test]
-fn should_leave_identical_lock_state_whether_transaction_ends_by_commit_or_cleanup() {
-    // -- COMMIT path --
-    {
-        // Arrange
-        let family = RouteFamily::new(1);
-        let (sink, source, kv_address, mailbox) = new_lock_state_sink();
-        let tx_id = begin_read_write_tx(&sink, &source, &kv_address, &mailbox, 7, family);
-        assert!(!sink.resource_locks_are_empty_for_tests());
-        assert_eq!(sink.active_transaction_count(), 1);
+fn should_release_kv_resource_lock_after_commit() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let (sink, source, kv_address, mailbox) = new_lock_state_sink();
+    let tx_id = begin_read_write_tx(&sink, &source, &kv_address, &mailbox, 7, family);
+    assert!(!sink.resource_locks_are_empty_for_tests());
+    assert_eq!(sink.active_transaction_count(), 1);
 
-        // Act
-        sink.deliver(Envelope::from_route(
-            source,
-            kv_address,
-            FrameContext::new(
-                7,
-                ChannelId::Pub,
-                MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-                encode_kv_commit(tx_id, "kv://acme/app/resource"),
-                family,
-            ),
-        ))
-        .expect("commit KV transaction");
-        let _ = receive_envelope(&mailbox, "commit ack envelope");
+    // Act
+    sink.deliver(Envelope::from_route(
+        source,
+        kv_address,
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
+            encode_kv_commit(tx_id, "kv://acme/app/resource", 0),
+            family,
+        ),
+    ))
+    .expect("commit KV transaction");
+    let _ = receive_envelope(&mailbox, "commit ack envelope");
 
-        // Assert
-        assert!(sink.resource_locks_are_empty_for_tests());
-        assert_eq!(sink.active_transaction_count(), 0);
-    }
+    // Assert
+    assert!(sink.resource_locks_are_empty_for_tests());
+    assert_eq!(sink.active_transaction_count(), 0);
+}
 
-    // -- cleanup_session path (disconnect mid read-write transaction) --
-    {
-        // Arrange
-        let family = RouteFamily::new(1);
-        let (sink, source, kv_address, mailbox) = new_lock_state_sink();
-        let _tx_id = begin_read_write_tx(&sink, &source, &kv_address, &mailbox, 7, family);
-        assert!(!sink.resource_locks_are_empty_for_tests());
-        assert_eq!(sink.active_transaction_count(), 1);
+#[test]
+fn should_release_kv_resource_lock_after_session_cleanup() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let (sink, source, kv_address, mailbox) = new_lock_state_sink();
+    let _tx_id = begin_read_write_tx(&sink, &source, &kv_address, &mailbox, 7, family);
+    assert!(!sink.resource_locks_are_empty_for_tests());
+    assert_eq!(sink.active_transaction_count(), 1);
 
-        // Act
-        // Disconnect the session instead of committing.
-        sink.cleanup_session(7).expect("cleanup KV session");
+    // Act
+    sink.cleanup_session(7).expect("cleanup KV session");
 
-        // Assert
-        // The end state is identical to the COMMIT path above.
-        assert!(sink.resource_locks_are_empty_for_tests());
-        assert_eq!(sink.active_transaction_count(), 0);
-    }
+    // Assert
+    assert!(sink.resource_locks_are_empty_for_tests());
+    assert_eq!(sink.active_transaction_count(), 0);
 }
 
 /// Sequence: COMMIT succeeds and releases the lock -> the client never saw
@@ -237,7 +232,7 @@ fn should_leave_identical_lock_state_whether_transaction_ends_by_commit_or_clean
 /// well-known "unknown transaction" error rather than silently succeeding
 /// again.
 #[test]
-fn should_reject_retried_commit_after_transaction_already_committed_and_forgotten() {
+fn should_reject_retried_commit_after_transaction_is_forgotten() {
     // Arrange
     let family = RouteFamily::new(1);
     let (sink, source, kv_address, mailbox) = new_lock_state_sink();
@@ -262,7 +257,7 @@ fn should_reject_retried_commit_after_transaction_already_committed_and_forgotte
             7,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, "kv://acme/app/resource"),
+            encode_kv_commit(tx_id, "kv://acme/app/resource", 0),
             family,
         ),
     ))
@@ -280,7 +275,7 @@ fn should_reject_retried_commit_after_transaction_already_committed_and_forgotte
             7,
             ChannelId::Pub,
             MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
-            encode_kv_commit(tx_id, "kv://acme/app/resource"),
+            encode_kv_commit(tx_id, "kv://acme/app/resource", 0),
             family,
         ),
     ))
@@ -321,7 +316,6 @@ fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
             actor.handle(crate::domains::kv::KvMessage::Begin {
                 scope: scope.clone(),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: crate::domains::WritePolicy::Buffered,
             })
         else {
             panic!("transaction should begin");
@@ -336,6 +330,7 @@ fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
         actor.handle(crate::domains::kv::KvMessage::Commit {
             tx_id,
             scope: scope.clone(),
+            persistence: crate::domains::CommitPersistence::Buffered,
         });
         runtime.collect_inventory_repairs(8);
         let pending_before_retry = runtime.core.pending_inventory_repairs.len();

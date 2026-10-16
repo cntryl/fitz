@@ -44,6 +44,7 @@ pub(in crate::domains::rpc::sink) struct RpcWorker {
     pub(in crate::domains::rpc::sink) total_latency_us: u64,
     pattern: Pattern,
     credit: RegistrationCredit,
+    pub(in crate::domains::rpc::sink) supports_cancellation: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -57,6 +58,7 @@ pub(in crate::domains::rpc::sink) struct RpcWorkerDispatch {
     pub(in crate::domains::rpc::sink) addr: RouteAddress,
     pub(in crate::domains::rpc::sink) inbox_addr: RouteAddress,
     pub(in crate::domains::rpc::sink) session_id: u64,
+    pub(in crate::domains::rpc::sink) supports_cancellation: bool,
 }
 
 impl RpcWorkerKey {
@@ -91,7 +93,16 @@ impl RpcWorker {
             total_latency_us: 0,
             pattern,
             credit: RegistrationCredit::new(max_concurrent),
+            supports_cancellation: false,
         }
+    }
+
+    pub(in crate::domains::rpc::sink) fn with_cancellation_support(
+        mut self,
+        supports_cancellation: bool,
+    ) -> Self {
+        self.supports_cancellation = supports_cancellation;
+        self
     }
 
     #[cfg(test)]
@@ -118,6 +129,7 @@ impl RpcWorker {
             total_latency_us,
             pattern,
             credit: RegistrationCredit::new(1),
+            supports_cancellation: false,
         }
     }
 
@@ -177,6 +189,7 @@ impl RpcWorker {
             addr: self.addr.clone(),
             inbox_addr: self.inbox_addr.clone(),
             session_id: self.session_id,
+            supports_cancellation: self.supports_cancellation,
         }
     }
 

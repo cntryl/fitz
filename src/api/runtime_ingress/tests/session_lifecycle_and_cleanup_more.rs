@@ -19,7 +19,7 @@ pub(super) fn should_keep_session_cleanup_order_aligned_with_domain_manifest() {
 }
 
 #[tokio::test]
-async fn should_cleanup_registered_domains_and_remove_session_state_on_close() {
+async fn should_remove_complete_session_lifecycle_state_on_close() {
     // Arrange
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
@@ -55,7 +55,7 @@ async fn should_cleanup_registered_domains_and_remove_session_state_on_close() {
 }
 
 #[tokio::test]
-async fn should_close_active_sessions_concurrently_and_reject_late_opens() {
+async fn should_apply_shutdown_barrier_to_session_lifecycle() {
     // Arrange
     let router = Arc::new(crate::runtime::Router::new());
     let (entered_tx, entered_rx) = crossbeam_channel::bounded(2);
@@ -233,7 +233,10 @@ async fn should_record_cleanup_failures_when_on_close_cannot_reach_all_domains()
     assert!(ingress.get_session(session_id).is_none());
     assert!(ingress.get_session_actor(session_id).is_none());
     assert!(admin_read_model.sessions().is_empty());
-    assert!(ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
+    assert!(ingress
+        .cleanup
+        .pending_session_cleanups
+        .contains_key(&session_id));
 }
 
 #[tokio::test]
@@ -257,14 +260,21 @@ async fn should_retry_pending_session_cleanup_without_later_traffic() {
 
     ingress.on_open(session).await.unwrap();
     ingress.on_close(session_id, CloseReason::ClientClose).await;
-    assert!(ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
+    assert!(ingress
+        .cleanup
+        .pending_session_cleanups
+        .contains_key(&session_id));
 
     let queue_sink = Arc::new(CleanupTrackingSink::default());
     router.register_domain_pattern(DispatchDomain::Queue.as_str(), queue_sink.clone());
 
     // Act
     tokio::time::timeout(Duration::from_secs(1), async {
-        while ingress.cleanup.pending_session_cleanups.contains_key(&session_id) {
+        while ingress
+            .cleanup
+            .pending_session_cleanups
+            .contains_key(&session_id)
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -272,12 +282,15 @@ async fn should_retry_pending_session_cleanup_without_later_traffic() {
     .expect("cleanup worker should retry without later traffic");
 
     // Assert
-    assert!(!ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
+    assert!(!ingress
+        .cleanup
+        .pending_session_cleanups
+        .contains_key(&session_id));
     assert_eq!(queue_sink.recorded_sessions(), vec![session_id]);
 }
 
 #[tokio::test]
-async fn should_give_up_and_stop_retrying_session_cleanup_that_can_never_succeed() {
+async fn should_abandon_permanently_failing_session_cleanup() {
     // Arrange: never register Queue's sink, so its cleanup can never
     // succeed. Without a give-up threshold, the retry worker would keep
     // this ticket pending forever (capped-but-endless exponential backoff),
@@ -301,14 +314,21 @@ async fn should_give_up_and_stop_retrying_session_cleanup_that_can_never_succeed
 
     ingress.on_open(session).await.unwrap();
     ingress.on_close(session_id, CloseReason::ClientClose).await;
-    assert!(ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
+    assert!(ingress
+        .cleanup
+        .pending_session_cleanups
+        .contains_key(&session_id));
     let permanent_failures_before =
         collector.counter_get(obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES);
 
     // Act: Queue's sink is intentionally never registered, so this ticket
     // can never succeed - the worker must eventually give up.
     tokio::time::timeout(Duration::from_secs(10), async {
-        while ingress.cleanup.pending_session_cleanups.contains_key(&session_id) {
+        while ingress
+            .cleanup
+            .pending_session_cleanups
+            .contains_key(&session_id)
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -316,7 +336,10 @@ async fn should_give_up_and_stop_retrying_session_cleanup_that_can_never_succeed
     .expect("cleanup worker should give up instead of retrying forever");
 
     // Assert
-    assert!(!ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
+    assert!(!ingress
+        .cleanup
+        .pending_session_cleanups
+        .contains_key(&session_id));
     assert!(
         collector.counter_get(obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES)
             > permanent_failures_before,
@@ -426,9 +449,7 @@ async fn should_cleanup_real_queue_inflight_on_close() {
         store,
         router.clone(),
         admin_read_model.clone(),
-        crate::domains::WritePolicy::Buffered,
-        crate::utils::idempotency::default_dedup_store(),
-    ));
+        crate::utils::idempotency::default_dedup_store(),));
 
     let sender_mailbox = Arc::new(Mailbox::new(8));
     let worker_mailbox = Arc::new(Mailbox::new(8));

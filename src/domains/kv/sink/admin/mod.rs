@@ -101,6 +101,30 @@ impl KvDomain {
         KvFamilyRuntime { core: &mut core }.admin_inventory(family)
     }
 
+    pub(crate) fn admin_inventory_page(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: Option<&str>,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<(Vec<crate::control::admin::KvResourceInventoryEntry>, bool), String> {
+        let mut core = self.admin_core();
+        KvFamilyRuntime { core: &mut core }.admin_inventory_page(family, realm, area, after, limit)
+    }
+
+    pub(crate) fn admin_inventory_metadata_resource(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
+        let mut core = self.admin_core();
+        KvFamilyRuntime { core: &mut core }
+            .admin_inventory_metadata_resource(family, realm, area, resource)
+    }
+
     /// Read one admin inventory entry for a specific KV resource.
     ///
     /// # Errors

@@ -1,8 +1,9 @@
 import { currentRoute } from "@askrjs/askr/router";
 import { state } from "@askrjs/askr";
-import { For, Show } from "@askrjs/askr/control";
+import { Show } from "@askrjs/askr/control";
 import { task } from "@askrjs/askr/resources";
-import { Block, Card, CardContent, CardTitle } from "@askrjs/themes/components";
+import { Badge, Block } from "@askrjs/themes/components";
+import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -13,10 +14,14 @@ import {
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
+import TitledCell from "@/components/shared/titled-cell";
 import { formatDurationSeconds, formatNumber, formatTimestamp } from "@/shared/format";
 import { createLeaseResourceRowsQuery } from "@/features/lease/lease-query";
 import { deriveLeaseRemainingLifetime } from "@/features/lease/lease-mappers";
-import type { LeaseOwnershipSearchRow } from "@/features/lease/lease-models";
+import type {
+  LeaseOwnershipRowState,
+  LeaseOwnershipSearchRow,
+} from "@/features/lease/lease-models";
 
 function decodeParam(value: string | undefined) {
   if (!value) {
@@ -53,63 +58,87 @@ function formatOwner(row: LeaseOwnershipSearchRow) {
   return row.ownerSessionId ?? row.ownerId ?? "--";
 }
 
-function LeaseOwnershipCards(props: { rows: LeaseOwnershipSearchRow[]; now: () => number }) {
-  const totalWaiters = props.rows.reduce((sum, row) => sum + row.pendingWaiters, 0);
+function formatState(state: LeaseOwnershipRowState) {
+  switch (state) {
+    case "owned":
+      return "Owned";
+    case "owned_with_waiters":
+      return "Owned with waiters";
+    case "waiting":
+      return "Waiting";
+  }
+}
+
+function formatTokenDetail(row: LeaseOwnershipSearchRow) {
+  return `${row.state === "waiting" ? "Queued token" : "Fencing token"} ${row.queuedToken ?? "--"}`;
+}
+
+function formatStateDetail(row: LeaseOwnershipSearchRow) {
+  const age = `age ${row.ageSeconds === null ? "--" : formatDurationSeconds(row.ageSeconds)}`;
+
+  return row.state === "waiting" ? age : `${formatNumber(row.pendingWaiters)} waiters · ${age}`;
+}
+
+function LeaseOwnershipTable(props: {
+  limit: number;
+  rows: LeaseOwnershipSearchRow[];
+  now: () => number;
+}) {
+  // Detail folds under each value so the table fits every width without scrolling.
+  const columns: readonly DataTableColumn<LeaseOwnershipSearchRow>[] = [
+    {
+      id: "session",
+      header: "Owner / waiting session",
+      width: "45%",
+      cellComponent: ({ row }) => (
+        <TitledCell title={formatOwner(row)} subtitle={formatTokenDetail(row)}>
+          {formatOwner(row)}
+        </TitledCell>
+      ),
+    },
+    {
+      id: "state",
+      header: "State",
+      width: "27%",
+      cellComponent: ({ row }) => (
+        <TitledCell subtitle={formatStateDetail(row)}>{formatState(row.state)}</TitledCell>
+      ),
+    },
+    {
+      id: "remaining-ttl",
+      header: "Remaining TTL",
+      width: "28%",
+      cellComponent: ({ row }) => (
+        <TitledCell
+          subtitle={row.expiresAt ? `Expires ${formatTimestamp(row.expiresAt)}` : "No expiry"}
+        >
+          <span class="lease-remaining-ttl" data-field="remaining-ttl">
+            {() => formatRemaining(row.expiresAt, props.now())}
+          </span>
+        </TitledCell>
+      ),
+    },
+  ];
 
   return (
     <DomainDataSection
       id="lease-ownership-rows"
-      title="Ownership details"
-      description={`${props.rows.length} ownership observation${props.rows.length === 1 ? "" : "s"} and ${totalWaiters} queued waiter${totalWaiters === 1 ? "" : "s"} in this scope.`}
+      title="Owners and waiters"
+      actions={
+        props.rows.length >= props.limit ? (
+          <Badge variant="warning">Observation sample reached {props.limit}</Badge>
+        ) : undefined
+      }
     >
-      <Block className="lease-ownership-list">
-        <For
-          each={props.rows}
-          by={(row) =>
-            `${row.ownerSessionId}-${row.ownerId ?? "none"}-${row.queuedToken ?? "none"}-${row.area}-${row.realm}-${row.resource}-${row.state}`
-          }
-        >
-          {(row) => (
-            <Card class="lease-ownership-card" padding="sm" variant="default">
-              <CardContent>
-                <Block direction="column" gap="sm">
-                  <CardTitle titleAs="h3">{formatOwner(row)}</CardTitle>
-                  <dl class="lease-ownership-details">
-                    <div>
-                      <dt>State</dt>
-                      <dd>{row.state}</dd>
-                    </div>
-                    <div>
-                      <dt>Queued token</dt>
-                      <dd>{row.queuedToken ?? "--"}</dd>
-                    </div>
-                    <div>
-                      <dt>Waiters</dt>
-                      <dd>{formatNumber(row.pendingWaiters)}</dd>
-                    </div>
-                    <div>
-                      <dt>Age</dt>
-                      <dd>
-                        {row.ageSeconds === null ? "--" : formatDurationSeconds(row.ageSeconds)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Remaining TTL</dt>
-                      <dd class="lease-remaining-ttl" data-field="remaining-ttl">
-                        {() => formatRemaining(row.expiresAt, props.now())}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Expiry</dt>
-                      <dd>{row.expiresAt ? formatTimestamp(row.expiresAt) : "--"}</dd>
-                    </div>
-                  </dl>
-                </Block>
-              </CardContent>
-            </Card>
-          )}
-        </For>
-      </Block>
+      <DataTable<LeaseOwnershipSearchRow>
+        ariaLabel="Owners and waiters"
+        class="domain-resource-data-table"
+        columns={columns}
+        getKey={(row) =>
+          `${row.ownerSessionId}-${row.ownerId ?? "none"}-${row.queuedToken ?? "none"}-${row.area}-${row.realm}-${row.resource}-${row.state}`
+        }
+        rows={props.rows}
+      />
     </DomainDataSection>
   );
 }
@@ -150,22 +179,19 @@ export default function LeaseResourcePage() {
       <DomainPageFrame>
         <Block direction="column" gap="sm">
           <DomainHeader
+            compact={true}
             eyebrow="Lease ownership"
             title={resource ?? ""}
-            description={`Ephemeral owner/session rows with TTL and waiter pressure for ${realm} / ${area} / ${resource}.`}
             primaryAction={{
               busy: rowsQuery.refreshing,
               disabled: rowsQuery.refreshing,
               label: "Refresh ownership rows",
               onPress: () => rowsQuery.refresh(),
             }}
-            status={queryHeaderStatus(rowsQuery, {
-              loading: "Loading lease ownership rows.",
-              ready: rowsData
-                ? `${formatNumber(rows.length)} row${rows.length === 1 ? "" : "s"} visible in scope. ${waiters} waiter${waiters === 1 ? "" : "s"} visible. Ephemeral, not crash-safe continuity.`
-                : "",
-              unavailable: "Lease ownership evidence is unavailable for this resource.",
-            })}
+            status={queryHeaderStatus(
+              rowsQuery,
+              waiters > 0 ? { label: "Waiters present", tone: "warning" } : {},
+            )}
           />
           <Show when={!rowsData && rowsQuery.loading}>
             <QueryLoadingState description="Loading lease ownership rows..." />
@@ -179,7 +205,7 @@ export default function LeaseResourcePage() {
           </Show>
 
           <Show when={rowsData && rows.length > 0}>
-            <LeaseOwnershipCards rows={rows} now={leaseClockNow} />
+            <LeaseOwnershipTable rows={rows} limit={rowsData?.limit ?? limit} now={leaseClockNow} />
           </Show>
 
           <Show when={rowsData && rows.length === 0}>

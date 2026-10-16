@@ -1,0 +1,44 @@
+name: Integration GCS
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      sqrzl:
+        image: ghcr.io/sqrzl/sqrzl-emulator:latest
+        ports:
+          - 9000:9000
+        env:
+          SQRZL_ACCESS_KEY_ID: admin
+          SQRZL_SECRET_ACCESS_KEY: sqrzl-secret
+          SQRZL_BUCKET_LIST: fitz-integration
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      FITZ_STORAGE_MODE: cloud
+      FITZ_STORAGE_PROVIDER: sqrzl-gcs
+      FITZ_STORAGE_ENDPOINT: http://127.0.0.1:9000
+      FITZ_STORAGE_BUCKET: fitz-integration
+      FITZ_STORAGE_CONTAINER: fitz-integration
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test cloud integration
+        run: cargo test --locked --test cloud_integration -- --ignored

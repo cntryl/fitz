@@ -75,7 +75,6 @@ fn should_reject_long_poll_when_family_reserve_capacity_is_full() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for (session_id, inbox, _) in &clients {
         for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
@@ -126,7 +125,6 @@ fn should_release_long_poll_capacity_when_session_is_cleaned_up() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
         park_queue_reserve(&sink, family, &queue_address, 8, &inbox);
@@ -157,7 +155,6 @@ fn should_reject_long_poll_when_session_reserve_capacity_is_full() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
         park_queue_reserve(&sink, family, &queue_address, 8, &inbox);
@@ -193,7 +190,6 @@ fn should_release_long_poll_capacity_when_reserves_expire() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     for _ in 0..MAX_PENDING_QUEUE_RESERVES_PER_SESSION {
         park_queue_reserve(&sink, family, &queue_address, 9, &inbox);
@@ -229,7 +225,6 @@ fn should_not_deliver_woken_reserve_to_a_session_cleaned_up_before_enqueue() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
 
     // Act
@@ -324,7 +319,6 @@ fn should_reject_stale_ack_after_visibility_expiry_already_released_inflight_to_
         store,
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
 
     sink.deliver(Envelope::from_route(
@@ -428,7 +422,6 @@ fn should_retain_subscription_when_notify_delivery_fails() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     );
 
     sink.deliver(Envelope::from_route(
@@ -543,7 +536,6 @@ fn should_not_wake_pending_reserve_when_an_unrelated_dead_letter_is_purged() {
         store,
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
 
     sink.deliver(Envelope::from_route(
@@ -581,14 +573,13 @@ fn should_not_wake_pending_reserve_when_an_unrelated_dead_letter_is_purged() {
 /// Invariant: the failure is counted for alerting and the family stays dirty,
 /// so the next flush pass retries instead of silently widening the loss window.
 #[test]
-fn should_count_and_retain_failed_fast_flushes() {
+fn should_retain_failed_fast_flush_for_retry() {
     // Arrange
     let family = RouteFamily::new(1);
     let sink = new_queue_domain_sink(
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
     );
     let failures_before = crate::observability::metrics()
         .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL);
@@ -608,4 +599,63 @@ fn should_count_and_retain_failed_fast_flushes() {
             .counter_get(crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL)
             > failures_before
     );
+}
+
+#[test]
+fn should_serve_queue_delivery_while_fast_flush_is_blocked() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let sender_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(sender_address.clone(), sender_mailbox.clone());
+    let (started_tx, started_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    let first_flush = std::sync::atomic::AtomicBool::new(true);
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    )
+    .with_fast_flush_worker_for_tests(Duration::from_millis(100), move |_| {
+        if first_flush.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            started_tx.send(()).expect("notify blocked flush start");
+            release_rx
+                .recv_timeout(Duration::from_secs(3))
+                .expect("release blocked flush");
+        }
+        Ok(true)
+    });
+    sink.inspect_family_for_tests(family, |state| {
+        state.dirty_fast_flush_families.insert(1);
+        state.flush_dirty_fast_families();
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("fast flush worker started");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        sender_address,
+        queue_address,
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send("queue://acme/email/jobs", b"email"),
+            family,
+        ),
+    ))
+    .expect("Queue delivery stays responsive during flush");
+    let response = receive_queue_frame(&sender_mailbox, "Queue send response");
+    let dirty_during_flush = sink.inspect_family_for_tests(family, |state| {
+        state.dirty_fast_flush_families.contains(&1)
+            && state.in_flight_fast_flushes.contains_key(&1)
+    });
+    release_tx.send(()).expect("release blocked flush");
+
+    // Assert
+    assert_eq!(response.payload[0], 0);
+    assert!(dirty_during_flush, "writes during a flush remain dirty");
 }

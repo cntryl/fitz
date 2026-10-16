@@ -28,10 +28,12 @@ import type {
   KvCommittedPair,
   KvKeyEncoding,
   KvResourceScope,
+  KvTransaction,
 } from "@/features/kv/kv-models";
 import { createKvRowsQuery } from "@/features/kv/kv-rows-query";
+import { createKvTransactionsQuery } from "@/features/kv/kv-query";
 import { createKvValueQuery } from "@/features/kv/kv-value-query";
-import { formatNumber } from "@/shared/format";
+import { formatNumber, formatTimestamp } from "@/shared/format";
 import { domainResourceHref } from "@/shared/navigation/domains";
 import { rowsRequestQuery } from "@/shared/navigation/rows-request";
 
@@ -52,6 +54,7 @@ export function rowsHref(
     cursorTrail?: readonly string[];
     limit: number;
     startsWith: string;
+    transactions?: boolean;
   },
 ) {
   const query = rowsRequestQuery();
@@ -62,6 +65,7 @@ export function rowsHref(
     query.append("cursorTrail", trailCursor);
   }
   if (params.limit !== DEFAULT_ROWS_LIMIT) query.set("limit", params.limit.toString());
+  if (params.transactions) query.set("transactions", "1");
 
   return `${domainResourceHref("kv", scope)}?${query.toString()}`;
 }
@@ -72,6 +76,7 @@ export interface KvRowsSectionProps {
   limit: number;
   scope: KvResourceScope;
   startsWith: string;
+  transactions: boolean;
 }
 
 /**
@@ -84,6 +89,7 @@ export function KvRowsSection({
   limit,
   scope,
   startsWith,
+  transactions,
 }: KvRowsSectionProps) {
   const rowsQuery = createKvRowsQuery(scope, { cursor, limit, startsWith });
   const rows = rowsQuery.data?.items ?? [];
@@ -169,7 +175,10 @@ export function KvRowsSection({
 
       <Block direction="row" gap="xs" wrap={true}>
         <Show when={cursor !== null}>
-          <Link class="page-action-link" href={rowsHref(scope, { limit, startsWith })}>
+          <Link
+            class="page-action-link"
+            href={rowsHref(scope, { limit, startsWith, transactions })}
+          >
             First page
           </Link>
           <Link
@@ -179,6 +188,7 @@ export function KvRowsSection({
               cursorTrail: previousCursorTrail,
               limit,
               startsWith,
+              transactions,
             })}
           >
             Previous page
@@ -192,6 +202,7 @@ export function KvRowsSection({
                 cursorTrail: [...cursorTrail, cursor ?? ""],
                 limit,
                 startsWith,
+                transactions,
               })}
             >
               Next page
@@ -200,6 +211,70 @@ export function KvRowsSection({
         </Show>
       </Block>
     </Block>
+  );
+}
+
+function formatTransactionDetail(transaction: KvTransaction) {
+  return [
+    transaction.mode ?? "--",
+    `started ${transaction.startedAt ? formatTimestamp(transaction.startedAt) : "--"}`,
+    `${transaction.operationsCount === undefined ? "--" : formatNumber(transaction.operationsCount)} operations`,
+  ].join(" · ");
+}
+
+export function KvTransactionsSection({ scope }: { scope: KvResourceScope }) {
+  const query = createKvTransactionsQuery(scope);
+  const transactions = query.data ?? [];
+  // Mode, start, and operation count fold under the id so the table never scrolls sideways.
+  const transactionColumns: readonly DataTableColumn<KvTransaction>[] = [
+    {
+      id: "transaction",
+      header: "Transaction",
+      width: "72%",
+      cellComponent: ({ row }) => (
+        <TitledCell subtitle={formatTransactionDetail(row)}>{row.txId ?? "--"}</TitledCell>
+      ),
+    },
+    {
+      id: "idle",
+      header: "Idle",
+      width: "28%",
+      cellComponent: ({ row }) => (
+        <span>{row.idleSeconds === undefined ? "--" : `${formatNumber(row.idleSeconds)}s`}</span>
+      ),
+    },
+  ];
+
+  return (
+    <DomainDataSection id="kv-active-transactions" title="Active transactions">
+      <Block direction="column" gap="sm">
+        <Show when={query.loading && !query.data}>
+          <QueryLoadingState description="Loading active KV transactions..." />
+        </Show>
+        <Show when={query.error}>
+          <QueryErrorState
+            title="Unable to load active KV transactions"
+            error={query.error}
+            onRetry={() => query.refresh()}
+          />
+        </Show>
+        <Show when={query.data && transactions.length === 0}>
+          <QueryCompactEmptyState
+            title="No active transactions"
+            description="No active transaction rows are currently reported."
+          />
+        </Show>
+        <Show when={transactions.length > 0}>
+          <DataTable<KvTransaction>
+            ariaLabel="Active transactions"
+            class="domain-resource-data-table"
+            columns={transactionColumns}
+            getKey={(transaction, index) => `${index}-${transaction.txId ?? "none"}`}
+            rows={transactions}
+          />
+        </Show>
+      </Block>
+    </DomainDataSection>
   );
 }
 

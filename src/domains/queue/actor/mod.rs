@@ -1,4 +1,4 @@
-//! `QueueActor`: manages a single message queue with configurable durability
+//! `QueueActor`: manages a single message queue with best-effort persistence
 //!
 //! Each queue has:
 //! - Identity: (realm, area, resource) from route
@@ -7,20 +7,20 @@
 //!
 //! # Invariants
 //!
-//! 1. **Crash-safe ID reservation**: persisted ID reservations prevent collisions across restarts
-//! 2. **At-least-once delivery**: Messages may be delivered multiple times
+//! 1. **Persisted ID reservation**: recovery resumes from reservations that reached storage
+//! 2. **Redelivery**: Persisted messages may be delivered multiple times
 //! 3. **Inflight isolation**: Reserved messages invisible to other consumers
 //! 4. **Automatic redelivery**: Expired inflight entries or crashes return messages to ready queue
-//! 5. **Policy-scoped recovery**: State that reached durable storage is restored on restart
+//! 5. **Persisted-state recovery**: State that reached storage is restored on restart
 //! 6. **Correct time semantics**: Delays use absolute `SystemTime` epochs (V-002 Fix)
 //! 7. **Fair distribution**: Competing consumers get best-effort ready-queue order
 //!
 //! # Intent vs Events
 //!
 //! Queues represent **intent** (work to be done), not events of record.
-//! Minimal data loss is acceptable under the fast queue write policy (producers can regenerate work items).
+//! Persistence is always best effort; producers must be able to regenerate lost work.
 //! Messages commit together with any required ID-reservation extension.
-//! Crashes may create ID gaps, but never ID reuse or collisions.
+//! Crashes may lose reservations and permit ID reuse; IDs are not durable deduplication keys.
 //!
 //! # State Model
 //!
@@ -53,6 +53,9 @@ const QUEUE_IDLE_HORIZON: Duration = Duration::from_hours(1);
 const QUEUE_STORAGE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_DUE_ITEMS_PER_PASS: usize = 32;
 pub(super) const QUEUE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
+// Client storage operations use Midge's default runtime response budget.
+// Admission and control-plane waits retain the short latency budget above.
+pub(super) use super::QUEUE_CLIENT_REPLY_TIMEOUT as QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT;
 
 use bytes::Bytes;
 use lexkey::LexKey;
@@ -172,6 +175,7 @@ enum DlqReason {
 #[derive(Clone, Copy)]
 enum QueueCommit {
     Ack,
+    Enqueue,
     Redelivery,
 }
 
@@ -554,7 +558,7 @@ pub struct QueueActor {
     /// Queue identity
     queue_key: QueueKey,
 
-    /// Queue persistence adapter, including engine-specific policy conversion.
+    /// Queue persistence adapter; every write is best effort.
     persistence: recovery_store::QueuePersistence,
 
     /// Next message ID to allocate (monotonic counter)
@@ -661,12 +665,14 @@ pub struct QueueActor {
     next_delayed_deadline: Instant,
 }
 
+pub(in crate::domains::queue) mod ack_timing;
 mod admin_snapshot;
 mod constructors_validation;
 mod dead_letter_admin;
 mod dlq;
 mod enqueue;
 mod inflight_release;
+mod mutation_storage;
 mod recovery_state;
 mod reserve_and_ack;
 mod startup_reconciliation;

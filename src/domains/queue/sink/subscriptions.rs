@@ -138,7 +138,10 @@ impl QueueFamilyState {
             if let Some(id) = state.find_existing_id(session_id, pattern_str) {
                 (id, false)
             } else {
-                if state.wildcard_registration_limit_reached(session_id, &parsed_pattern) {
+                if state
+                    .registration_limit_for_session(session_id, &parsed_pattern)
+                    .is_some()
+                {
                     return (
                         crate::domains::queue::QueueResponse::SubscriptionLimit,
                         None,

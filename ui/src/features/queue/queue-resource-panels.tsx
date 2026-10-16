@@ -11,7 +11,7 @@ import {
   Text,
 } from "@askrjs/themes/components";
 import DomainDataSection from "@/components/shared/domain-data-section";
-import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
+import DomainFacts from "@/components/shared/domain-facts";
 import { QueryCompactEmptyState } from "@/components/shared/query-state";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
@@ -22,7 +22,7 @@ import type {
   QueueResourceTimeline,
   QueueResourceTimelineEvent,
 } from "@/features/queue/queue-resource-models";
-import { formatTimestamp } from "@/shared/format";
+import { formatNumber, formatTimestamp } from "@/shared/format";
 import {
   formatRate,
   formatTimelineContext,
@@ -32,33 +32,25 @@ import {
 
 export function QueueResourceCurrentValuesPanel({ detail }: { detail: QueueResourceDetail }) {
   return (
-    <DomainSummaryStrip
-      class="queue-resource-summary domain-detail-summary"
-      title="Current values"
-      description="Broker-visible queue counters and live reservations for this scope."
+    <DomainFacts
+      id="queue-current-values"
+      title="Queue state"
       items={[
-        { label: "Ready", value: detail.messagesReady },
+        { label: "Ready", value: formatNumber(detail.messagesReady) },
         {
-          label: "Delayed",
-          value: detail.messagesDelayed,
-          caption: detail.messagesDelayed > 0 ? "Delayed messages visible" : undefined,
+          label: "Oldest ready",
+          value: detail.messagesReady > 0 ? humanizeSeconds(detail.oldestMessageAgeSeconds) : "--",
         },
-        { label: "Inflight", value: detail.messagesInflight },
-        { label: "Subscriptions", value: detail.subscriptionsActive },
+        { label: "Delayed", value: formatNumber(detail.messagesDelayed) },
+        { label: "In flight", value: formatNumber(detail.messagesInflight) },
+        { label: "Dead-lettered", value: formatNumber(detail.messagesDeadLettered) },
+        { label: "Enqueued/s (60s)", value: formatRate(detail.inRatePerSecond) },
+        { label: "Completed/s (60s)", value: formatRate(detail.outRatePerSecond) },
         {
-          label: "Snapshot dead letters",
-          value: detail.messagesDeadLettered,
-          caption:
-            detail.messagesDeadLettered > 0
-              ? "Resource-summary counter; needs action"
-              : "Resource-summary counter",
-        },
-        { label: "In / sec", value: formatRate(detail.inRatePerSecond) },
-        { label: "Out / sec", value: formatRate(detail.outRatePerSecond) },
-        {
-          label: "Oldest backlog",
-          value: humanizeSeconds(detail.oldestBacklogAgeSeconds),
-          caption: "Ready and delayed messages",
+          label: "Live subscriptions",
+          value: formatNumber(detail.subscriptionsActive),
+          title:
+            "Live route registrations; these do not prove durable consumer identity or capacity.",
         },
       ]}
     />
@@ -70,7 +62,6 @@ export function QueueResourceInflightPanel({ messages }: { messages: QueueInflig
     <DomainDataSection
       id="queue-inflight"
       title="Inflight"
-      description="Live reservations currently owned by queue sessions."
       actions={
         <Badge variant="info">
           {messages.length} {messages.length === 1 ? "entry" : "entries"}
@@ -108,7 +99,6 @@ export function QueueResourceDeadLettersPanel({
     <DomainDataSection
       id="queue-dead-letters"
       title="Dead letters"
-      description="Durable messages returned by the current dead-letter inspection. This list and the resource-summary counter can have different snapshot times."
       actions={
         <Badge variant={messages.length > 0 ? "warning" : "success"}>
           {messages.length} {messages.length === 1 ? "message" : "messages"} returned
@@ -190,15 +180,10 @@ export function QueueResourceTimelinePanel({ timeline }: { timeline: QueueResour
   return (
     <DomainDataSection
       id="queue-timeline"
-      title="Timeline"
-      description={
-        timeline.derived
-          ? "Derived transition evidence built from surrounding queue state."
-          : "Broker-observed queue transitions for this resource."
-      }
+      title={timeline.derived ? "Derived transitions" : "Observed transitions"}
       actions={
         <Badge variant={timeline.derived ? "info" : "success"}>
-          {timeline.derived ? "Derived" : "Live"}
+          {timeline.derived ? "Derived" : "Observed"}
         </Badge>
       }
     >
@@ -206,8 +191,8 @@ export function QueueResourceTimelinePanel({ timeline }: { timeline: QueueResour
         when={timeline.events.length > 0}
         fallback={
           <QueryCompactEmptyState
-            title={timeline.derived ? "Derived timeline" : "Live timeline"}
-            description="No recent transitions are visible for this resource. Use current metrics for context."
+            title="No transitions"
+            description="No transition evidence is available for this resource."
           />
         }
       >

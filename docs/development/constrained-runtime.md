@@ -1,0 +1,147 @@
+# Constrained runtime qualification
+
+Fitz must remain usable with a fraction of a CPU and 512MiB RAM. The campaigns
+qualify a specific envelope: 0.25 CPU, 512MiB RAM, swap disabled, and an
+external load generator. Automated workflows use native Linux AMD64; manual
+qualification can also target native Linux ARM64. This is a survival and
+correctness qualification, not a throughput promise or a maximum-capacity claim.
+The CI workflow runs backend and frontend validation. Separate
+`integration-s3.yml`, `integration-azure.yml`, and `integration-gcs.yml` workflows
+run a focused Rust KV/Stream commit and fresh-cache recovery test against a
+Sqrzl Actions service. The resource qualification campaigns described here are
+manual and require a separately built runtime image.
+
+The campaign probes all seven domains, enqueues 16,384 uniquely identified 4KiB
+Queue messages through 64 connections, verifies every delivery and ACK, checks
+that the queue is empty, and probes all seven domains again. Health must remain
+ready throughout. The container must remain running with zero restarts and no
+OOM kill. Every operation must finish within the campaign's 600-second deadline;
+returned rejections fail this bounded qualification and are never blindly retried.
+
+The 64MiB payload burst crosses normal Midge SST publication and checks that
+storage pressure does not leave other domains unusable. Notice/RPC probes cover
+live delivery; Lease covers acquire/release; Schedule covers create/cancel;
+Stream and KV cover write/read; Queue covers enqueue/reserve/ACK. These probes do
+not establish replay, power-loss recovery, scheduled execution, or ownership
+continuity. The campaign uses anonymous connections and local storage; cloud
+storage, authenticated workloads, and larger bursts require separate evidence.
+
+Run against the exact source checkout used to build the image:
+
+```sh
+docker build -t fitz-resource-local .
+docker run --detach --name fitz-resource-local \
+  --cpus 0.25 --memory 512m --memory-swap 512m \
+  --publish 127.0.0.1::4090 --publish 127.0.0.1::4091 \
+  --env FITZ_AUTH_REQUIRED=false --env FITZ_ADMIN_AUTH_MODE=open \
+  --env FITZ_STORAGE_MODE=local --env FITZ_STORAGE_PATH=/data \
+  --env FITZ_LOG_LEVEL=warn --env OTEL_ENABLED=false fitz-resource-local
+export FITZ_EXTERNAL_CONTAINER=fitz-resource-local
+export FITZ_EXTERNAL_HTTP_ENDPOINT="http://$(docker port fitz-resource-local 4090/tcp)"
+export FITZ_EXTERNAL_TCP_ADDRESS="$(docker port fitz-resource-local 4091/tcp)"
+export FITZ_RESOURCE_SOURCE_SHA="$(git rev-parse HEAD)"
+export FITZ_RESOURCE_REPORT_PATH=target/fitz-stress/constrained-runtime/report.json
+curl --fail "$FITZ_EXTERNAL_HTTP_ENDPOINT/healthz"
+cargo test --locked --test constrained_runtime \
+  should_remain_usable_after_bounded_storage_pressure -- --ignored --nocapture
+```
+
+Wait for `/healthz` to report `ready` before starting the driver. The driver
+checks the actual Docker limits before and after the campaign and writes its
+accounting, health timings, container state, and supplied source SHA to the
+report. Capture Docker stats and logs alongside the report; on failure, retain
+the local store before removing the disposable container. Docker CLI memory stats report
+a working set; the container's hard memory limit includes file cache.
+
+The Queue optimization exposed a Midge SST index bug: an unsafe trie successor
+hint could hide an existing Stream epoch key after SST publication. The official Midge 0.4.0 dependency includes the upstream fix from
+Midge PR 775. The Stream concurrency guard remains enforced. A focused actor regression
+also checks Stream writes after Fast Queue forces automatic SST publication.
+
+## S3 WAL retention and crash recovery
+
+Four manual process-level campaigns run against the same native runtime image
+at 0.25 CPU / 512MiB / no additional swap. A digest-pinned Sqrzl container and
+the external driver run outside the broker's resource limit. Fitz uses its native
+S3-compatible provider with best-effort Queue persistence and strict durability
+for KV and other durable-domain writes. Provider
+failure fails the campaign; these tests never silently skip.
+
+The retention campaign prepares a catalog-authorized 64MiB historical KV
+WAL fixture before boot, then runs four enqueue/ACK cycles of 4,096 deterministic
+16KiB messages, totaling 256MiB of accepted Queue payload. It uses the ordinary automatic
+memtable and maintenance settings. Within 120 seconds of the final ACK, the
+catalog segments captured before boot must retire, SST objects
+must exist, and both
+catalog-authorized WAL and actual remote WAL objects must total at most 128MiB.
+Every accepted message ID and payload is verified before ACK, each cycle ends
+with an empty queue, and all 4,096 historical KV values are verified after
+retirement to reject premature deletion. This measures a fixed resource/workload envelope;
+it does not assert that every possible database has a universal WAL size cap.
+
+Two separate restart campaigns enqueue 4,096 best-effort 16KiB messages,
+allow a quiet background flush interval, finish orderly storage shutdown, restart, then send
+SIGKILL and verify exit 137 without an OOM kill. The frozen crash state must
+contain published SST objects. These tests recover a persisted 64MiB fixture;
+an enqueue response or orderly shutdown alone does not promise crash survival. The fixture preparation is
+included in the unchanged 1,200-second whole-case limit. The separate 640MiB
+KV fixture qualifies WAL-volume pressure.
+
+Each campaign either restarts with the same cache or removes the container and
+its anonymous data volume before creating a replacement with a fresh cache.
+Strict `/healthz` must report ready within 180 seconds measured from the crash
+attempt, including evidence capture, cache lifecycle, container startup and the
+configured 59-second crashed-writer lease. All checkpointed IDs and exact payloads
+must recover, be ACKed and leave the queue empty. The seven-domain smoke probe
+must also pass after recovery. Each whole campaign has a fixed 1,200-second
+deadline.
+
+The large-WAL campaign constructs a separate catalog-authorized 640MiB backlog
+with the pinned Midge frame/record codecs, then opens the ordinary Fitz image
+with a completely empty cache. This backlog exceeds the broker's entire hard
+memory limit. Readiness has the same 180-second deadline, and 40,960 exact KV
+values must be readable through Fitz afterward. Fixture construction runs
+outside the resource cap and occurs with no active writer. It qualifies large
+WAL recovery; the two Queue campaigns separately prove recovery of explicitly
+checkpointed Queue state. They do not qualify durability of unflushed Queue acceptance. Only the external driver enables the
+`recovery-qualification` feature; the production image uses its normal features.
+
+Startup validation and inventory consume storage rows incrementally so Queue,
+Stream, and Schedule do not retain unrelated KV payloads while selecting their
+own rows. This avoids copying the fixture's entire KV state into a startup scan.
+
+Reports retain the supplied source SHA, resolved runtime image ID, provider
+digest, actual Docker resource limits, authoritative WAL catalog and remote
+object inventories, readiness timings, container lifecycle, broker logs and
+Docker memory samples. The driver requires Docker and AWS CLI v2. Run the
+ignored `s3::` tests against the exact source checkout used to build the image:
+
+```sh
+export FITZ_TEST_IMAGE=fitz-resource-local
+export FITZ_S3_PROVIDER_IMAGE=ghcr.io/sqrzl/sqrzl-emulator@sha256:bb5bf54895fcb3b9730665b48e0f7b602791c61c3d18e5e7a060a4dce5c90964
+export FITZ_S3_TEST_ENDPOINT=http://127.0.0.1:9000
+export FITZ_S3_NETWORK=fitz-s3-qualification
+export FITZ_S3_REPORT_DIR=target/fitz-stress/s3-recovery
+export FITZ_RESOURCE_SOURCE_SHA="$(git rev-parse HEAD)"
+docker network create "$FITZ_S3_NETWORK"
+docker run --detach --name fitz-s3-provider --network "$FITZ_S3_NETWORK" \
+  --publish 127.0.0.1:9000:9000 --publish 127.0.0.1:9001:9001 \
+  --env SQRZL_ACCESS_KEY_ID=admin --env SQRZL_SECRET_ACCESS_KEY=easy-peasy \
+  --env SQRZL_BLOBS_PATH=/app/blobs "$FITZ_S3_PROVIDER_IMAGE"
+curl --fail --retry 30 --retry-delay 1 --retry-all-errors \
+  http://127.0.0.1:9001/healthz
+mkdir -p "$FITZ_S3_REPORT_DIR"
+cargo test --locked --features recovery-qualification --test constrained_runtime s3:: \
+  -- --ignored --nocapture --test-threads=1
+```
+
+These campaigns qualify native S3 protocol behavior against an emulator. They
+do not qualify production AWS latency, an unmeasured historic backlog, or reuse
+of a Fitz 0.1.0 storage prefix. Fitz 0.1.0 resolved Midge 0.1.1; current develop
+uses the official crates.io Midge 0.4.1 release.
+Its streaming recovery checkpoints, exact delete/range-tombstone retirement,
+budgeted replay coverage and indexed SST candidate selection address concrete
+historical retention/recovery mechanisms. Residual recovery cost remains
+tracked in [Midge #754](https://github.com/cntryl/midge/issues/754), and the Fitz stable release remains gated by
+[Fitz #416](https://github.com/cntryl/fitz/issues/416). Follow the
+[migration guide](../operations/migration-guide.md) before any production cutover.

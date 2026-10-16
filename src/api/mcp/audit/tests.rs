@@ -16,6 +16,7 @@ fn context() -> McpExecutionContext {
 
 fn record(name: String) -> McpAuditRecord {
     McpAuditRecord {
+        correlation_id: None,
         principal: Some("operator".to_string()),
         tool_name: name,
         capability: McpCapabilityClass::Summary,
@@ -23,6 +24,7 @@ fn record(name: String) -> McpAuditRecord {
         argument_summary: "absent".to_string(),
         decision: McpAuditDecision::Denied,
         result_summary: "denied".to_string(),
+        duration_ms: 0,
     }
 }
 
@@ -145,7 +147,7 @@ fn should_audit_handler_failure_without_retaining_error_details() {
     let registry = McpToolRegistry {
         tools: vec![crate::api::mcp::McpToolDefinition::new(
             descriptor,
-            |_, _| {
+            |_, _, _| {
                 Err(McpToolError::Serialization {
                     tool_name: "get_global_stats".to_string(),
                     reason: "private-secret".to_string(),
@@ -169,4 +171,51 @@ fn should_audit_handler_failure_without_retaining_error_details() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].result_summary, "handler_error");
     assert!(!serde_json::to_string(&records).unwrap().contains("secret"));
+}
+
+#[test]
+fn should_bound_untrusted_request_identifiers_in_retained_audit() {
+    // Arrange
+    let context = context().with_correlation_id(format!("\n{}", "é".repeat(32_000)));
+
+    // Act
+    context.record_audit(record("test".into()));
+
+    // Assert
+    let records = context.audit_records();
+    let identifier = records[0].correlation_id.as_ref().unwrap();
+    assert!(identifier.len() <= AUDIT_FIELD_BYTES);
+    assert!(!identifier.chars().any(char::is_control));
+}
+
+#[test]
+fn should_not_retain_unpermitted_scope_arguments_in_denial_audit() {
+    // Arrange
+    let context = McpExecutionContext::authenticated(
+        AdminPrincipal {
+            username: "reader".into(),
+            route_family_access: crate::api::admin::auth::AdminRouteFamilyAccess::Explicit(vec![
+                "1".into(),
+            ]),
+        },
+        SessionPermissions::empty(),
+    );
+    let runtime = Runtime::new(Arc::new(Router::new()));
+    let arguments = serde_json::json!({"scheme":"rpc","realm":"private-secret","area":"jobs","resource":"orders","route_family":1});
+
+    // Act
+    let result = McpToolRegistry::read_only().execute(
+        "inspect_resource_detail",
+        &runtime,
+        &context,
+        &McpCapabilityPolicy::read_only(),
+        Some(&arguments),
+    );
+
+    // Assert
+    assert!(matches!(result, Err(McpToolError::ScopeDenied { .. })));
+    assert!(!serde_json::to_string(&context.audit_records())
+        .unwrap()
+        .contains("private-secret"));
+    assert!(context.audit_records()[0].scope_route.is_none());
 }

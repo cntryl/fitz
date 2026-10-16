@@ -68,7 +68,10 @@ impl QueueFamilyState {
                 format!("queue inventory scan failed: family={family} error={error:?}")
             })?;
 
-            for (key, value) in rows {
+            for row in rows {
+                let (key, value) = row.map_err(|error| {
+                    format!("queue inventory scan failed: family={family} error={error:?}")
+                })?;
                 drop(value);
                 if let Some(queue_key) =
                     crate::domains::queue::QueueActor::queue_key_from_authoritative_storage_key(
@@ -124,8 +127,7 @@ impl QueueFamilyState {
     }
 
     pub(super) fn fast_flush_enabled(&mut self) -> bool {
-        self.queue_write_policy == crate::domains::WritePolicy::BestEffort
-            && self.maintenance_clock.fast_flush_enabled()
+        self.maintenance_clock.fast_flush_enabled()
     }
 
     pub(super) fn mark_fast_flush_dirty(
@@ -138,15 +140,89 @@ impl QueueFamilyState {
     }
 
     pub(super) fn maybe_flush_dirty_fast_families_at(&mut self, now: Instant) {
-        if self.queue_write_policy != crate::domains::WritePolicy::BestEffort {
-            return;
-        }
+        self.complete_fast_flushes();
         if self.maintenance_clock.fast_flush_due(now) {
             self.flush_dirty_fast_families();
         }
     }
 
     pub(super) fn flush_dirty_fast_families(&mut self) {
+        self.complete_fast_flushes();
+        let client = self.fast_flush_client.clone();
+        if let Some(client) = client.as_ref() {
+            self.submit_fast_flushes(client);
+            return;
+        }
+
+        // Sinks without a configured fast-flush interval never create a
+        // worker. Keep this path for explicit internal maintenance calls.
+        self.flush_dirty_fast_families_inline();
+    }
+
+    fn submit_fast_flushes(&mut self, client: &super::fast_flush::FastFlushClient) {
+        let dirty_family_ids = std::mem::take(&mut self.dirty_fast_flush_families);
+        let mut retry_family_ids = Vec::new();
+        for family_id in dirty_family_ids {
+            if self.in_flight_fast_flushes.contains_key(&family_id) {
+                retry_family_ids.push(family_id);
+                continue;
+            }
+            match client.try_flush(family_id) {
+                Ok(completion) => {
+                    self.in_flight_fast_flushes.insert(family_id, completion);
+                }
+                Err(true) => retry_family_ids.push(family_id),
+                Err(false) => {
+                    crate::observability::counter_inc(
+                        crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL,
+                    );
+                    tracing::warn!(
+                        domain = "queue",
+                        family = family_id,
+                        "Queue fast flush worker stopped; accepted writes remain dirty for retry"
+                    );
+                    retry_family_ids.push(family_id);
+                }
+            }
+        }
+        self.dirty_fast_flush_families.extend(retry_family_ids);
+    }
+
+    fn complete_fast_flushes(&mut self) {
+        let completed = self
+            .in_flight_fast_flushes
+            .iter()
+            .filter_map(|(family_id, receiver)| match receiver.try_recv() {
+                Ok(result) => Some((*family_id, result)),
+                Err(crossbeam_channel::TryRecvError::Empty) => None,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => Some((
+                    *family_id,
+                    Err("Queue fast flush worker dropped its completion".to_string()),
+                )),
+            })
+            .collect::<Vec<_>>();
+        for (family_id, result) in completed {
+            self.in_flight_fast_flushes.remove(&family_id);
+            match result {
+                Ok(true) => {}
+                Ok(false) => {
+                    // A missing column family is permanent: retrying every flush
+                    // interval would only raise a false durability alert.
+                    tracing::warn!(
+                        domain = "queue",
+                        family = family_id,
+                        "Queue fast flush dropped a family whose column family no longer exists"
+                    );
+                }
+                Err(error) => {
+                    Self::record_fast_flush_failure(family_id, &error);
+                    self.dirty_fast_flush_families.insert(family_id);
+                }
+            }
+        }
+    }
+
+    fn flush_dirty_fast_families_inline(&mut self) {
         let dirty_family_ids = {
             let dirty = &mut self.dirty_fast_flush_families;
             dirty.drain().collect::<Vec<_>>()
@@ -169,15 +245,7 @@ impl QueueFamilyState {
                     );
                 }
                 Err(error) => {
-                    crate::observability::counter_inc(
-                        crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL,
-                    );
-                    tracing::warn!(
-                        domain = "queue",
-                        family = family_id,
-                        error = ?error,
-                        "Queue fast flush failed; accepted writes remain unflushed past the loss window until a retry succeeds"
-                    );
+                    Self::record_fast_flush_failure(family_id, &error.to_string());
                     retry_family_ids.push(family_id);
                 }
             }
@@ -186,6 +254,18 @@ impl QueueFamilyState {
         if !retry_family_ids.is_empty() {
             self.dirty_fast_flush_families.extend(retry_family_ids);
         }
+    }
+
+    fn record_fast_flush_failure(family_id: u32, error: &str) {
+        crate::observability::counter_inc(
+            crate::domains::queue::metrics::METRIC_FAST_FLUSH_FAILURES_TOTAL,
+        );
+        tracing::warn!(
+            domain = "queue",
+            family = family_id,
+            error,
+            "Queue fast flush failed; accepted writes remain unflushed past the loss window until a retry succeeds"
+        );
     }
 
     pub(super) fn maybe_cleanup_dedup_at(&mut self, now: Instant) {
@@ -202,13 +282,8 @@ impl QueueFamilyState {
     where
         F: FnOnce(&mut crate::domains::queue::QueueActor) -> R,
     {
-        self.actor_registry.with_actor(
-            key,
-            &self.store,
-            &self.dedup_store,
-            self.queue_write_policy,
-            operation,
-        )
+        self.actor_registry
+            .with_actor(key, &self.store, &self.dedup_store, operation)
     }
 
     pub(super) fn maybe_sweep_idle_actors(&mut self) {
@@ -290,6 +365,15 @@ impl QueueFamilyState {
         for (key, notification) in notifications {
             self.notify_queue_ready_and_wake_reserves(&key, Some(notification), now);
         }
+    }
+
+    pub(super) fn inspect_dead_letter(
+        &mut self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<Option<crate::domains::queue::projection::QueueDeadLetterSnapshot>, String> {
+        let (result, _) = self.with_actor(key, |actor| actor.admin_dead_letter(id))?;
+        result
     }
 
     /// Replays a dead-lettered message back into its queue.

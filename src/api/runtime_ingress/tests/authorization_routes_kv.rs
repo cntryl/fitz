@@ -1,7 +1,7 @@
 use super::*;
 
-fn kv_begin_payload(mode: u8, durability: u8, trailing: &[u8]) -> Bytes {
-    let frame = crate::benchkit::build_kv_begin("kv://acme/app/users", mode, durability);
+fn kv_begin_payload(mode: u8, trailing: &[u8]) -> Bytes {
+    let frame = crate::benchkit::build_kv_begin("kv://acme/app/users", mode);
     let (_, payload) = crate::benchkit::extract_single_tlv_field(&frame);
     let mut payload = payload.to_vec();
     payload.extend_from_slice(trailing);
@@ -12,11 +12,11 @@ fn kv_begin_payload(mode: u8, durability: u8, trailing: &[u8]) -> Bytes {
 fn should_accept_kv_begin_authorization_exactly_when_the_kv_codec_accepts_it() {
     // Arrange
     let cases = [
-        ("read-only buffered", kv_begin_payload(0, 0, &[])),
-        ("read-write sync", kv_begin_payload(1, 1, &[])),
-        ("trailing byte", kv_begin_payload(1, 0, &[0])),
-        ("unknown mode", kv_begin_payload(2, 0, &[])),
-        ("unknown durability", kv_begin_payload(0, 2, &[])),
+        ("read-only", kv_begin_payload(0, &[])),
+        ("read-write", kv_begin_payload(1, &[])),
+        ("trailing byte", kv_begin_payload(1, &[0])),
+        ("unknown mode", kv_begin_payload(2, &[])),
+        ("legacy persistence", kv_begin_payload(0, &[1])),
     ];
 
     for (name, payload) in cases {
@@ -58,7 +58,7 @@ async fn should_close_before_dispatch_given_kv_begin_with_trailing_data() {
             session_id,
             ChannelId::Pub,
             MessageType::new(100),
-            kv_begin_payload(1, 0, &[0]),
+            kv_begin_payload(1, &[0]),
             None,
         )
         .await;

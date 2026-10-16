@@ -73,16 +73,35 @@ fn should_register_inspect_tools_given_read_only_registry() {
     let descriptors = registry.tool_descriptors();
 
     // Assert
-    assert_eq!(descriptors.len(), 5);
-    assert_eq!(descriptors[2].name, "inspect_resource_detail");
-    assert_eq!(descriptors[2].capability, McpCapabilityClass::Inspect);
-    assert_eq!(descriptors[2].budget, McpCostBudget::inspect());
-    assert_eq!(descriptors[3].name, "inspect_resource_timeline");
-    assert_eq!(descriptors[3].capability, McpCapabilityClass::Inspect);
-    assert_eq!(descriptors[3].budget, McpCostBudget::timeline());
-    assert_eq!(descriptors[4].name, "explain_global_troubleshooting");
-    assert_eq!(descriptors[4].capability, McpCapabilityClass::Explain);
-    assert_eq!(descriptors[4].budget, McpCostBudget::summary());
+    assert_eq!(descriptors.len(), 10);
+    let by_name = descriptors
+        .into_iter()
+        .map(|descriptor| (descriptor.name.clone(), descriptor))
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        by_name["inspect_resource_detail"].capability,
+        McpCapabilityClass::Inspect
+    );
+    assert_eq!(
+        by_name["inspect_resource_detail"].budget,
+        McpCostBudget::inspect()
+    );
+    assert_eq!(
+        by_name["inspect_resource_timeline"].capability,
+        McpCapabilityClass::Inspect
+    );
+    assert_eq!(
+        by_name["inspect_resource_timeline"].budget,
+        McpCostBudget::timeline()
+    );
+    assert_eq!(
+        by_name["explain_global_troubleshooting"].capability,
+        McpCapabilityClass::Explain
+    );
+    assert_eq!(
+        by_name["explain_global_troubleshooting"].budget,
+        McpCostBudget::summary()
+    );
 }
 
 #[test]
@@ -168,7 +187,10 @@ fn should_execute_resource_detail_given_kv_scope() {
         .expect("resource detail output");
 
     // Assert
-    assert_eq!(output, expected);
+    assert!(output["_meta"]["evidence_id"].is_string());
+    let mut facts = output.clone();
+    facts.as_object_mut().unwrap().remove("_meta");
+    assert_eq!(facts, expected);
 }
 
 #[test]
@@ -209,7 +231,10 @@ fn should_execute_resource_timeline_given_kv_scope() {
         .expect("resource timeline output");
 
     // Assert
-    assert_eq!(output, expected);
+    assert!(output["_meta"]["evidence_id"].is_string());
+    let mut facts = output.clone();
+    facts.as_object_mut().unwrap().remove("_meta");
+    assert_eq!(facts, expected);
     let audit_records = context.audit_records();
     assert_eq!(audit_records.len(), 1);
     assert_eq!(audit_records[0].decision, McpAuditDecision::Allowed);
@@ -269,10 +294,8 @@ fn should_deny_resource_detail_given_missing_scope() {
     let audit_records = context.audit_records();
     assert_eq!(audit_records.len(), 1);
     assert_eq!(audit_records[0].decision, McpAuditDecision::Denied);
-    assert_eq!(
-        audit_records[0].scope_route.as_deref(),
-        Some("kv://acme/app/users")
-    );
+    assert!(audit_records[0].scope_route.is_none());
+    assert_eq!(audit_records[0].result_summary, "scope_denied");
 }
 
 #[test]

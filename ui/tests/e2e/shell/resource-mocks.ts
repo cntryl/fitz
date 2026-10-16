@@ -7,6 +7,7 @@ import {
   makeDiagnosticSnapshot,
   mockAdminFeatures,
   normalizedAdminApiSegments,
+  scenarioTime,
   topologyApiPayload,
 } from "./api-fixtures";
 import {
@@ -102,7 +103,7 @@ export async function mockResourceDetailApis(
           await route.fulfill({
             json: {
               area,
-              family_watermarks: [{ family: 1, watermark: 20 }],
+              family_watermarks: [{ family: routeScope.routeFamily ?? 1, watermark: 20 }],
               realm,
               resource_count: 2,
             },
@@ -120,7 +121,7 @@ export async function mockResourceDetailApis(
               age_seconds: 7,
               correlation_id: "corr-1",
               route: "GetStatus",
-              submitted_at: "2026-05-21T13:00:00.000Z",
+              submitted_at: scenarioTime(-7_000),
               worker_session_id: "worker-1",
             },
           ],
@@ -136,6 +137,7 @@ export async function mockResourceDetailApis(
           limit: Number(parsed.searchParams.get("limit") || 200),
           operation: parsed.searchParams.get("operation"),
           realm: parsed.searchParams.get("realm") ?? routeScope.realm,
+          routeFamily: routeScope.routeFamily,
           resource: parsed.searchParams.get("resource") ?? routeScope.resource,
         }),
       });
@@ -149,7 +151,8 @@ export async function mockResourceDetailApis(
       return;
     }
 
-    const scope = parseResourceScope(segments);
+    const apiScope = parseResourceScope(segments);
+    const scope = apiScope ? { ...apiScope, routeFamily: routeScope.routeFamily } : null;
 
     if (!scope) {
       await route.continue();
@@ -185,6 +188,7 @@ export async function mockResourceDetailApis(
           area: scope.area,
           limit: Number(parsed.searchParams.get("limit") || 50),
           realm: scope.realm,
+          routeFamily: routeScope.routeFamily,
           resource: scope.resource,
         }),
       });
@@ -202,7 +206,7 @@ export async function mockResourceDetailApis(
               operations_count: 4,
               realm: scope.realm,
               resource: scope.resource,
-              started_at: "2026-05-21T13:00:00.000Z",
+              started_at: scenarioTime(-11_000),
               tx_id: 101,
             },
           ],
@@ -226,7 +230,7 @@ export async function mockResourceDetailApis(
           next_cursor: null,
           realm: scope.realm,
           resource: scope.resource,
-          route_family: 1,
+          route_family: scope.routeFamily ?? 1,
           starts_with: { base64: "", len_bytes: 0, utf8: "" },
         },
       });
@@ -238,7 +242,7 @@ export async function mockResourceDetailApis(
         json: {
           subscriptions: [
             {
-              created_at: "2026-05-21T13:00:00.000Z",
+              created_at: scenarioTime(-10 * 60_000),
               notifications_received: 8,
               pattern: "notifications/**",
               realm: scope.realm,
@@ -350,6 +354,7 @@ export async function mockScheduleResourceApis(page: Page, routeScope: ResourceS
         json: scheduleMissedHandoffsFixture({
           area: parsed.searchParams.get("area") ?? routeScope.area,
           realm: parsed.searchParams.get("realm") ?? routeScope.realm,
+          routeFamily: routeScope.routeFamily,
           resource: parsed.searchParams.get("resource") ?? routeScope.resource,
         }),
       });
@@ -380,7 +385,8 @@ export async function mockScheduleResourceApis(page: Page, routeScope: ResourceS
       return;
     }
 
-    const scope = parseResourceScope(segments);
+    const apiScope = parseResourceScope(segments);
+    const scope = apiScope ? { ...apiScope, routeFamily: routeScope.routeFamily } : null;
 
     if (!scope) {
       await route.continue();
@@ -441,7 +447,7 @@ export function queueTimelineFixture(scope: ResourceScope) {
         domain: "queue",
         kind: "transition",
         message_id: 200,
-        observed_at: "2026-05-21T13:00:00.000Z",
+        observed_at: scenarioTime(-2_000),
         operation: "Peek",
         owner_session: "session-queue-1",
         realm: scope.realm,
@@ -450,7 +456,7 @@ export function queueTimelineFixture(scope: ResourceScope) {
         worker_session: "worker-queue-1",
       },
     ],
-    family: 1,
+    family: scope.routeFamily ?? 1,
     limit: 8,
     realm: scope.realm,
     resource: scope.resource,
@@ -484,7 +490,8 @@ export async function mockQueueResourceApis(page: Page, routeScope: ResourceScop
       return;
     }
 
-    const scope = parseResourceScope(segments);
+    const apiScope = parseResourceScope(segments);
+    const scope = apiScope ? { ...apiScope, routeFamily: routeScope.routeFamily } : null;
 
     if (!scope) {
       await route.continue();
@@ -544,8 +551,8 @@ export async function mockQueueResourceApis(page: Page, routeScope: ResourceScop
             {
               area: scope.area,
               attempts: 1,
-              expires_at: "2026-05-21T13:05:00.000Z",
-              family: 1,
+              expires_at: scenarioTime(5 * 60_000),
+              family: routeScope.routeFamily ?? 1,
               inflight_token: "token-1",
               message_id: 101,
               realm: scope.realm,
@@ -565,8 +572,8 @@ export async function mockQueueResourceApis(page: Page, routeScope: ResourceScop
             {
               area: scope.area,
               attempts: 2,
-              dead_lettered_at: "2026-05-21T12:59:00.000Z",
-              family: 1,
+              dead_lettered_at: scenarioTime(-60_000),
+              family: routeScope.routeFamily ?? 1,
               message_id: 88,
               realm: scope.realm,
               reason: "Transient failure",

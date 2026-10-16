@@ -33,6 +33,51 @@ regression-gate throughput must remain at least 90% of baseline with p95 at most
 most 105%; and hot-resource append with 100,000 prior events must remain within
 10% of an empty resource.
 
+The Tier 4 workflow runs the registered Stream workloads directly through
+`cntryl-stress`. Native artifacts retain sampling, correctness, quality, and
+environment data. Use the framework's baseline comparison and
+`cntryl-tools summarize-benchmarks` for performance analysis; do not launch
+comparison campaigns from integration tests or repository-owned scripts.
+
+The six memory transport workloads declare native `max_regression_pct = 10`
+budgets; maximum-event disk writes declare `5`. With a compatible raw native
+baseline, `cntryl-stress` applies these budgets to throughput and the paired
+p95 latency measurement. Sampling stays at the framework default. No baseline
+means these relative budgets are unevaluated, and statistically inconclusive
+comparisons do not establish a regression. These guards use the framework's
+environment, trust, quality, and confidence checks; the committed summary
+baseline is not a raw native baseline. Keep accepted raw baselines separate
+from current output artifacts and supply them with the native `--baseline`
+option. Paired latency rows remain report-only in the configured release
+summary; explicit native budgets also apply when doing this raw comparison.
+
+The former bespoke Stream comparison workflow is retired. Ordinary tier runs
+and the two configured Stream release rows do not enforce its complete
+same-host qualification policy. The existing blocked qualification remains
+blocked; a scheduled benchmark pass does not satisfy it or refresh the baseline.
+
+That outstanding qualification requires all 32 workloads, identical fixtures,
+the default sampling profile, and three alternating baseline/candidate pairs
+per workload on a stable Linux host. Maximum-event writes and WebSocket exact
+replay also require three alternating unchanged-binary control pairs with
+throughput and p95 ratios within 0.95–1.05. Unstable controls invalidate the
+performance conclusion regardless of observed budget results.
+
+One full qualification and one predeclared full confirmation must use the same
+archived executables; both must pass the budgets above and both controls.
+Finish compilation and fixture/dependency audits before timing. Preserve source
+SHAs, locked dependency resolution, executable hashes, raw quality labels,
+semantic checks, failed captures, and untimed host CPU/I/O observations.
+Dependency comparisons must retain the baseline's original manifest and lockfile.
+Byte-identical outputs alone do not qualify a source change. A performance
+host and shared-tool support for this policy are still required; no new timing
+qualification or artifact-equivalence verdict is claimed by this cleanup.
+
+For Fitz 0.2.0, the maintainer accepted local Apple Silicon Mac verification on
+2026-10-16 instead of requiring a separate Linux host. This changes the accepted
+host for that release only. The workload set, sampling, alternating pairs,
+controls, confirmation and performance budgets above remain unchanged.
+
 ## Selection Rules
 
 Use [config/perf_targets.json](../../config/perf_targets.json) and [Performance targets](bench-targets.md) to choose optimization candidates. Prefer the scenario furthest over its operational target inside the relevant bucket, then use stretch-target distance and current `mean_us` to break ties.

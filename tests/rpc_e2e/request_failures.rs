@@ -356,7 +356,7 @@ where
         &response,
         300,
         fitz::protocol::error_codes::rpc::ERR_SUBSCRIPTION_LIMIT,
-        "wildcard subscription limit exceeded (128 per session)",
+        "RPC registration limit exceeded",
     );
 }
 

@@ -70,11 +70,18 @@ fn should_preserve_previous_index_when_replacement_commit_fails() {
         dlq: &dlq,
     };
 
+    QueueStore::fail_next_commit_for_tests(cntryl_midge::MidgeError::Internal(
+        "injected index replacement failure".to_string(),
+    ));
+
     // Act
-    let result = store.replace_index(&replacement, WritePolicy::CloudStrict);
+    let result = store.replace_index(&replacement);
 
     // Assert
-    assert!(result.is_err(), "cloud policy must fail on local storage");
+    assert!(
+        result.is_err(),
+        "replacement commit must report its failure"
+    );
     let snapshot = store.snapshot().expect("read original index");
     assert_eq!(
         store
@@ -111,9 +118,7 @@ fn should_read_reserved_id_from_recovery_snapshot_after_concurrent_commit() {
             None,
         )
         .expect("advance ID reservation");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit reservation");
+    write.commit().expect("commit reservation");
 
     // Act
     let reserved = store
@@ -154,9 +159,7 @@ fn should_use_authoritative_reservation_when_index_hit_has_stale_next_id() {
             None,
         )
         .expect("write stale index next ID");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit stale index");
+    write.commit().expect("commit stale index");
 
     // Act
     actor.recover_from_store().expect("recover empty queue");
@@ -187,9 +190,7 @@ fn should_use_authoritative_reservation_when_index_counters_are_invalid() {
             None,
         )
         .expect("write invalid counters and ID");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit corrupt index");
+    write.commit().expect("commit corrupt index");
 
     // Act
     let recovery = actor.recover_from_store();
@@ -235,9 +236,7 @@ fn should_use_authoritative_reservation_when_index_rows_are_invalid_and_queue_is
             None,
         )
         .expect("write malformed ready index row");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit corrupt index");
+    write.commit().expect("commit corrupt index");
 
     // Act
     actor.recover_from_store().expect("recover empty queue");
@@ -252,6 +251,8 @@ fn should_fail_reservation_recovery_when_persisted_row_cannot_be_read() {
     // Arrange
     let error = QueueStoreError {
         message: "injected reservation read failure".to_string(),
+        midge_error: None,
+        admission_stalled: false,
     };
 
     // Act
@@ -310,9 +311,7 @@ fn should_fail_closed_when_existing_index_has_no_reservation_row() {
     write
         .delete(QueueActor::meta_key(&store.key))
         .expect("remove reservation row");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit reservation removal");
+    write.commit().expect("commit reservation removal");
 
     // Act
     let result = actor.recover_from_store();
@@ -337,9 +336,7 @@ fn should_fail_closed_when_header_scan_finds_messages_without_reservation_metada
     write
         .delete(store.index_meta_key.clone())
         .expect("remove index metadata");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit metadata removal");
+    write.commit().expect("commit metadata removal");
 
     // Act
     let result = actor.recover_from_store();
@@ -364,9 +361,7 @@ fn should_fail_closed_when_header_ids_exceed_reservation_metadata() {
     write
         .delete(store.index_meta_key.clone())
         .expect("remove index metadata to force header scan");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit stale reservation");
+    write.commit().expect("commit stale reservation");
 
     // Act
     let result = actor.recover_from_store();
@@ -392,9 +387,7 @@ fn should_decode_header_rows_only_as_consumed() {
             None,
         )
         .expect("write malformed later header");
-    write
-        .commit(WritePolicy::Buffered)
-        .expect("commit malformed header");
+    write.commit().expect("commit malformed header");
     let snapshot = store.snapshot().expect("read snapshot");
 
     // Act
@@ -408,4 +401,105 @@ fn should_decode_header_rows_only_as_consumed() {
     let rows = first.expect("an unread malformed row must not fail an earlier valid row");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, MessageId::new(1));
+}
+
+/// Fills family 1's L0 slots with compaction disabled until Midge itself
+/// rejects a commit, then returns that rejection unmodified.
+fn real_midge_l0_rejection() -> QueueStoreError {
+    let directory = tempfile::tempdir().expect("create Midge directory");
+    let engine = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::local(directory.path())
+                .background_compaction(false)
+                .build()
+                .expect("build Midge options"),
+        )
+        .expect("open Midge engine"),
+    );
+    let family = engine
+        .create_column_family("cf_1")
+        .expect("create column family 1");
+    let store = QueueStore::new(engine.clone());
+    let mut rejection = None;
+    for round in 0_u32..64 {
+        let mut txn = store
+            .begin(family.id(), QueueTransactionMode::ReadWrite)
+            .expect("begin queue transaction");
+        txn.put(round.to_be_bytes().to_vec(), b"value".to_vec(), None)
+            .expect("stage queue row");
+        if let Err(error) = txn
+            .inner
+            .commit(cntryl_midge::WriteOptions::sync())
+            .map_err(QueueStoreError::from_midge)
+        {
+            rejection = Some(error);
+            break;
+        }
+        engine.flush_cf(&family).expect("publish one L0 file");
+    }
+    drop(store);
+    crate::testkit::midge::shutdown_test_engine(engine);
+    rejection.expect("Midge rejects a write once every L0 slot is used")
+}
+
+#[test]
+fn should_classify_real_midge_l0_rejection_as_retryable_admission() {
+    // Arrange
+    let rejection = real_midge_l0_rejection();
+
+    // Act
+    let retryable = rejection.is_l0_admission_rejection(1);
+
+    // Assert
+    assert!(
+        retryable,
+        "Midge L0 rejection no longer matches Queue retry detection: {rejection}"
+    );
+    assert!(!rejection.is_l0_admission_rejection(2));
+}
+
+#[test]
+fn should_reject_unqualified_l0_admission_errors() {
+    // Arrange
+    let errors = [
+        cntryl_midge::MidgeError::Timeout("column family 1 has no free L0 slot (15/14)".into()),
+        cntryl_midge::MidgeError::WriteStall("column family 10 has no free L0 slot (15/14)".into()),
+        cntryl_midge::MidgeError::WriteStall(
+            "prefix column family 1 has no free L0 slot (15/14)".into(),
+        ),
+        cntryl_midge::MidgeError::WriteStall(
+            "column family 1 has no free L0 slot after WAL submission".into(),
+        ),
+    ];
+
+    // Act
+    let classified: Vec<_> = errors
+        .into_iter()
+        .map(QueueStoreError::from_midge)
+        .map(|error| {
+            (
+                error.is_l0_admission_rejection(1),
+                error.is_admission_pressure(1),
+            )
+        })
+        .collect();
+
+    // Assert
+    assert_eq!(classified, vec![(false, false); 4]);
+}
+
+#[test]
+fn should_not_infer_admission_pressure_from_unstructured_error_text() {
+    // Arrange
+    let error = QueueStoreError {
+        message: "Queue storage admission remained stalled for 20ms".to_string(),
+        midge_error: None,
+        admission_stalled: false,
+    };
+
+    // Act
+    let pressure = error.is_admission_pressure(1);
+
+    // Assert
+    assert!(!pressure);
 }

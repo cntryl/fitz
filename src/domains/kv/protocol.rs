@@ -5,7 +5,7 @@
 //! - Resource (table) isolation
 //! - Explicit `RouteFamily` → `ColumnFamily` mapping
 
-use crate::domains::WritePolicy;
+use crate::domains::CommitPersistence;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
@@ -47,11 +47,14 @@ pub enum KvMessage {
     Begin {
         scope: KvResourceScope,
         mode: TxMode,
-        write_options: WritePolicy,
     },
 
-    /// Commit a transaction by ID
-    Commit { tx_id: u64, scope: KvResourceScope },
+    /// Commit using an explicit Buffered or Sync persistence choice.
+    Commit {
+        tx_id: u64,
+        scope: KvResourceScope,
+        persistence: CommitPersistence,
+    },
 
     /// Rollback a transaction by ID
     Rollback { tx_id: u64, scope: KvResourceScope },
@@ -351,11 +354,7 @@ impl std::fmt::Display for KvError {
             KvError::InvalidSubscriptionPattern(msg) => {
                 write!(f, "Invalid subscription pattern: {msg}")
             }
-            KvError::SubscriptionLimit => write!(
-                f,
-                "Wildcard subscription limit exceeded ({} per session)",
-                crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
-            ),
+            KvError::SubscriptionLimit => write!(f, "Subscription registration limit exceeded"),
             KvError::InvalidRealm => write!(f, "Invalid realm"),
             KvError::InvalidRouteFamily => {
                 write!(f, "Invalid route family (cannot be zero)")

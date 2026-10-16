@@ -1,0 +1,70 @@
+name: Benchmark Tier 2
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Measurement intensity
+        type: choice
+        options: [smoke, standard, extended]
+        default: standard
+  schedule:
+    - cron: "0 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-tier2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        bench:
+          - tier2_subsystem_mailbox
+          - tier2_subsystem_family_actor_pool
+          - tier2_subsystem_subscriptions
+          - tier2_subsystem_tlv_pipeline
+          - tier2_subsystem_router
+          - tier2_subsystem_schedule_scan
+          - tier2_subsystem_schedule_create
+          - tier2_subsystem_schedule_churn
+          - tier2_subsystem_schedule_control_latency
+          - tier2_subsystem_schedule_fire
+          - tier2_subsystem_queue
+          - tier2_subsystem_rpc
+          - tier2_subsystem_lease
+          - tier2_subsystem_notice
+          - tier2_subsystem_stream
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      CARGO_INCREMENTAL: "0"
+      RUST_LOG: "off"
+      FITZ_LOG_LEVEL: "off"
+      OTEL_ENABLED: "false"
+      STRESS_PROFILE: ${{ inputs.profile == 'smoke' && 'smoke' || inputs.profile == 'extended' && 'lab' || 'default' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Run benchmarks
+        run: cargo bench --locked --bench '${{ matrix.bench }}'
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-tier2-${{ matrix.bench }}-${{ github.sha }}
+          path: |
+            target/stress/**
+            target/fitz-stress/**
+          if-no-files-found: ignore

@@ -1,6 +1,6 @@
 ---
 name: write-unit-test
-description: 'Write unit tests for Rust code in the Fitz project. Use when asked to write, add, create, or generate tests, unit tests, or test cases. Enforces should_* naming, AAA structure, single-behavior principle, and meta-test compliance.'
+description: 'Write Rust behavior tests for Fitz with should_* naming, AAA structure, and focused semantic invariants. Validate conventions with cntryl-tools.'
 argument-hint: 'Describe the function or behavior to test'
 ---
 
@@ -46,7 +46,7 @@ should_reject_expired_lease
 should_fanout_to_all_subscribers_given_wildcard_route
 ```
 
-**Never use** `test_*` prefix — it fails the meta-test.
+**Never use** `test_*` prefix — `cntryl-tools validate-tests` checks the naming convention.
 
 ### Step 4 — Write the test body
 
@@ -102,6 +102,8 @@ cargo test <test_name>
 For broader Rust changes, run the default repo validation:
 
 ```bash
+cntryl-tools validate-tests
+cntryl-tools check-module-sizes
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic

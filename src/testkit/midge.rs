@@ -38,6 +38,19 @@ use std::time::Duration;
 ///
 /// Panics if another owner still holds the engine or Midge cannot shut it down cleanly.
 pub fn shutdown_test_engine(engine: Arc<Engine>) {
+    shutdown_test_engine_with_timeout(engine, Duration::from_secs(2));
+}
+
+/// Shut down a test engine using the fixture's explicit cleanup budget.
+///
+/// `CloudAsync` cleanup includes WAL publication, a final checkpoint, and fencing
+/// cleanup. Cloud fixtures pass their built `OpenOptions::runtime_response_timeout`
+/// so cleanup uses the configured I/O response budget.
+///
+/// # Panics
+///
+/// Panics if engine ownership is shared or cleanup exceeds the scaled budget.
+pub fn shutdown_test_engine_with_timeout(engine: Arc<Engine>, timeout: Duration) {
     let mut engine = Arc::try_unwrap(engine).unwrap_or_else(|engine| {
         panic!(
             "Midge test shutdown blocked by {} engine references",
@@ -45,7 +58,7 @@ pub fn shutdown_test_engine(engine: Arc<Engine>) {
         );
     });
     engine
-        .shutdown(scaled_test_timeout(Duration::from_secs(2)))
+        .shutdown(scaled_test_timeout(timeout))
         .expect("shutdown Midge test engine");
 }
 

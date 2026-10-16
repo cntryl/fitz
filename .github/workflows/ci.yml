@@ -41,6 +41,18 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      - name: Install cntryl-tools
+        run: cargo install --locked --git https://github.com/cntryl/tools --rev bc2d07782cf6873e1a4962fe8fe91396daa81a24 cntryl-tools
+
+      - name: Validate test conventions
+        run: cntryl-tools validate-tests
+
+      - name: Check module sizes
+        run: cntryl-tools check-module-sizes
+
+      - name: Validate benchmark contract
+        run: cntryl-tools validate-benchmarks
+
       - name: Pedantic lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 
@@ -49,6 +61,9 @@ jobs:
 
       - name: Test
         run: cargo test --locked --workspace
+
+      - name: Queue diagnostic artifact regressions
+        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts --test queue_pressure_accounting --test queue_pacing --test queue_pressure_envelopes
 
   frontend:
     runs-on: ubuntu-latest

@@ -109,7 +109,7 @@ impl RpcState {
             submitted_at_instant,
             expires_at,
         } = queued;
-        let pending = RpcPendingRequest::new(RpcPendingRequestInit {
+        let mut pending = RpcPendingRequest::new(RpcPendingRequestInit {
             route: request.route.clone(),
             caller_session_id,
             caller_inbox_addr,
@@ -120,6 +120,7 @@ impl RpcState {
             submitted_at_instant,
             expires_at,
         });
+        pending.supports_cancellation = registration.supports_cancellation;
         self.pending
             .track_pending_for_family(family, correlation_id, pending);
         self.mark_route_ready_if_eligible(family, route);
@@ -128,6 +129,7 @@ impl RpcState {
             request,
             registration,
             live_request_count: self.live_request_count(),
+            expires_at,
         })
     }
 }

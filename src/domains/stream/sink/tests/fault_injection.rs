@@ -215,7 +215,7 @@ fn should_keep_subscription_alive_after_one_commit_notify_delivery_fails() {
 /// append ack leaves the event staged and the session alive with an
 /// offset the caller was never told about.
 #[test]
-fn should_retain_staged_event_and_active_session_when_append_response_cannot_be_delivered() {
+fn should_preserve_append_state_when_response_cannot_be_delivered() {
     // Arrange
     let family = RouteFamily::new(1);
     let route = "stream://bench/events/append-undeliverable";

@@ -1,0 +1,69 @@
+name: Benchmark Tier 6
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Workload duration (60s smoke, 600s standard, 3600s extended)
+        type: choice
+        options: [smoke, standard, extended]
+        default: standard
+  schedule:
+    - cron: "0 7 1 * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-tier6-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        workload:
+          - should_soak_queue
+          - should_soak_kv
+          - should_soak_stream
+          - should_soak_schedule
+          - should_soak_rpc
+          - should_soak_notice
+          - should_soak_lease
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      CARGO_INCREMENTAL: "0"
+      RUST_LOG: "off"
+      FITZ_LOG_LEVEL: "off"
+      OTEL_ENABLED: "false"
+      STRESS_PROFILE: smoke
+      STRESS_SAMPLES: "1"
+      STRESS_WARMUP_SAMPLES: "0"
+      STRESS_COOLDOWN_SAMPLES: "0"
+      FITZ_STRESS_STORAGE_PROFILE: local_disk
+      STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
+      FITZ_TIER6_DURATION_SECS: ${{ inputs.profile == 'smoke' && '60' || inputs.profile == 'standard' && '600' || '3600' }}
+      STRESS_TIMEOUT_SECS: ${{ inputs.profile == 'smoke' && '960' || inputs.profile == 'standard' && '1500' || '4500' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Run benchmarks
+        run: cargo bench --locked --bench tier6_endurance --features benchkit,stress-soak -- --workload '${{ matrix.workload }}'
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-tier6-${{ matrix.workload }}-${{ github.sha }}
+          path: |
+            target/stress/**
+            target/fitz-stress/**
+          if-no-files-found: ignore

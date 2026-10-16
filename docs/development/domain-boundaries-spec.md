@@ -42,7 +42,7 @@ These rules apply to every domain in this document:
 | Notice | Live fanout to connected subscribers | None | subscriptions and delivery state | Client re-subscribes |
 | Stream | Durable append and replay | committed records, offsets, watermarks | append sessions and live subscriptions | Client resumes from its own offsets |
 | KV | Current authoritative state | committed values | open transactions and live locks | Broker recovers committed state; client restarts transactions |
-| Queue | Work delivery with reservation and redelivery | messages and indexes that reached durable storage under the selected write policy | inflight ownership, tokens, warm actors | Broker recovers durable backlog; client handles redelivery |
+| Queue | Work delivery with reservation and redelivery | messages and indexes persisted in the background on a best-effort basis | inflight ownership, tokens, warm actors, unpersisted mutations | Broker recovers persisted backlog; client handles loss and redelivery |
 | RPC | Live request and response dispatch | None | workers, pending requests, reply routing | Caller and worker retry explicitly |
 | Lease | Single-broker ownership coordination | None | ownership, fencing tokens, waiters | Client reacquires |
 | Schedule | Durable timing intent (except explicit memory mode) | definitions and pending fire claims when persistence is enabled | live subscriptions | Broker reloads timing intent; client rebuilds subscriptions |
@@ -64,7 +64,7 @@ KV provides transactional storage for current authoritative state. It is the sys
 
 ### Queue
 
-Queue provides competing-consumer work delivery with configurable durability, reservation, retry, redelivery, and optional dead-letter handling. It exists to manage work backlog and work lifecycle, not to expose durable history or live request-response semantics.
+Queue provides competing-consumer work delivery with best-effort persistence, reservation, retry, redelivery, and optional dead-letter handling. It exists to manage work backlog and work lifecycle, not to expose durable history or live request-response semantics.
 
 ### RPC
 
@@ -122,9 +122,9 @@ These rules deliberately keep Schedule responsible only for *when* an
 occurrence becomes due. Waiting for a subscriber would turn temporary absence
 into a backlog and would require retry deadlines, cancellation and upsert rules,
 restart recovery, and consumer acknowledgement semantics. Queue already owns
-that durable-work contract. Applications that require eventual processing
-should schedule a durable Queue operation rather than treat a Schedule
-subscription as one.
+that work-lifecycle contract. Applications that use Queue for eventual processing
+must regenerate work lost before persistence; a Schedule subscription does not
+provide that recovery mechanism.
 
 ## 2. Primary Use Cases
 
@@ -277,10 +277,11 @@ patterns must be capable of matching four; Notice and RPC retain flexible
 depth. Wrong schemes, empty segments, partial wildcard tokens, and impossible
 depths are rejected before state mutation.
 
-Each wildcard-capable domain retains at most 128 wildcard registrations per
-session. Exact registrations do not count. A duplicate `(session, original
-registration string)` is idempotent and checked before the limit. Matching does
-not cross `RouteFamily`; exact and wildcard registrations are equal candidates,
+Each domain retains at most 1,024 registrations per session, counting exact
+and wildcard registrations together. The wildcard subset is separately capped
+at 128 per session. A duplicate `(session, original registration string)` is
+idempotent and checked before either limit. Matching does not cross
+`RouteFamily`; exact and wildcard registrations are equal candidates,
 overlapping registrations stay independent, and notifications report the exact
 concrete route.
 
@@ -288,12 +289,12 @@ Registration authorization covers the complete concrete-route match set. One
 granted permission pattern must contain the requested registration pattern;
 authorizing the literal wildcard-bearing string alone is insufficient.
 
-Lease participates in this wildcard contract for observation only: `SUBSCRIBE`,
-`UNSUBSCRIBE`, and `LIST` accept the same depth-three grammar and share the
-128-per-session wildcard-registration quota. Observation never changes
-ownership. Lease `ACQUIRE`, `EXTEND`, and `RELEASE` remain exact-route only and
-reject every wildcard, because those are the only operations that grant,
-renew, or release a lease.
+Lease participates in this registration contract for observation only:
+`SUBSCRIBE`, `UNSUBSCRIBE`, and `LIST` accept the same depth-three grammar and
+share the per-session total and wildcard-registration quotas. Observation never
+changes ownership. Lease `ACQUIRE`, `EXTEND`, and `RELEASE` remain exact-route
+only and reject every wildcard, because those are the only operations that
+grant, renew, or release a lease.
 
 ### Notice
 
@@ -317,13 +318,21 @@ Notice does NOT guarantee:
 Stream guarantees:
 
 - ordered append within a resource
-- durable committed history according to the selected write mode
+- durable committed history according to the explicit Buffered or Sync choice on COMMIT
 - exact resource replay suitable for rebuilding client-owned aggregate state or projections
 - replay from client-supplied offsets
 - wildcard area and realm reads gated by committed watermarks
 - a concrete three-segment route on every READ delivery item, including exact reads and filtered markers
 - monotonic committed offsets and watermarks
 - committed history is readable after restart
+
+Replay validates decoded fragments and checks blob integrity for examined
+records, including records excluded by a discriminator filter. It does not
+fetch blob payloads before the requested offset, after the item limit, or
+beyond the visible watermark. Applying the byte limit can require hydrating
+the next record to determine its wire cost. Unfiltered reads do not load
+discriminator sidecars. Compacted parent fragments may be shared within a read;
+this must preserve locator identity and direct-fragment corruption checks.
 
 Stream does NOT guarantee:
 
@@ -341,7 +350,8 @@ Stream does NOT guarantee:
 KV guarantees:
 
 - transaction correctness inside one resource scope
-- committed current-state persistence according to the selected write policy
+- committed current-state persistence according to the explicit Buffered or Sync choice on COMMIT
+- BEGIN selects scope and transaction mode without choosing persistence
 - rollback discards uncommitted mutations
 - stale or invalid transaction handles do not mutate committed state
 - RouteFamily isolation for committed values
@@ -358,15 +368,16 @@ KV does NOT guarantee:
 
 Queue guarantees:
 
-- durable backlog according to the selected write policy
-- at-least-once delivery semantics
+- best-effort persistence of backlog, independently of local or cloud durability settings
+- at-least-once delivery of retained work; crash loss can remove accepted work or resurrect ACKed work
 - exclusive live reservation per active inflight token
-- retry and redelivery after lease expiry
+- retry and redelivery after inflight expiry
 - optional dead-letter transition when retry policy is exhausted
-- `FITZ_QUEUE_WRITE_POLICY=fast` may lose accepted recent queue mutations before the `FITZ_QUEUE_LOSS_WINDOW_MS` background flush window closes
-- fast-policy startup durably discards incomplete split message remnants from that
-  loss window and rebuilds the affected queue indexes; buffered and strict
-  policies fail closed on the same incomplete authoritative state
+- Queue mutations skip WAL and are flushed in the background; the
+  `FITZ_QUEUE_LOSS_WINDOW_MS` interval is a target, not a durability deadline
+- incomplete split message remnants are discarded on startup with best-effort
+  writes and affected indexes are rebuilt; other malformed authoritative state
+  fails closed. Repair can repeat after another crash
 
 Queue does NOT guarantee:
 
@@ -374,6 +385,7 @@ Queue does NOT guarantee:
 - strict global FIFO under competing consumers
 - durable continuation of live lease ownership after restart
 - stream-style immutable replay
+- continuity of unpersisted message ID reservations across crashes
 - live request-response semantics
 
 ### RPC
@@ -390,10 +402,15 @@ RPC guarantees:
 - worker registrations accept strict whole-segment `*` and `**` patterns; calls remain concrete
 - registration credit is shared across every concrete route matched by that registration
 - exact and wildcard registrations are equal candidates; overlapping registrations remain distinct
-- at most 128 wildcard worker registrations are retained per session
+- at most 1,024 RPC worker registrations are retained per session, including
+  exact and wildcard registrations; the wildcard subset is capped at 128
 - queued concrete routes rotate fairly when they share wildcard registration credit
 - per-concrete-route dispatch state is removed when no call is queued or pending
 - successful request submission does not produce an immediate success frame
+- negotiated workers receive cooperative cancellation and remaining-budget controls
+- after cancellation wins actor ordering, dispatched worker credit stays
+  reserved until handler cleanup acknowledgment or worker-session cleanup;
+  a terminal response or unregistration does not prove handler cleanup
 
 RPC does NOT guarantee:
 
@@ -402,7 +419,8 @@ RPC does NOT guarantee:
 - retries after timeout or worker loss
 - replayable response history
 - queue-like backlog across restart
-- a worker ACK frame or support for message type 304
+- remote cancellation without worker capability negotiation
+- side-effect rollback or automatic retry safety after cancellation
 
 ### Lease
 
@@ -482,7 +500,7 @@ Schedule does NOT guarantee:
 
 ### Queue + RPC
 
-- Queue distributes work that becomes durable according to the configured queue write policy.
+- Queue distributes work with unconditional best-effort persistence.
 - RPC executes work that a live worker must answer now.
 - Queue must not become RPC with hidden backlog.
 - RPC must not become a durable retry system.
@@ -539,7 +557,7 @@ If you need one of these, do NOT choose the adjacent domain:
 
 - replay -> not Notice -> use Stream
 - retries -> not RPC -> use Queue
-- durability for messages -> not Notice -> use Stream or Queue depending on whether the problem is history or work
+- durable message history -> Stream; work delivery with best-effort persistence -> Queue
 - current authoritative state -> not Stream -> use KV
 - coordination or fencing -> not Queue -> use Lease
 - durable future intent -> not Notice or RPC -> use Schedule
@@ -683,7 +701,7 @@ Place a new feature in the domain that owns its primary guarantee:
 - if it requires replay -> Stream
 - if it requires durable ordering of committed history -> Stream
 - if it requires current authoritative state -> KV
-- if it requires retries or backlog with a defined durability policy -> Queue
+- if it requires retries or backlog with best-effort persistence -> Queue
 - if it requires live request execution -> RPC
 - if it requires ownership or fencing -> Lease
 - if it requires timing intent -> Schedule

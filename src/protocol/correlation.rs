@@ -41,9 +41,12 @@ pub const CAP_SESSION_METADATA: u32 = 1 << 1;
 /// Broker accepts the optional exclusive-start byte on KV SCAN requests.
 pub const CAP_KV_SCAN_EXCLUSIVE: u32 = 1 << 2;
 
+/// Broker supports cooperative RPC cancellation and remaining-budget fields.
+pub const CAP_RPC_CANCELLATION: u32 = 1 << 3;
+
 /// Every capability this broker implements.
 pub const SUPPORTED_CAPABILITIES: u32 =
-    CAP_CORRELATION | CAP_SESSION_METADATA | CAP_KV_SCAN_EXCLUSIVE;
+    CAP_CORRELATION | CAP_SESSION_METADATA | CAP_KV_SCAN_EXCLUSIVE | CAP_RPC_CANCELLATION;
 
 /// Why a correlation record could not be accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

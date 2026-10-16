@@ -16,9 +16,9 @@ const DOMAIN_DISPATCH_BACKPRESSURE_POLICY: DomainDispatchBackpressurePolicy =
         retry_delay: Duration::from_micros(50),
     };
 
-/// Bound Stream blocking-task admission while commands wait behind synchronous
-/// storage commits. Tokio's blocking-pool limit can vary by runtime.
-pub(super) const STREAM_DISPATCH_CONCURRENCY: usize = 64;
+/// Bound Stream blocking tasks and Queue waiters separately. Queue uses one
+/// blocking handoff per route family instead of one thread per queued caller.
+pub(super) const BLOCKING_DOMAIN_DISPATCH_CONCURRENCY: usize = 64;
 
 #[derive(Clone, Copy)]
 struct DomainDispatchBackpressurePolicy {
@@ -27,7 +27,7 @@ struct DomainDispatchBackpressurePolicy {
 }
 
 impl DomainDispatchBackpressurePolicy {
-    fn within_budget(self, started_at: Instant) -> bool {
+    fn within_budget(self, started_at: tokio::time::Instant) -> bool {
         started_at.elapsed() < self.wait_budget
     }
 
@@ -83,6 +83,9 @@ pub(super) struct DomainFrameDispatcher {
     pub(super) registry: super::session_registry::SessionRegistry,
     pub(super) auth_required: bool,
     pub(super) stream_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(super) queue_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(super) queue_family_dispatch:
+        std::sync::Arc<dashmap::DashMap<u32, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl RuntimeIngress {
@@ -126,6 +129,7 @@ impl DomainFrameDispatcher {
         u64::try_from(start.elapsed().as_micros().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn dispatch_if_domain(
         &self,
         session_id: u64,
@@ -134,6 +138,7 @@ impl DomainFrameDispatcher {
         msg_type: crate::protocol::tlv::MessageType,
         payload: DomainDispatchPayload<'_>,
         correlation: Option<std::num::NonZeroU64>,
+        received_at: Instant,
     ) -> Result<(), IngressDecision> {
         let Some(router) = &self.router else {
             return Ok(());
@@ -167,6 +172,7 @@ impl DomainFrameDispatcher {
                     msg_type,
                     payload,
                     correlation,
+                    received_at,
                 };
                 self.authorize_and_dispatch_domain_frame(dispatch).await
             }
@@ -564,65 +570,6 @@ impl DomainFrameDispatcher {
         (addr, source, descriptor)
     }
 
-    async fn route_client_domain(
-        &self,
-        router: &crate::runtime::Router,
-        domain: DispatchDomain,
-        envelope: crate::runtime::Envelope,
-    ) -> Result<(), crate::runtime::router::RouteError> {
-        if domain != DispatchDomain::Stream {
-            return router.route_to_domain(domain.as_str(), envelope);
-        }
-
-        let destination = envelope.destination().clone();
-        let permit = match self.stream_dispatch_permits.clone().try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Err(crate::runtime::router::RouteError::DeliveryFailed(
-                    destination,
-                    crate::runtime::DeliveryError::MailboxFull {
-                        capacity: STREAM_DISPATCH_CONCURRENCY,
-                        current_len: STREAM_DISPATCH_CONCURRENCY,
-                    },
-                ));
-            }
-            Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(crate::runtime::router::RouteError::DeliveryFailed(
-                    destination,
-                    crate::runtime::DeliveryError::ActorStopped,
-                ));
-            }
-        };
-
-        let blocking_router = self
-            .router
-            .as_ref()
-            .expect("domain dispatch requires an attached router")
-            .clone();
-        match tokio::task::spawn_blocking(move || {
-            // Retain admission until the synchronous sink returns, even if
-            // the awaiting client task is cancelled after enqueue.
-            let _permit = permit;
-            blocking_router.route_to_domain(domain.as_str(), envelope)
-        })
-        .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "Ingress: Stream dispatch blocking task failed after handoff"
-                );
-                // Handoff may have enqueued the command; this must not become
-                // a retryable pre-enqueue rejection.
-                Err(crate::runtime::router::RouteError::DeliveryFailed(
-                    destination,
-                    crate::runtime::DeliveryError::ActorStopped,
-                ))
-            }
-        }
-    }
-
     async fn dispatch_domain_frame(
         &self,
         dispatch: DomainDispatchRequest<'_>,
@@ -638,11 +585,15 @@ impl DomainFrameDispatcher {
             msg_type,
             payload,
             correlation,
+            received_at,
         } = dispatch;
         let (addr, source, descriptor) = self.dispatch_addressing(session_id, route_family, domain);
         let dispatch_payload = payload.into_dispatch_bytes();
-
+        // Transport/session queueing consumes an RPC deadline, but admission
+        // retries get their own budget starting when dispatch begins.
         let backpressure_started_at = Instant::now();
+        // Use the same clock for the retry budget and its async waits.
+        let retry_started_at = tokio::time::Instant::now();
         let mut retries = 0_u64;
         let policy = DOMAIN_DISPATCH_BACKPRESSURE_POLICY;
 
@@ -657,6 +608,7 @@ impl DomainFrameDispatcher {
                     source: source.clone(),
                     destination: addr.clone(),
                     correlation,
+                    received_at,
                 });
             let reply_claim = envelope.reply_claim();
 
@@ -670,7 +622,9 @@ impl DomainFrameDispatcher {
             );
 
             let dispatch_start = Instant::now();
-            let dispatch_result = self.route_client_domain(router, domain, envelope).await;
+            let dispatch_result = self
+                .route_client_domain(router, domain, envelope, backpressure_started_at)
+                .await;
             if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
                 collector.histogram_observe_us(
                     obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
@@ -689,7 +643,7 @@ impl DomainFrameDispatcher {
                 // descheduled past the budget between the two attempts.
                 Err(error)
                     if Self::domain_dispatch_backpressured(&error)
-                        && (retries == 0 || policy.within_budget(backpressure_started_at)) =>
+                        && (retries == 0 || policy.within_budget(retry_started_at)) =>
                 {
                     retries = retries.saturating_add(1);
                     Self::record_backpressure_retry();

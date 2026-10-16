@@ -122,12 +122,6 @@ impl KvDomain {
     }
 
     #[must_use]
-    #[cfg(test)]
-    pub fn with_sync_write_policy(self, write_policy: crate::domains::WritePolicy) -> Self {
-        self.with_write_policies(write_policy, write_policy.buffered_companion())
-    }
-
-    #[must_use]
     pub fn with_write_policies(
         mut self,
         sync_write_policy: crate::domains::WritePolicy,
@@ -161,6 +155,12 @@ impl KvDomain {
         self.family_runtime.stop();
     }
 
+    /// Pool availability uses the existing aggregate flags without copying family health rows.
+    pub(crate) fn has_usable_family(&self) -> bool {
+        self.family_runtime.is_running()
+    }
+
+    #[cfg(test)]
     pub(crate) fn family_health_snapshot(
         &self,
     ) -> crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {

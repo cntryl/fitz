@@ -14,6 +14,12 @@ fn u64_to_u32_saturating(value: u64) -> u32 {
 }
 
 impl StreamStore {
+    #[cfg(test)]
+    pub(crate) fn delay_next_promotion_frontier_commit_for_tests(&self) {
+        self.delay_next_promotion_frontier_commit_ms
+            .store(5_000, std::sync::atomic::Ordering::Release);
+    }
+
     pub(crate) fn column_family_ids(&self) -> Result<Vec<u64>, String> {
         self.db
             .list_column_families()
@@ -127,7 +133,7 @@ impl StreamStore {
     }
 
     #[cfg(test)]
-    pub(super) fn with_clock_for_tests(
+    pub(crate) fn with_clock_for_tests(
         mut self,
         clock: Arc<dyn crate::runtime::clock::Clock>,
     ) -> Self {
@@ -174,6 +180,8 @@ impl StreamStore {
             maintenance_metrics: crate::observability::metrics().as_ref().clone(),
             #[cfg(test)]
             fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            delay_next_promotion_frontier_commit_ms: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             fence_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
@@ -257,14 +265,15 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("stream validation failed: family={family} begin_tx: {e:?}"))?;
-        let iter = txn
-            .scan(&cntryl_midge::Query::new())
-            .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
+        let iter = crate::storage::domain_scan::scan_domain_rows(
+            &txn,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        )
+        .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
 
-        for (key, value) in iter
-            .try_collect()
-            .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?
-        {
+        for row in iter {
+            let (key, value) =
+                row.map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
             let validation = Self::validate_persisted_row(&key, &value);
             if let Err((category, error)) = validation {
                 return Err(format!(
@@ -535,8 +544,11 @@ impl StreamStore {
             KeyPrefix::PayloadBlob as u8,
         ];
 
-        let query = cntryl_midge::Query::new();
-        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
+        let iter = crate::storage::domain_scan::scan_domain_rows(
+            txn,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        )
+        .map_err(|e| format!("scan error: {e:?}"))?;
         for entry in iter {
             let (key, _value) = entry.map_err(|e| format!("scan error: {e:?}"))?;
             let suffix = crate::domains::stream::storage::stream_key_suffix(&key);

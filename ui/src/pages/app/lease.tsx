@@ -1,134 +1,71 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
-import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
-import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
+import {
+  domainResourceInventoryRows,
+  type DomainResourceMetricColumn,
+} from "@/components/shared/domain-resource-inventory-table";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-import { formatCount, formatDurationSeconds, formatNumber } from "@/shared/format";
+import { formatDurationSeconds, formatNumber } from "@/shared/format";
 
-const leaseMetricColumns: readonly DomainResourceMetricColumn[] = [
-  {
-    id: "active",
-    header: "Active",
-    width: "14%",
-    cell: (row) => formatNumber(row.activeLeases ?? 0),
-    sortValue: (row) => row.activeLeases,
-  },
-  {
-    id: "waiters",
-    header: "Waiters",
-    width: "14%",
-    cell: (row) => formatNumber(row.waiters ?? 0),
-    sortValue: (row) => row.waiters,
-  },
-  {
-    id: "oldest",
-    rollup: "worst",
-    header: "Oldest",
-    width: "18%",
-    cell: (row) => formatDurationSeconds(row.oldestLeaseAgeSeconds ?? 0),
-    sortValue: (row) => row.oldestLeaseAgeSeconds,
-  },
-];
-
-function riskSignal(stats: {
-  acquireTimeoutsTotal: number;
-  forcedReleasesTotal: number;
-  invalidTokenRejectsTotal: number;
-  oldestLeaseAgeSeconds: number;
-  leasesActive: number;
-  waiterDepth: number;
-}) {
-  const cumulativeDetail = `${formatNumber(
-    stats.acquireTimeoutsTotal,
-  )} acquire ${stats.acquireTimeoutsTotal === 1 ? "timeout" : "timeouts"}, ${formatNumber(
-    stats.forcedReleasesTotal,
-  )} forced ${stats.forcedReleasesTotal === 1 ? "release" : "releases"}, ${formatNumber(
-    stats.invalidTokenRejectsTotal,
-  )} token ${stats.invalidTokenRejectsTotal === 1 ? "rejection" : "rejections"}`;
-  const detailBase = `${formatNumber(stats.leasesActive)} active leases, ${formatNumber(
-    stats.waiterDepth,
-  )} waiters, ${formatDurationSeconds(
-    stats.oldestLeaseAgeSeconds,
-  )} oldest lease age. Cumulative process totals: ${cumulativeDetail}.`;
-
-  if (stats.waiterDepth > 0) {
-    return {
-      detail: `${detailBase} Current waiters indicate live contention. Historical totals do not identify a current incident.`,
-      label: "Pressure" as const,
-      reason: `${formatCount(stats.waiterDepth, "caller is", "callers are")} waiting for a lease; the oldest lease has been held ${formatDurationSeconds(
-        stats.oldestLeaseAgeSeconds,
-      )}. Sort realms by Waiters to find the contention.`,
-      tone: "warning" as const,
-    };
-  }
-
-  return {
-    detail: `${detailBase} No current waiters are visible; historical totals do not establish live contention.`,
-    label: "Healthy" as const,
-    reason: "No callers are waiting for a lease.",
-    tone: "success" as const,
-  };
+function maybeCount(value: number | undefined) {
+  return value === undefined ? "--" : formatNumber(value);
 }
 
 export default function LeasePage() {
-  const overview = createLeaseOverviewQuery();
   const inventory = createResourceInventoryQuery("lease");
-  const stats = overview.data?.stats;
-  const health =
-    overview.data &&
-    riskSignal({
-      acquireTimeoutsTotal: overview.data.stats.acquireTimeoutsTotal,
-      forcedReleasesTotal: overview.data.stats.forcedReleasesTotal,
-      invalidTokenRejectsTotal: overview.data.stats.invalidTokenRejectsTotal,
-      oldestLeaseAgeSeconds: overview.data.stats.oldestLeaseAgeSeconds,
-      leasesActive: overview.data.stats.leasesActive,
-      waiterDepth: overview.data.stats.waiterDepth,
-    });
+  const rows = domainResourceInventoryRows(inventory.data);
+  const hasWaiters = rows.some((row) => (row.waiters ?? 0) > 0);
+  const leaseMetricColumns: readonly DomainResourceMetricColumn[] = [
+    {
+      id: "waiters",
+      header: "Waiters",
+      width: "14%",
+      cell: (row) => maybeCount(row.waiters),
+      sortValue: (row) => row.waiters,
+    },
+    {
+      id: "active",
+      priority: "secondary",
+      header: "Active leases",
+      width: "14%",
+      cell: (row) => maybeCount(row.activeLeases),
+      sortValue: (row) => row.activeLeases,
+    },
+    {
+      id: "oldest",
+      priority: "secondary",
+      rollup: "worst",
+      header: "Oldest ownership",
+      width: "18%",
+      cell: (row) =>
+        row.oldestLeaseAgeSeconds === undefined
+          ? "--"
+          : formatDurationSeconds(row.oldestLeaseAgeSeconds),
+      sortValue: (row) => row.oldestLeaseAgeSeconds,
+      title: () => "Long ownership can be expected when a lease is renewed.",
+    },
+  ];
+
   return (
     <DomainInventoryPage
       domain="lease"
       eyebrow="Ownership coordination"
       title="Lease inventory"
-      description="Ephemeral ownership coordination resources for the active Route Family."
       refreshLabel="Refresh lease"
       inventory={inventory}
-      refreshing={overview.refreshing || inventory.refreshing}
-      refreshers={[() => overview.refresh(), () => inventory.refresh()]}
       loadingDescription="Loading lease inventory..."
       errorTitle="Unable to load lease inventory"
       refreshingDescription="Refreshing lease inventory..."
       emptyDescription="No lease resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={leaseMetricColumns}
-      reason={health?.reason}
-      stats={[
-        { label: "Active leases", value: stats ? formatNumber(stats.leasesActive) : "--" },
-        { label: "Waiters", value: stats ? formatNumber(stats.waiterDepth) : "--" },
-        {
-          label: "Oldest lease",
-          value: stats ? formatDurationSeconds(stats.oldestLeaseAgeSeconds) : "--",
-        },
-      ]}
-      status={{
-        detail: overview.data
-          ? (health?.detail ?? "")
-          : overview.error
-            ? "Lease health is unavailable. Resource inventory can still be inspected when loaded."
-            : "Loading lease health.",
-        label: overview.refreshing
-          ? "Refreshing"
-          : overview.error
-            ? "Health unavailable"
-            : overview.stale
-              ? "Stale"
-              : (health?.label ?? "Loading"),
-        tone: overview.refreshing
-          ? "info"
-          : overview.error
-            ? "warning"
-            : overview.stale
-              ? "warning"
-              : (health?.tone ?? "info"),
-      }}
+      status={
+        inventory.data
+          ? {
+              label: hasWaiters ? "Waiters present" : "Health unavailable",
+              tone: hasWaiters ? "warning" : "info",
+            }
+          : undefined
+      }
     />
   );
 }

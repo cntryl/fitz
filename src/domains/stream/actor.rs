@@ -414,6 +414,7 @@ mod tests {
     use super::*;
     use crate::testkit::create_test_engine_with_cfs;
 
+    mod invariants;
     mod state_model;
 
     #[test]

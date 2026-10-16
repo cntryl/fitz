@@ -109,12 +109,21 @@ impl RpcFamilyRuntime<'_> {
     }
 
     pub(super) fn expire_timed_out_requests_at(&mut self, now: Instant) {
-        let timeout_result = {
-            let state = &mut self.core.state;
-            state.expire_timed_out(now)
-        };
+        let cancellation_grace_period = self.core.cancellation_grace_period;
+        let router = &self.core.router;
+        let timeout_result = self.core.state.expire_timed_out_with_grace(
+            now,
+            cancellation_grace_period,
+            |family, worker_session_id| {
+                Self::worker_frame_loop_busy_time(router, family, worker_session_id, now)
+            },
+        );
 
-        if timeout_result.removed_pending == 0 {
+        if timeout_result.removed_pending == 0
+            && timeout_result.timed_out_requests == 0
+            && timeout_result.cancellations.is_empty()
+            && timeout_result.close_worker_sessions.is_empty()
+        {
             return;
         }
 
@@ -123,7 +132,7 @@ impl RpcFamilyRuntime<'_> {
         self.gauge_set("rpc_pending_requests", timeout_result.pending_len as u64);
         self.counter_add(
             "rpc_request_timeouts_total",
-            timeout_result.removed_pending as u64,
+            timeout_result.timed_out_requests as u64,
         );
         self.counter_add(
             "rpc_cleanup_pending_removed_total",
@@ -140,11 +149,26 @@ impl RpcFamilyRuntime<'_> {
             );
         }
         self.schedule_admin_snapshot(false);
-        self.dispatch_all_queued_requests();
+        if timeout_result.removed_pending > 0 {
+            self.dispatch_all_queued_requests();
+        }
+
+        for cancellation in &timeout_result.cancellations {
+            self.forward_worker_cancellation(cancellation);
+        }
+        for (family, worker_session_id) in timeout_result.close_worker_sessions.iter().copied() {
+            self.counter_inc("rpc_cancellation_grace_expired_total");
+            self.request_worker_session_close(
+                family,
+                worker_session_id,
+                "RPC cancellation grace period expired",
+            );
+        }
 
         tracing::debug!(
             domain = "rpc",
             removed_pending = timeout_result.removed_pending,
+            timed_out_requests = timeout_result.timed_out_requests,
             delivered_timeouts = timeout_delivery_count,
             closed_caller_drops = timeout_result.closed_caller_drops,
             pending_len = timeout_result.pending_len,

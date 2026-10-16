@@ -1,13 +1,53 @@
 use super::state_model::{
     RpcDomain, RpcDomainCommand, RpcDomainConfig, RpcFamilyRuntime, RpcFamilyState, RpcState,
-    RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
-    RPC_MIN_TIMEOUT_SWEEP_INTERVAL,
+    RPC_DEFAULT_CANCELLATION_GRACE, RPC_DEFAULT_REQUEST_TIMEOUT,
+    RPC_DEFAULT_ROUTE_PENDING_CAPACITY, RPC_MIN_TIMEOUT_SWEEP_INTERVAL,
 };
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::{DeliveryError, Router};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+fn configured_cancellation_grace_period() -> Duration {
+    const SETTING: &str = "FITZ_RPC_CANCELLATION_GRACE_MS";
+    match std::env::var(SETTING) {
+        Err(std::env::VarError::NotPresent) => {
+            cancellation_grace_period_from_setting(None).expect("absent setting uses the default")
+        }
+        Ok(value) => {
+            if let Some(grace) = cancellation_grace_period_from_setting(Some(&value)) {
+                grace
+            } else {
+                tracing::warn!(
+                    setting = SETTING,
+                    value = %value,
+                    "Invalid RPC cancellation grace; using five seconds"
+                );
+                RPC_DEFAULT_CANCELLATION_GRACE
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                setting = SETTING,
+                error = %error,
+                "Could not read RPC cancellation grace; using five seconds"
+            );
+            RPC_DEFAULT_CANCELLATION_GRACE
+        }
+    }
+}
+
+fn cancellation_grace_period_from_setting(value: Option<&str>) -> Option<Duration> {
+    match value {
+        None => Some(RPC_DEFAULT_CANCELLATION_GRACE),
+        Some(value) => value
+            .parse::<u32>()
+            .ok()
+            .filter(|millis| *millis <= crate::protocol::rpc_codec::MAX_RPC_BUDGET_MILLIS)
+            .map(|millis| Duration::from_millis(u64::from(millis))),
+    }
+}
 
 impl RpcDomain {
     pub fn new(
@@ -34,6 +74,7 @@ impl RpcDomain {
             router,
             admin_read_model,
             request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
+            cancellation_grace_period: configured_cancellation_grace_period(),
             route_pending_capacity: RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
             global_pending_count: Arc::new(AtomicUsize::new(0)),
             snapshot_epoch: Instant::now(),
@@ -137,7 +178,10 @@ impl RpcDomain {
         )
     }
 
-    fn new_family_state(config: &RpcDomainConfig, family: RouteFamily) -> RpcFamilyState {
+    pub(super) fn new_family_state(
+        config: &RpcDomainConfig,
+        family: RouteFamily,
+    ) -> RpcFamilyState {
         RpcFamilyState {
             family,
             state: RpcState::new(),
@@ -147,6 +191,7 @@ impl RpcDomain {
             router: config.router.clone(),
             admin_read_model: config.admin_read_model.clone(),
             request_timeout: config.request_timeout,
+            cancellation_grace_period: config.cancellation_grace_period,
             route_pending_capacity: config.route_pending_capacity,
             global_pending_count: config.global_pending_count.clone(),
             snapshot_dirty: AtomicBool::new(false),
@@ -196,3 +241,6 @@ impl RpcDomain {
         self
     }
 }
+
+#[cfg(test)]
+mod cancellation_grace_tests;

@@ -73,3 +73,23 @@ export interface KvResourceScope {
   realm: string;
   resource: string;
 }
+
+export interface KvTransaction {
+  idleSeconds?: number;
+  mode?: string;
+  operationsCount?: number;
+  startedAt?: string;
+  txId?: number;
+}
+
+export interface KvResourceDetail {
+  estimatedRecordCount: number;
+  estimatedStorageBytes: number;
+  estimateComplete: boolean;
+  measurementsAvailable: boolean;
+  readLatencyAvgMs: number;
+  readLatencyP95Ms: number;
+  transactionsActive: number;
+  writeLatencyAvgMs: number;
+  writeLatencyP95Ms: number;
+}

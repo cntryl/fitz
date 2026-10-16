@@ -6,7 +6,7 @@ use chrono::{Duration, Utc};
 use hyper::StatusCode;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -63,7 +63,7 @@ pub enum AdminAuthMode {
 pub struct AdminAuth {
     settings: Arc<Option<AdminAuthSettings>>,
     mode: AdminAuthMode,
-    provisioned_route_families: Arc<parking_lot::RwLock<Option<Vec<u32>>>>,
+    provisioned_route_families: Arc<parking_lot::RwLock<Option<BTreeSet<u32>>>>,
     login_rate_limiter: Arc<parking_lot::Mutex<LoginRateLimiter>>,
 }
 
@@ -231,18 +231,53 @@ impl AdminAuth {
     /// Restrict explicit admin grants to the route-family set provisioned at
     /// broker startup. `*` remains the only wildcard grant.
     pub fn set_provisioned_route_families(&self, route_families: &[u32]) {
-        *self.provisioned_route_families.write() = Some(route_families.to_vec());
+        *self.provisioned_route_families.write() = Some(route_families.iter().copied().collect());
     }
 
     #[must_use]
     pub fn provisioned_route_families(&self) -> Vec<String> {
         self.provisioned_route_families
             .read()
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
+            .as_ref()
+            .into_iter()
+            .flat_map(BTreeSet::iter)
             .map(u32::to_string)
             .collect()
+    }
+
+    pub(crate) fn bounded_provisioned_route_families(
+        &self,
+        limit: usize,
+        access: Option<&AdminRouteFamilyAccess>,
+    ) -> (Vec<u64>, bool) {
+        let provisioned = self.provisioned_route_families.read();
+        let Some(provisioned) = provisioned.as_ref() else {
+            return (Vec::new(), false);
+        };
+        let (mut families, mut truncated) =
+            if let Some(AdminRouteFamilyAccess::Explicit(values)) = access {
+                let families = values
+                    .iter()
+                    .take(limit.saturating_add(1))
+                    .filter_map(|value| value.parse::<u32>().ok())
+                    .filter(|family| provisioned.contains(family))
+                    .map(u64::from)
+                    .collect::<Vec<_>>();
+                (families, values.len() > limit)
+            } else {
+                (
+                    provisioned
+                        .iter()
+                        .take(limit.saturating_add(1))
+                        .copied()
+                        .map(u64::from)
+                        .collect::<Vec<_>>(),
+                    provisioned.len() > limit,
+                )
+            };
+        truncated |= families.len() > limit;
+        families.truncate(limit);
+        (families, truncated)
     }
 
     #[must_use]
@@ -450,7 +485,8 @@ impl AdminAuth {
         if !access.is_valid_grant_set() {
             return false;
         }
-        let Some(provisioned) = self.provisioned_route_families.read().clone() else {
+        let provisioned = self.provisioned_route_families.read();
+        let Some(provisioned) = provisioned.as_ref() else {
             return true;
         };
         match access {

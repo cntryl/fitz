@@ -2,7 +2,7 @@
 
 use super::KvActor;
 use crate::domains::kv::{KvError, KvPair, KvResourceScope, KvResponse, ScanQuery};
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 
 pub(super) const MAX_SCAN_ITEMS: usize = 1_024;
 
@@ -69,8 +69,8 @@ impl KvActor {
         let mut used = 0usize;
         let mut has_more = false;
         let mut unresumable_boundary: Option<Bytes> = None;
-        for (key, value) in iterator {
-            let Some(user_key) = Self::strip_scoped_prefix(prefix, &key) else {
+        for (mut key, value) in iterator {
+            let Some(user_key) = key.strip_prefix(prefix) else {
                 continue;
             };
             if let Some(boundary) = unresumable_boundary.as_ref() {
@@ -99,7 +99,7 @@ impl KvActor {
                         error: KvError::InvalidRequest(format!(
                             "scan pair {} ({} byte key) is {cost} wire bytes, exceeding the \
                              {ceiling}-byte limit a scan response can return",
-                            Self::truncated_key_for_error(&user_key),
+                            Self::truncated_key_for_error(user_key),
                             user_key.len()
                         )),
                     };
@@ -108,10 +108,15 @@ impl KvActor {
                 break;
             }
             used = used.saturating_add(cost);
-            items.push(KvPair {
-                key: Bytes::from(user_key),
-                value,
-            });
+            // Reuse owned scan keys without retaining a disproportionately
+            // large hidden scope prefix behind a small response key.
+            let key = if prefix.len() > user_key.len() {
+                Bytes::copy_from_slice(user_key)
+            } else {
+                key.advance(prefix.len());
+                key
+            };
+            items.push(KvPair { key, value });
             unresumable_boundary = if unresumable {
                 items.last().map(|item| item.key.clone())
             } else {
@@ -173,5 +178,54 @@ impl KvActor {
     fn immediate_successor(mut key: Vec<u8>) -> Vec<u8> {
         key.push(0);
         key
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    struct OwnedScanKey {
+        bytes: Vec<u8>,
+        released: Arc<AtomicBool>,
+    }
+
+    impl AsRef<[u8]> for OwnedScanKey {
+        fn as_ref(&self) -> &[u8] {
+            &self.bytes
+        }
+    }
+
+    impl Drop for OwnedScanKey {
+        fn drop(&mut self) {
+            self.released.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn should_release_large_scope_backing_before_returning_a_tiny_scan_key() {
+        // Arrange
+        let prefix = vec![b'p'; 1024];
+        let mut scoped_key = prefix.clone();
+        scoped_key.push(b'k');
+        let released = Arc::new(AtomicBool::new(false));
+        let key = Bytes::from_owner(OwnedScanKey {
+            bytes: scoped_key,
+            released: released.clone(),
+        });
+
+        // Act
+        let response =
+            KvActor::collect_scan_items(vec![(key, Bytes::from_static(b"value"))], &prefix, 1);
+
+        // Assert
+        let KvResponse::ScanResult { items, has_more } = response else {
+            panic!("expected bounded scan result");
+        };
+        assert!(released.load(Ordering::SeqCst));
+        assert!(!has_more);
+        assert_eq!(items[0].key, Bytes::from_static(b"k"));
     }
 }

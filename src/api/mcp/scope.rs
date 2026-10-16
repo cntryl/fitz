@@ -11,6 +11,24 @@ pub struct McpScopedResourceRequest {
     pub route_family: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpAdminScopeRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_family: Option<u64>,
+}
+
+impl McpAdminScopeRequest {
+    pub(super) fn validate(&self) -> Result<(), String> {
+        if self
+            .route_family
+            .is_some_and(|family| u32::try_from(family).is_err())
+        {
+            return Err("route_family exceeds the supported u32 range".to_string());
+        }
+        Ok(())
+    }
+}
+
 impl McpScopedResourceRequest {
     pub(super) fn effective_family(&self) -> Option<u64> {
         self.route_family.or_else(|| {
@@ -21,6 +39,17 @@ impl McpScopedResourceRequest {
     }
 
     pub(super) fn validate(&self) -> Result<(), String> {
+        if crate::runtime::DomainKind::from_scheme(&self.resource.scheme).is_none() {
+            return Err("unsupported resource scheme".to_string());
+        }
+        crate::utils::route_shape::validate_route_shape(&self.resource.scope_route())
+            .map_err(|error| format!("invalid resource route: {error}"))?;
+        if self
+            .effective_family()
+            .is_some_and(|family| u32::try_from(family).is_err())
+        {
+            return Err("route_family exceeds the supported u32 range".to_string());
+        }
         if self.resource.scheme == "queue"
             && self
                 .route_family

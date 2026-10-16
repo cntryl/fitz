@@ -1,4 +1,5 @@
 use super::{DateTime, Instant, Route, RouteAddress, RpcRegistrationId, RpcWorkerDispatch, Utc};
+use crate::protocol::rpc_codec::RpcCancellationReason;
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Debug, Clone)]
@@ -11,10 +12,20 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
     pub(in crate::domains::rpc::sink) delivery_retries: u32,
     pub(in crate::domains::rpc::sink) submitted_at: DateTime<Utc>,
     pub(in crate::domains::rpc::sink) expires_at: Instant,
+    pub(in crate::domains::rpc::sink) supports_cancellation: bool,
+    pub(in crate::domains::rpc::sink) cancelled: bool,
+    pub(in crate::domains::rpc::sink) close_requested: bool,
+    /// Worker frame-loop busy time already credited to the cancellation grace.
+    pub(in crate::domains::rpc::sink) grace_busy_baseline: Option<std::time::Duration>,
+    /// Total busy time credited to the cancellation grace, capped by
+    /// `RPC_MAX_CANCELLATION_GRACE_DEFERRAL` for this cancellation.
+    pub(in crate::domains::rpc::sink) grace_deferred: std::time::Duration,
 }
 
 #[derive(Clone, Debug)]
 pub(in crate::domains::rpc::sink) struct RpcPendingDispatchInfo {
+    /// Opaque per-dispatch identity echoed by negotiated workers.
+    pub(in crate::domains::rpc::sink) worker_correlation_id: uuid::Uuid,
     pub(in crate::domains::rpc::sink) family: crate::runtime::routing::RouteFamily,
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::domains::rpc::sink) route: Route,
@@ -52,6 +63,7 @@ impl RpcPendingRequest {
 
         Self {
             dispatch_info: RpcPendingDispatchInfo {
+                worker_correlation_id: uuid::Uuid::nil(),
                 family: *registration_addr.family(),
                 route,
                 caller_session_id,
@@ -65,6 +77,11 @@ impl RpcPendingRequest {
             delivery_retries: 0,
             submitted_at,
             expires_at,
+            supports_cancellation: false,
+            cancelled: false,
+            close_requested: false,
+            grace_busy_baseline: None,
+            grace_deferred: std::time::Duration::ZERO,
         }
     }
 
@@ -76,7 +93,7 @@ impl RpcPendingRequest {
         expires_at: Instant,
     ) -> Self {
         let submitted_at_instant = Instant::now();
-        Self::new(RpcPendingRequestInit {
+        let mut pending = Self::new(RpcPendingRequestInit {
             route: req.route.clone(),
             caller_session_id,
             caller_inbox_addr,
@@ -86,7 +103,9 @@ impl RpcPendingRequest {
             submitted_at: Utc::now(),
             submitted_at_instant,
             expires_at,
-        })
+        });
+        pending.supports_cancellation = registration.supports_cancellation;
+        pending
     }
 
     pub(in crate::domains::rpc::sink) fn dispatch_info(&self) -> RpcPendingDispatchInfo {
@@ -161,6 +180,7 @@ pub(in crate::domains::rpc::sink) struct RpcPendingCleanupResult {
     pub(in crate::domains::rpc::sink) detached_callers: usize,
     pub(in crate::domains::rpc::sink) removed_pending: usize,
     pub(in crate::domains::rpc::sink) disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
+    pub(in crate::domains::rpc::sink) cancellations: Vec<RpcWorkerCancellation>,
 }
 
 #[derive(Default)]
@@ -170,6 +190,7 @@ pub(in crate::domains::rpc::sink) struct RpcSessionCleanupResult {
     pub(in crate::domains::rpc::sink) removed_pending: usize,
     pub(in crate::domains::rpc::sink) pending_len: usize,
     pub(in crate::domains::rpc::sink) disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
+    pub(in crate::domains::rpc::sink) cancellations: Vec<RpcWorkerCancellation>,
 }
 
 #[derive(Default)]
@@ -185,12 +206,41 @@ pub(in crate::domains::rpc::sink) struct RpcPendingTimeoutResult {
     pub(in crate::domains::rpc::sink) pending_len: usize,
     pub(in crate::domains::rpc::sink) closed_caller_drops: usize,
     pub(in crate::domains::rpc::sink) timeout_deliveries: Vec<RpcPendingErrorDelivery>,
+    pub(in crate::domains::rpc::sink) timed_out_requests: usize,
+    pub(in crate::domains::rpc::sink) cancellations: Vec<RpcWorkerCancellation>,
+    pub(in crate::domains::rpc::sink) close_worker_sessions:
+        Vec<(crate::runtime::routing::RouteFamily, u64)>,
+}
+
+pub(in crate::domains::rpc::sink) struct RpcWorkerCancellation {
+    pub(in crate::domains::rpc::sink) family: crate::runtime::routing::RouteFamily,
+    pub(in crate::domains::rpc::sink) correlation_id: uuid::Uuid,
+    pub(in crate::domains::rpc::sink) worker_session_id: u64,
+    pub(in crate::domains::rpc::sink) reason: RpcCancellationReason,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::domains::rpc::sink) enum RpcCancellationDisposition {
+    QueuedRemoved,
+    Dispatched {
+        worker_session_id: u64,
+        supports_cancellation: bool,
+    },
+    AlreadyCancelled,
+    UnauthorizedOrUnknown,
+}
+
+pub(in crate::domains::rpc::sink) enum RpcCancellationAckDisposition {
+    /// Boxed so the grace accounting fields do not inflate every disposition.
+    Acknowledged(Box<RpcPendingRequest>),
+    Rejected,
 }
 
 pub(in crate::domains::rpc::sink) struct RpcQueuedDispatch {
     pub(in crate::domains::rpc::sink) request: crate::domains::rpc::protocol::RpcRequest,
     pub(in crate::domains::rpc::sink) registration: RpcWorkerDispatch,
     pub(in crate::domains::rpc::sink) live_request_count: usize,
+    pub(in crate::domains::rpc::sink) expires_at: Instant,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -200,6 +250,7 @@ pub(in crate::domains::rpc::sink) enum RpcRequestRejection {
     NoWorkers,
     GlobalCapacityFull,
     RouteCapacityFull,
+    Expired,
 }
 
 pub(in crate::domains::rpc::sink) enum RpcRequestDispatch {
@@ -216,5 +267,6 @@ pub(in crate::domains::rpc::sink) enum RpcRequestDispatch {
         request: crate::domains::rpc::protocol::RpcRequest,
         registration: RpcWorkerDispatch,
         live_request_count: usize,
+        expires_at: Instant,
     },
 }

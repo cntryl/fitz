@@ -2,9 +2,10 @@
 //! message, and dispatch to the registration/delivery/response layers.
 
 use super::state_model::{
-    RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RPC_MSG_TYPE_REQUEST,
+    RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RPC_MSG_TYPE_CANCELLATION,
+    RPC_MSG_TYPE_REQUEST,
 };
-use crate::domains::rpc::protocol::{RpcClientRequest, RpcClientResponseBody, RpcMessage};
+use crate::domains::rpc::protocol::{RpcClientResponseBody, RpcMessage};
 use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope};
 use std::time::Instant;
@@ -17,9 +18,13 @@ impl RpcFamilyRuntime<'_> {
         self.ensure_active()?;
         Self::log_delivery(envelope);
 
-        let request = Self::extract_request(envelope)?;
+        let ingress_request = Self::extract_request(envelope)?;
+        let request = ingress_request.request;
+        let received_at = ingress_request.received_at;
         let meta = request.meta;
-        let request_started = self.record_request_start();
+        let request_started = (meta.message_type != RPC_MSG_TYPE_CANCELLATION)
+            .then(|| self.record_request_start())
+            .flatten();
 
         if !Self::valid_request_envelope(envelope, meta) {
             let response_meta = Self::response_meta_for_source(envelope, meta);
@@ -37,12 +42,20 @@ impl RpcFamilyRuntime<'_> {
         // registration or pending request for a session that is already gone
         // and will never be cleaned up again.
         if self.is_cleaned_up_request(meta.session_id, envelope) {
+            if meta.message_type == RPC_MSG_TYPE_CANCELLATION {
+                return Ok(());
+            }
             let response_meta = Self::response_meta_for_source(envelope, meta);
             self.route_rpc_client_response(
                 envelope,
                 response_meta,
                 &RpcClientResponseBody::Error("session already closed".to_string()),
             );
+            return Ok(());
+        }
+
+        if meta.message_type == RPC_MSG_TYPE_CANCELLATION {
+            self.handle_cancellation_frame(&meta, &request.raw_payload);
             return Ok(());
         }
 
@@ -78,7 +91,7 @@ impl RpcFamilyRuntime<'_> {
             _ => None,
         };
         let (response, snapshot_policy, request_failed) =
-            self.handle_rpc_message(envelope, &meta, rpc_msg);
+            self.handle_rpc_message(envelope, &meta, rpc_msg, &request.raw_payload, received_at);
 
         let response_delivered = self.complete_request(
             envelope,
@@ -106,16 +119,37 @@ impl RpcFamilyRuntime<'_> {
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         rpc_msg: RpcMessage,
+        raw_payload: &[u8],
+        received_at: Instant,
     ) -> DeliveryOutcome {
         match rpc_msg {
             RpcMessage::RegisterWorker {
                 worker_addr,
                 max_concurrent,
-            } => self.handle_register_worker_message(envelope, meta, worker_addr, max_concurrent),
+            } => {
+                let supports_cancellation =
+                    crate::protocol::rpc_codec::extract_registration_cancellation_support(
+                        raw_payload,
+                    )
+                    .unwrap_or(false);
+                self.handle_register_worker_message(
+                    envelope,
+                    meta,
+                    worker_addr,
+                    max_concurrent,
+                    supports_cancellation,
+                )
+            }
             RpcMessage::UnregisterWorker { worker_addr } => {
                 self.handle_unregister_worker_message(meta, worker_addr)
             }
-            RpcMessage::Request(req) => self.handle_request_message(envelope, meta, req),
+            RpcMessage::Request(req) => {
+                let remaining_budget_ms =
+                    crate::protocol::rpc_codec::extract_request_remaining_budget_ms(raw_payload)
+                        .ok()
+                        .flatten();
+                self.handle_request_message(envelope, meta, req, remaining_budget_ms, received_at)
+            }
             RpcMessage::Response(resp) => self.handle_response_message(envelope, meta, &resp),
         }
     }
@@ -132,7 +166,9 @@ impl RpcFamilyRuntime<'_> {
         );
     }
 
-    fn extract_request(envelope: &Envelope) -> Result<RpcClientRequest, DeliveryError> {
+    fn extract_request(
+        envelope: &Envelope,
+    ) -> Result<crate::domains::rpc::protocol::RpcClientRequestIngress, DeliveryError> {
         Self::request_from_envelope(envelope).ok_or_else(|| {
             tracing::warn!(domain = "rpc", "Envelope payload was not RpcClientRequest");
             DeliveryError::ActorStopped

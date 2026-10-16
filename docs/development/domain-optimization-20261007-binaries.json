@@ -1,0 +1,44 @@
+[
+  {
+    "case": "kv_scan",
+    "stage": "before",
+    "binary": "kv_scan",
+    "sha256": "44054e426f43dd44577db3f4946e46fa16cff155834e36f4b6692ea53a0e9b25",
+    "commit": "12707d8b6e6ed6cf8e2a911fc1c2693ba532c4c0"
+  },
+  {
+    "case": "kv_scan",
+    "stage": "after",
+    "binary": "after-kv_scan",
+    "sha256": "abfcade733e95f4daa62ed3d3a874b69fd4f8f868810c798263d2da65613d423",
+    "commit": "bd6327dd57d79bcfdc77d1cf2ef29976ba427098"
+  },
+  {
+    "case": "notice_suffix",
+    "stage": "before",
+    "binary": "notice_suffix",
+    "sha256": "a9a99d3ea28ca89c3862455babba5e89199ce80db8ec1b88e6ceb896a4dc9349",
+    "commit": "12707d8b6e6ed6cf8e2a911fc1c2693ba532c4c0"
+  },
+  {
+    "case": "notice_suffix",
+    "stage": "after",
+    "binary": "after-notice_suffix",
+    "sha256": "717570067a0eee9142fc0f3342970aeb33a81742a2d0cddc81002def92290792",
+    "commit": "bd6327dd57d79bcfdc77d1cf2ef29976ba427098"
+  },
+  {
+    "case": "schedule_fanout",
+    "stage": "before",
+    "binary": "schedule_fanout",
+    "sha256": "2bf256af33e031b14b8fb7b332c60e5d435eaf592d0a84b42eff96ebb3e12366",
+    "commit": "12707d8b6e6ed6cf8e2a911fc1c2693ba532c4c0"
+  },
+  {
+    "case": "schedule_fanout",
+    "stage": "after",
+    "binary": "after-schedule_fanout",
+    "sha256": "7aada65190cd7d6f02a7a74412121210aeb5a8ebd4dadd6976559612e6028672",
+    "commit": "bd6327dd57d79bcfdc77d1cf2ef29976ba427098"
+  }
+]

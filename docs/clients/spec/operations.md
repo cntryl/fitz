@@ -16,20 +16,21 @@ invalid, and structured-domain patterns must be capable of matching their
 concrete route depth (three segments for KV, Queue, and Stream; four for
 Schedule). Notice and RPC have flexible depth.
 
-Each wildcard-capable domain permits 128 wildcard registrations per session.
-Exact registrations do not count. Duplicate `(session, original registration
-string)` requests are idempotent and checked before the limit. Matching never
-crosses `RouteFamily`; overlaps remain independent and exact registrations have
-no precedence. Notifications include the matching subscription identifier and
-the exact concrete route.
+Each domain permits 1,024 retained registrations per session, counting exact
+and wildcard registrations together. The wildcard subset is separately limited
+to 128 per session. Duplicate `(session, original registration string)` requests
+are idempotent and checked before either limit. Matching never crosses
+`RouteFamily`; overlaps remain independent and exact registrations have no
+precedence. Notifications include the matching subscription identifier and the
+exact concrete route.
 
 Lease's exact mutation operations (`ACQUIRE`, `EXTEND`, `RELEASE`) still
 require an exact `lease://realm/area/resource` route; only they can grant,
 renew, or release a lease. Lease's observation operations (`SUBSCRIBE`,
 `UNSUBSCRIBE`, `LIST`) instead accept the same generic fixed-depth pattern
-language as KV, Queue, Stream, and Schedule, and share the same 128-per-session
-wildcard-registration quota — observing a route this way never changes its
-ownership.
+language as KV, Queue, Stream, and Schedule, and share the same per-session
+total and wildcard registration limits — observing a route this way never
+changes its ownership.
 
 ### KV Domain (Key-Value Store)
 
@@ -58,13 +59,13 @@ ownership.
 - Multiple transactions to different resources MAY be parallel
 - Watches are session-scoped and MUST be re-established after reconnect
 - Watches accept exact routes or patterns capable of matching a three-segment KV route
-- `Notify` is emitted only after a successful `Commit` that applied one or more mutations
+- `Notify` is emitted only after a successful `Commit` that applied one or more mutations, or after an operator KV snapshot restore replaces the resource
 
 ---
 
 ### Queue Domain (Message Queue)
 
-**Purpose:** Durable FIFO message queue with leasing.
+**Purpose:** FIFO message queue with leasing and best-effort persistence.
 
 **Canonical Operations:**
 
@@ -154,6 +155,8 @@ ownership.
 | `Unsubscribe` | 301 | C→S | Deregister worker |
 | `Request` | 302 | C→S and S→Worker | Send RPC request and deliver it to a worker |
 | `Response` | 303 | Worker→S and S→Caller | Send RPC response |
+| `RPC_CANCEL` | 304 | C→S and Worker→S | Cancel a caller request or acknowledge worker cleanup |
+| `RPC_LIFECYCLE` | 305 | S→C and S→Worker | Deliver cancellation result or signal |
 
 **Constraints:**
 - Each request uses 16-byte UUID `correlation_id` for matching the live in-flight response
@@ -163,7 +166,19 @@ ownership.
   REQUEST frames as async pushes
 - The broker derives caller response routing from the source session; callers do not send a reply route
 - Successful REQUEST submission is silent; callers wait for RESPONSE or an error frame
-- Message type 304 is unsupported and MUST NOT be sent
+- `SERVER_HELLO` capability `CAP_RPC_CANCELLATION` gates lifecycle support;
+  absent capability, clients retain legacy payloads and behavior
+- Supporting worker registrations set bit 0 in the optional version-1
+  registration extension; supporting callers append a version-1 remaining
+  budget extension to REQUEST
+- A cleanup acknowledgment means the worker handler has stopped and released
+  request-owned resources; a broker-forwarded cancellation signal alone does
+  not confirm cleanup
+- Dispatched worker credit remains reserved until worker acknowledgment,
+  or worker session cleanup after cancellation wins actor ordering; a late
+  terminal response cannot prove handler cleanup
+- Cancellation cannot undo application side effects and MUST NOT trigger an
+  automatic retry
 - Worker registrations and pending requests are process-local and are not recovered or replayed after broker restart
 - A worker reconnecting after disconnect or restart MUST send `Subscribe` again before it can receive new requests
 
@@ -217,8 +232,8 @@ operations above; in particular, portable clients use offset/limit `List` 702.
 
 **Constraints:**
 - Cron-style scheduling (precise timing, best-effort delivery)
-- Exact and whole-segment `*`/`**` registration patterns are session-scoped and
-  limited to 128 wildcard registrations per session
+- Exact and whole-segment `*`/`**` registration patterns are session-scoped,
+  limited to 1,024 total registrations and 128 wildcard registrations per session
 - NOTIFY carries `[subscription_id][exact_route][payload]` and is best-effort
   (may be dropped under backpressure)
 - No matching registration or an entirely rejected handoff still advances the
@@ -337,6 +352,15 @@ Permission strings must be either route-shaped Fitz permissions such as
 `notice.read`. Clients should treat the compact JWT as opaque input and let the
 broker enforce the contract.
 
+A route-shaped permission must not contain an empty path segment. `kv://#read`,
+`queue:///orders/**#write`, `queue://acme//orders/**#write`, and
+`queue://acme/orders/**/#write` are all invalid. One invalid grant in the
+selected permission source rejects the whole claim: the broker does not drop
+the bad grant and keep the others, and it does not fall back to a lower-priority
+permission source. Token authentication fails and the CONNECT is refused. The
+MCP OAuth path applies the same path-segment rule to `fitz_permissions` and
+rejects the token as invalid provisioning (`403 insufficient_scope`).
+
 For an organization-identity setup, use an API access token for the Fitz API
 identifier, emit the organization id claim, include route-shaped permissions,
 map organization ids with `FITZ_ROUTE_FAMILY_MAP`, and validate the issuer
@@ -398,8 +422,8 @@ Transactions are **explicit and domain-specific**. Clients MUST NOT provide impl
 Clients MUST expose explicit methods for supported domains:
 | Domain | API | Required |
 | -------- | ----------------------------------------- | -------- |
-| KV | `begin()`, `commit()`, `rollback()` | YES |
-| Stream | `begin()`, `commit()`, `rollback()` | YES |
+| KV | `begin()`, `commit(persistence)`, `rollback()` | YES |
+| Stream | `begin()`, `commit(persistence)`, `rollback()` | YES |
 | Queue | N/A (message-oriented, not transactional) | — |
 | Notice | N/A (fire-and-forget) | — |
 | RPC | N/A (request-scoped) | — |
@@ -423,14 +447,14 @@ Clients MUST:
 
 ```rust
 // ✅ CORRECT - explicit transaction lifecycle
-let tx_id = client.begin(KvBeginRequest { route, mode, durability })?;
+let tx_id = client.begin(KvBeginRequest { route, mode })?;
 client.put(KvPutRequest { tx_id, key, value })?;
 client.get(KvGetRequest { tx_id, key })?;
 client.commit(KvCommitRequest { tx_id })?;
 
 // ✅ CORRECT - multiple concurrent transactions to different resources
-let tx1 = client.begin(KvBeginRequest { route: "kv://prod/app/users", mode, durability })?;
-let tx2 = client.begin(KvBeginRequest { route: "kv://prod/app/posts", mode, durability })?;
+let tx1 = client.begin(KvBeginRequest { route: "kv://prod/app/users", mode })?;
+let tx2 = client.begin(KvBeginRequest { route: "kv://prod/app/posts", mode })?;
 // Both tx1 and tx2 active simultaneously
 client.put(KvPutRequest { tx_id: tx1, key, value })?;
 client.put(KvPutRequest { tx_id: tx2, key, value })?;
@@ -438,7 +462,7 @@ client.commit(KvCommitRequest { tx_id: tx1 })?;
 client.commit(KvCommitRequest { tx_id: tx2 })?;
 
 // ❌ WRONG - parallel operations on SAME transaction
-let tx = client.begin(KvBeginRequest { route, mode, durability })?;
+let tx = client.begin(KvBeginRequest { route, mode })?;
 // DO NOT DO THIS:
 // futures::join_all(vec![
 //   client.put(KvPutRequest { tx_id: tx, key: "k1", value: "v1" }),
@@ -628,7 +652,7 @@ When a single operation generates multiple responses:
 
 **Session-Bound Handle Behavior:**
 - Open KV transactions and Stream append sessions are invalidated; clients must begin fresh handles after reconnect.
-- Queue item handles reserved before disconnect are invalid; clients must reserve again. Durable queue messages may redeliver according to queue policy.
+- Queue item handles reserved before disconnect are invalid; clients must reserve again. Persisted queue messages may redeliver; unpersisted enqueues, ACKs, and ID reservations can be lost in a crash.
 - Lease handles acquired before disconnect are invalid; clients must reacquire if ownership is still required.
 - Pending RPC calls fail with a connection/interruption error instead of stalling or silently replaying.
 - Stream subscriptions are live wake signals only. Replay resumes through explicit `READ` calls from client-owned offsets.

@@ -1,6 +1,6 @@
 use super::{
     list, AdminFamilyScope, AdminPrincipal, AuthFailure, Body, Infallible, Response, RouteFamily,
-    Runtime, RuntimeDrainResponse, StatusCode,
+    Runtime, StatusCode,
 };
 use std::sync::Arc;
 
@@ -14,15 +14,9 @@ pub(super) fn require_data_plane_ready(runtime: &Arc<Runtime>) -> Result<(), Box
 }
 
 pub(super) async fn handle_runtime_drain(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    runtime.begin_drain();
-    Ok(super::json_response(RuntimeDrainResponse {
-        lifecycle_state: runtime.lifecycle_state().as_str(),
-        active_sessions: runtime.session_count(),
-        drain_grace_seconds: runtime.drain_grace_seconds(),
-        drain_started_epoch_ms: runtime.drain_started_epoch_ms(),
-        drain_deadline_epoch_ms: runtime.drain_deadline_epoch_ms(),
-        close_reason: runtime.drain_close_reason(),
-    }))
+    Ok(super::json_response(
+        crate::api::admin::commands::begin_runtime_drain(runtime.as_ref()),
+    ))
 }
 
 pub(super) fn require_admin<B>(
@@ -268,7 +262,15 @@ pub(super) fn handle_queue_dead_letter_replay(
         );
     };
 
-    match runtime.queue_replay_dead_letter(family, realm, area, resource, message_id) {
+    match crate::api::admin::commands::queue_dead_letter(
+        runtime,
+        family.as_u64(),
+        realm,
+        area,
+        resource,
+        message_id,
+        crate::api::admin::commands::QueueDeadLetterOperation::Replay,
+    ) {
         Ok(true) => no_content_response(),
         Ok(false) => super::not_found(),
         Err(message) => super::error_response(StatusCode::INTERNAL_SERVER_ERROR, &message),
@@ -300,7 +302,15 @@ pub(super) fn handle_queue_dead_letter_purge(
         );
     };
 
-    match runtime.queue_purge_dead_letter(family, realm, area, resource, message_id) {
+    match crate::api::admin::commands::queue_dead_letter(
+        runtime,
+        family.as_u64(),
+        realm,
+        area,
+        resource,
+        message_id,
+        crate::api::admin::commands::QueueDeadLetterOperation::Purge,
+    ) {
         Ok(true) => no_content_response(),
         Ok(false) => super::not_found(),
         Err(message) => super::error_response(StatusCode::INTERNAL_SERVER_ERROR, &message),

@@ -118,13 +118,11 @@ pub(super) fn new_queue_domain_sink(
     store: Arc<cntryl_midge::Engine>,
     router: Arc<Router>,
     admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    queue_write_policy: crate::domains::WritePolicy,
 ) -> QueueDomain {
     QueueDomain::new(
         store,
         router,
         admin_read_model,
-        queue_write_policy,
         crate::utils::idempotency::default_dedup_store(),
     )
 }
@@ -226,12 +224,7 @@ impl QueueWatchHarness {
         router.register(sender_address.clone(), sender_mailbox.clone());
         router.register(worker_address.clone(), worker_mailbox.clone());
         let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-        let sink = new_queue_domain_sink(
-            store,
-            router,
-            admin_read_model,
-            crate::domains::WritePolicy::BestEffort,
-        );
+        let sink = new_queue_domain_sink(store, router, admin_read_model);
 
         Self {
             family,
@@ -247,6 +240,11 @@ impl QueueWatchHarness {
     }
 
     fn watch(&self, pattern: &str) -> u64 {
+        let frame = self.watch_frame(pattern);
+        watch_response_subscription_id(&frame)
+    }
+
+    fn watch_frame(&self, pattern: &str) -> FrameContext {
         self.sink
             .deliver(Envelope::from_route(
                 self.watcher_address.clone(),
@@ -260,8 +258,7 @@ impl QueueWatchHarness {
                 ),
             ))
             .expect("watch queue readiness");
-        let frame = receive_queue_frame(&self.watcher_mailbox, "watch response");
-        watch_response_subscription_id(&frame)
+        receive_queue_frame(&self.watcher_mailbox, "watch response")
     }
 
     fn send(&self, route: &str, body: &[u8]) {

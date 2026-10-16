@@ -1,183 +1,61 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
 import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
-import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-import { createStreamOverviewQuery } from "@/features/stream/stream-query";
-import type { StreamLagBucketsSummary } from "@/features/stream/stream-models";
-import { formatBytes, formatCount, formatNumber } from "@/shared/format";
+import { formatBytes, formatNumber } from "@/shared/format";
 
-const streamMetricColumns: readonly DomainResourceMetricColumn[] = [
-  {
-    id: "committed",
-    header: "Committed",
-    width: "14%",
-    cell: (row) => formatNumber(row.committedEventCount ?? 0),
-    sortValue: (row) => row.committedEventCount,
-  },
-  {
-    id: "storage",
-    priority: "secondary",
-    header: "Storage",
-    width: "14%",
-    cell: (row) => formatBytes(row.sizeBytes ?? 0),
-    sortValue: (row) => row.sizeBytes,
-  },
-  {
-    id: "sessions",
-    priority: "secondary",
-    header: "Append sessions",
-    width: "18%",
-    cell: (row) => formatNumber(row.sessionsActive ?? 0),
-    sortValue: (row) => row.sessionsActive,
-  },
-  {
-    id: "subscriptions",
-    header: "Active subscriptions",
-    width: "18%",
-    cell: (row) => formatNumber(row.subscriptionsActive ?? 0),
-    sortValue: (row) => row.subscriptionsActive,
-  },
-];
-
-type StreamPostureTone = "success" | "warning" | "danger" | "info";
-
-interface StreamPosture {
-  detail: string;
-  label: "Healthy" | "Idle" | "Pressure" | "Attention";
-  reason: string;
-  tone: StreamPostureTone;
-}
-
-function summarizeWatermarkLag(buckets: StreamLagBucketsSummary) {
-  const total = buckets.caughtUp + buckets.under10 + buckets.under100 + buckets.over100;
-  const behind = buckets.under10 + buckets.under100 + buckets.over100;
-
-  return {
-    behind,
-    percentageBehind: total === 0 ? 0 : Math.round((behind / total) * 100),
-    total,
-  };
-}
-
-function summarizeStreamHealth(stats: {
-  eventsTotal: number;
-  operationsPerSecond: number;
-  streamsActive: number;
-  subscriptionsActive: number;
-  watermarkLagBuckets: StreamLagBucketsSummary;
-}): StreamPosture {
-  const lag = summarizeWatermarkLag(stats.watermarkLagBuckets);
-
-  if (lag.total === 0) {
-    return {
-      detail:
-        "No active stream families are visible yet; stream replay health will appear when families are active.",
-      label: "Idle",
-      reason: "No subscribers are tracking replay yet.",
-      tone: "info",
-    };
-  }
-
-  if (stats.watermarkLagBuckets.over100 > 0) {
-    return {
-      detail: `${formatCount(stats.eventsTotal, "committed event")} across ${formatCount(
-        stats.streamsActive,
-        "active stream",
-      )}; ${formatCount(stats.subscriptionsActive, "live subscription")}. ${formatNumber(
-        lag.behind,
-      )} of ${formatNumber(
-        lag.total,
-      )} observed watermark families (${lag.percentageBehind}%) are behind the latest watermark, including ${formatNumber(
-        stats.watermarkLagBuckets.over100,
-      )} ${stats.watermarkLagBuckets.over100 === 1 ? "family" : "families"} at 100+ behind.`,
-      label: "Attention",
-      reason: `${formatNumber(lag.behind)} of ${formatCount(lag.total, "subscriber watermark")} are behind; ${formatNumber(
-        stats.watermarkLagBuckets.over100,
-      )} by more than 100 events. Open a realm to find the lagging stream.`,
-      tone: "danger",
-    };
-  }
-
-  if (lag.behind > 0) {
-    return {
-      detail: `${formatCount(stats.eventsTotal, "committed event")} across ${formatCount(
-        stats.streamsActive,
-        "active stream",
-      )}; ${formatCount(stats.subscriptionsActive, "live subscription")}. ${formatNumber(
-        lag.behind,
-      )} of ${formatNumber(
-        lag.total,
-      )} observed watermark families (${lag.percentageBehind}%) are behind the latest watermark, and replay catch-up is in progress.`,
-      label: "Pressure",
-      reason: `${formatNumber(lag.behind)} of ${formatCount(lag.total, "subscriber watermark")} are catching up on replay.`,
-      tone: "warning",
-    };
-  }
-
-  return {
-    detail: `${formatCount(stats.eventsTotal, "committed event")} across ${formatCount(
-      stats.streamsActive,
-      "active stream",
-    )}; ${formatCount(
-      stats.subscriptionsActive,
-      "live subscription",
-    )}. Watermark lag is caught up for durable replay.`,
-    label: "Healthy",
-    reason: `All ${formatCount(lag.total, "subscriber watermark")} are caught up.`,
-    tone: "success",
-  };
+function maybeCount(value: number | undefined) {
+  return value === undefined ? "--" : formatNumber(value);
 }
 
 export default function StreamPage() {
-  const overview = createStreamOverviewQuery();
   const inventory = createResourceInventoryQuery("stream");
-  const health = summarizeStreamHealth(
-    overview.data?.stats ?? {
-      eventsTotal: 0,
-      operationsPerSecond: 0,
-      streamsActive: 0,
-      subscriptionsActive: 0,
-      watermarkLagBuckets: {
-        caughtUp: 0,
-        under10: 0,
-        under100: 0,
-        over100: 0,
-      },
+  const streamMetricColumns: readonly DomainResourceMetricColumn[] = [
+    {
+      id: "committed",
+      header: "Committed",
+      width: "14%",
+      cell: (row) => maybeCount(row.committedEventCount),
+      sortValue: (row) => row.committedEventCount,
     },
-  );
-  const stats = overview.data?.stats;
+    {
+      id: "subscriptions",
+      header: "Live subscriptions",
+      width: "18%",
+      cell: (row) => maybeCount(row.subscriptionsActive),
+      sortValue: (row) => row.subscriptionsActive,
+    },
+    {
+      id: "storage",
+      priority: "secondary",
+      header: "Storage",
+      width: "14%",
+      cell: (row) => (row.sizeBytes === undefined ? "--" : formatBytes(row.sizeBytes)),
+      sortValue: (row) => row.sizeBytes,
+    },
+    {
+      id: "sessions",
+      priority: "secondary",
+      header: "Append sessions",
+      width: "18%",
+      cell: (row) => maybeCount(row.sessionsActive),
+      sortValue: (row) => row.sessionsActive,
+    },
+  ];
+
   return (
     <DomainInventoryPage
       domain="stream"
-      eyebrow="Durable replay"
+      eyebrow="Durable history"
       title="Stream inventory"
-      description="Durable stream resources for replay and active live subscriptions."
       refreshLabel="Refresh stream"
       inventory={inventory}
-      refreshing={overview.refreshing || inventory.refreshing}
-      refreshers={[() => overview.refresh(), () => inventory.refresh()]}
       loadingDescription="Loading stream inventory..."
       errorTitle="Unable to load stream inventory"
       refreshingDescription="Refreshing stream inventory..."
       emptyDescription="No stream resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={streamMetricColumns}
-      reason={stats ? health.reason : undefined}
-      stats={[
-        { label: "Committed events", value: stats ? formatNumber(stats.eventsTotal) : "--" },
-        { label: "Streams", value: stats ? formatNumber(stats.streamsActive) : "--" },
-        { label: "Subscriptions", value: stats ? formatNumber(stats.subscriptionsActive) : "--" },
-      ]}
-      status={queryHeaderStatus(
-        overview,
-        {
-          loading: "Loading stream health.",
-          ready: health.detail,
-          unavailable:
-            "Stream health is unavailable. Resource inventory can still be inspected when loaded.",
-        },
-        { label: health.label, tone: health.tone },
-      )}
+      status={inventory.data ? { label: "Consumer health unavailable", tone: "info" } : undefined}
     />
   );
 }

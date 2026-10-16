@@ -6,20 +6,43 @@ use std::sync::Arc;
 use super::{KvError, TxMode};
 use crate::domains::WritePolicy;
 
+mod write_admission;
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+pub(crate) type CommitObserver = Arc<parking_lot::Mutex<Vec<cntryl_midge::WriteOptions>>>;
+
 #[derive(Clone)]
 pub(crate) struct KvStore {
     engine: crate::storage::FitzStorageEngine,
+    #[cfg(test)]
+    commit_observer: Option<CommitObserver>,
 }
 
 pub(crate) struct KvTransaction {
     inner: cntryl_midge::Transaction,
+    engine: crate::storage::FitzStorageEngine,
+    family: u32,
+    has_mutations: bool,
+    #[cfg(test)]
+    commit_observer: Option<CommitObserver>,
 }
 
 impl KvStore {
     pub(crate) fn new(engine: Arc<cntryl_midge::Engine>) -> Self {
         Self {
             engine: crate::storage::FitzStorageEngine::new(engine),
+            #[cfg(test)]
+            commit_observer: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_commit_observer(mut self, observer: CommitObserver) -> Self {
+        self.commit_observer = Some(observer);
+        self
     }
 
     pub(crate) fn begin(&self, column_family: u32, mode: TxMode) -> Result<KvTransaction, KvError> {
@@ -29,7 +52,14 @@ impl KvStore {
         };
         self.engine
             .begin_tx(column_family, mode)
-            .map(|inner| KvTransaction { inner })
+            .map(|inner| KvTransaction {
+                inner,
+                engine: self.engine.clone(),
+                family: column_family,
+                has_mutations: false,
+                #[cfg(test)]
+                commit_observer: self.commit_observer.clone(),
+            })
             .map_err(|error| Self::map_error(&error))
     }
 
@@ -65,6 +95,7 @@ impl KvStore {
             | cntryl_midge::MidgeError::MemoryModeViolation(_)
             | cntryl_midge::MidgeError::Fenced(_)
             | cntryl_midge::MidgeError::LeaseIndeterminate(_)
+            | cntryl_midge::MidgeError::OutcomeUnknown(_)
             | cntryl_midge::MidgeError::LeaseEpochExhausted
             | cntryl_midge::MidgeError::ResourceLimit(_)
             | cntryl_midge::MidgeError::UnflushedDataPresent { .. } => {
@@ -90,19 +121,25 @@ impl KvTransaction {
     pub(crate) fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), KvError> {
         self.inner
             .put(key, value, None)
-            .map_err(|error| KvStore::map_error(&error))
+            .map_err(|error| KvStore::map_error(&error))?;
+        self.has_mutations = true;
+        Ok(())
     }
 
     pub(crate) fn delete(&mut self, key: Vec<u8>) -> Result<(), KvError> {
         self.inner
             .delete(key)
-            .map_err(|error| KvStore::map_error(&error))
+            .map_err(|error| KvStore::map_error(&error))?;
+        self.has_mutations = true;
+        Ok(())
     }
 
     pub(crate) fn delete_range(&mut self, start: Vec<u8>, end: Vec<u8>) -> Result<(), KvError> {
         self.inner
             .delete_range(start, end)
-            .map_err(|error| KvStore::map_error(&error))
+            .map_err(|error| KvStore::map_error(&error))?;
+        self.has_mutations = true;
+        Ok(())
     }
 
     pub(crate) fn scan(
@@ -137,8 +174,16 @@ impl KvTransaction {
     }
 
     pub(crate) fn commit(self, policy: WritePolicy) -> Result<(), KvError> {
+        if self.has_mutations {
+            self.wait_for_write_admission()?;
+        }
+        let options = policy.into();
+        #[cfg(test)]
+        if let Some(observer) = &self.commit_observer {
+            observer.lock().push(options);
+        }
         self.inner
-            .commit(policy.into())
+            .commit(options)
             .map_err(|error| KvStore::map_error(&error))
     }
 }

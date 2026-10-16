@@ -128,14 +128,14 @@ async fn should_require_connect_message_when_auth_enabled_ws() {
 }
 
 #[tokio::test]
-async fn should_put_and_get_same_key_in_transaction_ws() {
+async fn should_read_own_transaction_writes_ws() {
     // Arrange
     let server = TestServer::start()
         .await
         .expect("failed to start test server");
 
     // Act
-    should_put_and_get_same_key_in_transaction::<WsConnector>(&server).await;
+    should_read_own_transaction_writes::<WsConnector>(&server).await;
 
     // Assert
     // (assertions are in the helper)
@@ -213,6 +213,7 @@ async fn should_deliver_kv_watch_notification_after_committed_put_ws() {
 
 #[tokio::test]
 async fn should_unregister_websocket_inbox_route_on_disconnect() {
+    // Arrange
     let server = TestServer::start()
         .await
         .expect("failed to start test server");
@@ -228,8 +229,10 @@ async fn should_unregister_websocket_inbox_route_on_disconnect() {
         .await
         .expect("route registration");
 
+    // Act
     drop(socket);
 
+    // Assert
     server
         .wait_for_session_count(0)
         .await

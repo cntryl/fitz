@@ -50,7 +50,6 @@ fn write_committed_value_for_family(
             "shared".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -67,6 +66,7 @@ fn write_committed_value_for_family(
     let commit = actor.handle(KvMessage::Commit {
         tx_id,
         scope: kv_scope(family, "tenant", "shared"),
+        persistence: fitz::domains::CommitPersistence::Buffered,
     });
     assert!(matches!(commit, KvResponse::CommitOk));
 }
@@ -80,7 +80,6 @@ fn read_committed_value_for_family(actor: &mut KvActor, family: RouteFamily) -> 
             "shared".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -121,7 +120,6 @@ fn should_show_committed_value_before_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -137,6 +135,7 @@ fn should_show_committed_value_before_restart() {
     let c = actor.handle(KvMessage::Commit {
         tx_id,
         scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+        persistence: fitz::domains::CommitPersistence::Sync,
     });
 
     // Assert (verify visibility)
@@ -148,7 +147,6 @@ fn should_show_committed_value_before_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx_read } = b_read else {
         panic!("Expected BeginOk");
@@ -191,7 +189,6 @@ fn should_commit_durable_kv_transaction() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -207,6 +204,7 @@ fn should_commit_durable_kv_transaction() {
     let c = actor.handle(KvMessage::Commit {
         tx_id,
         scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+        persistence: fitz::domains::CommitPersistence::Sync,
     });
 
     // Assert
@@ -229,7 +227,6 @@ fn should_restore_committed_kv_value_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -245,6 +242,7 @@ fn should_restore_committed_kv_value_on_engine_restart() {
     let c = actor.handle(KvMessage::Commit {
         tx_id,
         scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+        persistence: fitz::domains::CommitPersistence::Sync,
     });
     assert!(matches!(c, KvResponse::CommitOk));
 
@@ -264,7 +262,6 @@ fn should_restore_committed_kv_value_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx2 } = b2 else {
         panic!("Expected BeginOk");
@@ -320,7 +317,6 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -347,7 +343,6 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx2 } = begin2 else {
         panic!("Expected BeginOk");
@@ -484,7 +479,6 @@ fn should_handle_high_throughput_batch_puts() {
                 "batch".to_string(),
             ),
             mode: TxMode::ReadWrite,
-            write_options: fitz::domains::WritePolicy::Buffered,
         });
         let KvResponse::BeginOk { tx_id } = begin else {
             panic!("Begin failed");
@@ -501,6 +495,7 @@ fn should_handle_high_throughput_batch_puts() {
         let c = actor.handle(KvMessage::Commit {
             tx_id,
             scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
+            persistence: fitz::domains::CommitPersistence::Buffered,
         });
         assert!(matches!(c, KvResponse::CommitOk));
     }
@@ -514,7 +509,6 @@ fn should_handle_high_throughput_batch_puts() {
             "batch".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx } = b else {
         panic!("Begin failed");

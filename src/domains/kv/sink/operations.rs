@@ -48,6 +48,7 @@ impl KvFamilyRuntime<'_> {
                 "Creating new KvActor instance ({context})"
             );
             KvActor::new(self.core.store.clone())
+                .with_write_policies(self.core.sync_write_policy, self.core.buffered_write_policy)
         })
     }
 

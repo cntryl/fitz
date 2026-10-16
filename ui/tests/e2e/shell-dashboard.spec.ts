@@ -127,14 +127,12 @@ test("captures desktop domain navigation", async ({ page }, testInfo) => {
   await expect(page.locator("main#main-content")).toHaveCount(1);
 });
 
-test("applies the Fitz palette in every explicit and system color mode", async ({ page }) => {
+test("applies the default Askr theme in explicit and system color modes", async ({ page }) => {
   // Arrange
   const palette = () =>
     page.evaluate(() => ({
       background: getComputedStyle(document.body).backgroundColor,
-      primary: getComputedStyle(document.documentElement)
-        .getPropertyValue("--ak-color-primary")
-        .trim(),
+      text: getComputedStyle(document.body).color,
     }));
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -150,9 +148,14 @@ test("applies the Fitz palette in every explicit and system color mode", async (
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.emulateMedia({ colorScheme: "dark" });
   const explicitLight = await palette();
+  await page.evaluate(() => localStorage.removeItem("fitz-admin-theme"));
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Fitz status", exact: true })).toBeVisible();
+  const systemDark = await palette();
 
   // Assert
-  expect(systemLight.primary).toBe("#9a4a0f");
-  expect(explicitDark).toEqual({ background: "rgb(34, 27, 22)", primary: "#f5a750" });
-  expect(explicitLight.primary).toBe("#9a4a0f");
+  expect(systemLight).toEqual({ background: "oklch(1 0 0)", text: "oklch(0.145 0 0)" });
+  expect(explicitDark).toEqual({ background: "oklch(0.145 0 0)", text: "oklch(0.985 0 0)" });
+  expect(explicitLight).toEqual(systemLight);
+  expect(systemDark).toEqual(explicitDark);
 });

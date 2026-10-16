@@ -678,7 +678,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_preserve_lease_request_response_notification_and_error_golden_bytes() {
+    fn should_preserve_lease_wire_golden_vectors() {
         // Arrange
         let route = "lease://r/a/x";
         let request = [

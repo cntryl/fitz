@@ -92,6 +92,14 @@ pub fn queue_detail(
         })
         .collect();
 
+    queue_detail_from_rows(path, family, queues)
+}
+
+pub(crate) fn queue_detail_from_rows(
+    path: &ResourcePath<'_>,
+    family: Option<u64>,
+    queues: Vec<super::QueueInfo>,
+) -> QueueResourceDetail {
     if queues.is_empty() {
         return QueueResourceDetail::empty(path);
     }
@@ -747,17 +755,17 @@ pub(crate) fn parse_rpc_operation(route: &str) -> Option<OwnedRpcOperation> {
 }
 
 pub(crate) fn matches_resource_route(route: &str, path: &ResourcePath<'_>) -> bool {
-    parse_flexible_route(route).is_some_and(|parsed| parsed.matches_path(path))
+    crate::runtime::matcher::matches_resource_registration(
+        route,
+        path.realm,
+        path.area,
+        path.resource,
+    )
 }
 
 pub(crate) fn matches_operation_route(route: &str, path: &RpcOperationPath<'_>) -> bool {
-    if !route.contains('*') {
-        return parse_rpc_operation(route)
-            .is_some_and(|parsed| parsed.matches_operation_path(path));
-    }
-    let concrete = format!(
-        "rpc://{}/{}/{}/{}",
-        path.realm, path.area, path.resource, path.operation
-    );
-    crate::runtime::matcher::Pattern::new(route).matches_str(&concrete)
+    crate::runtime::matcher::matches_registration_prefix(
+        route,
+        &[path.realm, path.area, path.resource, path.operation],
+    )
 }

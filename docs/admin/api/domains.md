@@ -189,7 +189,7 @@ boundary may differ by up to one second; storage remains bounded under high publ
 }
 ```
 ### Queue Domain
-Queue admin responses reflect only the current broker's warm in-memory actor state unless otherwise noted. Queue data remains durable according to the configured queue write policy, but warm resource counts and live lease rows can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates that queue.
+Queue admin responses reflect only the current broker's warm in-memory actor state unless otherwise noted. Queue persistence is always best effort, so accepted mutations can be lost on a crash, but warm resource counts and live lease rows can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates that queue.
 
 #### List Queue Resources Under An Area
 ```
@@ -250,7 +250,7 @@ GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/inflight?fami
 ```
 GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters?family={family}
 ```
-`family` is optional on reads. Dead-letter rows remain durably stored, but this endpoint only exposes DLQ rows for queue actors that are currently warm on this broker.
+`family` is optional on reads. Dead-letter rows use Queue's best-effort persistence, and this endpoint only exposes DLQ rows for queue actors that are currently warm on this broker.
 
 **Response**:
 ```json

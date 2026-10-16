@@ -81,7 +81,7 @@ fn read_dimensions(transport: TransportKind) -> RowDimensions<'static> {
     }
 }
 
-#[stress(tier = 4)]
+#[stress(tier = 4, max_regression_pct = 10)]
 fn should_measure_memory_tcp_append_open_session(ctx: &mut StressContext) {
     measure_append_open_session(
         ctx,
@@ -91,7 +91,7 @@ fn should_measure_memory_tcp_append_open_session(ctx: &mut StressContext) {
     );
 }
 
-#[stress(tier = 4)]
+#[stress(tier = 4, max_regression_pct = 10)]
 fn should_measure_memory_ws_append_open_session(ctx: &mut StressContext) {
     measure_append_open_session(
         ctx,
@@ -121,7 +121,7 @@ fn should_measure_local_disk_ws_sync_write_lifecycle(ctx: &mut StressContext) {
     );
 }
 
-#[stress(tier = 4)]
+#[stress(tier = 4, max_regression_pct = 10)]
 fn should_measure_memory_tcp_sync_write_lifecycle(ctx: &mut StressContext) {
     measure_write_lifecycle(
         ctx,
@@ -131,7 +131,7 @@ fn should_measure_memory_tcp_sync_write_lifecycle(ctx: &mut StressContext) {
     );
 }
 
-#[stress(tier = 4)]
+#[stress(tier = 4, max_regression_pct = 10)]
 fn should_measure_memory_ws_sync_write_lifecycle(ctx: &mut StressContext) {
     measure_write_lifecycle(
         ctx,
@@ -141,7 +141,7 @@ fn should_measure_memory_ws_sync_write_lifecycle(ctx: &mut StressContext) {
     );
 }
 
-#[stress(tier = 4)]
+#[stress(tier = 4, max_regression_pct = 10)]
 fn should_measure_memory_tcp_exact_replay(ctx: &mut StressContext) {
     measure_exact_replay(
         ctx,
@@ -151,7 +151,7 @@ fn should_measure_memory_tcp_exact_replay(ctx: &mut StressContext) {
     );
 }
 
-#[stress(tier = 4)]
+#[stress(tier = 4, max_regression_pct = 10)]
 fn should_measure_memory_ws_exact_replay(ctx: &mut StressContext) {
     measure_exact_replay(
         ctx,

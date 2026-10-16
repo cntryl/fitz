@@ -152,9 +152,9 @@ Response (status=1):
   requires authentication, ingress validates the route first and may close the
   connection or answer 3009 before the Notice domain sees the request. Clients
   already depend on these codes, so they are not changed in place
-- A session may retain at most 128 wildcard registrations. Exact registrations
-  do not count, and duplicate `(session, original registration string)` requests
-  are idempotent and checked before the limit; overflow returns 3003
+- A session may retain at most 1,024 registrations total and 128 wildcard
+  registrations. Duplicate `(session, original registration string)` requests
+  are idempotent and checked before either limit; overflow returns 3003
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 
@@ -352,7 +352,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - **Session-Scoped**: Subscriptions tied to connection; lost on disconnect
 - **Acknowledgements & Retries**: `NOTIFY` frames are never acknowledged by clients and are never retried by the broker. Clients MUST NOT send acknowledgements for `NOTIFY` frames and MUST NOT expect guaranteed replay.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
-- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation, redelivery, and configurable durability. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
+- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation and redelivery with best-effort persistence. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
 
 ##### Pattern Matching & Precedence
 
@@ -791,7 +791,7 @@ class StreamSession:
 - **Watermarks**: Reads stop at the current committed watermark; reading past it returns an empty success
 - **Optimistic Concurrency**: `expected_offset` on APPEND prevents lost updates
 - **Filtered Replay**: `StreamFilterSet` clauses are conjunctive and operate on the optional append discriminator sidecar
-- **Durability**: All committed data survives broker restart
+- **Persistence**: Sync commits wait for the configured local or cloud persistence boundary; Buffered commits can lose recent writes on a crash.
 - **Isolation**: Only one active append session exists per resource at a time; subscriptions are separate live session-scoped state
 - **Resume Model**: Clients track resume offsets locally; `ReadCursor` is response metadata, not a durable broker cursor
 
@@ -863,8 +863,9 @@ The success response uses the "optional u64" encoding pattern: a 1-byte flag fol
 - The scheme must be `stream://`, segments must be non-empty, wildcards must be
   whole segments, and the pattern must be capable of matching a concrete
   three-segment Stream route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 2010
-- A session may retain at most 128 wildcard registrations. Exact registrations
-  do not count, and a duplicate is checked before the limit; overflow returns 2011
+- A session may retain at most 1,024 registrations total and 128 wildcard
+  registrations. A duplicate is checked before either limit; overflow returns
+  2011
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 

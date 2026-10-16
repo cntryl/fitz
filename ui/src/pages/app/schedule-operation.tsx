@@ -2,17 +2,11 @@ import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import {
-  Block,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@askrjs/themes/components";
+import { Badge, Block } from "@askrjs/themes/components";
 import type { ScheduleMissedObservation, ScheduleRunNowResponse } from "@/adapters";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
+import DomainDataSection from "@/components/shared/domain-data-section";
+import DomainFacts from "@/components/shared/domain-facts";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
@@ -24,7 +18,6 @@ import {
 import {
   decodeScheduleParam,
   formatScheduleTimestamp,
-  formatScheduleTiming,
   scheduleTimingMetric,
 } from "@/features/schedule/schedule-format";
 import { createScheduleOperationQuery } from "@/features/schedule/schedule-query";
@@ -89,7 +82,6 @@ export default function ScheduleOperationPage() {
     operation,
   });
   const data = query.data;
-  const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
   const scheduleRow = data?.executionObservations.observations[0];
   const missedRows = data?.missedHandoffs.observations ?? [];
   const missedTruncated = missedRows.length >= RESOURCE_SCHEDULE_LIMIT;
@@ -121,9 +113,9 @@ export default function ScheduleOperationPage() {
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
+          compact={true}
           eyebrow="Schedule"
           title={operation}
-          description={`Durable timing intent and schedule-owned handoff evidence for ${scopeLabel}.`}
           primaryAction={{
             busy: runNowPending(),
             disabled: runNowPending() || !scheduleRow,
@@ -138,13 +130,6 @@ export default function ScheduleOperationPage() {
           }}
           status={queryHeaderStatus(
             query,
-            {
-              loading: "Loading schedule.",
-              ready: scheduleRow
-                ? `${scheduleRow.status}. ${formatScheduleTiming(scheduleRow.next_run)}.`
-                : "No acknowledged handoff observations are visible for this schedule.",
-              unavailable: "Schedule timing and handoff evidence are unavailable.",
-            },
             scheduleRow
               ? { label: scheduleRow.status, tone: "info" }
               : { label: "No observations", tone: "warning" },
@@ -169,23 +154,22 @@ export default function ScheduleOperationPage() {
               <QueryRefreshingState description="Refreshing schedule..." />
             </Show>
 
-            <DomainMetricTable
+            <DomainFacts
+              id="schedule-operation-timing"
               title="Schedule timing"
-              description="Persisted timing intent and broker-observed, non-authoritative handoff counters for this individual schedule."
-              metrics={[
+              items={[
                 { label: "Cron", value: scheduleRow?.cron ?? "unset" },
-                timingMetric,
-                { label: "Delivery mode", value: scheduleRow?.delivery_mode ?? "--" },
                 {
-                  label: "Broker observation counter",
-                  value: scheduleRow?.executions_total ?? 0,
-                  caption: "Non-authoritative; not downstream execution history",
+                  label: timingMetric.label,
+                  value: timingMetric.value,
+                  title: timingMetric.caption,
                 },
+                { label: "Delivery mode", value: scheduleRow?.delivery_mode ?? "--" },
                 { label: "Last handoff", value: formatScheduleTimestamp(scheduleRow?.last_run) },
                 {
                   label: "Pending handoffs",
                   value: missedTruncated ? `${missedRows.length}+` : missedRows.length,
-                  caption: missedTruncated ? "Observation list reached the API cap" : undefined,
+                  title: missedTruncated ? "Observation list reached the API cap" : undefined,
                 },
               ]}
             />
@@ -194,23 +178,19 @@ export default function ScheduleOperationPage() {
               <ScheduleRunNowResult result={runNowResult()} />
             </Block>
 
-            <Card padding="sm" variant="default">
-              <CardHeader>
-                <CardTitle titleAs="h2">Pending and missed handoffs</CardTitle>
-                <CardDescription>
-                  Persisted pending schedule fire claims for this schedule that have not been
-                  acknowledged.
-                  <Show when={missedTruncated}>
-                    {" "}
-                    The observation list reached the {RESOURCE_SCHEDULE_LIMIT}-entry API cap and may
-                    be incomplete.
-                  </Show>
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <MissedRows rows={missedRows} />
-              </CardContent>
-            </Card>
+            <DomainDataSection
+              id="schedule-missed-handoffs-section"
+              title="Pending and missed handoffs"
+              actions={
+                missedTruncated ? (
+                  <Badge variant="warning">
+                    Observation sample reached {RESOURCE_SCHEDULE_LIMIT}
+                  </Badge>
+                ) : undefined
+              }
+            >
+              <MissedRows rows={missedRows} />
+            </DomainDataSection>
           </Block>
         </Show>
         <ScheduleRunNowDialog

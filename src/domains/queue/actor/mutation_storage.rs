@@ -1,0 +1,92 @@
+//! Actor-owned mutation retries require Midge's pre-WAL L0 admission rejection.
+
+use super::recovery_store::{QueueTransaction, QueueTransactionMode};
+use super::{QueueActor, QueueCommit};
+use std::time::{Duration, Instant};
+
+impl QueueActor {
+    pub(super) fn commit_ack_with_admission_retry(
+        &self,
+        prepare: impl FnMut(&mut QueueTransaction) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.commit_ack_with_admission_budget(Duration::from_secs(30), prepare)
+    }
+
+    pub(super) fn commit_ack_with_admission_budget(
+        &self,
+        budget: Duration,
+        mut prepare: impl FnMut(&mut QueueTransaction) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let txn = super::ack_timing::measure(true, super::ack_timing::Phase::Preparation, || {
+            let mut txn = self.begin_mutation_transaction()?;
+            prepare(&mut txn)?;
+            Ok::<_, String>(txn)
+        })?;
+        self.commit_prepared_with_admission_budget(txn, QueueCommit::Ack, budget, prepare)
+    }
+
+    pub(super) fn commit_prepared_with_admission_retry(
+        &self,
+        txn: QueueTransaction,
+        commit: QueueCommit,
+        prepare: impl FnMut(&mut QueueTransaction) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.commit_prepared_with_admission_budget(txn, commit, Duration::from_secs(30), prepare)
+    }
+
+    fn begin_mutation_transaction(&self) -> Result<QueueTransaction, String> {
+        self.persistence
+            .store
+            .begin(self.queue_key.family.id(), QueueTransactionMode::ReadWrite)
+            .map_err(|error| format!("Failed to begin queue mutation transaction: {error}"))
+    }
+
+    fn commit_prepared_with_admission_budget(
+        &self,
+        mut txn: QueueTransaction,
+        commit: QueueCommit,
+        budget: Duration,
+        mut prepare: impl FnMut(&mut QueueTransaction) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + budget;
+        loop {
+            match Self::commit_transaction_with_pressure_wait(
+                txn,
+                commit,
+                deadline.saturating_duration_since(Instant::now()),
+            ) {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if error.is_l0_admission_rejection(self.queue_key.family.id())
+                        && Instant::now() < deadline =>
+                {
+                    // The actor owns this queue's mutation plan. Midge rejected it
+                    // before WAL submission, so restaging cannot duplicate the write.
+                    // Admission is checked again within the original wait budget.
+                    crate::observability::counter_inc(
+                        crate::domains::queue::metrics::METRIC_L0_ADMISSION_RETRIES_TOTAL,
+                    );
+                    txn = super::ack_timing::measure(
+                        matches!(commit, QueueCommit::Ack),
+                        super::ack_timing::Phase::Preparation,
+                        || {
+                            let mut txn = self.begin_mutation_transaction()?;
+                            prepare(&mut txn)?;
+                            Ok::<_, String>(txn)
+                        },
+                    )?;
+                }
+                Err(error) => {
+                    if error.is_admission_pressure(self.queue_key.family.id())
+                        && Instant::now() >= deadline
+                    {
+                        crate::observability::counter_inc(
+                            crate::domains::queue::metrics::METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL,
+                        );
+                    }
+                    return Err(error.to_string());
+                }
+            }
+        }
+    }
+}

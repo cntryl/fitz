@@ -2,7 +2,7 @@ use crate::api::admin::list::SessionInfo;
 use crate::api::admin::{stats, troubleshooting};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessagingTopology {
     pub generated_at: String,
     pub broker: stats::BrokerStats,
@@ -12,7 +12,7 @@ pub struct MessagingTopology {
     pub connections: TopologyConnectionPage,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TopologySessionGroup {
     pub route_family: u64,
     pub sessions: usize,
@@ -23,7 +23,7 @@ pub struct TopologySessionGroup {
     pub representative_sessions: Vec<SessionInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TopologyState {
     Quiet,
@@ -32,7 +32,7 @@ pub enum TopologyState {
     Blocked,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TopologyLane {
     pub id: String,
     pub title: String,
@@ -45,14 +45,14 @@ pub struct TopologyLane {
     pub top_scoped_resources: Vec<TopologyScopedResource>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TopologyCounter {
     pub key: String,
     pub label: String,
     pub value: f64,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TopologyScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub realm: Option<String>,
@@ -72,7 +72,7 @@ pub struct TopologyScope {
     pub session_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TopologyScopedResource {
     pub id: String,
     pub label: String,
@@ -81,7 +81,7 @@ pub struct TopologyScopedResource {
     pub counters: Vec<TopologyCounter>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TopologyConnectionKind {
     BrokerDomainFlow,
@@ -95,7 +95,7 @@ pub enum TopologyConnectionKind {
     KvTransactionActivity,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TopologyConnection {
     pub id: String,
     pub kind: TopologyConnectionKind,
@@ -107,7 +107,7 @@ pub struct TopologyConnection {
     pub metrics: Vec<TopologyCounter>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TopologyConnectionPage {
     pub items: Vec<TopologyConnection>,
     pub total: usize,

@@ -9,7 +9,15 @@ Use Rust's normal split between unit and integration tests.
 - Unit tests live next to the module they exercise under `src/`.
 - Integration tests live under `tests/`.
 - Domain end-to-end flows use `tests/*_e2e.rs`.
-- Semantic boundary checks live under `tests/semantic_boundaries.rs`.
+- Cross-domain semantic boundary checks live under `tests/multi_domain_e2e.rs`.
+- [Domain behavior coverage](domain-behavior-coverage.md) maps invariants to actor,
+  transport, and recovery tests.
+
+Cover backend behavior in Rust and UI behavior in TypeScript. Use the existing
+test runners; do not add Python files or standalone scripts to reproduce or
+check behavior.
+Assert observable results and semantic invariants. Do not read source files to
+assert function names, code fragments, or implementation layout.
 
 Use unit tests for isolated parsing, state transitions, actor helpers, storage-key helpers, and protocol codecs. Use integration tests when a behavior spans transport, session state, runtime routing, storage, auth, or multiple domains.
 
@@ -32,6 +40,13 @@ The complete CI correctness pass is:
 ```bash
 cargo test --locked --workspace
 ```
+
+Queue's generated reservation model checks token/session ownership, visibility,
+expiry, extension and disconnect after every transition. Schedule's generated
+model checks definitions and live/persisted claims through upserts, cancellation,
+ACK and reconstruction over a retained engine. RPC's generated cleanup-order
+model checks cancellation credit against stale and unauthorized acknowledgements.
+These are bounded state-machine tests, not exhaustive interleaving proofs.
 
 Midge continues to own WAL, manifest, corruption, low-level writer fencing,
 and storage failpoint coverage. Fitz owns the domain contract at its actor,
@@ -80,9 +95,9 @@ Required coverage patterns:
 - Notice: disconnect cleanup, wildcard matching, duplicate subscription handling, RouteFamily isolation, no replay expectation.
 - Stream: append sessions, commit ordering, replay from offsets, watermarks, restart recovery of committed history, no live subscription recovery.
 - KV: transaction scope, commit, rollback, stale transaction rejection, RouteFamily isolation, restart recovery of committed values only.
-- Queue: enqueue, reserve, complete, extend, redelivery, dead-letter handling, write-policy durability, invalid token rejection.
+- Queue: enqueue, reserve, complete, extend, redelivery, dead-letter handling, best-effort acceptance, explicitly flushed recovery, crash-loss boundaries, invalid token rejection.
 - RPC: worker registration, request correlation, timeout, backpressure, streaming sequence, cleanup after disconnect or restart.
-- Lease: single live holder, fencing token scope, renew/release token validation, wait ordering, restart loss, selector grammar and authorization parity, exact keyed LIST, bounded wildcard snapshot work and retention, byte-bounded pagination, cursor misuse and expiry filtering, wildcard registration quotas and indexed fanout, notification transitions, RouteFamily isolation, and race-safe subscribe-before-list observers across reconnect, overflow, periodic reconciliation, and close on every supported client transport.
+- Lease: single live holder, fencing token scope, renew/release token validation, wait ordering, restart loss, selector grammar and authorization parity, exact keyed LIST, bounded wildcard snapshot work and retention, byte-bounded pagination, cursor misuse and expiry filtering, total and wildcard registration quotas and indexed fanout, notification transitions, RouteFamily isolation, and race-safe subscribe-before-list observers across reconnect, overflow, periodic reconciliation, and close on every supported client transport.
 - Schedule: persisted definitions, due-time handling, skip-forward overdue normalization, pending fire claims, live-only subscriptions.
 
 ## Determinism
@@ -94,7 +109,20 @@ Required coverage patterns:
 
 ## Validation Commands
 
+`cntryl-tools` owns test-structure conventions and module-size checks. Run those
+checks directly; do not reproduce them with source-scanning tests. CI installs
+the pinned revision documented in `CONTRIBUTING.md`.
+
+Performance and stress workloads belong in the six benchmark tiers and use
+`cntryl-stress` through direct `cargo bench` commands. See
+[Benchmark Guidelines](benchmarks.md) for the dedicated workflows and framework
+artifacts. Correctness tests exercise broker behavior and benchmark accounting
+invariants; they do not launch performance campaigns.
+
 ```sh
+cntryl-tools validate-tests
+cntryl-tools check-module-sizes
+cntryl-tools validate-benchmarks
 cargo fmt --all -- --check
 cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic

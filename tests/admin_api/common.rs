@@ -553,6 +553,9 @@ pub(crate) fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
 }
 
 pub(crate) fn seed_stream_watermark_lag_data(runtime: &Arc<Runtime>) {
+    // Settle the real Stream projection first; admin reads refresh dirty
+    // projections and would otherwise replace these synthetic watermarks.
+    let _ = runtime.stream_list_streams(None);
     let read_model = runtime.admin_read_model();
     read_model.replace_stream_area_watermarks(vec![
         StreamAreaWatermarkDetail {
@@ -621,7 +624,6 @@ pub(crate) fn seed_committed_kv_values(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Buffered,
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),
@@ -639,7 +641,11 @@ pub(crate) fn seed_committed_kv_values(
         }
     }
 
-    match actor.handle(KvMessage::Commit { tx_id, scope }) {
+    match actor.handle(KvMessage::Commit {
+        tx_id,
+        scope,
+        persistence: fitz::domains::CommitPersistence::Buffered,
+    }) {
         KvResponse::CommitOk => {}
         other => panic!("Expected CommitOk response, found {other:?}"),
     }
@@ -660,7 +666,6 @@ pub(crate) fn delete_committed_kv_range(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: fitz::domains::WritePolicy::Buffered,
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),
@@ -676,7 +681,11 @@ pub(crate) fn delete_committed_kv_range(
         other => panic!("Expected DeleteRangeOk response, found {other:?}"),
     }
 
-    match actor.handle(KvMessage::Commit { tx_id, scope }) {
+    match actor.handle(KvMessage::Commit {
+        tx_id,
+        scope,
+        persistence: fitz::domains::CommitPersistence::Buffered,
+    }) {
         KvResponse::CommitOk => {}
         other => panic!("Expected CommitOk response, found {other:?}"),
     }

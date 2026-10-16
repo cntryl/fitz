@@ -363,11 +363,7 @@ impl std::fmt::Display for StreamSubscriptionFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidPattern(message) => write!(f, "{message}"),
-            Self::Limit => write!(
-                f,
-                "wildcard subscription limit exceeded ({} per session)",
-                crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
-            ),
+            Self::Limit => write!(f, "subscription limit exceeded"),
         }
     }
 }
@@ -460,14 +456,8 @@ pub enum StreamCoordinationMessage {
     BatchCommitted(BatchCommitted),
 }
 
-/// Write mode for stream commits
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StreamWriteMode {
-    /// Buffered: throughput-first, may lose recent events on crash
-    Buffered,
-    /// Sync: correctness-first, writes are committed synchronously
-    Sync,
-}
+/// Explicit persistence choice on Stream COMMIT, shared with KV.
+pub use crate::domains::CommitPersistence as StreamWriteMode;
 
 /// Batch committed notification from `StreamActor` to `AreaActor`
 #[derive(Debug, Clone)]

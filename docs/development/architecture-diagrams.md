@@ -48,7 +48,7 @@ flowchart TB
     subgraph L5["Layer 5: Midge-backed storage where explicitly used"]
         MIDGE["Midge engine"]
         KVSTORE["KV committed state"]
-        QSTORE["Queue durable backlog"]
+        QSTORE["Queue best-effort persisted backlog"]
         SSTORE["Stream committed history"]
         TSTORE["Schedule timing intent"]
     end
@@ -147,7 +147,7 @@ Cleanup removes only session-owned live state:
 | Stream | live subscriptions and uncommitted append sessions | committed records, offsets, watermarks |
 | Schedule | live subscriptions | definitions, next-fire state, pending fire claims |
 | Lease | held leases, waiters, lease watches | nothing |
-| Queue | live inflight ownership and queue watches | durable backlog, delayed entries, DLQ state under the configured write policy |
+| Queue | live inflight ownership and queue watches | best-effort persisted backlog, delayed entries, and DLQ state |
 
 A reconnect creates a new session. Clients must explicitly re-authenticate,
 re-subscribe, re-register, reopen transactions, reacquire leases, or resume from
@@ -166,7 +166,7 @@ flowchart TB
     subgraph DU["Durable primary guarantees with live session adjuncts"]
         KV["KV<br/>durable committed current state<br/>ephemeral transactions and watches"]
         STREAM["Stream<br/>durable committed history and replay<br/>ephemeral append sessions and live subscriptions"]
-        QUEUE["Queue<br/>durable backlog by write policy<br/>ephemeral inflight ownership"]
+        QUEUE["Queue<br/>best-effort persisted backlog<br/>ephemeral inflight ownership"]
         SCHEDULE["Schedule<br/>durable timing intent<br/>ephemeral subscriptions and delivery"]
     end
 

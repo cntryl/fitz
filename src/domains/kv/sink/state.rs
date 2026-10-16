@@ -22,6 +22,13 @@ pub(super) struct KvActiveTransactions {
 }
 
 impl KvActiveTransactions {
+    #[cfg(test)]
+    pub(super) fn lock_for_tests(
+        &self,
+    ) -> parking_lot::MutexGuard<'_, HashMap<(u64, u64), KvResourceLockKey>> {
+        self.by_transaction.lock()
+    }
+
     pub(super) fn upsert(
         &self,
         session_id: u64,

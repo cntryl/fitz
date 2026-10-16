@@ -12,6 +12,7 @@ pub(in crate::domains::rpc::sink) struct RpcDomainConfig {
     pub(in crate::domains::rpc::sink) admin_read_model:
         Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(in crate::domains::rpc::sink) request_timeout: Duration,
+    pub(in crate::domains::rpc::sink) cancellation_grace_period: Duration,
     pub(in crate::domains::rpc::sink) route_pending_capacity: usize,
     pub(in crate::domains::rpc::sink) global_pending_count: Arc<AtomicUsize>,
     pub(in crate::domains::rpc::sink) snapshot_epoch: Instant,
@@ -27,6 +28,7 @@ pub(in crate::domains::rpc::sink) struct RpcFamilyState {
     pub(in crate::domains::rpc::sink) admin_read_model:
         Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(in crate::domains::rpc::sink) request_timeout: Duration,
+    pub(in crate::domains::rpc::sink) cancellation_grace_period: Duration,
     pub(in crate::domains::rpc::sink) route_pending_capacity: usize,
     pub(in crate::domains::rpc::sink) global_pending_count: Arc<AtomicUsize>,
     pub(in crate::domains::rpc::sink) snapshot_dirty: AtomicBool,

@@ -645,6 +645,44 @@ fn should_cap_wildcard_registrations_per_session() {
 }
 
 #[test]
+fn should_cap_total_registrations_per_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let mut state = RpcState::new();
+    for index in 0..crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION {
+        let worker = RpcWorker::new(
+            RouteAddress::new(
+                family,
+                Route::new(format!("rpc://bench/area{index}/worker/run")),
+            ),
+            session_inbox_address(family, 10),
+            10,
+            1,
+        );
+        assert!(matches!(
+            state.register_registration(worker),
+            RpcWorkerRegistration::Registered
+        ));
+    }
+    let overflow = RpcWorker::new(
+        RouteAddress::new(family, Route::new("rpc://bench/overflow/worker/run")),
+        session_inbox_address(family, 10),
+        10,
+        1,
+    );
+
+    // Act
+    let result = state.register_registration(overflow);
+
+    // Assert
+    assert!(matches!(result, RpcWorkerRegistration::TotalLimit));
+    assert_eq!(
+        state.registration_count(),
+        crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION
+    );
+}
+
+#[test]
 fn should_snapshot_unused_wildcard_registration_once() {
     // Arrange
     let router = Arc::new(Router::new());

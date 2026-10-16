@@ -2,10 +2,80 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## Midge 0.4.1
+
+Fitz uses the published crates.io `cntryl-midge` 0.4.1 package. This patch
+fixes cloud catalog memory admission during recovery, publication, retirement,
+and salvage. Relative to 0.4.0, FORMAT 8, SST V4, catalog v3, lease metadata v3,
+and Fitz row encodings are unchanged; this patch alone requires no logical
+export/import.
+
+Stop writers, complete orderly shutdown, preserve a verified store and cloud
+prefix copy, and qualify reads, writes, shutdown, and recovery with the new
+broker at the deployment's actual resource limits. Include complete local-cache
+loss for cloud storage. Rollback to a 0.4.0 broker is format-compatible after
+clean shutdown, but restores the catalog admission defects and is unsuitable
+for affected stores. Pre-0.4 stores still require the logical migration below;
+never open the deployed Fitz 0.1.0 prefix directly with the new broker.
+
+## Midge 0.4.0
+
+The official crates.io `cntryl-midge` 0.4.0 release replaced
+the 0.3.3 Git pin and introduced database FORMAT 8, SST V4, cloud WAL catalog v3,
+and cloud lease metadata version 3. Existing FORMAT 1–7 databases and older
+cloud catalogs are rejected; there is no in-place format migration.
+
+Stop writers, preserve the original database and cloud prefix, and export
+logical data with the previous broker while it can still read that data.
+Preserve application metadata needed to reconstruct TTL expiration. Import
+into a fresh database or cloud prefix using the new broker; do not copy old
+WAL, lease, catalog, or metadata files into it. Qualify reads, writes, shutdown,
+and restart recovery before cutover, including fresh-cache recovery for cloud
+storage. Rollback requires the preserved original store and previous broker;
+post-export writes require separate reconciliation.
+
+An unknown commit outcome is a terminal storage error: the write may have
+committed despite a failed acknowledgement. Reconcile after recovery instead
+of blindly retrying. See the [Midge 0.4.0 migration guide](https://github.com/cntryl/midge/blob/v0.4.0/docs/operations/migration-guide.md#032-to-040).
+
+## Midge 0.3.2 to 0.3.3
+
+The previous Fitz development version embedded `cntryl-midge` 0.3.3, pinned to git rev
+`d5bcb607b75b1fa5cf5e4f4f910d7e49f9ebe12b` because 0.3.3 is not yet tagged or
+published. Relative to 0.3.2, Midge FORMAT 4, SST V4, cloud control formats,
+and Fitz row encodings are unchanged, so no logical export/import is required.
+Use the same stop, preserve, and qualify-a-copy procedure as the 0.3.1 to 0.3.2
+update below.
+
+0.3.3 fixes a false absence on point and bounded prefix reads after SST
+publication when a duplicate SST successor boundary spans many retained
+versions; Stream epoch reads under Fast Queue pressure could observe it.
+Rollback to a 0.3.2 broker can read the same format but restores that defect.
+
+## Midge 0.3.1 to 0.3.2
+
+Relative to 0.3.1, Midge FORMAT 4,
+SST V4, cloud control formats, and Fitz row encodings are unchanged. This
+dependency update requires no logical export/import for an otherwise compatible
+Fitz store. Stop writes, complete broker shutdown, preserve a verified database
+and cloud-prefix copy, and qualify reads, writes, and recovery on a separate
+copy before cutover; cloud qualification should also cover local-cache loss.
+
+Cloud transactions and active iterators now return `MidgeError::Fenced` after
+lease loss, including reads. Fitz propagates storage failures; an operator must
+restore healthy writer authority rather than treat those failures as successful
+reads or safe mutation retries. The new optional Midge startup timeout is not
+enabled by this dependency update.
+
+Rollback uses the preserved pre-upgrade copy with the previous broker image.
+Writes after that copy require separate reconciliation, and rollback restores
+the Midge defects fixed in 0.3.2. Salvage-mutated stores are excluded from this
+rollback procedure. See the [Midge migration guide](https://github.com/cntryl/midge/blob/v0.3.2/docs/operations/migration-guide.md#031-to-032).
+
 ## Breaking: Midge 0.3 cloud storage metadata
 
 **A cloud-mode broker (`FITZ_STORAGE_MODE=cloud`) cannot open a storage prefix
-written by an earlier broker.** This release embeds `cntryl-midge` 0.3.0. It
+written by a broker using Midge 0.2.0.** The Midge 0.3 release line
 commits provider-backed control metadata as immutable generations under a
 version 2 lease descriptor and DDL registry, and it rejects the legacy lease and
 mutable metadata that earlier Fitz releases (Midge 0.2.0) wrote. The broker
@@ -25,7 +95,7 @@ fails to start against an old prefix; nothing is migrated in place.
    - **Logical migration.** While Midge 0.2.0 (the old broker's engine) can
      still read the prefix, export every route-family column family's
      key/value contents through Midge's public API. Then create a new empty
-     prefix and a fresh local cache with the new broker's Midge 0.3.0 and
+     prefix and a fresh local cache with the new broker's Midge 0.3.2 and
      import. Fitz does not ship an export/import tool. Public scans do not
      return expiration timestamps, and Stream rows carry retention TTLs, so an
      importer must recompute each Stream row's remaining TTL from its creation
@@ -97,12 +167,12 @@ Portia's stale-append and pending-batch assertions before release.
 
 ## Rust embedding API: write policies and delivery errors
 
-`KvMessage::Begin::write_options` takes `fitz::domains::WritePolicy` so the
+`KvMessage::Commit::persistence` takes `fitz::domains::CommitPersistence` so the
 domain message does not expose the storage engine's option type. Construct the
 Fitz policy directly:
 
 ```rust,ignore
-write_options: fitz::domains::WritePolicy::Buffered,
+persistence: fitz::domains::CommitPersistence::Buffered,
 ```
 
 Broker configuration carries Fitz `WritePolicy` values into crate-private
@@ -172,7 +242,7 @@ RESERVE form must decode each returned item as
 or COMPLETE. Stream READ now prefixes every event, filtered marker, and filtered
 range with `concrete_route`; mixed broker/client versions cannot decode Stream
 responses. The byte-exact response layouts are defined in
-[the Queue wire contract](../clients/spec/queue-rpc-kv.md) and
+[the Queue wire contract](../clients/spec/queue-rpc.md) and
 [the Stream wire contract](../clients/spec/notice-stream.md).
 
 Existing Stream stores require an offline event export/replay into a fresh
@@ -203,18 +273,22 @@ their cron or payload is malformed.
 
 ### Subscription registration contract
 
-KV, Queue, Notice, Stream, RPC, and Schedule now share strict whole-segment
-`*`/`**` registration validation and a 128-wildcard-registration session limit.
-Exact registrations do not count, and duplicates remain idempotent. Clients
-must surface the domain-specific validation and limit codes: KV 1012/1013,
-Stream 2010/2011, Notice 3002/3003, Queue 4010/4011, RPC 6012/6013, and Schedule
-7006/7007.
+KV, Queue, Notice, Stream, RPC, Schedule, and Lease now share strict
+whole-segment `*`/`**` registration validation, a 1,024-total-registration
+session limit, and a separate 128-wildcard-registration limit. Duplicates
+remain idempotent and do not consume an additional slot. Clients must recognize
+the domain-specific validation and limit responses: KV
+1012/1013, Stream 2010/2011, Notice 3002/3003, Queue 4010/4011, and RPC
+6012/6013 use their existing codes. Schedule SUBSCRIBE/UNSUBSCRIBE errors are
+uncoded, while LIST uses 7006/7007. Lease uses its existing uncoded
+subscription-error response.
 
 Lease `SUBSCRIBE` and `UNSUBSCRIBE` now accept the shared generic
 three-segment selector grammar, including whole-segment `*` and valid
 non-adjacent `**` forms. Existing exact subscriptions remain wire compatible;
 new wildcard callers must use an updated SDK that applies the same grammar as
-the broker and handles the 128-wildcard-registration session limit. `LIST`
+the broker and handles both the 1,024-total and 128-wildcard registration
+limits. `LIST`
 (message 410) is a clean protocol addition with typed 5011/5012
 cursor/selector failures, and each supported SDK now provides a high-level
 subscribe-before-list inventory observer. Upgrade broker and observer clients
@@ -375,3 +449,41 @@ respectively.
 1. Execute smoke tests for each domain.
 2. Verify metrics continuity.
 3. Record upgrade notes and any required mitigations.
+
+## Queue persistence is always best effort
+
+Remove `FITZ_QUEUE_WRITE_POLICY=buffered` or `strict` before upgrading; those
+settings now fail startup. The legacy value `fast` is accepted, and leaving the
+setting unset selects the same unconditional best-effort behavior. Queue skips
+WAL in both local and cloud storage and persists in the background.
+
+An enqueue or ACK response does not guarantee crash recovery. Unpersisted
+mutations and ID reservations can be lost, lost ACKs can cause redelivery, and
+unpersisted IDs can be reused after a crash. Producers must regenerate missing
+work and consumers must tolerate duplicates. `FITZ_QUEUE_LOSS_WINDOW_MS` sets a
+target flush interval, not a durability deadline. Strict cloud durability for
+other domains does not change Queue acceptance.
+
+## Breaking change: explicit KV and Stream COMMIT persistence
+
+KV BEGIN now contains `[u32 route_len][route][u8 mode]` only. Remove its old
+persistence byte. KV COMMIT now requires
+`[u64 tx_id][u32 route_len][route][u8 persistence]`. Stream COMMIT keeps
+`[u64 session_id][u8 persistence]`. In both domains, `0` is Buffered and `1` is
+Sync; missing, invalid, or trailing fields are rejected. Update broker and SDKs
+together; old KV frames are unsupported.
+
+BEGIN creates scope and transaction/isolation state without choosing persistence.
+Call COMMIT with an explicit Buffered or Sync choice for each transaction. Do not
+silently commit a context-managed transaction on scope exit; explicitly commit
+inside the scope, or roll back unfinished work. Local choices map to Buffered/Sync;
+cloud choices map to CloudAsync/CloudStrict. `FITZ_STORAGE_CLOUD_DURABILITY`
+continues to select Schedule's server-owned policy and cannot downgrade a KV or
+Stream Sync commit. Queue persistence remains always best effort.
+
+Server implementation: [Fitz #471](https://github.com/cntryl/fitz/issues/471).
+Coordinated SDK updates: [.NET #54](https://github.com/cntryl/fitz-dotnet/issues/54),
+[TypeScript #52](https://github.com/cntryl/fitz-ts/issues/52),
+[Go #29](https://github.com/cntryl/fitz-go/issues/29),
+[Rust #31](https://github.com/cntryl/fitz-rs/issues/31),
+[Python #17](https://github.com/cntryl/fitz-py/issues/17).

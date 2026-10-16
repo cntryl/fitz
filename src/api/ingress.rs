@@ -174,36 +174,30 @@ mod tests {
 
     #[test]
     fn should_display_ingress_errors() {
-        // Arrange / Act / Assert: each variant's Display impl must actually
-        // surface its structured data, not just a static label — this is
-        // what operators and clients see in logs/error responses.
-        let frame_too_large = format!(
-            "{}",
+        // Arrange
+        let errors = [
             IngressError::FrameTooLarge {
                 size: 2048,
                 max: 1024,
-            }
-        );
-        assert!(frame_too_large.contains("2048"));
-        assert!(frame_too_large.contains("1024"));
-        assert!(format!("{}", IngressError::SessionNotFound(123)).contains("123"));
-        assert!(format!(
-            "{}",
-            IngressError::InvalidFrame("missing length prefix".to_string())
-        )
-        .contains("missing length prefix"));
-        assert!(format!(
-            "{}",
-            IngressError::TransportError("connection reset".to_string())
-        )
-        .contains("connection reset"));
+            },
+            IngressError::SessionNotFound(123),
+            IngressError::InvalidFrame("missing length prefix".to_string()),
+            IngressError::TransportError("connection reset".to_string()),
+            IngressError::TooManyConnections,
+            IngressError::BackpressureFull,
+        ];
 
-        // Variants with no embedded data should still format to something
-        // non-empty and distinct from one another.
-        let too_many = format!("{}", IngressError::TooManyConnections);
-        let backpressure = format!("{}", IngressError::BackpressureFull);
-        assert_ne!(too_many, "");
-        assert_ne!(backpressure, "");
-        assert_ne!(too_many, backpressure);
+        // Act
+        let messages = errors.map(|error| error.to_string());
+
+        // Assert
+        assert!(messages[0].contains("2048"));
+        assert!(messages[0].contains("1024"));
+        assert!(messages[1].contains("123"));
+        assert!(messages[2].contains("missing length prefix"));
+        assert!(messages[3].contains("connection reset"));
+        assert_ne!(messages[4], "");
+        assert_ne!(messages[5], "");
+        assert_ne!(messages[4], messages[5]);
     }
 }

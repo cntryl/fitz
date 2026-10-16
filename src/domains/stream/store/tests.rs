@@ -49,6 +49,9 @@ fn drain_maintenance(store: &StreamStore, family: u64) -> StreamMaintenanceResul
 
 mod sessions_layout_and_watermarks;
 use sessions_layout_and_watermarks::*;
+mod bounded_replay;
+mod commit_persistence;
+mod compacted_locator_cache;
 mod filters_ttl_and_metadata;
 mod global_ordering;
 mod global_recovery_and_filters;
@@ -57,3 +60,5 @@ mod model_based;
 mod offsets_and_reads;
 mod overflow_and_recovery;
 mod ttl_cursor_regressions;
+
+mod storage_admission;

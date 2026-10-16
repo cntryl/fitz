@@ -14,6 +14,12 @@ export type DomainOverviewFixture = {
   stats: Record<string, unknown>;
 };
 
+export const scenarioNow = Date.now();
+
+export function scenarioTime(offsetMs = 0) {
+  return new Date(scenarioNow + offsetMs).toISOString();
+}
+
 export const adminFeatures = {
   admin_auth_required: false,
   admin_auth_mode: "open" as const,
@@ -108,7 +114,7 @@ export const topologyApiPayload: MessagingTopology = {
     truncated: false,
   },
   diagnostics: dashboardDiagnostics,
-  generated_at: "2026-06-23T18:30:00.000Z",
+  generated_at: scenarioTime(),
   lanes: [
     topologyDtoLane("queue", "blocked", 4),
     topologyDtoLane("rpc", "flowing", 4),
@@ -375,6 +381,13 @@ export function domainResourcesByArea(domain: string, realm: string, area: strin
   const metrics =
     {
       lease: { active_leases: 2, oldest_lease_age_seconds: 47, waiters: 1 },
+      kv: {
+        estimated_record_count: 1280,
+        estimated_storage_bytes: 65536,
+        transactions_active: 2,
+        read_latency_p95_ms: 3.4,
+        write_latency_p95_ms: 4.8,
+      },
       notice: {
         notifications_received: 128,
         publishes_per_minute: 12.5,
@@ -386,7 +399,7 @@ export function domainResourcesByArea(domain: string, realm: string, area: strin
         workers_registered: 4,
       },
       schedule: {
-        next_run: "2026-08-01T12:00:00Z",
+        next_run: scenarioTime(5 * 60_000),
         pending_claims: 1,
         schedules_active: 2,
       },
@@ -410,30 +423,35 @@ export function noticeDeliveriesFixture(options: {
   area?: string;
   limit?: number;
   operation?: string | null;
+  routeFamily?: number;
   realm?: string;
   resource?: string;
 }) {
+  const realm = options.realm ?? "default";
+  const area = options.area ?? "ops";
+  const resource = options.resource ?? "primary";
+  const routePrefix = `notice://${realm}/${area}/${resource}/`;
   const rows = [
     {
-      area: options.area ?? "ops",
+      area,
       notifications_received: 12,
       publishes_per_minute: 30,
       publishes_total: 120,
-      realm: options.realm ?? "default",
-      resource: options.resource ?? "primary",
-      route: options.operation ?? "GetStatus",
+      realm,
+      resource,
+      route: `${routePrefix}${options.operation ?? "GetStatus"}`,
       session_id: "session-1",
       status: "open",
       subscription_id: 11,
     },
     {
-      area: options.area ?? "ops",
+      area,
       notifications_received: 8,
       publishes_per_minute: 11,
       publishes_total: 45,
-      realm: options.realm ?? "default",
-      resource: options.resource ?? "primary",
-      route: "Stream",
+      realm,
+      resource,
+      route: `${routePrefix}Stream`,
       session_id: "session-2",
       status: "open",
       subscription_id: 12,
@@ -441,15 +459,15 @@ export function noticeDeliveriesFixture(options: {
   ];
 
   const observations = options.operation
-    ? rows.filter((row) => row.route === options.operation)
+    ? rows.filter((row) => row.route.slice(routePrefix.length) === options.operation)
     : rows;
 
   return {
-    area: options.area ?? "ops",
+    area,
     limit: options.limit ?? 50,
     observations,
-    realm: options.realm ?? "default",
-    route_family: 7,
+    realm,
+    route_family: options.routeFamily ?? 1,
   };
 }
 
@@ -527,6 +545,7 @@ export async function mockDomainOverviewApis(
           area,
           limit,
           operation,
+          routeFamily: Number(parsed.pathname.split("/").filter(Boolean)[2]) || 1,
           realm,
           resource,
         }),
@@ -615,7 +634,7 @@ export type SessionsPayload = {
 export const sessionsWithData: SessionsPayload = {
   sessions: [
     {
-      connected_at: "2026-05-21T13:00:00Z",
+      connected_at: scenarioTime(-10 * 60_000),
       idle_seconds: 12,
       identity_claim: "tid",
       identity_value: "default",
@@ -628,7 +647,7 @@ export const sessionsWithData: SessionsPayload = {
       transport: "ws",
     },
     {
-      connected_at: "2026-05-21T13:01:00Z",
+      connected_at: scenarioTime(-9 * 60_000),
       idle_seconds: 45,
       identity_claim: "tenant",
       identity_value: "ops",
@@ -650,7 +669,7 @@ export const sessionsEmpty: SessionsPayload = {
 export const structuredMetricsPayload: StructuredMetricsResponse = {
   scope: "family",
   family: 1,
-  generated_at: 1719167400000,
+  generated_at: scenarioNow,
   samples: [
     {
       name: "fitz_broker_uptime_seconds",
@@ -713,9 +732,9 @@ export function makeDiagnosticSnapshot(
     current_stage: "healthy",
     explanation_hints: ["Sprint 16 fixture route state."],
     failure_count: 0,
-    last_changed_at: "2026-05-21T13:00:00.000Z",
+    last_changed_at: scenarioTime(-5 * 60_000),
     last_failure_at: null,
-    last_success_at: "2026-05-21T13:00:00.000Z",
+    last_success_at: scenarioTime(-60_000),
     likely_bottleneck: null,
     recent_transition_count: 0,
     severity: "informational",

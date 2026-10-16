@@ -8,7 +8,11 @@ import {
 } from "@/features/queue/queue-resource-mappers";
 import { mapKvStats } from "@/features/kv/kv-mappers";
 import { mapLeaseStats } from "@/features/lease/lease-mappers";
-import { mapNoticeResourceOperationRows, mapNoticeStats } from "@/features/notice/notice-mappers";
+import {
+  mapNoticeDeliveryRows,
+  mapNoticeResourceOperationRows,
+  mapNoticeStats,
+} from "@/features/notice/notice-mappers";
 import { mapRpcStats } from "@/features/rpc/rpc-mappers";
 import { mapScheduleStats } from "@/features/schedule/schedule-mappers";
 import { mapStreamStats } from "@/features/stream/stream-mappers";
@@ -18,47 +22,125 @@ import { healthyDiagnostics, healthyGlobalDiagnostics } from "./fixtures/topolog
 
 describe("Data query layer", () => {
   it("keeps one route publish rate when Notice repeats it per subscription", () => {
-    const mapped = mapNoticeResourceOperationRows({
-      limit: 50,
-      observations: [
-        {
-          area: "ops",
-          notifications_received: 8,
-          publishes_per_minute: 12.5,
-          publishes_total: 100,
-          realm: "default",
-          resource: "orders",
-          route: "notice://default/ops/orders/RefreshProjection",
-          route_family: 1,
-          session_id: "session-1",
-          status: "active_subscription",
-          subscription_id: 11,
-        },
-        {
-          area: "ops",
-          notifications_received: 5,
-          publishes_per_minute: 12.5,
-          publishes_total: 100,
-          realm: "default",
-          resource: "orders",
-          route: "notice://default/ops/orders/RefreshProjection",
-          route_family: 1,
-          session_id: "session-2",
-          status: "active_subscription",
-          subscription_id: 12,
-        },
-      ],
-      route_family: 1,
-    });
+    const mapped = mapNoticeResourceOperationRows(
+      {
+        limit: 50,
+        observations: [
+          {
+            area: "ops",
+            notifications_received: 8,
+            publishes_per_minute: 12.5,
+            publishes_total: 100,
+            realm: "default",
+            resource: "orders",
+            route: "notice://default/ops/orders/RefreshProjection",
+            route_family: 1,
+            session_id: "session-1",
+            status: "active_subscription",
+            subscription_id: 11,
+          },
+          {
+            area: "ops",
+            notifications_received: 5,
+            publishes_per_minute: 12.5,
+            publishes_total: 100,
+            realm: "default",
+            resource: "orders",
+            route: "notice://default/ops/orders/RefreshProjection",
+            route_family: 1,
+            session_id: "session-2",
+            status: "active_subscription",
+            subscription_id: 12,
+          },
+          {
+            area: "ops",
+            notifications_received: 1,
+            publishes_per_minute: 90,
+            publishes_total: 4,
+            realm: "other",
+            resource: "orders",
+            route: "notice://other/ops/orders/RefreshProjection",
+            route_family: 1,
+            session_id: "out-of-scope",
+            status: "active_subscription",
+            subscription_id: 13,
+          },
+          {
+            area: "ops",
+            notifications_received: 1,
+            publishes_per_minute: 40,
+            publishes_total: 4,
+            realm: "default",
+            resource: "orders",
+            route: "notice://default/ops/orders/RefreshProjection/archive",
+            route_family: 1,
+            session_id: "sibling-route",
+            status: "active_subscription",
+            subscription_id: 14,
+          },
+        ],
+        route_family: 1,
+      },
+      { area: "ops", realm: "default", resource: "orders" },
+    );
 
     expect(mapped.operations).toEqual([
       {
         activeSubscribers: 2,
         latencyMs: null,
-        operation: "notice://default/ops/orders/RefreshProjection",
+        operation: "RefreshProjection",
+        route: "notice://default/ops/orders/RefreshProjection",
         rollingMessageCount: 12.5,
       },
+      {
+        activeSubscribers: 1,
+        latencyMs: null,
+        operation: "RefreshProjection/archive",
+        rollingMessageCount: 40,
+        route: "notice://default/ops/orders/RefreshProjection/archive",
+      },
     ]);
+    expect(mapped.observationsReturned).toBe(4);
+  });
+
+  it("filters Notice delivery evidence to one exact operation route", () => {
+    const mapped = mapNoticeDeliveryRows(
+      {
+        limit: 50,
+        observations: [
+          {
+            area: "ops",
+            notifications_received: 1,
+            publishes_per_minute: 2,
+            publishes_total: 3,
+            realm: "default",
+            resource: "orders",
+            route: "notice://default/ops/orders/RefreshProjection",
+            route_family: 1,
+            session_id: "match",
+            status: "active_subscription",
+            subscription_id: 1,
+          },
+          {
+            area: "ops",
+            notifications_received: 1,
+            publishes_per_minute: 2,
+            publishes_total: 3,
+            realm: "default",
+            resource: "orders",
+            route: "notice://default/ops/orders/RefreshProjection/archive",
+            route_family: 1,
+            session_id: "prefix-match-only",
+            status: "active_subscription",
+            subscription_id: 2,
+          },
+        ],
+        route_family: 1,
+      },
+      { area: "ops", operation: "RefreshProjection", realm: "default", resource: "orders" },
+    );
+
+    expect(mapped.observations.map((row) => row.sessionId)).toEqual(["match"]);
   });
 
   it("maps queue DTOs to camelCase app models", () => {

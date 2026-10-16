@@ -4,19 +4,27 @@ import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Form, Input, Label } from "@askrjs/ui";
 import { Button, Block } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
+import DomainFacts from "@/components/shared/domain-facts";
 import RowsRequestPrompt from "@/components/shared/rows-request-prompt";
-import { hasRowsRequest } from "@/shared/navigation/rows-request";
+import { hasRowsRequest, revealSectionHref } from "@/shared/navigation/rows-request";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import { QueryEmptyState } from "@/components/shared/query-state";
+import {
+  QueryEmptyState,
+  QueryErrorState,
+  QueryLoadingState,
+} from "@/components/shared/query-state";
 import type { KvKeyEncoding } from "@/features/kv/kv-models";
 import {
   DEFAULT_ROWS_LIMIT,
   KvRowsSection,
+  KvTransactionsSection,
   KvValueLookupResult,
   rowsHref,
 } from "@/features/kv/kv-resource-sections";
-import { currentRouteFamilySegment } from "@/shared/navigation/domains";
+import { createKvResourceDetailQuery } from "@/features/kv/kv-query";
+import { formatBytes, formatNumber } from "@/shared/format";
+import { currentRouteFamilySegment, domainResourceHref } from "@/shared/navigation/domains";
 import { parseConcreteRouteFamilyId, useOperatorScope } from "@/shared/operator-scope";
 
 function decodeParam(value: string | undefined) {
@@ -61,6 +69,9 @@ export default function KvResourcePage() {
   const selectedFamily = currentRouteFamilySegment() ?? operator.selectedRouteFamilyId;
   const concreteFamily = parseConcreteRouteFamilyId(selectedFamily);
   const rowsRequested = hasRowsRequest(route.query, ["cursor", "startsWith"]);
+  const transactionsRequested = route.query.get("transactions") === "1";
+  const detailQuery = createKvResourceDetailQuery(scope);
+  const detail = detailQuery.data;
   const lookup = activeLookup();
 
   function applyFilters(event: Event) {
@@ -70,6 +81,7 @@ export default function KvResourcePage() {
       rowsHref(scope, {
         limit: nextLimit,
         startsWith: startsWithDraft(),
+        transactions: transactionsRequested,
       }),
     );
   }
@@ -96,11 +108,72 @@ export default function KvResourcePage() {
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
+          compact={true}
           eyebrow="KV resource"
           title={scope.resource}
           description={`${scope.realm} / ${scope.area}`}
           status={rowsStatus}
         />
+
+        <Show when={detailQuery.loading && !detail}>
+          <QueryLoadingState description="Loading KV resource measurements..." />
+        </Show>
+        <Show when={detailQuery.error}>
+          <QueryErrorState
+            title="Unable to load KV resource measurements"
+            error={detailQuery.error}
+            onRetry={() => detailQuery.refresh()}
+          />
+        </Show>
+        <Show when={detail}>
+          {(resourceDetail) => (
+            <DomainFacts
+              id="kv-resource-facts"
+              title="Current state"
+              items={[
+                {
+                  label: resourceDetail.estimateComplete
+                    ? "Estimated records"
+                    : "Estimated records (incomplete)",
+                  value: resourceDetail.measurementsAvailable
+                    ? formatNumber(resourceDetail.estimatedRecordCount)
+                    : "--",
+                  title: resourceDetail.measurementsAvailable
+                    ? resourceDetail.estimateComplete
+                      ? "Current KV inventory estimate."
+                      : "KV inventory estimate is incomplete."
+                    : "KV inventory measurements are unavailable for this resource.",
+                },
+                {
+                  label: "Estimated storage",
+                  value: resourceDetail.measurementsAvailable
+                    ? formatBytes(resourceDetail.estimatedStorageBytes)
+                    : "--",
+                },
+                {
+                  label: "Active transactions",
+                  value: formatNumber(resourceDetail.transactionsActive),
+                },
+                {
+                  label: "Read p95",
+                  value: resourceDetail.measurementsAvailable
+                    ? `${resourceDetail.readLatencyP95Ms.toFixed(1)} ms`
+                    : "--",
+                  title:
+                    "Percentile from up to 256 retained resource samples; the sample is not time-based.",
+                },
+                {
+                  label: "Write p95",
+                  value: resourceDetail.measurementsAvailable
+                    ? `${resourceDetail.writeLatencyP95Ms.toFixed(1)} ms`
+                    : "--",
+                  title:
+                    "Percentile from up to 256 retained resource samples; the sample is not time-based.",
+                },
+              ]}
+            />
+          )}
+        </Show>
 
         <DomainDataSection
           id="kv-exact-key-lookup"
@@ -206,7 +279,7 @@ export default function KvResourcePage() {
         <Show when={concreteFamily !== null && !rowsRequested}>
           <RowsRequestPrompt
             description="Committed rows load only when requested."
-            href={rowsHref(scope, { limit, startsWith })}
+            href={rowsHref(scope, { limit, startsWith, transactions: transactionsRequested })}
             label="Load rows"
           />
         </Show>
@@ -218,7 +291,20 @@ export default function KvResourcePage() {
             limit={limit}
             scope={scope}
             startsWith={startsWith}
+            transactions={transactionsRequested}
           />
+        </Show>
+
+        <Show when={concreteFamily !== null && detail && detail.transactionsActive > 0}>
+          {transactionsRequested ? (
+            <KvTransactionsSection scope={scope} />
+          ) : (
+            <RowsRequestPrompt
+              description="Inspect transaction mode, age, and queued operations."
+              href={revealSectionHref(domainResourceHref("kv", scope), route.query, "transactions")}
+              label="Inspect active transactions"
+            />
+          )}
         </Show>
       </Block>
     </DomainPageFrame>

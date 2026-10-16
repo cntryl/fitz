@@ -2,6 +2,41 @@ use super::*;
 
 #[test]
 #[serial]
+fn should_require_commit_persistence_without_background_cloud_downgrade() {
+    with_storage_env(
+        &[
+            ("FITZ_STORAGE_MODE", "cloud"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
+            ("FITZ_STORAGE_CLOUD_DURABILITY", "background"),
+        ],
+        || {
+            // Arrange
+            let config = BootConfig::new();
+
+            // Act
+            let policies = [
+                config.request_buffered_write_policy(),
+                config.request_sync_write_policy(),
+            ];
+
+            // Assert
+            assert_eq!(
+                policies,
+                [
+                    crate::domains::WritePolicy::CloudAsync,
+                    crate::domains::WritePolicy::CloudStrict,
+                ]
+            );
+            assert_eq!(
+                config.queue_write_policy(),
+                crate::domains::WritePolicy::BestEffort
+            );
+        },
+    );
+}
+
+#[test]
+#[serial]
 fn should_default_storage_lease_ttl_to_thirty_seconds() {
     with_storage_env(&[], || {
         // Arrange
@@ -191,7 +226,7 @@ fn should_accept_background_cloud_durability() {
             );
             assert_eq!(
                 config.request_sync_write_policy(),
-                crate::domains::WritePolicy::CloudAsync
+                crate::domains::WritePolicy::CloudStrict
             );
             assert_eq!(
                 config.request_buffered_write_policy(),
@@ -203,27 +238,20 @@ fn should_accept_background_cloud_durability() {
 
 #[test]
 #[serial]
-fn should_map_queue_buffered_write_policy_to_cloud_async() {
-    with_storage_env(
-        &[
-            ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
-            ("FITZ_QUEUE_WRITE_POLICY", "buffered"),
-        ],
-        || {
-            // Arrange
+fn should_reject_removed_buffered_queue_policy() {
+    with_storage_env(&[("FITZ_QUEUE_WRITE_POLICY", "buffered")], || {
+        // Arrange
+        let config = BootConfig::new();
 
-            // Act
-            let config = BootConfig::new();
+        // Act
+        let result = config.validate();
 
-            // Assert
-            assert_eq!(config.queue_write_policy, QueueWritePolicy::Buffered);
-            assert_eq!(
-                config.queue_write_policy(),
-                crate::domains::WritePolicy::CloudAsync
-            );
-        },
-    );
+        // Assert
+        assert!(result
+            .expect_err("Queue only supports best-effort persistence")
+            .to_string()
+            .contains("FITZ_QUEUE_WRITE_POLICY"));
+    });
 }
 
 #[test]
@@ -254,41 +282,41 @@ fn should_reject_invalid_cloud_durability() {
 
 #[test]
 #[serial]
-fn should_map_queue_strict_write_policy_to_local_sync() {
+fn should_reject_removed_strict_queue_policy() {
     with_storage_env(&[("FITZ_QUEUE_WRITE_POLICY", "strict")], || {
         // Arrange
+        let config = BootConfig::new();
 
         // Act
-        let config = BootConfig::new();
-        let write_policy = config.queue_write_policy();
+        let result = config.validate();
 
         // Assert
-        assert_eq!(config.queue_write_policy, QueueWritePolicy::Strict);
-        assert_eq!(write_policy, crate::domains::WritePolicy::Sync);
+        assert!(result
+            .expect_err("Queue only supports best-effort persistence")
+            .to_string()
+            .contains("FITZ_QUEUE_WRITE_POLICY"));
     });
 }
 
 #[test]
 #[serial]
-fn should_map_queue_strict_write_policy_to_cloud_strict() {
+fn should_keep_queue_best_effort_with_strict_cloud_storage() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
-            ("FITZ_QUEUE_WRITE_POLICY", "strict"),
+            ("FITZ_STORAGE_CLOUD_DURABILITY", "strict"),
         ],
         || {
             // Arrange
-
-            // Act
             let config = BootConfig::new();
 
+            // Act
+            let policy = config.queue_write_policy();
+
             // Assert
-            assert_eq!(config.queue_write_policy, QueueWritePolicy::Strict);
-            assert_eq!(
-                config.queue_write_policy(),
-                crate::domains::WritePolicy::CloudStrict
-            );
+            assert_eq!(policy, crate::domains::WritePolicy::BestEffort);
+            assert!(config.queue_fast_flush_interval().is_some());
         },
     );
 }

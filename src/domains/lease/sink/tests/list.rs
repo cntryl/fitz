@@ -45,6 +45,43 @@ fn new_list_test_sink() -> LeaseDomain {
     )
 }
 
+fn subscribe_lease_pattern(
+    sink: &LeaseDomain,
+    family: RouteFamily,
+    session_id: u64,
+    source: &RouteAddress,
+    destination: &RouteAddress,
+    mailbox: &Mailbox,
+    pattern: &str,
+) -> u8 {
+    let request = crate::domains::lease::LeaseClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(
+            session_id,
+            ClientChannel::Sub,
+            crate::dispatch::protocol::lease_codec::msg_type::SUBSCRIBE,
+            family,
+        ),
+        Ok(crate::domains::lease::LeaseClientFrame::Sub(
+            crate::domains::lease::LeaseSubscriptionMessage::Subscribe {
+                family_id: family,
+                route: Route::new(pattern),
+                session_id,
+                subscriber: source.clone(),
+            },
+        )),
+    );
+    sink.deliver(Envelope::from_route(
+        source.clone(),
+        destination.clone(),
+        request,
+    ))
+    .expect("deliver lease subscription");
+    let response = receive_envelope(mailbox, "lease subscription response")
+        .into_payload::<FrameContext>()
+        .expect("lease subscription response frame");
+    parse_status_only(&response.payload).1
+}
+
 fn acquire_immediate(
     sink: &LeaseDomain,
     family: RouteFamily,
@@ -143,6 +180,93 @@ fn should_enforce_wildcard_lease_subscription_cap_per_session() {
         "the 129th wildcard subscription must be rejected"
     );
     assert_eq!(sink.subscription_count(), 128);
+}
+
+#[test]
+fn should_enforce_lease_registration_quotas_per_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("lease://inbound"));
+    let mailbox = Arc::new(Mailbox::new(16));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    let exact_sink = LeaseDomain::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    for index in 0..crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION {
+        let pattern = format!("lease://acme/area{index}/resource");
+        assert_eq!(
+            subscribe_lease_pattern(
+                &exact_sink,
+                family,
+                7,
+                &source,
+                &destination,
+                &mailbox,
+                &pattern,
+            ),
+            0,
+            "exact registration {index} should succeed"
+        );
+    }
+
+    let wildcard_mailbox = Arc::new(Mailbox::new(16));
+    let wildcard_router = Arc::new(Router::new());
+    wildcard_router.register(source.clone(), wildcard_mailbox.clone());
+    let wildcard_sink = LeaseDomain::new(
+        wildcard_router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    for index in 0..crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION {
+        let pattern = format!("lease://acme/area{index}/*");
+        assert_eq!(
+            subscribe_lease_pattern(
+                &wildcard_sink,
+                family,
+                7,
+                &source,
+                &destination,
+                &wildcard_mailbox,
+                &pattern,
+            ),
+            0,
+            "wildcard registration {index} should succeed"
+        );
+    }
+
+    // Act
+    let exact_overflow = subscribe_lease_pattern(
+        &exact_sink,
+        family,
+        7,
+        &source,
+        &destination,
+        &mailbox,
+        "lease://acme/overflow/resource",
+    );
+    let wildcard_overflow = subscribe_lease_pattern(
+        &wildcard_sink,
+        family,
+        7,
+        &source,
+        &destination,
+        &wildcard_mailbox,
+        "lease://acme/overflow/*",
+    );
+
+    // Assert
+    assert_eq!(exact_overflow, 1);
+    assert_eq!(wildcard_overflow, 1);
+    assert_eq!(
+        exact_sink.subscription_count(),
+        crate::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION
+    );
+    assert_eq!(
+        wildcard_sink.subscription_count(),
+        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+    );
 }
 
 fn parse_status_only(payload: &bytes::Bytes) -> (u8, u8, ()) {
@@ -609,7 +733,8 @@ fn should_drain_served_items_from_retained_snapshot_memory() {
 
 #[test]
 fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exceeded() {
-    // Arrange: several independent multi-page scans, each retaining a few
+    // Arrange
+    // Several independent multi-page scans, each retaining a few
     // not-yet-served items, until the (test-shrunk) global retained-item
     // budget is exceeded. Each scan uses its own family so the (also
     // test-shrunk) per-family candidate ceiling never interferes — this
@@ -624,6 +749,8 @@ fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exc
         &families,
     );
     let mut first_snapshot_id = None;
+
+    // Act
     for scan in 0..scans_needed {
         let family = RouteFamily::new(u32::try_from(scan).expect("scan index fits u32") + 1);
         for item in 0..3 {
@@ -651,7 +778,8 @@ fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exc
         }
     }
 
-    // Assert: the retained total across every outstanding snapshot never
+    // Assert
+    // The retained total across every outstanding snapshot never
     // exceeds the global bound, and the oldest scan was evicted to make
     // room rather than growing past it.
     let total_retained: usize = sink
@@ -813,13 +941,16 @@ fn should_reclaim_idle_lease_list_snapshot_past_its_ttl() {
 
 #[test]
 fn should_classify_invalid_list_responses_as_failures() {
-    // A LIST response the reviewer flagged as miscounted: malformed
-    // patterns and stale cursors must count as failures for latency/SLO
-    // metrics, the same as any other Lease error.
-    assert!(LeaseFamilyRuntime::lease_response_is_failure(
-        &LeaseResponse::InvalidListPattern("bad pattern".to_string())
-    ));
-    assert!(LeaseFamilyRuntime::lease_response_is_failure(
-        &LeaseResponse::InvalidListCursor
-    ));
+    // Arrange
+    let responses = [
+        LeaseResponse::InvalidListPattern("bad pattern".to_string()),
+        LeaseResponse::InvalidListCursor,
+    ];
+
+    // Act
+    let failures =
+        responses.map(|response| LeaseFamilyRuntime::lease_response_is_failure(&response));
+
+    // Assert
+    assert_eq!(failures, [true, true]);
 }

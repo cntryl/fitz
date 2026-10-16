@@ -7,6 +7,8 @@
 use std::sync::Arc;
 
 pub(crate) mod cf_validation;
+pub(crate) mod domain_scan;
+pub(crate) mod write_admission;
 mod write_policy;
 
 #[derive(Clone)]
@@ -38,6 +40,28 @@ impl FitzStorageEngine {
         family: &cntryl_midge::ColumnFamilyHandle,
     ) -> cntryl_midge::MidgeResult<()> {
         self.inner.flush_cf(family)
+    }
+
+    pub(crate) fn wait_for_write_stall_clear(
+        &self,
+        family: cntryl_midge::ColumnFamilyId,
+        timeout: std::time::Duration,
+    ) -> cntryl_midge::MidgeResult<bool> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Ok(false);
+            }
+            // Recheck in bounded slices: pressure relief does not always emit
+            // a flush/compaction completion to wake an existing waiter.
+            if self.inner.wait_for_write_stall_clear(
+                family,
+                remaining.min(std::time::Duration::from_secs(1)),
+            )? {
+                return Ok(true);
+            }
+        }
     }
 }
 

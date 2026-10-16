@@ -27,7 +27,7 @@ fn should_signal_session_close_even_when_outbound_data_is_full() {
 }
 
 #[test]
-fn should_coalesce_duplicate_close_requests_and_preserve_first_reason() {
+fn should_preserve_first_close_reason_under_duplicate_requests() {
     // Arrange
     let (tx, _data) = mpsc::channel(1);
     let (sink, signal) = SessionOutboundSink::with_close_signal(tx);
@@ -67,4 +67,21 @@ fn should_reject_control_close_for_sink_without_transport_lifecycle() {
 
     // Assert
     assert_eq!(result, Err(DeliveryError::UnsupportedPayload));
+}
+
+#[test]
+fn should_report_frame_in_progress_as_frame_loop_busy_time() {
+    // Arrange
+    let (tx, _data) = mpsc::channel(1);
+    let (sink, _signal) = SessionOutboundSink::with_close_signal(tx);
+    let probe = Instant::now() + Duration::from_secs(60);
+    let idle = MailboxSink::frame_loop_busy_time(&sink, probe);
+
+    // Act
+    let _busy = sink.begin_frame();
+    let busy = MailboxSink::frame_loop_busy_time(&sink, probe);
+
+    // Assert
+    assert_eq!(idle, Some(Duration::ZERO));
+    assert!(busy.is_some_and(|busy| busy >= Duration::from_secs(59)));
 }

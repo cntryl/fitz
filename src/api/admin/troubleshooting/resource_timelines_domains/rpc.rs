@@ -45,12 +45,8 @@ pub(crate) fn rpc_resource_timeline(
 
     let workers_registered = matching_workers.len();
     let requests_pending = matching_pending.len();
-    let latency_summary = summarize_rpc_worker_latency(matching_workers.iter().copied());
-    let diagnostics = rpc_operation_diagnostics(
-        workers_registered,
-        requests_pending,
-        Some(latency_summary.slowest_worker_average_latency_ms),
-    );
+    let latency_ms = resource_latency_ms(&matching_workers);
+    let diagnostics = rpc_operation_diagnostics(workers_registered, requests_pending, latency_ms);
     let mut oldest_pending_age = 0u64;
     let mut candidates = build_rpc_timeline_candidates(
         path,
@@ -83,11 +79,8 @@ pub(crate) fn rpc_resource_timeline(
             ),
         ));
     } else if requests_pending > 0 || workers_registered > 0 {
-        let latency_note = if latency_summary.slowest_worker_average_latency_ms > 0.0 {
-            format!(
-                "; slowest worker avg latency {:.1}ms",
-                latency_summary.slowest_worker_average_latency_ms
-            )
+        let latency_note = if let Some(latency_ms) = latency_ms.filter(|latency| *latency > 0.0) {
+            format!("; slowest worker avg latency {latency_ms:.1}ms")
         } else {
             String::new()
         };
@@ -127,7 +120,16 @@ pub(crate) fn rpc_resource_timeline(
 }
 
 fn matches_rpc(path: &ResourcePath<'_>, route: &str) -> bool {
-    parse_rpc_operation(route).is_some_and(|parsed| parsed.matches_resource_path(path))
+    crate::api::admin::list::matches_resource_route(route, path)
+}
+
+fn resource_latency_ms(workers: &[&RpcWorker]) -> Option<f64> {
+    workers
+        .iter()
+        .all(|worker| !worker.route.contains('*') && worker.average_latency_ms.is_finite())
+        .then(|| {
+            summarize_rpc_worker_latency(workers.iter().copied()).slowest_worker_average_latency_ms
+        })
 }
 
 fn build_rpc_timeline_candidates(
@@ -153,7 +155,7 @@ fn build_rpc_timeline_candidates(
                     ),
                     path,
                     None,
-                    parse_rpc_operation(&worker.route).map(|operation| operation.operation),
+                    parse_rpc_operation(&worker.route),
                     Some(i64_to_u64_non_negative(
                         now.signed_duration_since(registered_at).num_seconds(),
                     )),
@@ -161,7 +163,8 @@ fn build_rpc_timeline_candidates(
                     Some(worker.session_id.clone()),
                     None,
                     None,
-                    Some(u64_to_usize_non_negative(worker.requests_handled)),
+                    (!worker.route.contains('*'))
+                        .then(|| u64_to_usize_non_negative(worker.requests_handled)),
                 ),
             ));
         }
@@ -190,7 +193,7 @@ fn build_rpc_timeline_candidates(
                     },
                     path,
                     None,
-                    parse_rpc_operation(&request.route).map(|operation| operation.operation),
+                    parse_rpc_operation(&request.route),
                     Some(age_seconds),
                     None,
                     request.worker_session_id.clone(),

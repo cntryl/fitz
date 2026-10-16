@@ -19,7 +19,11 @@ fn commit_value(
         KvResponse::PutOk
     ));
     assert!(matches!(
-        actor.handle(KvMessage::Commit { tx_id, scope }),
+        actor.handle(KvMessage::Commit {
+            tx_id,
+            scope,
+            persistence: crate::domains::CommitPersistence::Buffered,
+        }),
         KvResponse::CommitOk
     ));
 }
@@ -43,6 +47,7 @@ fn should_capture_only_committed_rows_from_one_kv_resource() {
         actor.handle(KvMessage::Commit {
             tx_id: committed_tx,
             scope: scope.clone(),
+            persistence: crate::domains::CommitPersistence::Buffered,
         }),
         KvResponse::CommitOk
     ));

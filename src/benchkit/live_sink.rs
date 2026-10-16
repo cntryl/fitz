@@ -405,6 +405,7 @@ pub fn route_frame_to_address(
                 source: source.clone(),
                 destination: destination.clone(),
                 correlation: None,
+                received_at: std::time::Instant::now(),
             },
         );
         return router.route_to_domain(descriptor.domain_name(), envelope);
@@ -725,7 +726,6 @@ pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
         create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::BestEffort,
         crate::utils::idempotency::default_dedup_store(),
     ));
     Arc::new(BenchDomainHandle::new(sink))

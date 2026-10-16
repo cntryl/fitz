@@ -112,7 +112,12 @@ fn top_schedule_resources(schedules: &[ScheduleInfo]) -> Vec<TopologyScopedResou
                 },
                 TopologyScope {
                     operation: Some(schedule.operation.clone()),
-                    ..scope_for_resource(&schedule.realm, &schedule.area, &schedule.resource, None)
+                    ..scope_for_resource(
+                        &schedule.realm,
+                        &schedule.area,
+                        &schedule.resource,
+                        Some(schedule.route_family),
+                    )
                 },
                 counters,
             )

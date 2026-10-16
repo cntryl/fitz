@@ -159,12 +159,7 @@ fn should_cleanup_queue_inflight_for_disconnected_session() {
     router.register(sender_address.clone(), sender_mailbox.clone());
     router.register(worker_address.clone(), worker_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model.clone());
 
     // Act
     deliver_send(
@@ -230,12 +225,7 @@ fn should_reject_stale_reserve_after_disconnect_cleanup_marks_session() {
     let router = Arc::new(Router::new());
     router.register(worker_address.clone(), worker_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model);
 
     // Act: cleanup for this session runs and completes before the stale
     // reserve below is processed - equivalent to what the control-plane
@@ -292,12 +282,7 @@ fn should_reject_queue_inflight_followups_from_non_owner_session() {
     router.register(worker_address.clone(), worker_mailbox.clone());
     router.register(other_address.clone(), other_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model);
     let request_ctx = QueueRequestContext {
         sink: &sink,
         queue_address: queue_address.clone(),
@@ -393,12 +378,7 @@ fn should_include_delayed_messages_in_queue_admin_snapshot() {
     let router = Arc::new(Router::new());
     router.register(sender_address.clone(), sender_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model.clone());
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -446,12 +426,7 @@ fn should_restore_committed_queue_when_reserving_after_runtime_eviction() {
     router.register(sender_address.clone(), sender_mailbox.clone());
     router.register(worker_address.clone(), worker_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model.clone(),
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model.clone());
 
     sink.deliver(Envelope::from_route(
         sender_address,
@@ -519,7 +494,6 @@ fn should_bound_idle_actor_sweep_work_per_tick() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     let actor_count = QUEUE_IDLE_SWEEP_BATCH_SIZE + 5;
     for index in 0..actor_count {
@@ -569,7 +543,6 @@ fn should_prune_empty_queue_identity_when_actor_is_evicted() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        crate::domains::WritePolicy::Buffered,
     );
     let request_context = QueueRequestContext {
         sink: &sink,
@@ -614,12 +587,7 @@ fn should_not_evict_idle_queue_actor_with_live_inflight() {
     router.register(sender_address.clone(), sender_mailbox.clone());
     router.register(worker_address.clone(), worker_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         sender_address,
@@ -679,12 +647,7 @@ fn should_admit_session_cleanup_even_when_client_admission_is_exhausted() {
     // control-plane work and must not be rationed by client load.
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        Arc::new(Router::new()),
-        admin_read_model,
-        crate::domains::WritePolicy::Buffered,
-    );
+    let sink = new_queue_domain_sink(store, Arc::new(Router::new()), admin_read_model);
     let family = RouteFamily::new(1);
 
     // Hold every admission slot, as a stalled actor under load would.

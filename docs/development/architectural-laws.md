@@ -38,12 +38,17 @@ Examples:
 
 - Notice delivery is ephemeral.
 - RPC pending state is ephemeral.
-- Queue backlog is durable according to the configured queue write policy.
+- Queue backlog persistence is always best effort; acceptance does not guarantee crash recovery.
 - Queue inflight processing is ephemeral.
 - Stream committed history is durable.
 - KV committed state is durable.
 - Lease ownership is ephemeral.
 - Schedule intent is durable.
+
+KV BEGIN establishes scope and transaction mode only. KV and Stream COMMIT
+require an explicit Buffered or Sync choice. Local commits use Buffered/Sync;
+cloud commits use CloudAsync/CloudStrict. Background cloud configuration must
+never downgrade a client-selected Sync commit.
 
 Ambiguity here is a correctness bug.
 
@@ -70,7 +75,7 @@ Examples of durable state:
 
 - Stream committed records
 - KV committed writes
-- Queue enqueued backlog that reached durable storage under the configured queue write policy
+- Queue enqueued backlog that completed background persistence
 - Schedule persisted intent
 
 If a client must resume something, the client must do so explicitly against a domain that supports it.
@@ -195,17 +200,18 @@ Fitz must remain a runtime of narrow, composable primitives:
 - Notice = live awareness
 - Stream = durable history
 - KV = authoritative current state
-- Queue = durable work distribution with configurable write-policy latency/durability tradeoffs
+- Queue = competing work distribution with best-effort persistence
 - RPC = live execution dispatch
 - Lease = explicit ownership coordination
 - Schedule = durable timing intent
 
 KV, Queue, Notice, Stream, RPC, Lease, and Schedule registration patterns use
-strict whole-segment `*` and `**` syntax. Each domain caps wildcard
-registrations at 128 per session while exact registrations remain uncapped by
-that wildcard limit. Duplicates are idempotent and checked before the cap;
-overlaps stay independent, notification routes stay concrete, and matching
-never crosses a `RouteFamily` boundary. Lease `SUBSCRIBE`, `UNSUBSCRIBE`, and
+strict whole-segment `*` and `**` syntax. Each domain caps retained
+registrations at 1,024 per session, including exact and wildcard registrations,
+and caps the wildcard subset at 128. Duplicates are idempotent and checked
+before either cap; overlaps stay independent, notification routes stay
+concrete, and matching never crosses a `RouteFamily` boundary. Lease
+`SUBSCRIBE`, `UNSUBSCRIBE`, and
 `LIST` accept this same depth-three grammar so a fleet can observe ownership
 by pattern; exact `ACQUIRE`, `EXTEND`, and `RELEASE` remain unaffected and
 still require `lease://realm/area/resource` with no wildcard segment,
@@ -223,7 +229,7 @@ wildcards and never cross `RouteFamily` boundaries.
 Neither mode makes downstream delivery durable, retryable, or exactly-once.
 An occurrence is acknowledged and advances when no subscriber accepts it.
 This is intentional: subscriber availability must not turn Schedule into a
-second durable work queue. Use Queue when work must remain available until a
-consumer reserves and acknowledges it.
+second work queue. Use Queue for reservation, redelivery, and acknowledgement;
+its persistence is best effort, so applications must regenerate work lost in a crash.
 
 The architecture stays clean only if these meanings stay stable.

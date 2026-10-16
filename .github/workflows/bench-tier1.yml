@@ -1,0 +1,62 @@
+name: Benchmark Tier 1
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Measurement intensity
+        type: choice
+        options: [smoke, standard, extended]
+        default: standard
+  schedule:
+    - cron: "0 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-tier1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        bench:
+          - tier1_hotpath_matcher
+          - tier1_hotpath_tlv
+          - tier1_hotpath_mux
+          - tier1_hotpath_permissions
+          - tier1_hotpath_context
+          - tier1_hotpath_envelope
+          - tier1_hotpath_routing
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      CARGO_INCREMENTAL: "0"
+      RUST_LOG: "off"
+      FITZ_LOG_LEVEL: "off"
+      OTEL_ENABLED: "false"
+      STRESS_PROFILE: ${{ inputs.profile == 'smoke' && 'smoke' || inputs.profile == 'extended' && 'lab' || 'default' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Run benchmarks
+        run: cargo bench --locked --bench '${{ matrix.bench }}'
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-tier1-${{ matrix.bench }}-${{ github.sha }}
+          path: |
+            target/stress/**
+            target/fitz-stress/**
+          if-no-files-found: ignore

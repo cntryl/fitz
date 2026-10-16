@@ -9,14 +9,17 @@ use cntryl_midge::Query;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::domains::WritePolicy;
-
 #[derive(Clone)]
 pub struct QueueStore {
     engine: crate::storage::FitzStorageEngine,
 }
 
-pub(crate) struct QueueTransaction(cntryl_midge::Transaction);
+pub(crate) struct QueueTransaction {
+    inner: cntryl_midge::Transaction,
+    engine: crate::storage::FitzStorageEngine,
+    family: u32,
+    read_only: bool,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum QueueTransactionMode {
@@ -27,11 +30,15 @@ pub(crate) enum QueueTransactionMode {
 #[derive(Debug)]
 pub(crate) struct QueueStoreError {
     message: String,
+    midge_error: Option<cntryl_midge::MidgeError>,
+    /// The pre-commit wait for Midge to clear its write stall timed out.
+    admission_stalled: bool,
 }
 
 #[cfg(test)]
 std::thread_local! {
     static FAIL_NEXT_FLUSH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static NEXT_COMMIT_ERROR: std::cell::RefCell<Option<cntryl_midge::MidgeError>> = const { std::cell::RefCell::new(None) };
 }
 
 impl std::fmt::Display for QueueStoreError {
@@ -42,10 +49,28 @@ impl std::fmt::Display for QueueStoreError {
 
 impl QueueStoreError {
     #[allow(clippy::needless_pass_by_value)]
-    fn from_midge(error: cntryl_midge::MidgeError) -> Self {
+    pub(super) fn from_midge(error: cntryl_midge::MidgeError) -> Self {
         Self {
             message: error.to_string(),
+            midge_error: Some(error),
+            admission_stalled: false,
         }
+    }
+
+    /// Matches Midge's pre-WAL `WriteStall` rejection for a missing L0 slot.
+    ///
+    /// Midge exposes no structured variant or constant for this rejection, so
+    /// this matches its message. `should_classify_real_midge_l0_rejection_as_retryable_admission`
+    /// produces the real rejection, so a Midge rewording fails CI.
+    pub(super) fn is_l0_admission_rejection(&self, family: u32) -> bool {
+        self.midge_error.as_ref().is_some_and(|error| {
+            crate::storage::write_admission::is_l0_admission_rejection(error, family)
+        })
+    }
+
+    /// True when the commit failed because storage admission stayed closed.
+    pub(super) fn is_admission_pressure(&self, family: u32) -> bool {
+        self.admission_stalled || self.is_l0_admission_rejection(family)
     }
 }
 
@@ -61,13 +86,19 @@ impl QueueStore {
         family: u32,
         mode: QueueTransactionMode,
     ) -> Result<QueueTransaction, QueueStoreError> {
+        let read_only = matches!(mode, QueueTransactionMode::ReadOnly);
         let mode = match mode {
             QueueTransactionMode::ReadOnly => cntryl_midge::TransactionMode::ReadOnly,
             QueueTransactionMode::ReadWrite => cntryl_midge::TransactionMode::ReadWrite,
         };
         self.engine
             .begin_tx(family, mode)
-            .map(QueueTransaction)
+            .map(|inner| QueueTransaction {
+                inner,
+                engine: self.engine.clone(),
+                family,
+                read_only,
+            })
             .map_err(QueueStoreError::from_midge)
     }
 
@@ -83,6 +114,8 @@ impl QueueStore {
         if FAIL_NEXT_FLUSH.with(|cell| cell.replace(false)) {
             return Err(QueueStoreError {
                 message: "Injected queue fast flush failure".to_string(),
+                midge_error: None,
+                admission_stalled: false,
             });
         }
         let families = self
@@ -102,6 +135,16 @@ impl QueueStore {
     pub(crate) fn fail_next_flush_for_tests() {
         FAIL_NEXT_FLUSH.with(|cell| cell.set(true));
     }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_commit_for_tests(error: cntryl_midge::MidgeError) {
+        NEXT_COMMIT_ERROR.with(|cell| *cell.borrow_mut() = Some(error));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_commit_error_for_tests() {
+        NEXT_COMMIT_ERROR.with(|cell| *cell.borrow_mut() = None);
+    }
 }
 
 impl From<Arc<cntryl_midge::Engine>> for QueueStore {
@@ -118,7 +161,7 @@ impl From<crate::storage::FitzStorageEngine> for QueueStore {
 
 impl QueueTransaction {
     pub(super) fn get(&self, key: &[u8]) -> Result<Option<Bytes>, QueueStoreError> {
-        self.0.get(key).map_err(QueueStoreError::from_midge)
+        self.inner.get(key).map_err(QueueStoreError::from_midge)
     }
 
     pub(super) fn put(
@@ -127,31 +170,72 @@ impl QueueTransaction {
         value: Vec<u8>,
         ttl: Option<u64>,
     ) -> Result<(), QueueStoreError> {
-        self.0
+        self.inner
             .put(key, value, ttl)
             .map_err(QueueStoreError::from_midge)
     }
 
     pub(super) fn delete(&mut self, key: Vec<u8>) -> Result<(), QueueStoreError> {
-        self.0.delete(key).map_err(QueueStoreError::from_midge)
+        self.inner.delete(key).map_err(QueueStoreError::from_midge)
     }
 
-    pub(super) fn commit(self, policy: WritePolicy) -> Result<(), QueueStoreError> {
-        self.0
-            .commit(policy.into())
-            .map_err(QueueStoreError::from_midge)
+    pub(super) fn commit(self) -> Result<(), QueueStoreError> {
+        self.commit_with_pressure_wait(std::time::Duration::from_secs(30))
     }
 
-    pub(crate) fn scan_all(&self) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {
-        self.0
-            .scan(&cntryl_midge::Query::new())
-            .map_err(QueueStoreError::from_midge)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(QueueStoreError::from_midge)
+    pub(super) fn commit_with_pressure_wait(
+        self,
+        timeout: std::time::Duration,
+    ) -> Result<(), QueueStoreError> {
+        self.commit_with_pressure_wait_timed(timeout, false)
+    }
+
+    pub(super) fn commit_with_pressure_wait_timed(
+        self,
+        timeout: std::time::Duration,
+        ack: bool,
+    ) -> Result<(), QueueStoreError> {
+        // Wait before mutation submission; never retry an unknown commit outcome.
+        if !self.read_only {
+            let allowed =
+                super::ack_timing::measure(ack, super::ack_timing::Phase::Admission, || {
+                    self.engine
+                        .wait_for_write_stall_clear(self.family, timeout)
+                        .map_err(QueueStoreError::from_midge)
+                });
+            if !allowed? {
+                return Err(QueueStoreError {
+                    message: format!("Queue storage admission remained stalled for {timeout:?}"),
+                    midge_error: None,
+                    admission_stalled: true,
+                });
+            }
+        }
+        #[cfg(test)]
+        if let Some(error) = NEXT_COMMIT_ERROR.with(|cell| cell.borrow_mut().take()) {
+            return Err(QueueStoreError::from_midge(error));
+        }
+        super::ack_timing::measure(ack, super::ack_timing::Phase::Commit, || {
+            self.inner
+                .commit(cntryl_midge::WriteOptions::best_effort())
+                .map_err(QueueStoreError::from_midge)
+        })
+    }
+
+    pub(crate) fn scan_all(
+        &self,
+    ) -> Result<impl Iterator<Item = Result<(Bytes, Bytes), QueueStoreError>> + '_, QueueStoreError>
+    {
+        crate::storage::domain_scan::scan_domain_rows(
+            &self.inner,
+            crate::utils::storage_key::DomainKeyspace::Queue,
+        )
+        .map(|rows| rows.map(|row| row.map_err(QueueStoreError::from_midge)))
+        .map_err(QueueStoreError::from_midge)
     }
 
     fn scan_prefix(&self, prefix: Bytes) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {
-        self.0
+        self.inner
             .scan(&Query::new().prefix(prefix))
             .map_err(QueueStoreError::from_midge)?
             .collect::<Result<Vec<_>, _>>()
@@ -163,30 +247,16 @@ pub(super) struct QueuePersistence {
     pub store: QueueStore,
     pub recovery: Arc<QueueRecoveryStore>,
     pub body_key_prefix: Vec<u8>,
-    write_policy: WritePolicy,
 }
 
 impl QueuePersistence {
-    pub(super) fn new(
-        engine: impl Into<QueueStore>,
-        key: &QueueKey,
-        write_policy: WritePolicy,
-    ) -> Self {
+    pub(super) fn new(engine: impl Into<QueueStore>, key: &QueueKey) -> Self {
         let store = engine.into();
         Self {
             recovery: Arc::new(QueueRecoveryStore::new(store.clone(), key.clone())),
             body_key_prefix: QueueActor::body_key_prefix(key),
             store,
-            write_policy,
         }
-    }
-
-    pub(super) fn write_options(&self) -> WritePolicy {
-        self.write_policy
-    }
-
-    pub(super) fn write_policy(&self) -> WritePolicy {
-        self.write_policy
     }
 }
 
@@ -300,11 +370,7 @@ impl QueueRecoveryStore {
             .map(|(key, value)| decode_header(&key, &value, &self.header_key_prefix)))
     }
 
-    pub(super) fn replace_index(
-        &self,
-        state: &QueueIndexRebuild<'_>,
-        write_policy: WritePolicy,
-    ) -> Result<(), String> {
+    pub(super) fn replace_index(&self, state: &QueueIndexRebuild<'_>) -> Result<(), String> {
         let mut transaction = self
             .store
             .begin(self.key.family.id(), QueueTransactionMode::ReadWrite)
@@ -369,7 +435,7 @@ impl QueueRecoveryStore {
             )
             .map_err(|error| format!("Failed to write queue index meta: {error:?}"))?;
         transaction
-            .commit(write_policy)
+            .commit()
             .map_err(|error| format!("Failed to commit queue index rebuild: {error:?}"))
     }
 

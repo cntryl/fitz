@@ -1,0 +1,390 @@
+//! Opt-in bounded real TCP admission and cancellation diagnostic.
+mod fixtures;
+#[path = "rpc_pressure_support/report.rs"]
+mod report;
+#[path = "rpc_pressure_support/wire.rs"]
+mod wire;
+
+use fitz::testkit::{TestClient, TestServer};
+use fixtures::transport::{build_rpc_response_delivery, parse_rpc_request_delivery};
+use futures_util::future::join_all;
+use report::{Report, Stage};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use uuid::Uuid;
+
+fn error(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
+
+async fn connect_worker(server: &TestServer) -> Result<TestClient, String> {
+    bounded(10, async {
+        let mut worker = TestClient::new(server.tcp_addr).await.map_err(error)?;
+        worker.send_frame(&wire::subscribe()).await.map_err(error)?;
+        wire::registration(&worker.recv_frame(2000).await.map_err(error)?)?;
+        Ok(worker)
+    })
+    .await
+}
+
+async fn producer(
+    server: &TestServer,
+    start: usize,
+    count: usize,
+    counters: Arc<Mutex<Stage>>,
+) -> Result<(), String> {
+    let mut caller = TestClient::new(server.tcp_addr).await.map_err(error)?;
+    let mut pending = HashMap::with_capacity(count);
+    for sequence in start..start + count {
+        let sequence = u64::try_from(sequence).map_err(error)?;
+        let id = Uuid::new_v4();
+        counters.lock().unwrap().attempted += 1;
+        caller
+            .send_frame(&wire::request(id, sequence, 30_000))
+            .await
+            .map_err(error)?;
+        pending.insert(id, sequence);
+        counters.lock().unwrap().sent += 1;
+    }
+    while !pending.is_empty() {
+        let frame = caller.recv_frame(60000).await.map_err(error)?;
+        if wire::terminal(&frame, &mut pending)? {
+            counters.lock().unwrap().completed += 1;
+        } else {
+            counters.lock().unwrap().backpressure += 1;
+        }
+    }
+    Ok(())
+}
+
+async fn stage(server: &TestServer, offered: usize, report: &mut Report) -> Result<(), String> {
+    let mut worker = connect_worker(server).await?;
+    let counters = Arc::new(Mutex::new(Stage {
+        offered,
+        ..Stage::default()
+    }));
+    let counts = counters.clone();
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
+    let mut worker_task = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        let mut dispatched = std::collections::HashSet::new();
+        loop {
+            let frame = tokio::select! {
+                _ = &mut stop_rx => return Ok::<_, String>(()),
+                frame = worker.recv_frame_bytes_without_timeout() => frame.map_err(error)?,
+            };
+            let request = parse_rpc_request_delivery(&frame)?;
+            if request.route != wire::ROUTE
+                || request.body.len() != 1024
+                || request.remaining_budget_ms.is_none()
+                || !dispatched.insert(request.correlation_id)
+            {
+                return Err("invalid or duplicate worker dispatch".into());
+            }
+            let sequence = u64::from_be_bytes(request.body[..8].try_into().map_err(error)?);
+            if request.body != wire::body(sequence) {
+                return Err("corrupt worker payload".into());
+            }
+            counts.lock().unwrap().worker_dispatches += 1;
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            bounded(5, async {
+                worker
+                    .send_frame(&build_rpc_response_delivery(
+                        request.correlation_id,
+                        0,
+                        true,
+                        &request.body,
+                    ))
+                    .await
+                    .map_err(error)
+            })
+            .await?;
+        }
+    });
+    let started = Instant::now();
+    let producers = (0..offered)
+        .step_by(128)
+        .map(|start| producer(server, start, (offered - start).min(128), counters.clone()));
+    let result = tokio::time::timeout(Duration::from_secs(60), join_all(producers)).await;
+    let _ = stop_tx.send(());
+    let worker_result =
+        if let Ok(result) = tokio::time::timeout(Duration::from_secs(5), &mut worker_task).await {
+            result.map_err(error).and_then(|r| r)
+        } else {
+            worker_task.abort();
+            let _ = tokio::time::timeout(Duration::from_secs(1), &mut worker_task).await;
+            Err("worker shutdown join exceeded deadline; task aborted".into())
+        };
+    let worker_failure = worker_result.err();
+    let failure = match result {
+        Ok(results) => results.into_iter().find_map(Result::err),
+        Err(_) => Some("absolute stage deadline exceeded; outcomes unresolved".into()),
+    }
+    .or_else(|| worker_failure.clone());
+    let mut current = std::mem::take(&mut *counters.lock().unwrap());
+    current.elapsed_ns = started.elapsed().as_nanos();
+    current.indeterminate_writes = current.attempted - current.sent;
+    current.unresolved = current.attempted - current.completed - current.backpressure;
+    current.failure = failure;
+    current.worker_failure = worker_failure;
+    if current.failure.is_none()
+        && (current.sent != offered
+            || current.unresolved != 0
+            || current.worker_dispatches != current.completed)
+    {
+        current.failure = Some("stage reconciliation failed".into());
+    }
+    let result = current.failure.clone().map_or(Ok(()), Err);
+    report.stages.push(current);
+    report.save()?;
+    result
+}
+
+async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
+    let mut worker = connect_worker(server).await?;
+    let mut caller = TestClient::new(server.tcp_addr).await.map_err(error)?;
+    let id = Uuid::new_v4();
+    caller
+        .send_frame(&wire::request(
+            id,
+            99_999,
+            if mode == 4 { 250 } else { 5000 },
+        ))
+        .await
+        .map_err(error)?;
+    let delivery = parse_rpc_request_delivery(&worker.recv_frame(2000).await.map_err(error)?)?;
+    if delivery.route != wire::ROUTE
+        || delivery.body != wire::body(99_999)
+        || delivery.correlation_id == id
+        || delivery
+            .remaining_budget_ms
+            .is_none_or(|budget| budget > if mode == 4 { 250 } else { 5000 })
+    {
+        return Err("invalid negotiated lifecycle dispatch".into());
+    }
+    match mode {
+        1 => {
+            caller
+                .send_frame(&wire::control(1, id, Some(1)))
+                .await
+                .map_err(error)?;
+            wire::lifecycle(&caller.recv_frame(2000).await.map_err(error)?, 4, id, 2)?;
+        }
+        3 => {
+            drop(caller);
+        }
+        4 => {
+            wire::terminal_error(
+                &caller.recv_frame(2000).await.map_err(error)?,
+                id,
+                fitz::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            )?;
+        }
+        _ => return Err("unknown lifecycle scenario".into()),
+    }
+    wire::lifecycle(
+        &worker.recv_frame(2000).await.map_err(error)?,
+        2,
+        delivery.correlation_id,
+        mode,
+    )?;
+    worker
+        .send_frame(&wire::control(3, delivery.correlation_id, None))
+        .await
+        .map_err(error)?;
+    // The same registration must regain its single credit after acknowledged cleanup.
+    let mut probe = TestClient::new(server.tcp_addr).await.map_err(error)?;
+    let probe_id = Uuid::new_v4();
+    probe
+        .send_frame(&wire::request(probe_id, 100_000, 5000))
+        .await
+        .map_err(error)?;
+    let delivery = parse_rpc_request_delivery(&worker.recv_frame(2000).await.map_err(error)?)?;
+    if delivery.route != wire::ROUTE
+        || delivery.body != wire::body(100_000)
+        || delivery.correlation_id == probe_id
+        || delivery
+            .remaining_budget_ms
+            .is_none_or(|budget| budget > 5000)
+    {
+        return Err("cleanup credit probe payload mismatch".into());
+    }
+    worker
+        .send_frame(&build_rpc_response_delivery(
+            delivery.correlation_id,
+            0,
+            true,
+            &delivery.body,
+        ))
+        .await
+        .map_err(error)?;
+    let frame = probe.recv_frame(2000).await.map_err(error)?;
+    if !wire::terminal(&frame, &mut HashMap::from([(probe_id, 100_000)]))? {
+        return Err("cleanup credit probe failed".into());
+    }
+    Ok(())
+}
+
+async fn wait_for_cleanup(server: &TestServer, report: &mut Report) -> Result<(), String> {
+    bounded(10, async {
+        server.wait_for_session_count(0).await.map_err(error)
+    })
+    .await?;
+    // Coalesced read models can be stale when refresh fails; never acceptance proof.
+    report.advisory_workers_after_sessions_closed =
+        Some(server.runtime.rpc_list_workers(None).len());
+    report.advisory_pending_after_sessions_closed =
+        Some(server.runtime.rpc_list_pending(None).len());
+    Ok(())
+}
+
+async fn bounded<T>(
+    seconds: u64,
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::time::timeout(Duration::from_secs(seconds), future)
+        .await
+        .map_err(|_| {
+            format!("absolute {seconds}s operation deadline exceeded; outcome may be unknown")
+        })?
+}
+
+#[tokio::test]
+#[ignore = "bounded pressure diagnostic; run explicitly and serialize shared-host campaigns"]
+async fn should_push_rpc_admission_and_cleanup_limits() {
+    // Arrange
+    let mut report = Report::new().expect("report");
+    report.save().expect("initial artifact");
+    let mut server = None;
+    // Act
+    let result = async {
+        let stages = std::env::var("FITZ_RPC_PRESSURE_BURSTS")
+            .unwrap_or_else(|_| "1,32,256,1024,8192".into());
+        let bursts = stages
+            .split(',')
+            .map(str::parse::<usize>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(error)?;
+        if bursts.is_empty() || bursts.len() > 8 || bursts.iter().any(|&n| n == 0 || n > 8192) {
+            return Err("bursts must contain 1..8 values each in 1..8192".into());
+        }
+        report.planned_bursts.clone_from(&bursts);
+        report.save()?;
+        server = Some(bounded(60, async { TestServer::start().await.map_err(error) }).await?);
+        let active = server.as_ref().expect("startup completed");
+        for offered in bursts {
+            stage(active, offered, &mut report).await?;
+            wait_for_cleanup(active, &mut report).await?;
+        }
+        for mode in [1, 3, 4] {
+            bounded(10, lifecycle(active, mode)).await?;
+            wait_for_cleanup(active, &mut report).await?;
+        }
+        report.lifecycle_probes_passed = true;
+        stage(active, 1, &mut report).await?;
+        wait_for_cleanup(active, &mut report).await?;
+        report.recovery_passed = true;
+        Ok::<_, String>(())
+    }
+    .await;
+    report.failure = result.err();
+    if let Err(e) = report.save() {
+        report.artifact_failure = Some(e);
+    }
+    if let Some(active) = server {
+        let shutdown = bounded(60, async { active.shutdown().await.map_err(error) }).await;
+        report.cleanup_passed = shutdown.is_ok();
+        if let Err(e) = shutdown {
+            report.cleanup_failure = Some(e.clone());
+            report.failure.get_or_insert(e);
+        }
+    }
+    if report.artifact_failure.is_some() {
+        report
+            .failure
+            .get_or_insert_with(|| "partial artifact persistence failed".into());
+    }
+    report.status = if report.failure.is_none() {
+        "passed"
+    } else {
+        "failed"
+    };
+    report.save().expect("final artifact");
+    // Assert
+    assert!(
+        report.failure.is_none(),
+        "{}: {:?}",
+        report.path.display(),
+        report.failure
+    );
+    assert!(report.recovery_passed && report.lifecycle_probes_passed && report.cleanup_passed);
+    eprintln!("RPC pressure artifact: {}", report.path.display());
+}
+
+#[test]
+fn should_reject_wrong_cancellation_correlation() {
+    // Arrange
+    let id = Uuid::new_v4();
+    let mut payload = vec![2];
+    payload.extend_from_slice(id.as_bytes());
+    payload.push(1);
+    let frame = wire::frame(305, &payload);
+    // Act
+    let result = wire::lifecycle(&frame, 2, Uuid::new_v4(), 1);
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+fn should_reject_duplicate_rpc_terminal() {
+    // Arrange
+    let id = Uuid::new_v4();
+    let frame = build_rpc_response_delivery(id, 0, true, &wire::body(0));
+    let mut pending = HashMap::from([(id, 0)]);
+    // Act
+    let first = wire::terminal(&frame, &mut pending);
+    let duplicate = wire::terminal(&frame, &mut pending);
+    // Assert
+    assert_eq!(first, Ok(true));
+    assert!(duplicate.is_err());
+}
+
+#[test]
+fn should_reject_changed_rpc_echo_payload() {
+    // Arrange
+    let id = Uuid::new_v4();
+    let mut payload = wire::body(0);
+    payload[1023] = 0;
+    let frame = build_rpc_response_delivery(id, 0, true, &payload);
+    // Act
+    let result = wire::terminal(&frame, &mut HashMap::from([(id, 0)]));
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+fn should_reject_unknown_rpc_terminal_identity() {
+    // Arrange
+    let frame = build_rpc_response_delivery(Uuid::new_v4(), 0, true, &wire::body(0));
+    // Act
+    let result = wire::terminal(&frame, &mut HashMap::from([(Uuid::new_v4(), 0)]));
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+fn should_reject_unknown_rpc_terminal_flags() {
+    // Arrange
+    let id = Uuid::new_v4();
+    let mut payload = fitz::protocol::payload_codec::PayloadEncoder::new();
+    payload.put_raw(id.as_bytes());
+    payload.put_u64(0);
+    payload.put_u8(3);
+    payload.put_bytes(&wire::body(0));
+    let frame = wire::frame(303, &payload.finish());
+    // Act
+    let result = wire::terminal(&frame, &mut HashMap::from([(id, 0)]));
+    // Assert
+    assert!(result.is_err());
+}

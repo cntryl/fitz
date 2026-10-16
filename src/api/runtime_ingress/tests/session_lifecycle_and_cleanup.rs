@@ -186,6 +186,12 @@ pub(super) fn receive_frame(mailbox: &Mailbox, label: &str) -> FrameContext {
         return frame_context_from_client_meta(request.meta);
     }
 
+    if let Some(request) =
+        envelope.payload::<crate::domains::rpc::protocol::RpcClientRequestIngress>()
+    {
+        return frame_context_from_client_meta(request.request.meta);
+    }
+
     if let Some(request) = envelope.payload::<crate::domains::stream::StreamClientRequest>() {
         return frame_context_from_client_meta(request.meta);
     }
@@ -421,11 +427,14 @@ fn assert_queue_cleanup_admin_state(
 
 #[tokio::test]
 async fn should_open_session() {
+    // Arrange
     let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
     let session = make_session_info(1, TransportKind::WebSocket);
 
+    // Act
     let result = ingress.on_open(session).await;
 
+    // Assert
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 1);
     assert_eq!(ingress.session_count(), 1);
@@ -470,8 +479,10 @@ pub(super) fn should_process_frame() {
 
 #[tokio::test]
 async fn should_reject_unknown_session() {
+    // Arrange
     let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
 
+    // Act
     let decision = ingress
         .on_frame(
             999,
@@ -482,6 +493,7 @@ async fn should_reject_unknown_session() {
         )
         .await;
 
+    // Assert
     assert!(matches!(decision, IngressDecision::Close(_)));
 }
 

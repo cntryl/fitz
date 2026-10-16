@@ -163,7 +163,7 @@ fn queue_error_code_and_message(response: &QueueResponse) -> (u16, String) {
         }
         QueueResponse::SubscriptionLimit => (
             queue::ERR_SUBSCRIPTION_LIMIT,
-            "wildcard subscription limit exceeded".to_string(),
+            "subscription registration limit exceeded".to_string(),
         ),
         QueueResponse::QueueNotFound => (queue::ERR_QUEUE_NOT_FOUND, "QueueNotFound".to_string()),
         QueueResponse::Error { message } => (queue::ERR_BACKEND_ERROR, message.clone()),
@@ -764,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_queue_request_response_notification_and_error_golden_bytes() {
+    fn should_preserve_queue_wire_golden_vectors() {
         // Arrange
         let route = "queue://r/a/x";
         let request = [

@@ -49,13 +49,15 @@ fn should_persist_inventory_estimate_after_commit_in_cloud_mode() {
     store
         .create_column_family("cf_1")
         .expect("create route-family column family");
-    let mut actor = KvActor::new(store.clone());
+    let mut actor = KvActor::new(store.clone()).with_write_policies(
+        crate::domains::WritePolicy::CloudStrict,
+        crate::domains::WritePolicy::CloudAsync,
+    );
     let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "cloud-shared");
 
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::CloudAsync,
     }) else {
         panic!("transaction should begin");
     };
@@ -73,6 +75,7 @@ fn should_persist_inventory_estimate_after_commit_in_cloud_mode() {
     let commit = actor.handle(KvMessage::Commit {
         tx_id,
         scope: scope.clone(),
+        persistence: crate::domains::CommitPersistence::Buffered,
     });
 
     // Assert: the primary write always succeeds regardless of the inventory
@@ -104,7 +107,6 @@ fn should_commit_disjoint_writes_without_inventory_conflict() {
         let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
             scope: scope.clone(),
             mode: TxMode::ReadWrite,
-            write_options: crate::domains::WritePolicy::Buffered,
         }) else {
             panic!("transaction should begin");
         };
@@ -128,10 +130,12 @@ fn should_commit_disjoint_writes_without_inventory_conflict() {
     let first_commit = actor.handle(KvMessage::Commit {
         tx_id: first,
         scope: scope.clone(),
+        persistence: crate::domains::CommitPersistence::Buffered,
     });
     let second_commit = actor.handle(KvMessage::Commit {
         tx_id: second,
         scope,
+        persistence: crate::domains::CommitPersistence::Buffered,
     });
 
     // Assert
@@ -160,6 +164,7 @@ fn should_mark_inventory_incomplete_for_put_without_adding_a_hot_path_read() {
     let response = actor.handle(KvMessage::Commit {
         tx_id,
         scope: scope.clone(),
+        persistence: crate::domains::CommitPersistence::Buffered,
     });
 
     // Assert
@@ -178,6 +183,59 @@ fn should_mark_inventory_incomplete_for_put_without_adding_a_hot_path_read() {
     let estimate = crate::domains::kv::inventory::decode_estimate(&encoded)
         .expect("decode inventory estimate");
     assert!(!estimate.estimate_complete);
+}
+
+#[test]
+fn should_skip_redundant_incomplete_inventory_writes() {
+    // Arrange
+    let mut actor = test_actor();
+    let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "incomplete");
+    let tx_id = begin_with_scope(&mut actor, scope.clone());
+    put_scan_keys(&mut actor, tx_id, &scope, &[b"first"]);
+    assert!(matches!(
+        actor.handle(KvMessage::Commit {
+            tx_id,
+            scope: scope.clone(),
+            persistence: crate::domains::CommitPersistence::Buffered,
+        }),
+        KvResponse::CommitOk
+    ));
+    KvActor::fail_next_inventory_update_for_tests();
+    let next_tx_id = begin_with_scope(&mut actor, scope.clone());
+    put_scan_keys(&mut actor, next_tx_id, &scope, &[b"second"]);
+
+    // Act
+    let repeated_update = actor.handle(KvMessage::Commit {
+        tx_id: next_tx_id,
+        scope: scope.clone(),
+        persistence: crate::domains::CommitPersistence::Buffered,
+    });
+    let repairs_after_repeated_update = actor.take_inventory_repairs();
+    let changed_scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "changed");
+    let changed_tx_id = begin_with_scope(&mut actor, changed_scope.clone());
+    assert!(matches!(
+        actor.handle(KvMessage::Insert {
+            tx_id: changed_tx_id,
+            scope: changed_scope.clone(),
+            key: Bytes::from_static(b"key"),
+            value: Bytes::from_static(b"value"),
+        }),
+        KvResponse::InsertOk
+    ));
+    let changed_update = actor.handle(KvMessage::Commit {
+        tx_id: changed_tx_id,
+        scope: changed_scope.clone(),
+        persistence: crate::domains::CommitPersistence::Buffered,
+    });
+
+    // Assert
+    assert!(matches!(repeated_update, KvResponse::CommitOk));
+    assert_eq!(
+        repairs_after_repeated_update,
+        Vec::<(u32, KvResourceScope)>::new()
+    );
+    assert!(matches!(changed_update, KvResponse::CommitOk));
+    assert_eq!(actor.take_inventory_repairs(), vec![(1, changed_scope)]);
 }
 
 #[test]
@@ -205,7 +263,6 @@ fn should_queue_inventory_repair_when_estimate_update_fails_after_commit() {
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: crate::domains::WritePolicy::Buffered,
     }) else {
         panic!("transaction should begin");
     };
@@ -224,6 +281,7 @@ fn should_queue_inventory_repair_when_estimate_update_fails_after_commit() {
     let commit = actor.handle(KvMessage::Commit {
         tx_id,
         scope: scope.clone(),
+        persistence: crate::domains::CommitPersistence::Buffered,
     });
 
     // Assert

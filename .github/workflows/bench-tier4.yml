@@ -1,0 +1,79 @@
+name: Benchmark Tier 4
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Measurement intensity
+        type: choice
+        options: [smoke, standard, extended]
+        default: standard
+  schedule:
+    - cron: "0 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-tier4-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        bench:
+          - tier4_kv_gate
+          - tier4_kv_ladder
+          - tier4_kv_contention
+          - tier4_lease_gate
+          - tier4_lease_ladder
+          - tier4_lease_contention
+          - tier4_notice_publish
+          - tier4_notice_fanout
+          - tier4_notice_control
+          - tier4_queue_gate
+          - tier4_queue_concurrency
+          - tier4_queue_shapes
+          - tier4_rpc_roundtrip
+          - tier4_rpc_pipeline
+          - tier4_schedule_lifecycle
+          - tier4_schedule_concurrency
+          - tier4_schedule_shapes
+          - tier4_stream_gate
+          - tier4_stream_concurrency
+          - tier4_stream_filters
+          - tier4_stream_ladder
+          - tier4_stream_mixed
+          - tier4_stream_shapes
+          - tier4_stream_compacted
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      CARGO_INCREMENTAL: "0"
+      RUST_LOG: "off"
+      FITZ_LOG_LEVEL: "off"
+      OTEL_ENABLED: "false"
+      STRESS_PROFILE: ${{ inputs.profile == 'smoke' && 'smoke' || inputs.profile == 'extended' && 'lab' || 'default' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Run benchmarks
+        run: cargo bench --locked --bench '${{ matrix.bench }}' --features benchkit
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-tier4-${{ matrix.bench }}-${{ github.sha }}
+          path: |
+            target/stress/**
+            target/fitz-stress/**
+          if-no-files-found: ignore
