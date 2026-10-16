@@ -36,21 +36,23 @@ Workflow changes were explicitly declined. See the
 All five current SDK main branches passed their explicitly dispatched Spec
 workflows against the candidate `develop` broker image on 2026-10-16:
 
-| SDK | Candidate compatibility run |
-| --- | --- |
-| .NET | [38936654701](https://github.com/cntryl/fitz-dotnet/actions/runs/38936654701) |
-| TypeScript | [38936658858](https://github.com/cntryl/fitz-ts/actions/runs/38936658858) |
-| Go | [38936663174](https://github.com/cntryl/fitz-go/actions/runs/38936663174) |
-| Python | [38936667531](https://github.com/cntryl/fitz-py/actions/runs/38936667531) |
-| Rust | [38936671961](https://github.com/cntryl/fitz-rs/actions/runs/38936671961) |
+| SDK | Validated source | Candidate compatibility run |
+| --- | --- | --- |
+| .NET | `d52cb2ee54cad8b90095f64b42789ffea34a439a` | [38936654701](https://github.com/cntryl/fitz-dotnet/actions/runs/38936654701) |
+| TypeScript | `3a27c37cd01fc69f344c0c5e5167efd24e607dfc` | [38936658858](https://github.com/cntryl/fitz-ts/actions/runs/38936658858) |
+| Go | `b2dade7aa45ab6847f478acfd61c601d4fcd5550` | [38936663174](https://github.com/cntryl/fitz-go/actions/runs/38936663174) |
+| Python | `4046dcfdba3844ba290ddd40111902bf337f00ef` | [38936667531](https://github.com/cntryl/fitz-py/actions/runs/38936667531) |
+| Rust | `3458c45805649604ad07bcafb8e6d9f99fd411fc` | [38936671961](https://github.com/cntryl/fitz-rs/actions/runs/38936671961) |
 
 These source runs do not qualify older published packages. Registry readback
 found TypeScript 0.0.23 and GitHub NuGet 1.4.2 as the latest published versions.
 The TypeScript package still emits the old KV COMMIT payload, so it must not
-be used with the candidate's explicit commit-time persistence contract.
-Record and qualify the matching published SDK artifacts before broker publication;
-also repeat the downstream Portia assertions required by the
-[release checklist](release-checklist.md).
+be used with the candidate's explicit commit-time persistence contract. A
+deployment must build or obtain the matching client revision and follow the
+coordinated wire upgrade in the [migration guide](migration-guide.md#breaking-change-explicit-kv-and-stream-commit-persistence).
+SDK package publication and downstream Portia qualification are separate from
+this broker release; they are not claimed by these source compatibility runs.
+The Stream error-envelope generation introduced by #238 is unchanged in 0.2.0.
 
 ## Migration rehearsal
 
@@ -94,7 +96,6 @@ container identities, limits and restart timings under `FITZ_S3_REPORT_DIR`.
   qualification, including unchanged-binary controls and the confirmation run.
   A standard Tier 4 workflow alone does not satisfy the full policy in
   [Performance Loop](../development/perf-loop.md).
-- Matching SDK publication and exact published-consumer qualification.
 - Review of application migration scope and rollback/reconciliation instructions.
 - Exact-head promotion checks, merge `develop` into `main` with a merge commit,
   successful main checks, then the existing Publish workflow and immutable
