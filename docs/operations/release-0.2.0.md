@@ -24,8 +24,10 @@ Native ARM64 qualification passed at 0.25 CPU, 512 MiB RAM and no extra swap:
 
 These are bounded correctness and survival results against a pinned local
 Sqrzl provider. They do not establish production AWS latency, statistical
-performance, or a universal database capacity limit. Native AMD64 constrained
-qualification remains required. See the
+performance, or a universal database capacity limit. On 2026-10-16 the maintainer
+accepted local verification on the Apple Silicon Mac for this release, replacing
+the native AMD64 host requirement. No AMD64 runtime qualification is claimed.
+Workflow changes were explicitly declined. See the
 [catalog report](../development/cloud-catalog-pressure.md) and
 [constrained runtime procedure](../development/constrained-runtime.md).
 
@@ -88,7 +90,6 @@ container identities, limits and restart timings under `FITZ_S3_REPORT_DIR`.
 
 ## Remaining publication gates
 
-- Native AMD64 constrained recovery against the final runtime artifact.
 - Benchmark release rows and the required same-host Stream performance
   qualification, including unchanged-binary controls and the confirmation run.
   A standard Tier 4 workflow alone does not satisfy the full policy in

@@ -73,6 +73,11 @@ Byte-identical outputs alone do not qualify a source change. A performance
 host and shared-tool support for this policy are still required; no new timing
 qualification or artifact-equivalence verdict is claimed by this cleanup.
 
+For Fitz 0.2.0, the maintainer accepted local Apple Silicon Mac verification on
+2026-10-16 instead of requiring a separate Linux host. This changes the accepted
+host for that release only. The workload set, sampling, alternating pairs,
+controls, confirmation and performance budgets above remain unchanged.
+
 ## Selection Rules
 
 Use [config/perf_targets.json](../../config/perf_targets.json) and [Performance targets](bench-targets.md) to choose optimization candidates. Prefer the scenario furthest over its operational target inside the relevant bucket, then use stretch-target distance and current `mean_us` to break ties.

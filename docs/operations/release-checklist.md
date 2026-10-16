@@ -91,6 +91,12 @@ at 0.25 CPU, 512 MiB RAM, no extra swap, and the unchanged 180-second readiness
 deadline. Record native ARM64 and AMD64 evidence separately. See the
 [qualification report](../development/cloud-catalog-pressure.md).
 
+For Fitz 0.2.0, the maintainer accepted local Apple Silicon Mac verification on
+2026-10-16 in place of a separate native AMD64 campaign. Preserve the actual
+architecture and scope in the release record; this exception does not establish
+AMD64 runtime results or relax resource, readiness, correctness or performance
+budgets. Workflow files remain unchanged.
+
 ## Stream error envelope generation 2 release gate
 
 For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK
