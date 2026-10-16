@@ -172,3 +172,22 @@ writes. The catalog reached 1,050,260 bytes while the broker remained healthy;
 this was not an admission failure or a startup reproduction. That failed report
 is preserved under `target/fitz-stress/stream-gib/`. The corrected workload uses
 the incident-sized guard during growth and retains the strict post-load target.
+
+The corrected cold-first run acknowledged all 32,768 events (1 GiB) and passed
+automatic retirement before any forced checkpoint: the serialized catalog was
+347,556 bytes and remote WAL was 108,705,818 bytes. It then failed the unchanged
+180-second crash-to-ready limit after complete cache removal. Neither cold nor
+orderly full-history readback completed, so this run does not qualify recovery.
+Evidence is retained under
+`target/fitz-stress/stream-gib-cold-first/stream-gib-a5e3178b-dfc8-4eb0-a5ce-ae68ae70779c/`.
+
+The successor remained running without an OOM. Midge reported storage ready
+about 88 seconds after launch; subsequent Fitz domain initialization consumed
+the remaining window, including a Stream admin snapshot timeout. These logs
+do not establish another catalog-admission failure or its root cause.
+
+A separate active Midge regression found that repeated publication across the
+32,768-entry vector-capacity boundary still exceeds upload admission after
+PR 887. Claude owns follow-up draft
+[Midge PR 888](https://github.com/cntryl/midge/pull/888); overlapping local Midge
+work is paused. Keep the engine fix and Fitz cold-start acceptance gates open.
