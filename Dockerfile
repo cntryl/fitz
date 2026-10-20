@@ -1,4 +1,4 @@
-FROM node:26.11.1-trixie-slim AS frontend
+FROM node:26.12.0-trixie-slim AS frontend
 
 WORKDIR /ui
 
