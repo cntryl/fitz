@@ -33,7 +33,7 @@ impl Control {
         match self {
             Self::Create => create(CONTROL_ROUTE, Bytes::from(sample.to_le_bytes().to_vec())),
             Self::List => ScheduleMessage::List {
-                offset: 0,
+                cursor: None,
                 limit: 100,
             },
             Self::Cancel => ScheduleMessage::Cancel {
@@ -46,7 +46,7 @@ impl Control {
         matches!(
             (self, response),
             (Self::Create | Self::Cancel, ScheduleResponse::Ok)
-                | (Self::List, ScheduleResponse::ListDefs { .. })
+                | (Self::List, ScheduleResponse::ListPage { .. })
         )
     }
 }

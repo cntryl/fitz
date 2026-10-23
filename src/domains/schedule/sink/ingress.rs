@@ -351,8 +351,7 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleMessage::Create { .. }
             | ScheduleMessage::CreateBatch { .. }
             | ScheduleMessage::Cancel { .. }
-            | ScheduleMessage::List { .. }
-            | ScheduleMessage::ListV2 { .. } => true,
+            | ScheduleMessage::List { .. } => true,
         }
     }
 }

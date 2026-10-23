@@ -67,9 +67,9 @@ impl ScheduleDriver {
             encoder.put_optional_string(cursor.as_deref());
             encoder.put_optional_u64(Some(PAGE_LIMIT));
             let mut frame = TlvFrameBuilder::new();
-            frame.encode_field(707, &encoder.finish());
-            let body = request(&mut self.client, &frame.build(), 707).await?;
-            require_legacy_ok(&body, "Schedule LIST_V2")?;
+            frame.encode_field(702, &encoder.finish());
+            let body = request(&mut self.client, &frame.build(), 702).await?;
+            require_legacy_ok(&body, "Schedule LIST")?;
             let mut decoder = PayloadDecoder::new(&body);
             decoder.get_u8().map_err(BenchFailure::validation)?;
             if decoder.get_u8().map_err(BenchFailure::validation)? != 1 {

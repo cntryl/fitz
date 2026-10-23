@@ -17,12 +17,11 @@ Split from the former `lease-schedule.md`; the Lease domain is in [lease.md](lea
 |  704 | UNSUBSCRIBE | Client → Server            |
 |  705 | NOTIFY      | Server → Client (delivery) |
 |  706 | CREATE_BATCH | Client → Server (broker extension) |
-|  707 | LIST_V2     | Client → Server (broker extension) |
 
-Codes 700–705 are the canonical cross-client surface. The current broker also
-advertises 706 and 707 in its protocol manifest. They are additive extensions:
-clients MUST use LIST 702 for portable pagination and MUST NOT substitute the
-cursor-shaped LIST_V2 707 for canonical LIST.
+Codes 700–705 are the canonical cross-client surface. The broker also
+advertises 706 in its protocol manifest as an additive extension. Identifier
+707 was `LIST_V2` before 0.3.0; its cursor form is now `LIST` (702) and the
+identifier is never reused.
 
 #### Error Envelopes
 
@@ -108,15 +107,18 @@ Response (error=1):
 
 **Wire Format:**
 ```
-optional:
-  [u8]     1 (offset present)
-  [u64 BE] offset
-  [u8]     1 (limit present)
-  [u64 BE] limit
+optional (empty payload = first page, default limit):
+  [u8]     cursor present (0 or 1)
+  [string] cursor (if present; opaque continuation from a previous page)
+  [u8]     limit present (0 or 1)
+  [u64 BE] limit (if present; default 100, at most 1000)
 
 Response (success):
   [u8]     0 (status=success)
-  [u64 BE] total_count
+  [u8]     1 (page version)
+  [u8]     has_more (0 or 1)
+  [u8]     continuation present (0 or 1)
+  [string] continuation (if present; send it as the next cursor)
   repeat 0..N:
     [u8]     1 (has_entry=true)
     [u32 BE] route_len
@@ -138,31 +140,23 @@ Response (error):
 ```
 
 **Semantics:**
-- Omitting the payload defaults to `offset=0, limit=100`
-- `limit=0` requests all remaining entries from `offset`, but the response is
-  still one message bounded by `max_message_bytes` and MAY return fewer
-  entries than exist, regardless of what `limit` requested. There is no
-  `has_more` flag on this response: detect truncation by comparing the
-  returned entry count to `total_count`. If `offset + entries_returned <
-  total_count`, more entries remain; continue by re-issuing LIST with
-  `offset += entries_returned` (same `limit`) until the count is exhausted.
-  Every entry sits at a stable index for the duration of an unchanging
-  definition set, so this offset advance is safe.
-- LIST is scoped to the current route family and each call returns exactly one
-  response payload (never a multi-frame stream), but that payload may be a
-  partial page per the truncation rule above
+- Entries are returned in route order, scoped to the current route family.
+- A page holds at most `limit` entries and never more than fit in one
+  response message, so a page MAY be shorter than `limit`. `has_more=1` says
+  more entries remain and `continuation` is the cursor that resumes after the
+  last entry on the page; send it unchanged. A page with `has_more=0` is the
+  last.
+- A continuation resumes after the route it names even if that schedule has
+  since been cancelled. A cursor from another family or an unrecognised cursor
+  is not an error; it returns the first page.
+- `limit` above 1000 answers 7008 `BAD_REQUEST`. A `limit` of 0 is treated
+  as 1.
+- Each call returns exactly one response message, never a multi-frame stream.
 
 #### Broker Extensions
 
 - `CREATE_BATCH` (706) encodes `[u32 entry_count]` followed by the CREATE fields
   for each entry and returns the same plain success/error envelope as CREATE.
-- `LIST_V2` (707) encodes `[optional string continuation][optional u64 limit]`
-  and returns its versioned cursor page. It exists for broker compatibility;
-  portable clients use canonical offset/limit LIST (702). A continuation
-  cursor resumes after the route it names, even if that schedule has since
-  been cancelled. A cursor that lacks this family's `schedule-list-v1:<family>:`
-  prefix, or has nothing after it (including an empty cursor), is not an
-  error; it returns the first page.
 
 #### Cron Syntax (Broker-Enforced)
 
@@ -241,7 +235,7 @@ client.schedule_cancel(
 ```uses route as identity:
 
 - `CREATE`: `[route_len][route][cron_len][cron][mode][payload_len][payload]`
-- `LIST`: optional `[offset][limit]`, returning one response with `total_count` plus entry sentinels
+- `LIST`: optional `[cursor][limit]`, returning one route-ordered page with `has_more`, a continuation, and entry sentinels
 - `CANCEL`: `[route_len][route]`
 
 #### Semantics

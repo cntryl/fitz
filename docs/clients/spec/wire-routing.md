@@ -819,7 +819,6 @@ Clients MUST:
 | KV       | UNSUBSCRIBE        |       110 | Data          | Stop watching changes   |
 | KV       | NOTIFY             |       111 | Notification  | Committed change event  |
 | Queue    | ENQUEUE            |       200 | Data          | Add message             |
-| Queue    | ENQUEUE_BATCH      |       201 | Reserved      | Batch add (future)      |
 | Queue    | RESERVE            |       202 | Data          | Lease message(s)        |
 | Queue    | EXTEND             |       203 | Data          | Extend lease            |
 | Queue    | COMPLETE           |       204 | Data          | Mark complete           |
@@ -859,7 +858,6 @@ Clients MUST:
 | Schedule | UNSUBSCRIBE        |       704 | Data          | Unsubscribe             |
 | Schedule | NOTIFY             |       705 | Server→Client | Fire notification       |
 | Schedule | CREATE_BATCH       |       706 | Data          | Broker batch extension  |
-| Schedule | LIST_V2            |       707 | Data          | Broker cursor extension |
 
 ### MessageType Ranges Are Non-Overlapping
 

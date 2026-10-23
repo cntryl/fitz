@@ -110,16 +110,9 @@ pub enum ScheduleMessage {
     CreateBatch { entries: Vec<ScheduleCreateEntry> },
     /// Cancel an existing schedule by route
     Cancel { route: String },
-    /// List all schedules (supports pagination)
-    List {
-        /// Starting offset (0-based). Default: 0
-        offset: u64,
-        /// Maximum number of entries to return (0 = all remaining). Default: 100
-        limit: u64,
-    },
-    /// Versioned live ordered pagination. The cursor is an opaque route-key
-    /// continuation; omitted cursors start at the first route.
-    ListV2 { cursor: Option<String>, limit: u64 },
+    /// Live route-ordered pagination. The cursor is an opaque continuation
+    /// from a previous page; omitted cursors start at the first route.
+    List { cursor: Option<String>, limit: u64 },
     /// Subscribe to live notifications for a schedule route pattern.
     Subscribe {
         family_id: RouteFamily,
@@ -211,12 +204,7 @@ pub enum ScheduleResponse {
     Ok,
     /// SUBSCRIBE succeeded with the logical `subscription_id` used for NOTIFY fanout.
     SubscribeOk { subscription_id: u64 },
-    /// LIST operation: returns paginated schedules with total count
-    ListDefs {
-        entries: Arc<Vec<Arc<ScheduleListEntry>>>,
-        total_count: u64,
-    },
-    /// Versioned live ordered LIST page.
+    /// One route-ordered LIST page.
     ListPage {
         entries: Arc<Vec<Arc<ScheduleListEntry>>>,
         has_more: bool,

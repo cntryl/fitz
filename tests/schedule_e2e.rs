@@ -137,10 +137,12 @@ where
     let (_msg_type, list_status, list_payload) = parse_schedule_response(&list_response);
     assert_eq!(list_status, 0, "Expected success for schedule list");
 
-    // Decode the ListDefs entry and confirm the exact payload bytes round-tripped
+    // Decode the list page entry and confirm the exact payload bytes round-tripped
     // over the wire, not just that the create call reported success.
     let mut dec = PayloadDecoder::new(&list_payload[1..]);
-    let _total_count = dec.get_u64().expect("total count");
+    assert_eq!(dec.get_u8().expect("page version"), 1);
+    let _has_more = dec.get_u8().expect("has_more");
+    let _continuation = dec.get_optional_string().expect("continuation");
     let has_entry = dec.get_u8().expect("has_entry flag");
     assert_eq!(has_entry, 1, "expected the created schedule in the list");
     let route = dec.get_string().expect("route");
@@ -248,8 +250,18 @@ where
     assert_eq!(list_status, 0, "Expected success for schedule list");
 
     let mut dec = PayloadDecoder::new(&list_payload[1..]);
-    let total_count = dec.get_u64().expect("total count");
-    assert_eq!(total_count, entries.len() as u64);
+    assert_eq!(dec.get_u8().expect("page version"), 1);
+    let _has_more = dec.get_u8().expect("has_more");
+    let _continuation = dec.get_optional_string().expect("continuation");
+    let mut listed = 0;
+    while dec.get_u8().expect("has_entry flag") == 1 {
+        dec.get_string().expect("route");
+        dec.get_string().expect("cron");
+        dec.get_u8().expect("delivery mode");
+        dec.get_bytes().expect("payload");
+        listed += 1;
+    }
+    assert_eq!(listed, entries.len());
 }
 
 // Generic test helper for various cron expressions

@@ -34,9 +34,6 @@ fn acknowledge_claim_batch<P: SchedulePersistence>(
 /// continuation cursor.
 pub(crate) type ScheduleListPage = (Arc<Vec<Arc<ScheduleListEntry>>>, bool, Option<String>);
 
-/// One page of schedule definitions plus the total definition count.
-pub(crate) type ScheduleListDefs = (Arc<Vec<Arc<ScheduleListEntry>>>, u64);
-
 impl ScheduleActor {
     pub(super) fn insert_pending_claim(
         &mut self,
@@ -154,7 +151,7 @@ impl ScheduleActor {
     ///
     /// Returns the offending route when a stored definition is too large to
     /// appear in any list response.
-    pub fn list_entries_v2(
+    pub fn list_entries(
         &mut self,
         cursor: Option<&str>,
         limit: u64,
@@ -165,7 +162,7 @@ impl ScheduleActor {
             .clamp(1, MAX_LIMIT);
         let family_prefix = format!("schedule-list-v1:{}:", self.family.as_u64());
         // An empty, foreign-family, or unprefixed cursor lists from the first
-        // page, as LIST_V2 always has; only a cursor naming a route in this
+        // page, as LIST always has; only a cursor naming a route in this
         // family continues after that route (even if it was since deleted).
         let cursor_route = cursor
             .and_then(|value| value.strip_prefix(&family_prefix))
@@ -203,48 +200,6 @@ impl ScheduleActor {
         let continuation =
             has_more.then(|| format!("{family_prefix}{}", ordered[fitted - 1].route));
         Ok((entries, has_more, continuation))
-    }
-
-    fn u64_to_usize_saturating(value: u64) -> usize {
-        usize::try_from(value).unwrap_or(usize::MAX)
-    }
-
-    /// # Errors
-    ///
-    /// Returns the offending route when a stored definition is too large to
-    /// appear in any list response.
-    pub fn list_entries(&mut self, offset: u64, limit: u64) -> Result<ScheduleListDefs, String> {
-        let total_count = self.schedules.len() as u64;
-        let start = Self::u64_to_usize_saturating(offset);
-        if start >= self.list_entries.len() {
-            return Ok((Arc::new(Vec::new()), total_count));
-        }
-
-        let remaining = self.list_entries.len() - start;
-        let requested = if limit == 0 {
-            remaining
-        } else {
-            remaining.min(Self::u64_to_usize_saturating(limit))
-        };
-        // `limit = 0` means "all remaining", so the caller's count cannot bound
-        // the response - only the wire budget can. Clients detect the short
-        // page by comparing entry count against `total_count` and continue
-        // from `offset`, which the V1 contract already supports.
-        let take = Self::bounded_page_len(&self.list_entries, start, requested, |_| 0)?;
-
-        if start == 0 && take == self.list_entries.len() {
-            if let Some(cache) = &self.list_cache {
-                return Ok((cache.clone(), total_count));
-            }
-            let cache = Arc::new(self.list_entries.clone());
-            self.list_cache = Some(cache.clone());
-            return Ok((cache, total_count));
-        }
-
-        Ok((
-            Arc::new(self.list_entries[start..start + take].to_vec()),
-            total_count,
-        ))
     }
 
     fn store_claims_for<'a>(

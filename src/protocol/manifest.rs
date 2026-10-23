@@ -436,13 +436,6 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestAuthorization::MultiRouteWrite,
         ManifestDecoder::Schedule,
     ),
-    client(
-        707,
-        "schedule",
-        Some("schedule"),
-        ManifestAuthorization::WildcardRead,
-        ManifestDecoder::Schedule,
-    ),
 ];
 
 #[must_use]
@@ -535,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_reserved_message_id_given_valid_numeric_range() {
+    fn should_treat_an_unassigned_id_inside_a_domain_range_as_unknown() {
         assert!(is_reserved_or_unassigned(MessageType::new(201)));
         assert!(client_entry(MessageType::new(201)).is_err());
     }

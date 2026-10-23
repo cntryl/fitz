@@ -28,7 +28,6 @@
 | Value | Name |
 |---:|---|
 | 200 | ENQUEUE |
-| 201 | ENQUEUE_BATCH (reserved; servers may reject with unknown message type until defined) |
 | 202 | RESERVE |
 | 203 | EXTEND |
 | 204 | COMPLETE |
@@ -70,7 +69,7 @@
 | 607 | SUBSCRIBE |
 | 608 | UNSUBSCRIBE |
 | 609 | NOTIFY |
-**Schedule Domain (700–707):**
+**Schedule Domain (700–706):**
 | Value | Name |
 |---:|---|
 | 700 | CREATE |
@@ -80,7 +79,6 @@
 | 704 | UNSUBSCRIBE |
 | 705 | NOTIFY |
 | 706 | CREATE_BATCH (broker extension) |
-| 707 | LIST_V2 (broker extension; canonical clients use LIST 702) |
 
 ### MessageType Routing
 

@@ -41,7 +41,7 @@ fn should_reject_schedule_request_when_source_and_destination_families_differ() 
             destination_family,
         ),
         Ok(crate::domains::schedule::ScheduleMessage::List {
-            offset: 0,
+            cursor: None,
             limit: 10,
         }),
     );

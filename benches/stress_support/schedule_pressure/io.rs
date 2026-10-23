@@ -125,8 +125,8 @@ pub async fn verify_definitions(
         encoder.put_optional_string(cursor.as_deref());
         encoder.put_optional_u64(Some(16));
         let mut builder = TlvFrameBuilder::new();
-        builder.encode_field(707, &encoder.finish());
-        let body = bounded(request(client, &builder.build(), 707)).await?;
+        builder.encode_field(702, &encoder.finish());
+        let body = bounded(request(client, &builder.build(), 702)).await?;
         require_legacy_ok(&body, "Schedule LIST")?;
         let mut decoder = PayloadDecoder::new(&body);
         decoder.get_u8().map_err(BenchFailure::validation)?;
