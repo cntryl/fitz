@@ -239,8 +239,7 @@ pub struct ScanQuery {
     /// hold a single pair, and resuming from an inclusive `start` then returns
     /// that same pair forever - the scan never advances and later keys are
     /// unreachable. Resuming exclusively guarantees progress in both
-    /// directions. Absent on the wire from older clients, where it defaults to
-    /// `false` and the inclusive behaviour is unchanged.
+    /// directions. Bit 1 of the SCAN options byte on the wire.
     pub start_exclusive: bool,
 }
 
