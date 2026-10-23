@@ -33,6 +33,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-17 | Error envelope carries an explicit `u8 class` alongside the decimal code | Design 5.3 | landed: the envelope carries the explicit `class` byte | |
 | W-18 | Server control message `GOAWAY {code, grace_ms, reason}` | Design 5.12 | decided | |
 | W-19 | No `retry_after` hint; no route family in `HELLO`; `REAUTH` deferred as an additive verb | Design 5.4, 5.9, 5.12 | decided | |
+| W-20 | Stream `MAX_EVENT_SIZE` (61,247 bytes) still derives from the wire-1 64 KiB value cap; raise it to track `max_message_bytes` | Follows W-01, C-01 | proposed | Additive for clients; `READ_RESPONSE_TOO_LARGE` already means larger than `max_message_bytes` |
 
 ## Storage (Midge)
 

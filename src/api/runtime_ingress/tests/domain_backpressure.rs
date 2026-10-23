@@ -177,6 +177,14 @@ fn documented_retryable(code: u32) -> bool {
         .is_some_and(|entry| entry.effect == crate::protocol::wire2::envelope::Effect::NotApplied)
 }
 
+fn catalog_class(code: u32) -> crate::protocol::wire2::envelope::ErrorClass {
+    u16::try_from(code)
+        .ok()
+        .and_then(crate::protocol::wire2::catalog::lookup)
+        .unwrap_or_else(|| panic!("code {code} is not in the catalog"))
+        .class
+}
+
 #[test]
 fn should_absorb_transient_domain_mailbox_backpressure_for_each_domain() {
     // Arrange
@@ -567,6 +575,12 @@ fn should_not_close_session_when_a_domain_command_times_out() {
              would re-send a command that may already have applied",
             case.domain
         );
+        assert_eq!(
+            catalog_class(code),
+            crate::protocol::wire2::envelope::ErrorClass::Timeout,
+            "{} must answer a dispatch timeout with its TIMEOUT slot, got {code}",
+            case.domain
+        );
     }
 }
 
@@ -711,7 +725,7 @@ fn should_answer_terminal_delivery_failures_without_killing_the_session() {
                     session_id,
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
-                    case.payload,
+                    case.payload.clone(),
                     None,
                 )
                 .await
@@ -723,10 +737,17 @@ fn should_answer_terminal_delivery_failures_without_killing_the_session() {
             IngressDecision::Accept,
             "{failure:?} should be answered on the channel, not close the session"
         );
+        let frames = client_frames.lock().unwrap();
         assert_eq!(
-            client_frames.lock().unwrap().len(),
+            frames.len(),
             1,
             "{failure:?} should produce one error frame"
+        );
+        let code = synthesized_error_code(&case, &frames[0]);
+        assert_eq!(
+            catalog_class(code),
+            crate::protocol::wire2::envelope::ErrorClass::Backend,
+            "{failure:?} must be answered with the domain's BACKEND slot, got {code}"
         );
     }
 }

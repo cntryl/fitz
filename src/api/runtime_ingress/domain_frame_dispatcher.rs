@@ -190,8 +190,12 @@ impl DomainFrameDispatcher {
         super::types_and_helpers::ingress_descriptor(domain).backpressure_error_code
     }
 
-    pub(super) fn indeterminate_error_code(domain: DispatchDomain) -> u16 {
-        super::types_and_helpers::ingress_descriptor(domain).indeterminate_error_code
+    pub(super) fn timeout_error_code(domain: DispatchDomain) -> u16 {
+        super::types_and_helpers::ingress_descriptor(domain).timeout_error_code
+    }
+
+    pub(super) fn unavailable_error_code(domain: DispatchDomain) -> u16 {
+        super::types_and_helpers::ingress_descriptor(domain).unavailable_error_code
     }
 
     fn encode_domain_error_body(code: u16, message: &str) -> Bytes {
