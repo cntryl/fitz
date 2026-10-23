@@ -14,3 +14,4 @@ Stable entrypoint for the Fitz wire protocol and client contract. Detailed secti
 - [Lease domain details](spec/lease.md)
 - [Schedule domain details](spec/schedule.md)
 - [Constants, TLV registry, acceptance, and broker-specific behavior](spec/registry-acceptance.md)
+- [Error codes, classes, and effects (wire format 2)](spec/error-codes.md)

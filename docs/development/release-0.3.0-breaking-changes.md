@@ -17,7 +17,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-01 | Fixed 15-byte message header replaces TLV records and `CORRELATE`/`CORRELATED` | One parser, mandatory correlation, `u32` length | proposed | |
 | W-02 | Structured `CONNECT` with version range, capabilities, JWT, service name, client build; `HELLO` or `CONNECT_REJECTED` always answers it | Negotiation and an explicit failure signal | proposed | |
 | W-03 | One response envelope: `[status][u16 code][u8 effect][string message]` | Removes three layouts and length sniffing | proposed | |
-| W-04 | Shared error slots x01..x10 across every domain block; domain codes from x50; full old-to-new mapping | One retry table for every SDK | proposed | |
+| W-04 | Shared error slots x01..x10 across every domain block; domain codes from x50; full old-to-new mapping | One retry table for every SDK | spec written: `docs/clients/spec/error-codes.md` | |
 | W-05 | Schedule CREATE, CANCEL, SUBSCRIBE, UNSUBSCRIBE, CREATE_BATCH, and LIST errors become coded | Clients stop parsing messages | proposed | |
 | W-06 | Schedule `LIST` takes the cursor form; `LIST_V2` (707) retired | One list verb | proposed | |
 | W-07 | Stream READ uses the common envelope; generation-2 `status=2` retired | One envelope | proposed | |

@@ -28,6 +28,7 @@ pub mod stream_codec;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tlv;
+pub mod wire2;
 
 pub use error_codes::{
     kv as error_kv, lease as error_lease, notice as error_notice, queue as error_queue,

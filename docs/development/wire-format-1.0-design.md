@@ -115,7 +115,7 @@ the application-visible `realm`.
 The broker may send one server control message at any time after `HELLO`:
 
 ```
-GOAWAY (type 5) value, correlation 0:
+GOAWAY (type 4) value, correlation 0:
 [u16 BE] code             section 3.4, protocol block (DRAINING, FORCED_CLOSE, LIMIT_CHANGED)
 [u32 BE] grace_ms         time the broker will keep serving before it closes; 0 = closing now
 [string] reason
