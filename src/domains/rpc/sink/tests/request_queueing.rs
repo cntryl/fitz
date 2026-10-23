@@ -1,5 +1,14 @@
 use super::*;
 
+/// A delivery repeats the caller's request bytes and replaces the caller's
+/// budget presence byte with the broker's remaining budget.
+fn assert_delivered_request(delivered: &[u8], caller_payload: &[u8]) {
+    let fields = caller_payload.len() - 1;
+    assert_eq!(&delivered[..fields], &caller_payload[..fields]);
+    assert_eq!(delivered[fields], 1, "every delivery carries a budget");
+    assert_eq!(delivered.len(), fields + 5);
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn should_reject_duplicate_live_correlation_given_rpc_sink() {
@@ -204,7 +213,7 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
     let worker_frames = worker_frames.lock();
     assert_eq!(worker_frames.len(), 1);
     assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(worker_frames[0].payload, caller_one_payload);
+    assert_delivered_request(&worker_frames[0].payload, &caller_one_payload);
     let caller_one_frames = caller_one_frames.lock();
     assert_eq!(caller_one_frames.len(), 0);
     let caller_two_frames = caller_two_frames.lock();
@@ -334,9 +343,9 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
     let worker_frames = worker_frames.lock();
     assert_eq!(worker_frames.len(), 2);
     assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(worker_frames[0].payload, caller_one_payload);
+    assert_delivered_request(&worker_frames[0].payload, &caller_one_payload);
     assert_eq!(worker_frames[1].msg_type.as_u16(), 302);
-    assert_eq!(worker_frames[1].payload, caller_two_payload);
+    assert_delivered_request(&worker_frames[1].payload, &caller_two_payload);
 }
 
 #[test]

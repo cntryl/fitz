@@ -15,8 +15,7 @@ fn subscribe_cancellation_worker(route: &str, max_concurrent: u32) -> Vec<u8> {
     let mut payload = PayloadEncoder::new();
     payload.put_string(route);
     payload.put_u32(max_concurrent);
-    payload.put_u8(1);
-    payload.put_u8(1);
+    payload.put_u8(1); // accepts cancellation controls
     frame(300, &payload.finish())
 }
 
@@ -25,8 +24,7 @@ fn rpc_request(correlation_id: Uuid, route: &str, budget_ms: u32) -> Vec<u8> {
     payload.put_raw(correlation_id.as_bytes());
     payload.put_string(route);
     payload.put_bytes(b"request");
-    payload.put_u8(1);
-    payload.put_u8(1);
+    payload.put_u8(1); // budget present
     payload.put_u32(budget_ms);
     frame(302, &payload.finish())
 }

@@ -392,50 +392,32 @@ impl RpcFamilyRuntime<'_> {
                 .worker_correlation_id;
         }
         let req = &worker_request;
+        let remaining_budget_ms = Self::remaining_budget_millis(expires_at);
         #[cfg(test)]
         let request_envelope = {
-            let mut payload_encoder =
-                crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let mut request_bytes = crate::dispatch::protocol::rpc_codec::encode_request_into(
-                req,
-                &mut payload_encoder,
-            );
-            if worker.supports_cancellation {
-                let remaining_budget_ms = Self::remaining_budget_millis(expires_at);
-                request_bytes.push(1);
-                request_bytes.push(1);
-                request_bytes.extend_from_slice(&remaining_budget_ms.to_be_bytes());
-            }
             let request_ctx = FrameContext::new(
                 worker.session_id,
                 crate::dispatch::protocol::frame::ChannelId::Rpc,
                 crate::dispatch::protocol::tlv::MessageType::new(RPC_MSG_TYPE_REQUEST),
-                bytes::Bytes::from(request_bytes),
+                crate::dispatch::protocol::rpc_codec::encode_worker_request_payload(
+                    req,
+                    remaining_budget_ms,
+                ),
                 *worker.addr.family(),
             );
             Envelope::new(worker.inbox_addr.clone(), request_ctx)
         };
 
         #[cfg(not(test))]
-        let request_envelope = if worker.supports_cancellation {
-            Envelope::new(
-                worker.inbox_addr.clone(),
-                crate::domains::rpc::protocol::RpcWorkerRequestWithBudgetDelivery {
-                    session_id: worker.session_id,
-                    request: req.clone(),
-                    remaining_budget_ms: Self::remaining_budget_millis(expires_at),
-                },
-            )
-        } else {
-            Envelope::new(
-                worker.inbox_addr.clone(),
-                RpcWorkerRequestDelivery::new(
-                    worker.session_id,
-                    *worker.addr.family(),
-                    req.clone(),
-                ),
-            )
-        };
+        let request_envelope = Envelope::new(
+            worker.inbox_addr.clone(),
+            RpcWorkerRequestDelivery::new(
+                worker.session_id,
+                *worker.addr.family(),
+                req.clone(),
+                remaining_budget_ms,
+            ),
+        );
 
         self.core.router.route(request_envelope)
     }

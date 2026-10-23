@@ -349,6 +349,7 @@ Message type 304 is unsupported. Fitz has no RPC ACK frame.
 [u32 BE]  worker_route_len
 [bytes]   worker_route
 [u32 BE]  max_concurrent (must be 1..=1024)
+[u8]      flags (bit 0: the worker accepts cancellation controls and remaining budgets; other bits MUST be 0)
 Response (status=0):
   [u8]     0
   [u32 BE] data_len
@@ -386,9 +387,12 @@ Response (status=1):
 [bytes]    route
 [u32 BE]   body_len
 [bytes]    body
+[u8]       has_budget (0 or 1)
+[u32 BE]   remaining_budget_ms (if has_budget=1; 0..=86,400,000)
 ```
 
 `correlation_id` is always exactly 16 bytes (UUID), with no length prefix.
+A caller that states no budget gets the broker's default request timeout.
 Successful REQUEST submission produces **no immediate broker success frame**.
 Every deliverable broker admission or domain failure for a REQUEST with a
 readable UUID is one terminal
@@ -422,11 +426,13 @@ for the prior uncorrelated 302 ingress-error behavior and mixed-version handling
 When the broker selects a worker for an incoming REQUEST, it delivers the same REQUEST frame (MessageType=302) to the worker's connection. The worker receives:
 
 ```
-[16 bytes] correlation_id (UUID, from caller)
+[16 bytes] correlation_id (UUID; the caller's, or a fresh dispatch UUID for a worker that accepts cancellation)
 [u32 BE]   route_len
 [bytes]    route (the target route)
 [u32 BE]   body_len
 [bytes]    body
+[u8]       1 (has_budget; always present on delivery)
+[u32 BE]   remaining_budget_ms (the broker's remaining budget for this call)
 ```
 
 The worker MUST use `correlation_id` when sending RESPONSE frames back. The broker forwards RESPONSE frames to the caller currently associated with that in-memory pending request.
@@ -516,9 +522,9 @@ class WorkerSubscription:
 
 Every operation includes full context:
 
-- `SUBSCRIBE_WORKER`: `[worker_route_len][worker_route][max_concurrent]`
+- `SUBSCRIBE_WORKER`: `[worker_route_len][worker_route][max_concurrent][flags]`
 - `UNSUBSCRIBE_WORKER`: `[worker_route_len][worker_route]`
-- `REQUEST`: `[16 bytes correlation_id][route_len][route][body_len][body]`
+- `REQUEST`: `[16 bytes correlation_id][route_len][route][body_len][body][has_budget][remaining_budget_ms?]`
 - `RESPONSE`: `[16 bytes correlation_id][sequence][flags][body_len][body]`
 
 **Key Points:**
@@ -566,14 +572,12 @@ Every operation includes full context:
 
 ##### Cooperative cancellation and remaining budgets
 
-`HELLO` capability `CAP_RPC_CANCELLATION` (`1 << 3`) advertises the
-optional lifecycle extension. Supporting worker registrations append
-`[version:u8=1, flags:u8=1]` after the existing route and concurrency fields.
-Supporting caller requests may append
-`[version:u8=1, flags:u8=1, remaining_budget_ms:u32]` after the existing
-correlation, route, and body. Budgets range from 0 to 86,400,000 milliseconds;
-queueing and local elapsed time deduct from them without relying on wall clocks.
-Workers without support receive the original request fields without extensions.
+Cancellation controls and remaining budgets are base protocol. A worker
+declares in the SUBSCRIBE_WORKER `flags` byte (bit 0) that it accepts
+cancellation controls; a caller MAY state a remaining budget on REQUEST; and
+every worker receives the broker's remaining budget on REQUEST delivery.
+Budgets range from 0 to 86,400,000 milliseconds; queueing and local elapsed
+time deduct from them without relying on wall clocks.
 For supporting workers, the broker assigns a fresh opaque dispatch UUID in the
 existing worker request correlation field. Worker responses, cancellation
 signals and cleanup ACKs use that invocation UUID; the broker restores the

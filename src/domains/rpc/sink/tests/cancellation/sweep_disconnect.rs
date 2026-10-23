@@ -17,12 +17,11 @@ fn deliver_budgeted_request(
         Bytes::from_static(b"request"),
     );
     let id = request.correlation_id;
-    let mut raw_payload = crate::protocol::rpc_codec::encode_request_into(
+    let raw_payload = crate::protocol::rpc_codec::encode_request_with_budget_into(
         &request,
+        budget_ms,
         &mut crate::protocol::payload_codec::PayloadEncoder::new(),
     );
-    raw_payload.extend([1, 1]);
-    raw_payload.extend(budget_ms.to_be_bytes());
     let ingress = RpcClientRequestIngress {
         request: RpcClientRequest::new_with_payload(
             crate::runtime::ClientFrameMeta::new(

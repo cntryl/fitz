@@ -37,11 +37,11 @@ fn should_encode_worker_request_payload() {
         Bytes::from_static(b"ping"),
     );
     let mut encoder = PayloadEncoder::with_capacity(request_payload_capacity(&request));
-    let expected_payload = encode_request_into(&request, &mut encoder);
+    let expected_payload = encode_request_with_budget_into(&request, 1_500, &mut encoder);
 
     // Act
 
-    let payload = encode_worker_request_payload(&request);
+    let payload = encode_worker_request_payload(&request, 1_500);
 
     // Assert
     assert_eq!(payload.as_ref(), expected_payload.as_slice());
@@ -118,7 +118,7 @@ fn should_preserve_rpc_wire_golden_vectors() {
         delivery,
         [
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 11, b'r', b'p', b'c',
-            b':', b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i',
+            b':', b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i', 0,
         ]
     );
     assert_eq!(response, [0, 0, 0, 0, 2, b'o', b'k']);
@@ -151,14 +151,13 @@ fn should_keep_cancellation_control_out_of_domain_rpc_messages() {
 }
 
 #[test]
-fn should_parse_negotiated_worker_cancellation_registration() {
+fn should_parse_worker_registration_flags_for_cancellation_support() {
     // Arrange
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/operation");
     let mut payload = BytesMut::new();
     put_payload_string(&mut payload, route.as_str());
     payload.put_u32(2);
-    payload.put_u8(RPC_LIFECYCLE_EXTENSION_VERSION);
     payload.put_u8(RPC_WORKER_CANCELLATION_SUPPORTED);
     let context = FrameContext::new(
         42,
@@ -186,7 +185,7 @@ fn should_parse_negotiated_worker_cancellation_registration() {
 }
 
 #[test]
-fn should_parse_request_with_remaining_budget_extension() {
+fn should_parse_request_with_remaining_budget() {
     // Arrange
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/operation");
@@ -196,8 +195,7 @@ fn should_parse_request_with_remaining_budget_extension() {
         route.clone(),
         Bytes::from_static(b"request"),
     );
-    let mut payload = encode_request_into(&request, &mut PayloadEncoder::new());
-    payload.extend_from_slice(&[RPC_LIFECYCLE_EXTENSION_VERSION, 0x01, 0, 0, 4, 210]);
+    let payload = encode_request_with_budget_into(&request, 1_234, &mut PayloadEncoder::new());
     let context = FrameContext::new(
         1,
         crate::protocol::frame::ChannelId::Rpc,

@@ -494,6 +494,7 @@ pub fn build_rpc_subscribe_with_max_concurrent(worker_addr: &str, max_concurrent
     buf.put_u32(u32_len(worker_addr.len()));
     buf.put_slice(worker_addr.as_bytes());
     buf.put_u32(max_concurrent);
+    buf.put_u8(0); // no cancellation support
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(300, &buf);
@@ -514,6 +515,7 @@ pub fn build_rpc_request(route: &str, payload: &[u8]) -> Vec<u8> {
 
     buf.put_u32(u32_len(payload.len()));
     buf.put_slice(payload);
+    buf.put_u8(0); // no caller budget
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(302, &buf);

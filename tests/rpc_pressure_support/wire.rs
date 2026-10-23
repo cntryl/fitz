@@ -14,8 +14,7 @@ pub fn subscribe() -> Vec<u8> {
     let mut payload = PayloadEncoder::new();
     payload.put_string(ROUTE);
     payload.put_u32(1);
-    payload.put_u8(1);
-    payload.put_u8(1);
+    payload.put_u8(1); // accepts cancellation controls
     frame(300, &payload.finish())
 }
 
@@ -30,8 +29,7 @@ pub fn request(id: Uuid, sequence: u64, budget: u32) -> Vec<u8> {
     payload.put_raw(id.as_bytes());
     payload.put_string(ROUTE);
     payload.put_bytes(&body(sequence));
-    payload.put_u8(1);
-    payload.put_u8(1);
+    payload.put_u8(1); // budget present
     payload.put_u32(budget);
     frame(302, &payload.finish())
 }

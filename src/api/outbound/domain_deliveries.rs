@@ -42,28 +42,12 @@ impl SessionOutboundSink {
             "Outbound sink: encoding RPC worker request delivery"
         );
         let encode_start = Self::encode_latency_start();
-        let payload = crate::protocol::rpc_codec::encode_worker_request_payload(&delivery.request);
-        Self::observe_encode_latency(encode_start);
-        self.send_message(delivery.session_id, 302, None, &payload)
-    }
-
-    pub(super) fn deliver_rpc_worker_request_with_budget(
-        &self,
-        delivery: &crate::domains::rpc::protocol::RpcWorkerRequestWithBudgetDelivery,
-    ) -> Result<(), DeliveryError> {
-        debug!(
-            session_id = delivery.session_id,
-            route = %delivery.request.route,
-            remaining_budget_ms = delivery.remaining_budget_ms,
-            "Outbound sink: encoding RPC worker request with remaining budget"
-        );
-        let encode_start = Self::encode_latency_start();
-        let bytes = crate::protocol::rpc_codec::encode_worker_request_with_budget_payload(
+        let payload = crate::protocol::rpc_codec::encode_worker_request_payload(
             &delivery.request,
             delivery.remaining_budget_ms,
         );
         Self::observe_encode_latency(encode_start);
-        self.send_message(delivery.session_id, 302, None, &bytes)
+        self.send_message(delivery.session_id, 302, None, &payload)
     }
 
     pub(super) fn deliver_rpc_forwarded_response(

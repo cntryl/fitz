@@ -22,7 +22,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-06 | Schedule `LIST` takes the cursor form; `LIST_V2` (707) retired | One list verb | landed | 702 accepts an empty payload for the first page; 707 is unassigned and never reused |
 | W-07 | Stream READ uses the common envelope; generation-2 `status=2` retired | One envelope | landed: READ uses the common envelope | |
 | W-08 | KV SCAN options byte with `start_exclusive`; `CAP_KV_SCAN_EXCLUSIVE` retired | No capability-gated trailing byte | landed | `[u8 options]` replaces `[u8 reverse][u8 start_exclusive?]`; bit 0 reverse, bit 1 start_exclusive, reserved bits rejected |
-| W-09 | RPC budget and cancellation fields in the base layout; `CAP_RPC_CANCELLATION` retired | Base protocol | proposed | |
+| W-09 | RPC budget and cancellation fields in the base layout; `CAP_RPC_CANCELLATION` retired | Base protocol | landed | SUBSCRIBE_WORKER ends with `[u8 flags]`; REQUEST ends with `[u8 has_budget][u32?]`; every delivery carries the broker's remaining budget |
 | W-10 | `BUSY` with `effect=NOT_APPLIED` in every domain; no connection close on overflow | Spec and code agree | landed for codes: `BUSY` is `x005` in every block with `effect = NOT_APPLIED`; connection-close-on-overflow was already gone | |
 | W-11 | Notice `ACK_REQUESTED` header flag for PUBLISH | Observable drops on request | landed | Success means accepted for fan-out, never delivered; the flag forces the replying actor path |
 | W-12 | Notice malformed-wildcard patterns become `INVALID_PATTERN` | Ends the frozen-3005 exception | landed: every pattern the compiler rejects is `INVALID_PATTERN` (3003) | |

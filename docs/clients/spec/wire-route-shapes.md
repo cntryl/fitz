@@ -80,7 +80,6 @@ A request is valid **only if**:
   | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*/*` |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
   | `CREATE_BATCH` | broker extension; repeated canonical CREATE entries |
-  | `LIST_V2` | broker extension; cursor pagination, not a replacement for LIST 702 |
   | `COMMIT` | `{realm}/{area}/{resource}` |
   | `ROLLBACK` | `{realm}/{area}/{resource}` |
   **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on data operations: BEGIN, GET, PUT, INSERT, DELETE, DELETE_RANGE, SCAN, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK.

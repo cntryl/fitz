@@ -166,11 +166,10 @@ changes its ownership.
   REQUEST frames as async pushes
 - The broker derives caller response routing from the source session; callers do not send a reply route
 - Successful REQUEST submission is silent; callers wait for RESPONSE or an error frame
-- `HELLO` capability `CAP_RPC_CANCELLATION` gates lifecycle support;
-  absent capability, clients retain legacy payloads and behavior
-- Supporting worker registrations set bit 0 in the optional version-1
-  registration extension; supporting callers append a version-1 remaining
-  budget extension to REQUEST
+- Cancellation controls and remaining budgets are base protocol: a worker
+  declares cancellation support in the SUBSCRIBE_WORKER `flags` byte, a
+  caller may state a remaining budget on REQUEST, and every REQUEST delivery
+  carries the broker's remaining budget
 - A cleanup acknowledgment means the worker handler has stopped and released
   request-owned resources; a broker-forwarded cancellation signal alone does
   not confirm cleanup

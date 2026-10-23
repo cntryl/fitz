@@ -467,17 +467,14 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
     }
 
     if let Some(delivery) = envelope.payload::<crate::domains::rpc::RpcWorkerRequestDelivery>() {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
-            crate::protocol::rpc_codec::request_payload_capacity(&delivery.request),
-        );
         return Some(FrameContext::new(
             delivery.session_id,
             ChannelId::Rpc,
             MessageType::new(302),
-            Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+            crate::protocol::rpc_codec::encode_worker_request_payload(
                 &delivery.request,
-                &mut encoder,
-            )),
+                delivery.remaining_budget_ms,
+            ),
             delivery.route_family,
         ));
     }
