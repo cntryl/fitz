@@ -11,7 +11,6 @@ use crate::dispatch::wire::rpc::{
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use crate::protocol::tlv::MessageType;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::{BufMut, Bytes, BytesMut};
 use uuid::Uuid;
@@ -113,27 +112,8 @@ fn put_error_body(buf: &mut BytesMut, code: u16, message: &str) {
     put_payload_string(buf, message);
 }
 
-fn put_tlv_header(buf: &mut BytesMut, msg_type: MessageType, payload_len: usize) {
-    assert!(
-        u16::try_from(payload_len).is_ok(),
-        "TLV value too large: {} bytes (max {})",
-        payload_len,
-        u16::MAX
-    );
-
-    if msg_type.is_single_byte() {
-        buf.put_u8(u8::try_from(msg_type.as_u16()).unwrap_or(u8::MAX));
-    } else {
-        buf.put_u8(MessageType::ESCAPE_MARKER);
-        buf.put_slice(&msg_type.as_u16().to_be_bytes());
-    }
-    buf.put_slice(&u16::try_from(payload_len).unwrap_or(u16::MAX).to_be_bytes());
-}
-
-fn tlv_frame_buffer(msg_type: MessageType, payload_len: usize) -> BytesMut {
-    let mut buf = BytesMut::with_capacity(msg_type.encoded_size(payload_len));
-    put_tlv_header(&mut buf, msg_type, payload_len);
-    buf
+fn payload_buffer(payload_len: usize) -> BytesMut {
+    BytesMut::with_capacity(payload_len)
 }
 
 /// Return the exact payload size for a standard RPC client response body.
@@ -170,33 +150,6 @@ pub fn response_message_capacity(response: &RpcResponse) -> usize {
 #[must_use]
 pub fn terminal_error_response_message_capacity(message: &str) -> usize {
     UUID_BYTES_LEN + U64_LEN + U8_LEN + encoded_bytes_len(error_body_capacity(message))
-}
-
-/// Return the exact frame size for a standard RPC client response body.
-#[must_use]
-pub fn client_response_frame_capacity(
-    msg_type: MessageType,
-    response: &RpcClientResponseBody,
-) -> usize {
-    msg_type.encoded_size(response_body_capacity(response))
-}
-
-/// Return the exact frame size for an RPC worker request delivery frame.
-#[must_use]
-pub fn worker_request_frame_capacity(request: &RpcRequest) -> usize {
-    MessageType::new(302).encoded_size(request_payload_capacity(request))
-}
-
-/// Return the exact frame size for an RPC response message frame.
-#[must_use]
-pub fn response_message_frame_capacity(response: &RpcResponse) -> usize {
-    MessageType::new(303).encoded_size(response_message_capacity(response))
-}
-
-/// Return the exact frame size for an RPC terminal error response frame.
-#[must_use]
-pub fn terminal_error_response_message_frame_capacity(message: &str) -> usize {
-    MessageType::new(303).encoded_size(terminal_error_response_message_capacity(message))
 }
 
 /// Parse incoming message from TLV-encoded bytes.
@@ -517,39 +470,44 @@ pub(crate) fn parse_cancellation_message(
     Ok(message)
 }
 
-fn cancellation_control_tlv_frame(
+fn cancellation_control_frame(
     message_type: u16,
     kind: u8,
     correlation_id: &Uuid,
     trailing: Option<u8>,
 ) -> Bytes {
     let payload_len = UUID_BYTES_LEN + 1 + usize::from(trailing.is_some());
-    let mut buf = tlv_frame_buffer(MessageType::new(message_type), payload_len);
+    let mut buf = payload_buffer(payload_len);
     buf.put_u8(kind);
     put_uuid(&mut buf, correlation_id);
     if let Some(value) = trailing {
         buf.put_u8(value);
     }
-    buf.freeze()
+    Bytes::from(crate::protocol::wire2::header::encode_message(
+        message_type,
+        crate::protocol::wire2::header::HeaderFlags::none(),
+        None,
+        &buf,
+    ))
 }
 
-pub(crate) fn encode_worker_cancel_tlv_frame(
+pub(crate) fn encode_worker_cancel_frame(
     correlation_id: &Uuid,
     reason: RpcCancellationReason,
 ) -> Bytes {
-    cancellation_control_tlv_frame(305, 2, correlation_id, Some(reason as u8))
+    cancellation_control_frame(305, 2, correlation_id, Some(reason as u8))
 }
 
 #[cfg(test)]
-pub(crate) fn encode_cancel_ack_tlv_frame(correlation_id: &Uuid) -> Bytes {
-    cancellation_control_tlv_frame(304, 3, correlation_id, None)
+pub(crate) fn encode_cancel_ack_frame(correlation_id: &Uuid) -> Bytes {
+    cancellation_control_frame(304, 3, correlation_id, None)
 }
 
-pub(crate) fn encode_cancel_result_tlv_frame(
+pub(crate) fn encode_cancel_result_frame(
     correlation_id: &Uuid,
     result: RpcCancellationResult,
 ) -> Bytes {
-    cancellation_control_tlv_frame(305, 4, correlation_id, Some(result as u8))
+    cancellation_control_frame(305, 4, correlation_id, Some(result as u8))
 }
 
 fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, RpcDecodeError> {
@@ -635,12 +593,9 @@ pub fn encode_terminal_error_response_message_into(
 ///
 /// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
 #[must_use]
-pub fn encode_client_response_tlv_frame(
-    msg_type: MessageType,
-    response: &RpcClientResponseBody,
-) -> Bytes {
+pub fn encode_client_response_payload(response: &RpcClientResponseBody) -> Bytes {
     let payload_len = response_body_capacity(response);
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let mut buf = payload_buffer(payload_len);
 
     match response {
         RpcClientResponseBody::Ok { data } => {
@@ -659,10 +614,7 @@ pub fn encode_client_response_tlv_frame(
         }
     }
 
-    debug_assert_eq!(
-        buf.len(),
-        client_response_frame_capacity(msg_type, response)
-    );
+    debug_assert_eq!(buf.len(), response_body_capacity(response));
     buf.freeze()
 }
 
@@ -673,29 +625,27 @@ pub fn encode_client_response_tlv_frame(
 ///
 /// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
 #[must_use]
-pub fn encode_worker_request_tlv_frame(request: &RpcRequest) -> Bytes {
-    let msg_type = MessageType::new(302);
+pub fn encode_worker_request_payload(request: &RpcRequest) -> Bytes {
     let payload_len = request_payload_capacity(request);
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let mut buf = payload_buffer(payload_len);
 
     put_uuid(&mut buf, &request.correlation_id);
     put_payload_string(&mut buf, request.route.as_str());
     put_payload_bytes(&mut buf, &request.body);
 
-    debug_assert_eq!(buf.len(), worker_request_frame_capacity(request));
+    debug_assert_eq!(buf.len(), request_payload_capacity(request));
     buf.freeze()
 }
 
 /// Encode a worker request with the negotiated remaining-budget extension.
 #[must_use]
-pub(crate) fn encode_worker_request_with_budget_tlv_frame(
+pub(crate) fn encode_worker_request_with_budget_payload(
     request: &RpcRequest,
     remaining_budget_ms: u32,
 ) -> Bytes {
     assert!(remaining_budget_ms <= MAX_RPC_BUDGET_MILLIS);
-    let msg_type = MessageType::new(302);
     let payload_len = request_payload_capacity(request) + 6;
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let mut buf = payload_buffer(payload_len);
     put_uuid(&mut buf, &request.correlation_id);
     put_payload_string(&mut buf, request.route.as_str());
     put_payload_bytes(&mut buf, &request.body);
@@ -712,17 +662,16 @@ pub(crate) fn encode_worker_request_with_budget_tlv_frame(
 ///
 /// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
 #[must_use]
-pub fn encode_response_message_tlv_frame(response: &RpcResponse) -> Bytes {
-    let msg_type = MessageType::new(303);
+pub fn encode_response_message_payload(response: &RpcResponse) -> Bytes {
     let payload_len = response_message_capacity(response);
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let mut buf = payload_buffer(payload_len);
 
     put_uuid(&mut buf, &response.correlation_id);
     buf.put_u64(response.seq);
     buf.put_u8(u8::from(response.stream_end) & RPC_RESPONSE_FLAG_STREAM_END);
     put_payload_bytes(&mut buf, &response.body);
 
-    debug_assert_eq!(buf.len(), response_message_frame_capacity(response));
+    debug_assert_eq!(buf.len(), response_message_capacity(response));
     buf.freeze()
 }
 
@@ -733,15 +682,14 @@ pub fn encode_response_message_tlv_frame(response: &RpcResponse) -> Bytes {
 ///
 /// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
 #[must_use]
-pub fn encode_terminal_error_response_message_tlv_frame(
+pub fn encode_terminal_error_response_message_payload(
     correlation_id: &Uuid,
     code: u16,
     message: &str,
 ) -> Bytes {
-    let msg_type = MessageType::new(303);
     let payload_len = terminal_error_response_message_capacity(message);
     let error_body_len = error_body_capacity(message);
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let mut buf = payload_buffer(payload_len);
 
     put_uuid(&mut buf, correlation_id);
     buf.put_u64(0);
@@ -749,10 +697,7 @@ pub fn encode_terminal_error_response_message_tlv_frame(
     put_u32_len(&mut buf, error_body_len);
     put_error_body(&mut buf, code, message);
 
-    debug_assert_eq!(
-        buf.len(),
-        terminal_error_response_message_frame_capacity(message)
-    );
+    debug_assert_eq!(buf.len(), terminal_error_response_message_capacity(message));
     buf.freeze()
 }
 

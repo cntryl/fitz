@@ -101,8 +101,7 @@ async fn exercise_failure<C: RpcConnector + FrameReceivingConnector>(failure: Ad
         .expect("RPC request field");
     let correlation_id =
         fitz::protocol::rpc_codec::extract_request_correlation_id(&payload).expect("request UUID");
-    let mut request_builder = TlvFrameBuilder::new();
-    request_builder.encode_field(2, &42_u64.to_be_bytes());
+    let mut request_builder = TlvFrameBuilder::new().with_correlation(42);
     request_builder.encode_field(302, &payload);
     let request = request_builder.build();
 
@@ -112,11 +111,12 @@ async fn exercise_failure<C: RpcConnector + FrameReceivingConnector>(failure: Ad
         .await
         .expect("terminal RPC response");
 
-    let mut response_parser = TlvFrameParser::new(&terminal);
-    assert_eq!(response_parser.next_field().expect("response field").0, 303);
+    let response_parser = TlvFrameParser::new(&terminal);
+    let header = response_parser.header().expect("response header");
+    assert_eq!(header.message_type, 303);
     assert!(
-        response_parser.next_field().is_none(),
-        "RPC terminal reply must not echo optional frame correlation"
+        header.correlation.is_none(),
+        "RPC terminal reply is matched by its UUID, not the frame correlation"
     );
     let response = parse_rpc_response_delivery(&terminal).expect("decode terminal 303 by UUID");
     assert_eq!(response.msg_type, 303);

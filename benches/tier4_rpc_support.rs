@@ -65,27 +65,12 @@ fn read_uuid_field(input: &[u8], offset: &mut usize) -> Option<Uuid> {
 }
 
 fn single_tlv_payload_range(frame: &[u8]) -> Option<(u16, usize, usize)> {
-    const ESCAPE_MARKER: u8 = 0xFF;
-
-    let mut offset = 0usize;
-    let msg_type = if *frame.get(offset)? == ESCAPE_MARKER {
-        let end = offset.checked_add(3)?;
-        let bytes = frame.get(offset + 1..end)?;
-        offset = end;
-        u16::from_be_bytes(bytes.try_into().ok()?)
-    } else {
-        let value = u16::from(*frame.get(offset)?);
-        offset += 1;
-        value
-    };
-
-    let len_end = offset.checked_add(2)?;
-    let len_bytes = frame.get(offset..len_end)?;
-    offset = len_end;
-    let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
-    let end = offset.checked_add(len)?;
-    frame.get(offset..end)?;
-    Some((msg_type, offset, end))
+    let (header, _) = fitz::protocol::wire2::header::decode_message(frame, u32::MAX).ok()?;
+    Some((
+        header.message_type,
+        fitz::protocol::wire2::header::HEADER_LEN,
+        frame.len(),
+    ))
 }
 
 pub(crate) fn try_parse_rpc_request_payload_parts(payload: &Bytes) -> Option<(Uuid, Bytes)> {

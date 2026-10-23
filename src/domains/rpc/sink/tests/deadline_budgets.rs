@@ -73,7 +73,7 @@ fn should_preserve_legacy_worker_request_bytes_with_local_deadline() {
     let request = request(uuid::Uuid::new_v4());
     let mut state = RpcState::new();
     state.register_registration(test_rpc_worker(request.family_id, &request.route, 42));
-    let expected = crate::protocol::rpc_codec::encode_worker_request_tlv_frame(&request);
+    let expected = crate::protocol::rpc_codec::encode_worker_request_payload(&request);
 
     // Act
     let result = admit_with_deadline(
@@ -90,7 +90,7 @@ fn should_preserve_legacy_worker_request_bytes_with_local_deadline() {
     else {
         panic!("request with worker credit should dispatch immediately");
     };
-    let actual = crate::protocol::rpc_codec::encode_worker_request_tlv_frame(&dispatched_request);
+    let actual = crate::protocol::rpc_codec::encode_worker_request_payload(&dispatched_request);
 
     // Assert
     assert_eq!(actual, expected);

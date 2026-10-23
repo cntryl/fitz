@@ -1,15 +1,18 @@
 use super::*;
-use crate::protocol::tlv::TlvDecoder;
+use crate::protocol::tlv::MessageType;
 
 fn decode_single_frame(frame: &[u8]) -> (MessageType, Bytes) {
-    let decoder = TlvDecoder::new();
-    let (record, consumed) = decoder.decode_one(frame).expect("decode frame");
-    assert_eq!(consumed, frame.len());
-    (record.msg_type, record.value)
+    let (header, value) =
+        crate::protocol::wire2::header::decode_message(frame, u32::MAX).expect("decode frame");
+    assert_eq!(header.correlation, None, "control frames answer no request");
+    (
+        MessageType::new(header.message_type),
+        Bytes::copy_from_slice(value),
+    )
 }
 
 #[test]
-fn should_encode_client_response_tlv_frame() {
+fn should_encode_client_response_payload() {
     // Arrange
     let response = RpcClientResponseBody::Ok {
         data: b"accepted".to_vec(),
@@ -17,16 +20,15 @@ fn should_encode_client_response_tlv_frame() {
     let expected_payload = encode_response(&response);
 
     // Act
-    let frame = encode_client_response_tlv_frame(MessageType::new(302), &response);
-    let (msg_type, payload) = decode_single_frame(&frame);
+
+    let payload = encode_client_response_payload(&response);
 
     // Assert
-    assert_eq!(msg_type.as_u16(), 302);
     assert_eq!(payload.as_ref(), expected_payload.as_slice());
 }
 
 #[test]
-fn should_encode_worker_request_tlv_frame() {
+fn should_encode_worker_request_payload() {
     // Arrange
     let request = RpcRequest::new(
         RouteFamily::new(1),
@@ -38,31 +40,29 @@ fn should_encode_worker_request_tlv_frame() {
     let expected_payload = encode_request_into(&request, &mut encoder);
 
     // Act
-    let frame = encode_worker_request_tlv_frame(&request);
-    let (msg_type, payload) = decode_single_frame(&frame);
+
+    let payload = encode_worker_request_payload(&request);
 
     // Assert
-    assert_eq!(msg_type.as_u16(), 302);
     assert_eq!(payload.as_ref(), expected_payload.as_slice());
 }
 
 #[test]
-fn should_encode_response_message_tlv_frame() {
+fn should_encode_response_message_payload() {
     // Arrange
     let response = RpcResponse::single(Uuid::new_v4(), Bytes::from_static(b"pong"));
     let expected_payload = encode_response_message(&response);
 
     // Act
-    let frame = encode_response_message_tlv_frame(&response);
-    let (msg_type, payload) = decode_single_frame(&frame);
+
+    let payload = encode_response_message_payload(&response);
 
     // Assert
-    assert_eq!(msg_type.as_u16(), 303);
     assert_eq!(payload.as_ref(), expected_payload.as_slice());
 }
 
 #[test]
-fn should_encode_terminal_error_response_tlv_frame() {
+fn should_encode_terminal_error_response_payload() {
     // Arrange
     let correlation_id = Uuid::new_v4();
     let message = "worker unavailable";
@@ -78,15 +78,14 @@ fn should_encode_terminal_error_response_tlv_frame() {
     );
 
     // Act
-    let frame = encode_terminal_error_response_message_tlv_frame(
+
+    let payload = encode_terminal_error_response_message_payload(
         &correlation_id,
         crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
         message,
     );
-    let (msg_type, payload) = decode_single_frame(&frame);
 
     // Assert
-    assert_eq!(msg_type.as_u16(), 303);
     assert_eq!(payload.as_ref(), expected_payload.as_slice());
 }
 
@@ -246,7 +245,7 @@ fn should_round_trip_worker_cleanup_ack_control() {
     let correlation_id = Uuid::new_v4();
 
     // Act
-    let frame = encode_cancel_ack_tlv_frame(&correlation_id);
+    let frame = encode_cancel_ack_frame(&correlation_id);
     let (message_type, payload) = decode_single_frame(&frame);
     let ack = parse_cancellation_message(&payload).expect("parse worker cleanup ack");
 
@@ -264,8 +263,7 @@ fn should_encode_broker_deadline_worker_cancellation_control() {
     let correlation_id = Uuid::new_v4();
 
     // Act
-    let frame =
-        encode_worker_cancel_tlv_frame(&correlation_id, RpcCancellationReason::BrokerDeadline);
+    let frame = encode_worker_cancel_frame(&correlation_id, RpcCancellationReason::BrokerDeadline);
     let (message_type, payload) = decode_single_frame(&frame);
 
     // Assert
@@ -280,7 +278,7 @@ fn should_encode_forwarded_cancellation_result_control() {
     let correlation_id = Uuid::new_v4();
 
     // Act
-    let frame = encode_cancel_result_tlv_frame(&correlation_id, RpcCancellationResult::Forwarded);
+    let frame = encode_cancel_result_frame(&correlation_id, RpcCancellationResult::Forwarded);
     let (message_type, payload) = decode_single_frame(&frame);
 
     // Assert

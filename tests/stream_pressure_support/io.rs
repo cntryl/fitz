@@ -16,14 +16,12 @@ pub async fn request(client: &mut TestClient, frame: &[u8], kind: u16) -> Result
             .recv_frame_bytes_without_timeout()
             .await
             .map_err(|e| e.to_string())?;
-        if response.len() < 5
-            || response[0] != 0xFF
-            || u16::from_be_bytes([response[1], response[2]]) != kind
-            || usize::from(u16::from_be_bytes([response[3], response[4]])) + 5 != response.len()
-        {
+        let (header, value) = fitz::protocol::wire2::header::decode_message(&response, u32::MAX)
+            .map_err(|error| format!("invalid Stream response frame: {error}"))?;
+        if header.message_type != kind {
             return Err(format!("invalid complete Stream response type {kind}"));
         }
-        Ok(response[5..].to_vec())
+        Ok(value.to_vec())
     })
     .await
     .map_err(|_| format!("Stream type {kind} exceeded 60 seconds; outcome may be indeterminate"))?

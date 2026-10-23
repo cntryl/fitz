@@ -184,11 +184,7 @@ impl EncodedState {
         }
     }
     fn set_tx(frame: &mut [u8], tx_id: u64) {
-        let offset = if frame.first().copied() == Some(0xFF) {
-            5
-        } else {
-            3
-        };
+        let offset = fitz::protocol::wire2::header::HEADER_LEN;
         frame[offset..offset + 8].copy_from_slice(&tx_id.to_be_bytes());
     }
     fn dispatch(actor: &mut DirectKvActor, frame: &[u8]) -> KvResponse {

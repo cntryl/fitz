@@ -33,30 +33,26 @@ async fn websocket_upgrade_status_for_addr(
 }
 
 #[test]
-fn should_encode_tlv_frame() {
+fn should_encode_a_wire2_message_frame() {
     // Arrange
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = TlvFrameBuilder::new().with_correlation(7);
     builder.encode_field(100, b"test_value");
 
     // Act
     let frame = builder.build();
 
     // Assert
-    assert!(frame.len() >= 3 + b"test_value".len());
-    assert_eq!(frame[0], 100); // msg_type
-    assert_eq!(frame[1], 0);
-    assert_eq!(
-        frame[2],
-        u8::try_from(b"test_value".len()).expect("test value length fits in u8")
-    );
-    assert_eq!(&frame[3..], b"test_value");
+    let (header, value) =
+        crate::protocol::wire2::header::decode_message(&frame, u32::MAX).expect("one message");
+    assert_eq!(header.message_type, 100);
+    assert_eq!(header.correlation, std::num::NonZeroU64::new(7));
+    assert_eq!(value, b"test_value");
 }
 
 #[test]
-fn should_decode_tlv_frame() {
+fn should_parse_the_single_message_in_a_frame() {
     // Arrange
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(100, b"test_value");
     builder.encode_field(200, b"another_value");
     let frame = builder.build();
 
@@ -65,11 +61,7 @@ fn should_decode_tlv_frame() {
     let fields = parser.parse_all();
 
     // Assert
-    assert_eq!(fields.len(), 2);
-    assert_eq!(fields[0].0, 100);
-    assert_eq!(fields[0].1, b"test_value");
-    assert_eq!(fields[1].0, 200);
-    assert_eq!(fields[1].1, b"another_value");
+    assert_eq!(fields, vec![(200, b"another_value".to_vec())]);
 }
 
 #[test]
@@ -82,8 +74,10 @@ fn should_build_connect_frame() {
     let frame = build_connect_frame(realm, jwt);
 
     // Assert
-    assert_ne!(frame, Vec::<u8>::new());
-    assert_eq!(frame[0], 1); // msg_type 1 (CONNECT)
+    let (header, value) =
+        crate::protocol::wire2::header::decode_message(&frame, u32::MAX).expect("one message");
+    assert_eq!(header.message_type, 1);
+    assert_eq!(value, jwt.as_bytes());
 }
 
 #[test]

@@ -235,11 +235,8 @@ pub(crate) fn tlv_field(frame: &[u8]) -> (u16, Bytes) {
 }
 
 fn tlv_payload_offset(frame: &[u8]) -> usize {
-    match frame.first().copied() {
-        Some(0xFF) => 5,
-        Some(_) => 3,
-        None => panic!("TLV frame should not be empty"),
-    }
+    assert!(!frame.is_empty(), "frame must not be empty");
+    fitz::protocol::wire2::header::HEADER_LEN
 }
 
 fn usize_to_u32(value: usize) -> u32 {

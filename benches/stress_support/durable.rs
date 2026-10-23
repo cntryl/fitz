@@ -107,24 +107,15 @@ pub(super) fn response_payload(
     response: &[u8],
     expected_type: u16,
 ) -> Result<Vec<u8>, BenchFailure> {
-    let (message_type, header_len, length_offset) = match response.first().copied() {
-        Some(0xFF) if response.len() >= 5 => (u16::from_be_bytes([response[1], response[2]]), 5, 3),
-        Some(message_type) if response.len() >= 3 && message_type != 0xFF => {
-            (u16::from(message_type), 3, 1)
-        }
-        _ => return Err(BenchFailure::validation("truncated TLV response header")),
-    };
-    let length = usize::from(u16::from_be_bytes([
-        response[length_offset],
-        response[length_offset + 1],
-    ]));
-    if message_type != expected_type || response.len() != header_len + length {
+    let (header, value) = fitz::protocol::wire2::header::decode_message(response, u32::MAX)
+        .map_err(|error| BenchFailure::validation(format!("malformed response frame: {error}")))?;
+    if header.message_type != expected_type {
         return Err(BenchFailure::validation(format!(
-            "expected one complete TLV type {expected_type}, got type {message_type} and {} bytes",
-            response.len()
+            "expected one complete message of type {expected_type}, got type {}",
+            header.message_type
         )));
     }
-    Ok(response[header_len..].to_vec())
+    Ok(value.to_vec())
 }
 
 pub(super) fn require_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {

@@ -266,11 +266,8 @@ impl MutableQueueCompleteFrame {
 }
 
 fn tlv_payload_offset(frame: &[u8]) -> usize {
-    match frame.first().copied() {
-        Some(0xFF) => 5,
-        Some(_) => 3,
-        None => panic!("Queue frame must not be empty"),
-    }
+    assert!(!frame.is_empty(), "frame must not be empty");
+    fitz::protocol::wire2::header::HEADER_LEN
 }
 
 pub(crate) enum QueueBenchClient {

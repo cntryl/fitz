@@ -22,7 +22,7 @@ proptest! {
                 0..=2 => {
                     let family = if operation == 2 { RouteFamily::new(2) } else { h.family };
                     let worker = if operation == 1 { 99 } else { 42 };
-                    let frame = encode_cancel_ack_tlv_frame(&invocation);
+                    let frame = encode_cancel_ack_frame(&invocation);
                     let (kind, payload) = crate::benchkit::extract_single_tlv_field(&frame);
                     h.sink.deliver(Envelope::from_route(
                         session_inbox_address(family, worker), RouteAddress::new(family, h.route.clone()),

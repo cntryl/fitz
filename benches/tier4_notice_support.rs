@@ -152,11 +152,7 @@ pub(crate) struct MutableNoticeUnsubscribeFrame {
 impl MutableNoticeUnsubscribeFrame {
     pub(crate) fn new() -> Self {
         let frame = fitz::benchkit::build_notice_unsubscribe(0);
-        let payload_offset = match frame.first().copied() {
-            Some(0xFF) => 5,
-            Some(_) => 3,
-            None => panic!("Notice unsubscribe frame should not be empty"),
-        };
+        let payload_offset = fitz::protocol::wire2::header::HEADER_LEN;
         Self {
             frame,
             payload_offset,

@@ -1,6 +1,6 @@
 use super::*;
 use crate::domains::rpc::protocol::RpcLifecycleControlDelivery;
-use crate::protocol::rpc_codec::encode_cancel_ack_tlv_frame;
+use crate::protocol::rpc_codec::encode_cancel_ack_frame;
 use bytes::Bytes;
 
 mod frame_loop_grace;
@@ -100,7 +100,7 @@ fn deliver_worker_ack(
     correlation_id: uuid::Uuid,
 ) {
     let worker_id = sink.worker_correlation_for_tests(family, correlation_id);
-    let frame = encode_cancel_ack_tlv_frame(&worker_id);
+    let frame = encode_cancel_ack_frame(&worker_id);
     let (message_type, payload) = crate::benchkit::extract_single_tlv_field(&frame);
     sink.deliver(Envelope::from_route(
         worker_source,

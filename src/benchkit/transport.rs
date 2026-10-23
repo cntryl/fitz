@@ -530,7 +530,13 @@ pub fn build_rpc_response_frame(correlation_id: uuid::Uuid, body: &[u8]) -> Vec<
 #[must_use]
 pub fn build_rpc_response_frame_bytes(correlation_id: uuid::Uuid, body: Bytes) -> Bytes {
     let resp = crate::domains::rpc::protocol::RpcResponse::single(correlation_id, body);
-    crate::protocol::rpc_codec::encode_response_message_tlv_frame(&resp)
+    let payload = crate::protocol::rpc_codec::encode_response_message_payload(&resp);
+    Bytes::from(crate::protocol::wire2::header::encode_message(
+        303,
+        crate::protocol::wire2::header::HeaderFlags::none(),
+        None,
+        &payload,
+    ))
 }
 
 /// Parse RPC response

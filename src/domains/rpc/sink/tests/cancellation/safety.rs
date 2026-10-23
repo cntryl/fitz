@@ -336,7 +336,7 @@ fn should_ignore_cleanup_ack_from_unassigned_worker() {
     let id = uuid::Uuid::new_v4();
     h.request(id);
     h.cancel(id);
-    let frame = encode_cancel_ack_tlv_frame(&id);
+    let frame = encode_cancel_ack_frame(&id);
     let (message_type, payload) = crate::benchkit::extract_single_tlv_field(&frame);
 
     // Act
