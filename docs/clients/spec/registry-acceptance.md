@@ -1,4 +1,4 @@
-## Constants & TLV Registry
+## Constants & Message Registry
 
 ### MessageType Ranges
 
@@ -6,10 +6,9 @@
 | Value | Name | Direction |
 |---:|---|---|
 | 1 | CONNECT | Client→Server |
-| 2 | CORRELATE | Client→Server |
-| 3 | CORRELATED | Server→Client |
-| 4 | SERVER_HELLO | Server→Client |
-| 5 | SESSION_METADATA | Client→Server |
+| 2 | HELLO | Server→Client |
+| 3 | CONNECT_REJECTED | Server→Client |
+| 4 | GOAWAY | Server→Client |
 **KV Domain (100–111):**
 | Value | Name |
 |---:|---|
@@ -90,28 +89,15 @@ Each domain occupies an exclusive 100-code block. The broker's mux layer routes 
 
 ### Error Code Allocation (Authoritative)
 
-Error codes are allocated by domain in 100-block ranges:
-| Range | Domain | Capacity | Notes |
-| --------- | -------- | --------- | ----------------------------------- |
-| 1000–1099 | KV | 100 codes | Transactions, isolation, durability |
-| 2000–2099 | Stream | 100 codes | Concurrency, watermarks, ordering |
-| 3000–3099 | Notice | 100 codes | Routing, patterns, delivery |
-| 4000–4099 | Queue | 100 codes | Leasing, visibility, delivery |
-| 5000–5099 | Lease | 100 codes | Mutual exclusion, fencing, TTL |
-| 6000–6099 | RPC | 100 codes | Routing, backpressure, correlation |
-| 7000–7099 | Schedule | 100 codes | Scheduling, persistence, execution |
-**Expansion Strategy:**
-If domain exhausts range (>99 error codes allocated):
-
-- First expansion block: {base}100–{base}199 (e.g., 1100–1199 for KV)
-- Second expansion: {base}200–{base}299 (e.g., 1200–1299 for KV)
-- Continue as needed
-  **Cross-Domain Error Codes:**
-  These error codes are standardized across ALL domains:
-- `*001` = ERR_UNAUTHORIZED (permission denied, see Permissions section)
-- `*002` = ERR_INVALID_SCOPE (scope mismatch)
-- `*003` = ERR_REALM_MISMATCH (requested route realm is not authorized by the compiled permission set)
-  All other error codes are domain-specific and MUST NOT be reused across domains.
+The authoritative allocation, with class, effect, and the old-to-new mapping,
+is [error-codes.md](error-codes.md). In summary: blocks are decimal thousands
+per domain (`0xxx` protocol, `1xxx` KV, `2xxx` Stream, `3xxx` Notice, `4xxx`
+Queue, `5xxx` Lease, `6xxx` RPC, `7xxx` Schedule). Slots `x001`–`x010` carry
+the same shared meaning in every block (`x001` UNAUTHORIZED, `x002`
+INVALID_ROUTE, `x003` INVALID_PATTERN, `x004` REGISTRATION_LIMIT, `x005` BUSY,
+`x006` BACKEND, `x007` TIMEOUT, `x008` BAD_REQUEST, `x009` NOT_FOUND, `x010`
+UNSUPPORTED); domain-specific codes start at `x050`. Codes are append-only and
+MUST NOT be reused across domains.
 
 ### Channel IDs (Broker-Internal Reference)
 
@@ -126,42 +112,9 @@ Clients do NOT encode these; listed for reference:
 
 ### Type Encoding Rules
 
-- `type 0x00..0xFE`: single byte on wire
-- `type 0xFF`: escape marker — followed by `u16 BE` for actual type value (for types > 0xFE)
-
-**Decoder pseudocode:**
-
-```python
-def read_message_type(stream):
-    """Read MessageType from wire. Returns u16."""
-    first_byte = stream.read_u8()
-    if first_byte == 0xFF:
-        # Escape: next 2 bytes are the actual type
-        return stream.read_u16_be()
-    else:
-        # Single byte type (0x00–0xFE)
-        return first_byte
-```
-
-**Encoder pseudocode:**
-
-```python
-def write_message_type(stream, msg_type):
-    """Write MessageType to wire."""
-    if msg_type <= 0xFE:
-        stream.write_u8(msg_type)
-    else:
-        stream.write_u8(0xFF)
-        stream.write_u16_be(msg_type)
-```
-
-**Current implications:**
-
-- CONNECT (type=1): encodes as 1 byte `[0x01]`
-- KV BEGIN (type=100): encodes as 1 byte `[0x64]`
-- Notice PUBLISH (type=500): encodes as 3 bytes `[0xFF][0x01][0xF4]`
-
-**IMPORTANT:** The wire examples elsewhere in this document show all MessageTypes as 2-byte `[u16 BE]` for readability. Conformant implementations MUST use the variable-length encoding described above.
+`type` is a plain `u16 BE` in the fixed header. There is no escape byte and no
+variable-width form: CONNECT is `[0x00 0x01]`, KV BEGIN is `[0x00 0x64]`,
+Notice PUBLISH is `[0x01 0xF4]`.
 
 ## Acceptance Criteria
 
@@ -171,7 +124,7 @@ Client implementations MUST pass the following test suite against a reference br
 
 1. **WebSocket connect** - Establish WebSocket, send CONNECT, verify session opens
 2. **TCP connect** - Establish TCP, send length-prefixed CONNECT, verify session opens
-3. **Frame size enforcement** - Send frame > `max_frame_size`, broker closes connection
+3. **Message size enforcement** - Send a message larger than `max_message_bytes` from `HELLO`, broker closes connection
 4. **Reconnect** - Drop connection, reconnect, re-send CONNECT, verify session re-established
 
 ### Domain-Level Tests (per domain)
@@ -226,7 +179,7 @@ Client implementations MUST pass these cross-cutting tests:
 - Verify no cross-realm delivery (subscriber receives nothing)
   **Permission Enforcement:**
 - Client with `kv:read` scope sends PUT request
-- Broker returns ERR_UNAUTHORIZED (1001 domain error)
+- Broker returns ERR_UNAUTHORIZED (1001, class 1)
 - Verify client surfaces error correctly to caller
   **Multiplexing Across Domains (Channel-Based):**
 - Client sends KV PUT (KV channel)
@@ -311,34 +264,26 @@ These items are **not standardized** and may require broker-specific implementat
 
 #### Capability Negotiation
 
-The broker advertises its protocol version and capabilities with a
-`SERVER_HELLO` (4) frame, sent unsolicited once per session on `CONNECT`
-success. There is no client-sent probe, and clients MUST NOT invent one: an
-unknown client→server message type is fatal on a broker that predates it, so a
-probe would destroy the connection rather than be ignored.
+Negotiation happens in the handshake. `CONNECT` carries the client's version
+range and capability bits; the broker answers `HELLO` with the version in
+force, its capability bits, and the limits in force, or `CONNECT_REJECTED`
+when there is no version in common. See `wire-routing.md`, Connection
+Lifecycle, for both layouts.
 
-```
-MessageType: 4 (SERVER_HELLO)
-Value: [u16 BE protocol_version][u32 BE capability_bits]
-```
-
-| Bit | Name | Meaning |
-|---:|---|---|
-| 0 | `CAP_CORRELATION` | Broker accepts `CORRELATE` and echoes `CORRELATED` |
-| 1 | `CAP_SESSION_METADATA` | Broker accepts client-reported session metadata (message type 5) |
+No capability bits are defined in wire version 2. The set in force is the
+bitwise AND of `client_caps` and `broker_caps`; a client MUST NOT use a
+capability the broker did not advertise, and MUST ignore bits it does not
+implement.
 
 Rules:
 
-1. Readers MUST ignore trailing bytes after the documented fields, so a later
-   version can append without consuming another message id.
-2. Clients MUST NOT block `connect()` on `SERVER_HELLO`. `CONNECT` is zero
-   round-trip and stays that way; requests issued before the advertisement
-   arrives are simply uncorrelated.
-3. **Absence means a legacy broker.** A client that never receives
-   `SERVER_HELLO` MUST behave exactly as before: no correlation, one in-flight
-   request per message type. There is no timeout and no fallback reconnect.
-4. Clients MUST ignore a `SERVER_HELLO` whose `protocol_version` they do not
-   recognise, and MUST ignore capability bits they do not implement.
+1. `HELLO` readers MUST ignore trailing bytes after the documented fields, so a
+   later version can append without consuming another message id.
+2. A client that receives neither `HELLO` nor `CONNECT_REJECTED` treats the
+   close as a transport failure, never as a legacy broker: every wire 2 broker
+   answers `CONNECT`.
+3. There is no client-sent probe. An unknown client→server message type is a
+   protocol error and the broker closes the connection.
 
 If new verbs are added:
 

@@ -26,32 +26,23 @@ cursor-shaped LIST_V2 707 for canonical LIST.
 
 #### Error Envelopes
 
-Production clients depend on the exact error layouts below. Do not change
-either one inside an existing record; a new error field must travel in its own
-record so existing clients keep decoding unchanged.
+Every Schedule error, on every verb, uses the common envelope from
+[error-codes.md](error-codes.md):
+`[u8 1][u16 BE code][u8 class][u8 effect][u32 BE error_len][error_msg]`.
+Clients branch on `code` and `class`, never on `error_msg`. The conditions a
+Schedule client sees most:
 
-- Errors the Schedule domain itself returns for CREATE (700), CANCEL (701),
-  SUBSCRIBE (703), UNSUBSCRIBE (704), CREATE_BATCH (706), and LIST_V2 (707)
-  are uncoded: `[u8 1][u32 BE error_len][error_msg]`. On these operations an
-  invalid cron, an unknown delivery mode, an invalid subscription pattern, and
-  either subscription registration limit are distinguished only by `error_msg`.
-  The SUBSCRIBE (703) limit messages are exact and stable:
-  - `wildcard subscription limit exceeded (128 per session)` when a wildcard
-    SUBSCRIBE finds the session already holding 128 wildcard registrations.
-    This check runs first, so a wildcard SUBSCRIBE that reaches both limits
-    still receives this message.
-  - `total subscription limit exceeded (1024 per session)` when the session
-    already holds 1,024 registrations of any kind and the wildcard limit does
-    not apply.
-- Errors the Schedule domain returns for LIST (702) are coded:
-  `[u8 1][u32 BE error_code][u32 BE error_len][error_msg]`.
-- Errors the broker raises before the request reaches the Schedule domain are
-  coded on every Schedule message type: 7009 unauthorized, 7010 busy (never
-  accepted, safe to resend), and 7011 timeout or unavailable (outcome unknown).
-
-A client can tell the two status=1 layouts apart by length. The uncoded layout
-has a total length of `5 + error_len` read at offset 1; the coded layout has a
-total length of `9 + error_len` read at offset 5.
+- 7051 `INVALID_CRON`, 7054 `INVALID_DELIVERY_MODE`, 7053 `INVALID_TARGET`,
+  and 7008 `BAD_REQUEST` for a payload the verb contract rejects.
+- 7003 `INVALID_PATTERN` for a SUBSCRIBE or UNSUBSCRIBE selector the grammar
+  rejects.
+- 7004 `REGISTRATION_LIMIT` when a SUBSCRIBE would exceed 128 wildcard or
+  1,024 total registrations for the session. The wildcard check runs first.
+- 7052 `DEFINITION_LIMIT` when CREATE would exceed the definition cap.
+- 7050 `SCHEDULE_NOT_FOUND` for CANCEL or RUN on an unknown definition.
+- 7001 `UNAUTHORIZED`, 7005 `BUSY` (never accepted, safe to resend), and 7007
+  `TIMEOUT` (accepted, outcome unknown) are raised by ingress before the
+  domain sees the request.
 
 #### CREATE Request
 
@@ -70,6 +61,9 @@ Response (success=0):
 
 Response (error=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -78,13 +72,13 @@ Response (error=1):
 - Route serves as the unique schedule identifier (upsert behavior)
 - Creating a schedule with an existing route updates that schedule
 - Payload is arbitrary binary data delivered to matching live registrations on notification
-- Delivery mode is required. Unknown values are rejected with an uncoded error.
+- Delivery mode is required. Unknown values are rejected with 7054 `INVALID_DELIVERY_MODE`.
 - `broadcast` attempts every connected matching registration. `single` fairly
   rotates one accepted live handoff across matching registrations for the
   concrete fired route.
 - Both modes are ephemeral downstream delivery. No match or all rejected
   handoffs still complete the occurrence without backlog or retry.
-- An invalid cron expression is rejected with an uncoded error
+- An invalid cron expression is rejected with 7051 `INVALID_CRON`
 
 #### CANCEL Request
 
@@ -98,6 +92,9 @@ Response (success=0):
 
 Response (error=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -133,7 +130,9 @@ Response (success):
 
 Response (error):
   [u8]     1 (status=error)
-  [u32 BE] error_code
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -141,7 +140,7 @@ Response (error):
 **Semantics:**
 - Omitting the payload defaults to `offset=0, limit=100`
 - `limit=0` requests all remaining entries from `offset`, but the response is
-  still one TLV value bounded by the wire frame limit and MAY return fewer
+  still one message bounded by `max_message_bytes` and MAY return fewer
   entries than exist, regardless of what `limit` requested. There is no
   `has_more` flag on this response: detect truncation by comparing the
   returned entry count to `total_count`. If `offset + entries_returned <
@@ -297,34 +296,27 @@ or wildcard Schedule patterns via `SCHEDULE_SUBSCRIBE` and receiving
 
 #### Error Codes (7xxx)
 
-- 7001 = ERR_SCHEDULE_NOT_FOUND
-- 7002 = ERR_INVALID_CRON
-- 7003 = ERR_SCHEDULE_LIMIT
-- 7004 = ERR_PARSE_ERROR
-- 7005 = ERR_INVALID_TARGET
-- 7006 = ERR_INVALID_SUBSCRIPTION_PATTERN
-- 7007 = ERR_SUBSCRIPTION_LIMIT
-- 7008 = ERR_INVALID_DELIVERY_MODE
-- 7010 = ERR_BACKEND_ERROR
-- 7011 = ERR_TIMEOUT
+- 7050 = ERR_SCHEDULE_NOT_FOUND
+- 7051 = ERR_INVALID_CRON
+- 7052 = ERR_DEFINITION_LIMIT
+- 7008 = ERR_BAD_REQUEST
+- 7053 = ERR_INVALID_TARGET
+- 7003 = ERR_INVALID_SUBSCRIPTION_PATTERN
+- 7004 = ERR_SUBSCRIPTION_LIMIT
+- 7054 = ERR_INVALID_DELIVERY_MODE
+- 7005 = ERR_BUSY
+- 7007 = ERR_TIMEOUT
 
-`ERR_BACKEND_ERROR` reports transient broker backend unavailability or
-saturation. It is distinct from `ERR_PARSE_ERROR`: clients must not tell callers
-that their cron or payload is malformed when the broker could not service an
-otherwise valid request. Clients may classify 7010 as retryable, subject to the
-operation's normal replay-safety rules.
+`ERR_BUSY` (7005) means the broker declined the request before the Schedule
+domain saw it; nothing applied and re-sending after a backoff is safe. It is
+distinct from `ERR_BAD_REQUEST`: clients must not tell callers that their cron
+or payload is malformed when the broker could not service an otherwise valid
+request.
 
-Note the naming: in every other domain `ERR_BACKEND_ERROR` is fatal and must
-not be auto-retried. Schedule's 7010 instead plays the role of the other
-domains' saturation codes (`ERR_BUSY`, `ERR_QUEUE_FULL`,
-`ERR_RPC_BACKPRESSURE`). The code number and name are frozen on the wire, so
-clients must key retry behavior on the domain plus code, not on the name alone.
-
-`ERR_TIMEOUT` reports that the broker accepted the command but did not finish it
-before its deadline. The outcome is unknown: the command may still apply. It is
-deliberately NOT retryable, because 7010 means the request was declined and is
-safe to re-send, whereas re-sending after 7011 can apply the same create or
-cancel twice. A client that knows its operation is idempotent may still retry
+`ERR_TIMEOUT` (7007) reports that the broker accepted the command but did not
+finish it before its deadline. Its envelope carries effect INDETERMINATE: the
+command may still apply, so re-sending can apply the same create or cancel
+twice. A client that knows its operation is idempotent may still retry
 deliberately; an automatic `IsRetryable` retry must not.
 
 #### Acceptance Tests
@@ -336,7 +328,7 @@ deliberately; an automatic `IsRetryable` retry must not.
 - list returns all created schedules
 - schedule persists across broker restart
 - matching live registrations receive SCHEDULE_NOTIFY when schedule fires
-- invalid cron expression rejected with 7002
+- invalid cron expression rejected with 7051
 #### Schedule SUBSCRIBE (703)
 
 Subscribe to schedule fire notifications for an exact route or strict
@@ -351,6 +343,9 @@ Response (status=0):
   [u64 BE] subscription_id
 Response (status=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -365,10 +360,9 @@ Response (status=1):
 - Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
 - Client is responsible for local multiplexing when multiple handlers share the same route
 - Wildcards must occupy complete segments. Patterns that cannot match a concrete
-  four-segment Schedule route are rejected with an uncoded error.
+  four-segment Schedule route are rejected with 7003 `INVALID_PATTERN`.
 - A session may retain at most 1,024 Schedule registrations total and 128
-  wildcard registrations; overflow is rejected with an uncoded error whose
-  exact `error_msg` is listed under Error Envelopes.
+  wildcard registrations; overflow is rejected with 7004 `REGISTRATION_LIMIT`.
 - Matching never crosses `RouteFamily` boundaries; overlapping registrations
   remain distinct.
 - When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with
@@ -385,6 +379,9 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```

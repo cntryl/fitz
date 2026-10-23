@@ -78,13 +78,13 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 | Stream | 600–609 |
 | Schedule | 700–705 |
 
-**REQ-PROTO-002 (T0)** TLV encoding MUST be big-endian throughout. Type field is 1 byte for values 0–254 and `0xFF` + 2-byte BE u16 for values ≥255. Length field is u16 BE. A single TLV value MUST NOT exceed 65535 bytes.
+**REQ-PROTO-002 (T0)** The fixed 15-byte header MUST be encoded big-endian: `u16` type, `u8` flags, `u64` correlation, `u32` length. Exactly one message per transport frame. A message MUST NOT exceed the `max_message_bytes` the broker states in `HELLO`.
 
 **REQ-PROTO-003 (T0)** TCP transport MUST prefix every frame with a u32 BE length. WebSocket transport MUST use binary frames only; text frames MUST be rejected or ignored.
 
-**REQ-PROTO-004 (T0)** CONNECT frame (MessageType=1) MUST be the first outbound frame after transport open. A JWT payload of zero length is valid for anonymous mode. The client MUST NOT wait for an ACK before sending the first domain request.
+**REQ-PROTO-004 (T0)** `CONNECT` (type 1) MUST be the first outbound message after transport open, carrying the version range, capability bits (0), the JWT (empty in anonymous mode), the service name, and the client build. The client MUST read `HELLO` or `CONNECT_REJECTED` before treating the session as established; it MAY pipeline domain requests behind `CONNECT`.
 
-**REQ-PROTO-005 (T0)** The client MUST NOT send duplicate TLV tags within a single frame. If the server closes the connection with a parse error, the client MUST log the event and not retry the same malformed frame.
+**REQ-PROTO-005 (T0)** The client MUST set reserved flag bits to 0 and MUST NOT send a frame whose `length` disagrees with its value. If the server closes the connection with a protocol error, the client MUST log the event and not retry the same malformed frame.
 
 **REQ-PROTO-006 (T0)** All seven domains MUST be implemented: KV, Queue, Notice, RPC, Lease, Stream, Schedule.
 
@@ -100,11 +100,11 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-011 (T1)** The client MUST correctly handle all error code ranges and map each code to the right domain (AC-ERROR-002). Error code `XXYY` where `XX` identifies the domain and `YY` the specific error MUST NOT be confused across domains.
 
-**REQ-PROTO-012 (T1)** The client MUST correctly categorize retryable vs. fatal error codes per the table in `client-acceptance-criteria.md` (AC-ERROR-003). Retryable codes: 1004, 1014, 2014, 3006, 4005, 5001, 5007, 6001, 6002, 6003, 6004, 7010. All Unauthorized codes and non-retryable codes MUST be treated as fatal (no retry). Schedule 7010 retries remain subject to the operation's normal replay-safety rules.
+**REQ-PROTO-012 (T1)** The client MUST correctly categorize retryable vs. fatal error codes per the table in `client-acceptance-criteria.md` (AC-ERROR-003). Retry policy keys on the envelope's `effect` and `class`: retry with backoff when `effect` is NOT_APPLIED and the code is one of every `x005` BUSY, 1053, 5050, 5056, 6050, 6051; treat `x006` BACKEND and `x007` TIMEOUT (effect INDETERMINATE) as retryable only for operations the application knows are idempotent. All UNAUTHORIZED codes and the remaining NOT_APPLIED codes MUST be treated as fatal (no retry).
 
-**REQ-PROTO-013 (T1)** Frame size MUST be respected. Default server limit is 1 MB (configurable). Clients SHOULD expose this as a configurable option. Individual TLV values MUST NOT exceed 65535 bytes regardless of frame size setting.
+**REQ-PROTO-013 (T1)** Message size MUST be respected. The broker states `max_message_bytes` in `HELLO` (1 MiB by default). The client MUST NOT send a larger message and SHOULD expose a local ceiling.
 
-**REQ-PROTO-014 (T1)** The KV `Insert` operation MUST be distinct from `Put`: Insert MUST fail with error `1006` (ERR_KEY_EXISTS) when the key already exists; Put MUST overwrite unconditionally.
+**REQ-PROTO-014 (T1)** The KV `Insert` operation MUST be distinct from `Put`: Insert MUST fail with error `1055` (ERR_KEY_EXISTS) when the key already exists; Put MUST overwrite unconditionally.
 
 **REQ-PROTO-015 (T1)** KV `Scan` end key MUST be exclusive. `DeleteRange` end key MUST be exclusive. The client MUST encode these correctly on the wire.
 
@@ -116,15 +116,15 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-019 (T1)** Stream `Read` filter encoding MUST match the server's versioned `StreamFilterSet` codec exactly: optional filter bytes follow `max_bytes`, the filter payload begins with the fixed marker `[0, 0xF1]`, and clause tags/length prefixes MUST use big-endian lengths. The client MUST surface `ERR_STREAM_FILTER_UNSUPPORTED_VERSION` and `ERR_STREAM_FILTER_INVALID_PAYLOAD` as fatal request errors but MUST NOT treat them as transport failures.
 
-**REQ-PROTO-020 (T0)** The client MUST parse multiple TLV records from a single transport frame. A frame parser that rejects trailing bytes after the first record cannot read a correlated response and is non-conformant.
+**REQ-PROTO-020 (T0)** The client MUST parse exactly one message per transport frame and MUST reject a frame whose `length` field disagrees with the bytes present.
 
-**REQ-PROTO-021 (T1)** The client MUST handle `SERVER_HELLO` (4), MUST NOT block connection establishment waiting for it, and MUST treat its absence as "legacy broker, correlation unavailable" rather than as an error. Unknown protocol versions and unknown capability bits MUST be ignored, not rejected.
+**REQ-PROTO-021 (T1)** The client MUST handle `HELLO` (2) and `CONNECT_REJECTED` (3): record the version, capability bits, and limits from `HELLO`; surface the code from `CONNECT_REJECTED`. Trailing bytes after the documented `HELLO` fields and unknown capability bits MUST be ignored, not rejected.
 
-**REQ-PROTO-022 (T1)** When the broker advertises `CAP_CORRELATION`, the client MUST label requests with a `CORRELATE` (2) record carrying a non-zero `u64` unique among its in-flight requests, MUST place it immediately before the request in the same transport frame, and MUST match responses by the `CORRELATED` (3) identifier rather than by arrival order. The client MUST NOT send `CORRELATE` before the advertisement arrives.
+**REQ-PROTO-022 (T1)** The client MUST label every request with a non-zero `u64` header correlation unique among its in-flight requests and MUST match responses by correlation rather than by arrival order. A correlated frame whose identifier is no longer pending MUST be delivered to the message-type handler, not discarded.
 
-**REQ-PROTO-023 (T0)** The client MUST NOT treat the presence of a correlation record as a response-vs-notification discriminator. `NOTIFY` frames are never correlated and MUST continue to be routed by message type and subscription id.
+**REQ-PROTO-023 (T0)** The client MUST NOT treat a non-zero correlation as a response-vs-notification discriminator. `NOTIFY` frames carry correlation 0 and MUST be routed by message type and subscription id.
 
-**REQ-PROTO-024 (T1)** A client MAY report a service name using `SESSION_METADATA` (5) only after observing `SERVER_HELLO` with `CAP_SESSION_METADATA`. The payload is one length-prefixed UTF-8 string, 1–128 bytes after trimming, with no control characters. The client MUST NOT send this message to a broker that did not advertise the capability.
+**REQ-PROTO-024 (T1)** A client reports its service name in the `service_name` field of `CONNECT`: empty, or 1–128 bytes after trimming with no control characters. There is no separate metadata message.
 
 ---
 
@@ -184,7 +184,7 @@ rejection of an unknown mode; CREATE errors carry no numeric code on the wire
 
 **REQ-ERGON-001 (T0)** Wire-level identifiers (tx_id, session_id, subscription_id, message_id, correlation_id) MUST NOT appear in the public API. They are internal implementation details. Users MUST operate on opaque typed objects (Transaction, StreamSession, Subscription, QueueItem, Lease).
 
-**REQ-ERGON-002 (T0)** The client MUST NOT require users to specify or track the transport-framing layer (TLV, TCP length prefix). The public API is domain operations only.
+**REQ-ERGON-002 (T0)** The client MUST NOT require users to specify or track the transport-framing layer (message header, correlation, TCP length prefix). The public API is domain operations only.
 
 **REQ-ERGON-003 (T0)** Terminology in the public API MUST use the canonical terms from `client-spec.md`: `realm`, `area`, `resource`, `route`. Synonyms (`tenant`, `namespace`, `collection`, `endpoint`, `path`, `key` (for route), `topic`) are forbidden in all public symbols.
 
@@ -288,9 +288,9 @@ Reconnect rebuild behavior is domain-specific:
 
 **REQ-CONC-008 (T2)** Same-transaction KV operations MUST be serialized at the call site or at the multiplexer level. This is a domain ordering constraint, not a response-matching one: correlation does NOT make same-`tx_id` parallelism safe, and this requirement is unchanged by it. The client SHOULD enforce or document the constraint.
 
-**REQ-CONC-009 (T2)** Requests MUST support true per-request multiplexing wherever an identifier distinguishes them: RPC `Call` invocations on different UUIDs, and — once the broker advertises `CAP_CORRELATION` — any number of same-message-type requests on different correlation identifiers. None of these may be serialized against each other.
+**REQ-CONC-009 (T2)** Requests MUST support true per-request multiplexing: RPC `Call` invocations on different UUIDs, and any number of same-message-type requests on different header correlations. None of these may be serialized against each other.
 
-**REQ-CONC-010 (T0)** Absent `CAP_CORRELATION`, the client MUST keep at most one in-flight request per message type per connection. The broker does not answer same-type requests in receive order — a parked Queue `RESERVE` is answered after a later one that completed immediately — so matching uncorrelated responses by arrival order delivers a response to the wrong caller. This is a correctness requirement, not a throughput one.
+**REQ-CONC-010 (T0)** The client MUST NOT match responses by arrival order. The broker does not answer same-type requests in receive order — a parked Queue `RESERVE` is answered after a later one that completed immediately — so every response is routed by its header correlation. This is a correctness requirement, not a throughput one.
 
 ---
 
@@ -310,7 +310,7 @@ Reconnect rebuild behavior is domain-specific:
 
 **REQ-ERR-005 (T1)** Domain error codes MUST be exported as named constants (e.g., `ErrKvKeyExists`, `ErrLeaseHeld`, `ErrRpcRouteNotRegistered`) so callers can write `errors.Is(err, fitz.ErrKvKeyExists)` without hard-coding integers.
 
-**REQ-ERR-006 (T1)** Retryable errors (codes 1004, 1014, 2014, 3006, 4005, 5001, 5007, 6001, 6002, 6003, 6004, 7010) MUST be distinguishable from fatal errors via a type assertion or helper (`fitz.IsRetryable(err) bool`). Callers MUST NOT be required to know the numeric ranges.
+**REQ-ERR-006 (T1)** Retryable errors (every `x005` BUSY, plus 1053, 5050, 5056, 6050, 6051; `x006` and `x007` only when the operation is idempotent) MUST be distinguishable from fatal errors via a type assertion or helper (`fitz.IsRetryable(err) bool`). Callers MUST NOT be required to know the numeric ranges.
 
 **REQ-ERR-007 (T1)** Server error messages MUST be included in the `Error()` string. `fmt.Errorf("kv get: %w", err)` wrapping MUST preserve the code through the chain.
 
@@ -372,7 +372,7 @@ These targets apply to a loopback connection (broker and client on the same mach
 
 **REQ-PERF-004 (T2)** Round-trip latency for a KV transaction (Begin + Put + Commit) SHOULD be < 500 µs at p99 on loopback.
 
-**REQ-PERF-005 (T2)** Frame encoding latency for a single TLV frame SHOULD be < 500 ns per frame.
+**REQ-PERF-005 (T2)** Encoding latency for a single message (header plus value) SHOULD be < 500 ns.
 
 **REQ-PERF-006 (T2)** RPC correlation ID lookup SHOULD be < 2 µs with 1,000+ concurrent in-flight calls (hash map lookup, not linear scan).
 
@@ -386,9 +386,9 @@ These targets apply to a loopback connection (broker and client on the same mach
 
 ### T0 — Protocol Unit Tests
 
-**REQ-TEST-001 (T0)** The TLV encoder MUST have unit tests covering: u8, u16, u32, u64, string, bytes, optional present, optional absent, UUID encoding, and the escape byte (0xFF) path for MessageType ≥255.
+**REQ-TEST-001 (T0)** The header and primitive encoder MUST have unit tests covering: u8, u16, u32, u64, string, bytes, optional present, optional absent, UUID encoding, and the 15-byte header with zero and non-zero correlation.
 
-**REQ-TEST-002 (T0)** The TLV decoder MUST have unit tests covering: happy path for every primitive type, length mismatch, duplicate tag detection (MUST return error), and truncated payload.
+**REQ-TEST-002 (T0)** The decoder MUST have unit tests covering: happy path for every primitive type, length mismatch, a set reserved flag bit (MUST return error), and truncated payload.
 
 **REQ-TEST-003 (T0)** Error code constants MUST have a test asserting their numeric values against the canonical registry (REQ-PROTO-001 table). This prevents silent drift when the registry is updated.
 
@@ -469,10 +469,10 @@ Use this table to grade a specific client implementation. For each row, mark:
 | Req ID | Tier | Area | Short Description |
 |--------|------|------|-------------------|
 | REQ-PROTO-001 | T0 | Protocol | Message type constants match canonical registry |
-| REQ-PROTO-002 | T0 | Protocol | TLV encoding: big-endian, escape byte, 64 KiB value limit |
+| REQ-PROTO-002 | T0 | Protocol | Fixed header, big-endian, one message per frame, `max_message_bytes` |
 | REQ-PROTO-003 | T0 | Protocol | TCP u32 prefix; WebSocket binary only |
-| REQ-PROTO-004 | T0 | Protocol | CONNECT is first frame; no ACK wait |
-| REQ-PROTO-005 | T0 | Protocol | No duplicate TLV tags emitted |
+| REQ-PROTO-004 | T0 | Protocol | CONNECT is first message; HELLO or CONNECT_REJECTED answers it |
+| REQ-PROTO-005 | T0 | Protocol | Reserved flags zero; length matches value |
 | REQ-PROTO-006 | T0 | Protocol | All 7 domains implemented |
 | REQ-PROTO-007 | T0 | Protocol | All acceptance criteria AC-* pass |
 | REQ-PROTO-008 | T0 | Protocol | Auth rejection handled; no retry with same JWT |
@@ -480,7 +480,7 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-PROTO-010 | T0 | Protocol | Route values remain opaque; shape-only validation allowed |
 | REQ-PROTO-011 | T1 | Protocol | Error code domain mapping correct |
 | REQ-PROTO-012 | T1 | Protocol | Retryable vs. fatal error categorization |
-| REQ-PROTO-013 | T1 | Protocol | Frame size respected; configurable |
+| REQ-PROTO-013 | T1 | Protocol | `max_message_bytes` from HELLO respected |
 | REQ-PROTO-014 | T1 | Protocol | Insert distinct from Put |
 | REQ-PROTO-015 | T1 | Protocol | Scan/DeleteRange end-key exclusive |
 | REQ-PROTO-016 | T1 | Protocol | Stream Append includes expected_offset |
@@ -497,7 +497,7 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-API-009 | T1 | API | QueueItem carries Extend/Complete |
 | REQ-API-010 | T1 | API | Lease object carries Extend/Release |
 | REQ-ERGON-001 | T0 | Ergonomics | Wire IDs absent from public API |
-| REQ-ERGON-002 | T0 | Ergonomics | No TLV/framing in public API |
+| REQ-ERGON-002 | T0 | Ergonomics | No header/framing in public API |
 | REQ-ERGON-003 | T0 | Ergonomics | Canonical terminology enforced |
 | REQ-ERGON-004 | T1 | Ergonomics | KV via Transaction object |
 | REQ-ERGON-005 | T1 | Ergonomics | Stream writes via StreamSession object |
@@ -550,12 +550,12 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-PERF-002 | T1 | Performance | Response parsing: no intermediate copy |
 | REQ-PERF-003 | T1 | Performance | Multiplexer: separate locks for write vs. dispatch |
 | REQ-PERF-004 | T2 | Performance | KV round-trip < 500 µs p99 on loopback |
-| REQ-PERF-005 | T2 | Performance | Frame encode < 500 ns per frame |
+| REQ-PERF-005 | T2 | Performance | Message encode < 500 ns |
 | REQ-PERF-006 | T2 | Performance | RPC correlation lookup < 2 µs at 1k+ concurrent |
 | REQ-PERF-007 | T2 | Performance | Notice Publish > 50k ops/sec single goroutine |
 | REQ-PERF-008 | T2 | Performance | Benchmark suite for hot paths |
-| REQ-TEST-001 | T0 | Testing | TLV encoder unit tests |
-| REQ-TEST-002 | T0 | Testing | TLV decoder unit tests |
+| REQ-TEST-001 | T0 | Testing | Header and primitive encoder unit tests |
+| REQ-TEST-002 | T0 | Testing | Decoder unit tests |
 | REQ-TEST-003 | T0 | Testing | Error code constant values tested against registry |
 | REQ-TEST-004 | T1 | Testing | Integration tests: full lifecycle per domain |
 | REQ-TEST-005 | T1 | Testing | Tests run with both TCP and WebSocket |

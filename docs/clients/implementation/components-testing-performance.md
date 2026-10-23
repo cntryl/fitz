@@ -6,8 +6,8 @@
 - WebSocket lifecycle (connect, reconnect, close)
 - JWT authentication (CONNECT frame)
 - Frame send/receive
-- Frame-correlation tracking for every request/response verb when the broker
-  advertises `CAP_CORRELATION`, plus RPC payload-correlation tracking
+- Header-correlation tracking for every request/response verb, plus RPC
+  payload-correlation tracking
 - Subscription routing (Notice/RPC)
 
 **Key Features:**
@@ -33,19 +33,22 @@ Reconnect always creates a new Fitz broker session. Client libraries MAY hide th
 | Schedule fire subscriptions | Re-send SUBSCRIBE. Durable schedule definitions remain broker state, but live notification subscriptions do not. |
 | KV transactions | Fail/close open transaction handles and require a fresh BEGIN. |
 
-### 2. TLV Codec
+### 2. Message Codec
 
 **Encoding:**
 ```
-[MessageType u16 BE][Length u16 BE][Payload bytes]
+[type u16 BE][flags u8][correlation u64 BE][length u32 BE][Payload bytes]
 ```
 
 **Decoder pattern** (pseudocode):
 ```
 decode_frame(bytes):
     message_type = read_u16_be(bytes[0:2])
-    length = read_u16_be(bytes[2:4])
-    payload = bytes[4:4+length]
+    flags = bytes[2]
+    correlation = read_u64_be(bytes[3:11])
+    length = read_u32_be(bytes[11:15])
+    payload = bytes[15:]
+    assert len(payload) == length
     
     if 100 <= message_type <= 199:
         return decode_kv_message(message_type, payload)
@@ -81,7 +84,7 @@ KvClient
 1. Transport errors (connection lost, timeout)
    └─ Retryable: Yes (with backoff)
 
-2. Protocol errors (malformed TLV, unknown message type)
+2. Protocol errors (malformed header, unknown message type)
    └─ Retryable: No (fatal)
 
 3. Domain errors (key not found, unauthorized)
@@ -91,38 +94,38 @@ KvClient
 **Domain error code mapping:**
 ```
 1000-1999: KV
-  1001: Transaction not found → Retryable: No
-  1006: Key exists (Insert) → Retryable: No
-  1011: Unauthorized → Retryable: No
+  1050: Transaction not found → Retryable: No
+  1055: Key exists (Insert) → Retryable: No
+  1001: Unauthorized → Retryable: No
 
 2000-2999: Stream
-  2001: Concurrency conflict → Retryable: No
-    2006: Unsupported filter version → Retryable: No
-    2007: Invalid filter payload → Retryable: No
-  2009: Unauthorized → Retryable: No
+  2050: Concurrency conflict → Retryable: No
+    2055: Unsupported filter version → Retryable: No
+    2056: Invalid filter payload → Retryable: No
+  2001: Unauthorized → Retryable: No
 
 3000-3999: Notice
-  3009: Unauthorized → Retryable: No
+  3001: Unauthorized → Retryable: No
 
 4000-4999: Queue
-  4001: Invalid token → Retryable: No
-  4005: Queue full (backpressure) → Retryable: Yes (with backoff)
-  4009: Unauthorized → Retryable: No
+  4050: Invalid token → Retryable: No
+  4005: Busy (declined, nothing applied) → Retryable: Yes (with backoff)
+  4001: Unauthorized → Retryable: No
 
 5000-5999: Lease
-  5001: Lease held → Retryable: Yes (with backoff)
-  5005: Invalid token → Retryable: No
-  5009: Unauthorized → Retryable: No
+  5050: Lease held → Retryable: Yes (with backoff)
+  5054: Invalid token → Retryable: No
+  5001: Unauthorized → Retryable: No
 
 6000-6999: RPC
-  6001: Timeout → Retryable: Yes (with backoff)
-  6004: Route not registered → Retryable: Yes (with backoff)
-  6009: Unauthorized → Retryable: No
+  6007: Timeout → Retryable: Yes (with backoff)
+  6051: Route not registered → Retryable: Yes (with backoff)
+  6001: Unauthorized → Retryable: No
 
 7000-7999: Schedule
-  7002: Invalid cron → Retryable: No
-  7009: Unauthorized → Retryable: No
-  7010: Backend unavailable or saturated → Retryable: Yes when replay-safe
+  7051: Invalid cron → Retryable: No
+  7001: Unauthorized → Retryable: No
+  7005: Busy (declined, nothing applied) → Retryable: Yes (with backoff)
 
 See the client-acceptance-criteria.md appendix for the complete error code reference.
 ```
@@ -157,7 +160,7 @@ type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 ```csharp
 try {
     await tx.InsertAsync("key", "value");
-} catch (KvException ex) when (ex.Code == 1006) {
+} catch (KvException ex) when (ex.Code == 1055) {
     // Handle key exists (ERR_KEY_EXISTS)
 }
 ```
@@ -219,7 +222,7 @@ match result:
 
 ### Unit Tests (Protocol Layer)
 
-Test TLV encoding/decoding in isolation:
+Test message encoding/decoding in isolation:
 
 ```python
 def test_encode_put_request():
@@ -233,8 +236,9 @@ def test_encode_put_request():
     encoded = encode_message(MessageType.PUT, req)
     
     # Verify bytes match expected format
-    assert encoded[0:2] == b'\x00\x68'  # MessageType 104
-    assert encoded[2:4] == b'\x00\x2F'  # Length 47
+    assert encoded[0:2] == b'\x00\x68'      # type 104
+    assert encoded[2] == 0                   # flags
+    assert encoded[11:15] == b'\x00\x00\x00\x2F'  # length 47
 ```
 
 ### Integration Tests (Against Real Broker)
@@ -471,7 +475,7 @@ async for notice in sub:
   - [ ] JWT authentication (CONNECT frame)
   - [ ] Subscription state tracking
 - [ ] **Protocol:**
-  - [ ] TLV encoder/decoder
+  - [ ] Message header and primitive encoder/decoder
   - [ ] MessageType routing (100-799 ranges)
   - [ ] Frame size validation (1 MB limit)
 - [ ] **Domains:**
@@ -479,7 +483,7 @@ async for notice in sub:
   - [ ] Idiomatic error handling (Result types or exceptions)
   - [ ] Automatic cleanup (destructors/finalizers)
 - [ ] **Testing:**
-  - [ ] Protocol layer unit tests (TLV roundtrip)
+  - [ ] Protocol layer unit tests (message roundtrip)
   - [ ] Integration tests (against real broker)
   - [ ] All AC criteria passing
 - [ ] **Performance:**
@@ -489,7 +493,7 @@ async for notice in sub:
 
 ### Recommended Implementation Order
 
-1. **Week 1:** Connection + TLV codec + basic KV
+1. **Week 1:** Connection + message codec + basic KV
 2. **Week 2:** Complete KV domain + error handling
 3. **Week 3:** Notice + RPC domains (subscriptions)
 4. **Week 4:** Queue + Lease + Stream domains
@@ -501,7 +505,7 @@ async for notice in sub:
 
 1. **Read client-spec.md** for wire protocol details
 2. **Read client-acceptance-criteria.md** for test requirements
-3. **Choose your language** and start with Connection + TLV
+3. **Choose your language** and start with Connection + message codec
 4. **Implement KV domain first** (most complex, good learning)
 5. **Write tests** as you go (one AC at a time)
 6. **Join Fitz community** for help (Discord, GitHub Discussions)

@@ -63,7 +63,7 @@
 **When:** Client sends `Complete(message_id, token=<invalid_u64>)`  
 **Then:**
 
-- Server returns error code `4001` (ERR_INVALID_TOKEN)
+- Server returns error code `4050` (ERR_INVALID_TOKEN)
 - Message remains in queue
 - Lease remains active
 
@@ -88,7 +88,7 @@
 **When:** Client sends `Enqueue(payload)`  
 **Then:**
 
-- Server returns error code `4009` (Unauthorized)
+- Server returns error code `4001` (Unauthorized)
 - Message NOT enqueued
 
 ### AC-QUEUE-009: Unified availability-watch registration contract
@@ -102,10 +102,10 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 - Notifications contain the matching identifier and exact concrete three-segment Queue route
 - Duplicate original registration strings are idempotent and checked before
   either limit
-- The 1,025th distinct exact registration returns 4011; below the total cap,
+- The 1,025th distinct exact registration returns 4004; below the total cap,
   exact registration succeeds at the wildcard cap
-- The 129th distinct wildcard returns 4011
-- Wrong schemes, empty segments, partial wildcards, and impossible depths return 4010 on TCP and WebSocket
+- The 129th distinct wildcard returns 4004
+- Wrong schemes, empty segments, partial wildcards, and impossible depths return 4003 on TCP and WebSocket
 - Matching and disconnect cleanup remain isolated by `RouteFamily`
 - ENQUEUE, EXTEND, and COMPLETE continue to require concrete routes
 - RESERVE accepts exact routes and valid whole-segment Queue patterns
@@ -226,7 +226,7 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 **When:** Client sends `Publish(route, payload)`  
 **Then:**
 
-- Server returns error code `3009` (ERR_UNAUTHORIZED)
+- Server returns error code `3001` (ERR_UNAUTHORIZED)
 - No notifications delivered
   **Notes:**
 - Fitz notices are **best-effort, non-durable signals**. Clients **MUST NOT** assume guaranteed delivery, ordering across reconnects, or replay after disconnect.
@@ -275,7 +275,7 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 **When:** Client sends `Call(route, timeout=2s)` and waits  
 **Then:**
 
-- After 2 seconds, client receives error code `6001` (ERR_RPC_TIMEOUT)
+- After 2 seconds, client receives error code `6007` (ERR_RPC_TIMEOUT)
 - Request is abandoned
 - Client can retry or handle error
 
@@ -326,7 +326,7 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 **When:** Client sends `Subscribe(route)` to register as worker  
 **Then:**
 
-- Server returns error code `6009` (Unauthorized)
+- Server returns error code `6001` (Unauthorized)
 - Client is NOT registered as worker
 
 ### AC-RPC-008: Unauthorized RPC Call
@@ -336,7 +336,7 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 **When:** Client sends `Call(route, payload)`  
 **Then:**
 
-- Server returns error code `6009` (Unauthorized)
+- Server returns error code `6001` (Unauthorized)
 - Request is NOT forwarded to workers
 
 ## Lease Domain
@@ -444,7 +444,7 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 **When:** Client B sends `Renew(token="WRONG")`  
 **Then:**
 
-- Server returns error code `5005` (Invalid Token)
+- Server returns error code `5054` (Invalid Token)
 - Lease state unchanged
 
 ### AC-LEASE-010: Unauthorized Acquire
@@ -454,7 +454,7 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 **When:** Client sends `Acquire(route, ttl)`  
 **Then:**
 
-- Server returns error code `5009` (Unauthorized)
+- Server returns error code `5001` (Unauthorized)
 - Lease NOT granted
 
 ### AC-LEASE-011: Exact and patterned watch registration
@@ -473,7 +473,7 @@ whole-segment `*`/`**` selector such as `lease://acme/renderers/*`
 - Notifications carry the subscription identifier and the exact concrete
   Lease route that changed, never the pattern
 - Partial wildcards (`lock*`), wrong schemes, empty segments, and missing or
-  extra segments return 5010 for SUBSCRIBE and UNSUBSCRIBE on TCP and
+  extra segments return 5003 for SUBSCRIBE and UNSUBSCRIBE on TCP and
   WebSocket; whole-segment `*`/`**` selectors that can match a three-segment
   route are accepted
 - Lease retains at most 1,024 total and 128 wildcard registrations per session;
@@ -521,10 +521,10 @@ match set, and zero or more currently held leases matching it
   progress
 - Reusing a cursor with a different selector, a different `RouteFamily`, an
   unknown/evicted snapshot ID, or after a broker restart returns error code
-  `5011` (Invalid List Cursor) rather than silently narrowing or restarting
+  `5057` (Invalid List Cursor) rather than silently narrowing or restarting
   the read
 - A pattern that fails the shared grammar (partial wildcard, wrong scheme,
-  wrong depth, empty segment) returns error code `5012` (Invalid List
+  wrong depth, empty segment) returns error code `5003` (Invalid List
   Pattern) before any inventory is scanned
 - `LIST` items can never be turned into an owned Lease handle; only exact
   ACQUIRE/EXTEND/RELEASE change ownership

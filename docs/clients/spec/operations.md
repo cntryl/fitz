@@ -166,7 +166,7 @@ changes its ownership.
   REQUEST frames as async pushes
 - The broker derives caller response routing from the source session; callers do not send a reply route
 - Successful REQUEST submission is silent; callers wait for RESPONSE or an error frame
-- `SERVER_HELLO` capability `CAP_RPC_CANCELLATION` gates lifecycle support;
+- `HELLO` capability `CAP_RPC_CANCELLATION` gates lifecycle support;
   absent capability, clients retain legacy payloads and behavior
 - Supporting worker registrations set bit 0 in the optional version-1
   registration extension; supporting callers append a version-1 remaining
@@ -302,18 +302,16 @@ Authorization behavior depends on server authentication mode:
 
 ### Permission Error Codes (Authenticated Mode Only)
 
-If permission check fails, broker returns error in domain error encoding with these standard codes:
-| Error Code | Meaning | HTTP Equivalent |
-| ---------- | ------------------ | --------------- |
-| `*001` | ERR_UNAUTHORIZED | 403 Forbidden |
-| `*002` | ERR_INVALID_SCOPE | 403 Forbidden |
-| `*003` | ERR_REALM_MISMATCH | 403 Forbidden |
-Where `*` is domain prefix (1xxx for KV, 3xxx for Notice, etc.).
-**Example (KV domain):**
-
-- 1001 = ERR_UNAUTHORIZED
-- 1002 = ERR_INVALID_SCOPE
-- 1003 = ERR_REALM_MISMATCH
+If the permission check fails, the broker answers in the common error envelope
+with the shared slot for the domain:
+| Code | Class | Meaning | HTTP Equivalent |
+| ---- | ----- | ------- | --------------- |
+| `x001` | 1 UNAUTHORIZED | The compiled permission set does not grant this verb on this route, including a realm it does not cover | 403 Forbidden |
+| `x002` | 2 INVALID_ROUTE | The route's shape, scheme, or family is not one the session may address | 403 Forbidden |
+Where `x` is the domain block (1 for KV, 3 for Notice, etc.): 1001 is KV
+UNAUTHORIZED, 3002 is Notice INVALID_ROUTE. KV additionally answers 1056
+REALM_MISMATCH when an operation inside a transaction targets a realm other
+than the transaction's.
 
 ### JWT Claim Contract
 
@@ -534,9 +532,9 @@ Transport errors signal connection failure:
 | ------------------ | -------------------------------- | ----------------------------------- |
 | Connection refused | Broker unreachable | Retry with backoff; raise to caller |
 | Connection reset | Broker crashed or closed | Reconnect; re-establish session |
-| Frame too large | Payload exceeds `max_frame_size` | Close connection; raise error |
+| Message too large | Message exceeds `max_message_bytes` | Close connection; raise error |
 | Invalid UTF-8 | Malformed frame | Close connection; raise error |
-| TLV decode error | Unrecoverable frame format | Close connection; raise error |
+| Header decode error | Length mismatch or reserved flag set | Close connection; raise error |
 **Clients MUST:**
 
 - Distinguish transport errors from domain errors
@@ -545,57 +543,49 @@ Transport errors signal connection failure:
 
 ### Domain Errors
 
-Domain errors are returned in response payloads. Format is **domain-specific** (see domain specs).
+Domain errors are returned in response payloads. Every domain uses the common
+envelope from `wire-routing.md` (Response Format Convention) and the codes in
+`error-codes.md`.
 **Clients MUST:**
 
-- Parse domain error responses according to domain spec
-- Surface error code and message to caller
-- NOT reinterpret or hide server error messages
+- Parse the envelope: status, code, class, effect, message
+- Surface code, class, effect, and message to the caller
+- Branch on code and class, never on message text
   **Example (KV domain):**
 
 ```
 Error response:
-  [u32 BE error_len]
-  [bytes error_msg]
+  [u8 1][u16 BE code][u8 class][u8 effect][u32 BE error_len][bytes error_msg]
 // Client parses and raises:
-raise DomainError(error_msg)
+raise DomainError(code, class, effect, error_msg)
 ```
 
 ## Request/Response Correlation
 
-### Synchronous Model (Per Domain)
+### Correlation Model
 
-**Responses are matched by correlation identifier where one was sent, and by
-message type otherwise:**
+Every request carries a unique non-zero correlation in the message header and
+every frame answering it echoes that value, so responses are matched by
+correlation, never by message type or arrival order:
 
-- Different message types are never confusable, so any number may be in flight
-  across domains or within one domain.
-- **Same message type, correlated**: any number in flight. Each response carries
-  the `CORRELATE` identifier of the request it answers.
-- **Same message type, uncorrelated**: **at most one in flight per connection.**
-  The broker does not answer same-type requests in receive order — a parked
-  Queue `RESERVE` is answered after a later one that completed immediately — so
-  matching by arrival order delivers a response to the wrong caller.
-
-The broker does not close the connection for pipelining uncorrelated requests;
-it cannot detect it. The damage is silent misdelivery in the client, which is
-why the one-at-a-time rule is the client's to enforce.
-
-**Correlated (broker advertised `CAP_CORRELATION`):**
+- Any number of requests may be in flight, across domains, within one domain,
+  and of the same message type, up to `max_in_flight` from `HELLO`.
+- The broker does not answer same-type requests in receive order: a parked
+  Queue `RESERVE` is answered after a later one that completed immediately.
+  Correlation is what makes that safe.
+- A correlation may receive more than one frame (a contended Lease `ACQUIRE`
+  answers `Queued` and later the grant); the client routes a frame whose
+  correlation is no longer pending by message type.
 
 ```python
-# Same message type, many in flight; each response carries its own id
+# Same message type, many in flight; each response carries its own correlation
 f1 = client.kv_get(route, b"a")
 f2 = client.kv_get(route, b"b")
 f3 = client.kv_get(route, b"c")
 a, b, c = f1.wait(), f2.wait(), f3.wait()   # matched by correlation, not order
 ```
 
-**Uncorrelated (legacy broker):** the client holds one lane per message type, so
-the second `kv_get` above waits for the first to answer. Different types still
-proceed concurrently.
-
-**RPC** carries its own 16-byte UUID and multiplexes either way:
+**RPC** additionally carries its own 16-byte UUID inside the payload; `RESPONSE` (303) frames are delivered with correlation 0 and are matched by that UUID:
 
 ```python
 future1 = client.rpc_request(..., correlation_id=uuid1)

@@ -33,7 +33,9 @@ Response (status=0):
   [u64 BE] message_id
 Response (status=1):
   [u8]     1
-  [u32 BE] error_code
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -65,7 +67,9 @@ Response (status=0):
     [bytes]  body
 Response (status=1):
   [u8]     1
-  [u32 BE] error_code
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -78,7 +82,7 @@ contains a whole-segment wildcard, decode `concrete_route` before each item and
 use that route for EXTEND and COMPLETE. Wildcard reservation supports `*` and
 `**` as complete segments, including unknown realm, area, or resource segments.
 
-The broker bounds each RESERVE response to one TLV value. If a queued message
+The broker bounds each RESERVE response to one message under `max_message_bytes`. If a queued message
 cannot fit in an otherwise empty response using the requested concrete or
 wildcard item encoding, the broker moves it to dead-letter state with reason
 `reserve_response_too_large` with best-effort persistence and
@@ -98,6 +102,9 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -113,22 +120,25 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
 #### Error Codes (4xxx range)
 
-- 4001 = ERR_INVALID_TOKEN
-- 4002 = ERR_LEASE_EXPIRED
-- 4003 = ERR_MESSAGE_NOT_FOUND
-- 4004 = ERR_QUEUE_NOT_FOUND
-- 4005 = ERR_QUEUE_FULL
-- 4006 = ERR_BAD_REQUEST
-- 4007 = ERR_BACKEND_ERROR
-- 4009 = ERR_UNAUTHORIZED
-- 4010 = ERR_INVALID_SUBSCRIPTION_PATTERN
-- 4011 = ERR_SUBSCRIPTION_LIMIT
+- 4050 = ERR_INVALID_TOKEN
+- 4051 = ERR_INFLIGHT_EXPIRED
+- 4052 = ERR_MESSAGE_NOT_FOUND
+- 4053 = ERR_QUEUE_NOT_FOUND
+- 4005 = ERR_BUSY
+- 4008 = ERR_BAD_REQUEST
+- 4006 = ERR_BACKEND_ERROR
+- 4001 = ERR_UNAUTHORIZED
+- 4003 = ERR_INVALID_SUBSCRIPTION_PATTERN
+- 4004 = ERR_SUBSCRIPTION_LIMIT
 
 #### Queue SUBSCRIBE (207)
 
@@ -143,6 +153,9 @@ Response (status=0):
   [u64 BE] subscription_id
 Response (status=1):
   [u8]     1                    // status: error
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -163,10 +176,10 @@ The success response uses the "optional u64" encoding pattern: a 1-byte flag fol
 - `*` matches exactly one segment and `**` matches zero or more complete segments
 - The scheme must be `queue://`, segments must be non-empty, wildcards must be
   whole segments, and the pattern must be capable of matching a concrete
-  three-segment Queue route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 4010
+  three-segment Queue route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 4003
 - A session may retain at most 1,024 registrations total and 128 wildcard
   registrations. A duplicate is checked before either limit; overflow returns
-  4011
+  4004
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 - Notifications are sent when messages become available in matching queues
@@ -182,6 +195,9 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -339,6 +355,9 @@ Response (status=0):
   [bytes]  data (empty)
 Response (status=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -352,6 +371,9 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -372,22 +394,22 @@ Every deliverable broker admission or domain failure for a REQUEST with a
 readable UUID is one terminal
 RESPONSE (303), decoded with the RESPONSE layout below: the same UUID,
 `sequence=0`, `stream_end=1`, and a standard RPC error body
-`[u8 status=1][u32 BE code][u32 BE message_len][message UTF-8]` in its
+`[u8 status=1][u16 BE code][u8 class][u8 effect][u32 BE message_len][message UTF-8]` in its
 length-prefixed `body`. This applies before and after enqueue; a client must
-match the UUID, not the REQUEST message type or arrival order. The broker does
-not emit a `CORRELATED` frame-level record for RPC replies, even if the caller
-sent an optional `CORRELATE` record. RPC's UUID is its sole reply identity.
+match the UUID, not the REQUEST message type or arrival order. RPC `RESPONSE`
+frames carry header correlation 0 whatever correlation the caller put on its
+`REQUEST`. RPC's UUID is its sole reply identity.
 
 | Failure stage | Frame and body | Outcome and retry rule |
 | --- | --- | --- |
-| Ingress permission denied | terminal 303, code 6009, `unauthorized: permission denied` | Not enqueued; authorization is fatal until permissions change. |
-| Ingress mailbox backpressure exhausted | terminal 303, code 6003, `domain at capacity: request was not accepted, retry with backoff` | Never enqueued; safe to retry deliberately with backoff. |
-| Enqueued dispatch reply timed out | terminal 303, code 6010, `domain timeout: request outcome unknown, do not blindly retry` | Domain may still execute; indeterminate. No blind retry. |
-| Domain unavailable at dispatch | terminal 303, code 6010, `domain unavailable: request could not be completed` | Actor may have partially applied the request; treat as indeterminate. |
-| Domain decoded the REQUEST but rejected it | terminal 303, domain-specific RPC code and message (for example 6004, `No workers registered for route`) | One terminal rejection; retry only if that code and the application operation permit it. |
+| Ingress permission denied | terminal 303, code 6001, `unauthorized: permission denied` | Not enqueued; authorization is fatal until permissions change. |
+| Ingress mailbox backpressure exhausted | terminal 303, code 6005, `domain at capacity: request was not accepted, retry with backoff` | Never enqueued; safe to retry deliberately with backoff. |
+| Enqueued dispatch reply timed out | terminal 303, code 6007, `domain timeout: request outcome unknown, do not blindly retry` | Domain may still execute; indeterminate. No blind retry. |
+| Domain unavailable at dispatch | terminal 303, code 6006, `domain unavailable: request could not be completed` | Actor may have partially applied the request; treat as indeterminate. |
+| Domain decoded the REQUEST but rejected it | terminal 303, domain-specific RPC code and message (for example 6051, `No workers registered for route`) | One terminal rejection; retry only if that code and the application operation permit it. |
 
 Malformed REQUEST payloads with a readable UUID can also receive terminal
-303/code 6010 (`RPC request parse failed`). Without all 16 UUID bytes, the
+303/code 6006 (`RPC request parse failed`). Without all 16 UUID bytes, the
 broker cannot identify a terminal RPC reply and may close the session.
 If the caller session or inbox has already disappeared, the broker cannot
 deliver a terminal reply; the caller treats that connection loss as an
@@ -518,7 +540,7 @@ Every operation includes full context:
   actor ordering, credit stays reserved until a worker cleanup acknowledgment
   after handler cleanup or worker-session cleanup; a late terminal response or
   unregister operation does not release it.
-- **Backpressure**: ERR_RPC_BACKPRESSURE if outbound queue full
+- **Backpressure**: ERR_BUSY if outbound queue full
 - **Ordering**: Responses delivered in sequence order
 - **Single-Worker Assignment**: Each accepted request is assigned to at most one live worker while tracked in memory
 
@@ -533,7 +555,7 @@ Every operation includes full context:
 **If all workers busy:**
 
 - Server queues request (up to backpressure limit)
-- Returns ERR_RPC_BACKPRESSURE if queue full
+- Returns ERR_BUSY if queue full
 - Client should implement retry with backoff
 
 **Worker failure:**
@@ -544,7 +566,7 @@ Every operation includes full context:
 
 ##### Cooperative cancellation and remaining budgets
 
-`SERVER_HELLO` capability `CAP_RPC_CANCELLATION` (`1 << 3`) advertises the
+`HELLO` capability `CAP_RPC_CANCELLATION` (`1 << 3`) advertises the
 optional lifecycle extension. Supporting worker registrations append
 `[version:u8=1, flags:u8=1]` after the existing route and concurrency fields.
 Supporting caller requests may append
@@ -578,19 +600,19 @@ routing, without confirming that a remote handler stopped.
 
 | Code | Name | Meaning | Client Guidance |
 | ---: | --- | --- | --- |
-| 6001 | ERR_RPC_TIMEOUT | The request budget or broker timeout expired before completion, including while queued | Retry with backoff only if the operation is safe to retry; timeout alone does not prove that work was never dispatched |
-| 6002 | ERR_WORKER_NOT_FOUND | The assigned worker disconnected or unregistered before completion | Retry with backoff only if the operation is safe to retry |
-| 6003 | ERR_RPC_BACKPRESSURE | The broker's RPC pending queue is full | Retry with exponential backoff and jitter |
-| 6004 | ERR_ROUTE_NOT_REGISTERED | No live worker is registered for the route | Retry with backoff after allowing workers to register |
-| 6005 | ERR_CORRELATION_NOT_FOUND | Response, ACK, or cancellation referenced an unknown or finished correlation | Treat the correlation as invalid or finished; do not blindly retry the same correlation |
-| 6006 | ERR_RPC_INVALID_SEQUENCE | Worker response chunks were out of sequence | Fatal for the current correlation; do not retry the same correlation |
-| 6007 | ERR_RPC_DUPLICATE_CORRELATION | Caller reused a correlation ID that is still live | Fatal for the current correlation; retry only with a fresh correlation ID if the operation is safe to retry |
-| 6008 | ERR_RPC_WRONG_WORKER | Response or ACK came from a worker that does not own the request | Fatal for the current correlation; do not retry the same correlation |
-| 6009 | ERR_UNAUTHORIZED | Permissions do not allow this RPC operation | Fatal until credentials or permissions change |
-| 6010 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Inspect the error text; correct malformed requests and retry transient failures only if the operation is safe to retry |
-| 6011 | ERR_INVALID_ROUTE | An RPC call route is malformed or contains a wildcard | Correct the call to use a concrete `rpc://` route |
-| 6012 | ERR_INVALID_SUBSCRIPTION_PATTERN | A worker registration has the wrong scheme, an empty segment, or a partial wildcard token | Correct the registration to use whole-segment `*` or `**` wildcards |
-| 6013 | ERR_SUBSCRIPTION_LIMIT | A session attempted to exceed 1,024 total or 128 wildcard worker registrations | Unregister an existing registration before registering another |
+| 6007 | ERR_TIMEOUT | The request budget or broker timeout expired before completion, including while queued | Retry with backoff only if the operation is safe to retry; timeout alone does not prove that work was never dispatched |
+| 6050 | ERR_WORKER_NOT_FOUND | The assigned worker disconnected or unregistered before completion | Retry with backoff only if the operation is safe to retry |
+| 6005 | ERR_BUSY | The broker's RPC pending queue is full | Retry with exponential backoff and jitter |
+| 6051 | ERR_ROUTE_NOT_REGISTERED | No live worker is registered for the route | Retry with backoff after allowing workers to register |
+| 6052 | ERR_CORRELATION_NOT_FOUND | Response, ACK, or cancellation referenced an unknown or finished correlation | Treat the correlation as invalid or finished; do not blindly retry the same correlation |
+| 6053 | ERR_RPC_INVALID_SEQUENCE | Worker response chunks were out of sequence | Fatal for the current correlation; do not retry the same correlation |
+| 6054 | ERR_RPC_DUPLICATE_CORRELATION | Caller reused a correlation ID that is still live | Fatal for the current correlation; retry only with a fresh correlation ID if the operation is safe to retry |
+| 6055 | ERR_RPC_WRONG_WORKER | Response or ACK came from a worker that does not own the request | Fatal for the current correlation; do not retry the same correlation |
+| 6001 | ERR_UNAUTHORIZED | Permissions do not allow this RPC operation | Fatal until credentials or permissions change |
+| 6006 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Inspect the error text; correct malformed requests and retry transient failures only if the operation is safe to retry |
+| 6002 | ERR_INVALID_ROUTE | An RPC call route is malformed or contains a wildcard | Correct the call to use a concrete `rpc://` route |
+| 6003 | ERR_INVALID_SUBSCRIPTION_PATTERN | A worker registration has the wrong scheme, an empty segment, or a partial wildcard token | Correct the registration to use whole-segment `*` or `**` wildcards |
+| 6004 | ERR_SUBSCRIPTION_LIMIT | A session attempted to exceed 1,024 total or 128 wildcard worker registrations | Unregister an existing registration before registering another |
 
 #### Acceptance Tests
 
@@ -598,7 +620,7 @@ routing, without confirming that a remote handler stopped.
 - streaming response reassembled in order
 - request timeout returns error
 - multiple workers on same route handle requests
-- response with wrong correlation_id rejected with `6005 ERR_CORRELATION_NOT_FOUND`, while the original caller request remains pending until a valid response or timeout
+- response with wrong correlation_id rejected with `6052 ERR_CORRELATION_NOT_FOUND`, while the original caller request remains pending until a valid response or timeout
 - backpressure error when buffer full
 
 ### KV Domain (Durable Key-Value)

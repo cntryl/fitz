@@ -182,7 +182,7 @@ generic, non-adjacent `**` compositions capable of matching depth three (for
 example `lease://{realm}/**`, `lease://**`, and
 `lease://**/renderers/**`). A partial wildcard token, adjacent `**` segments,
 wrong scheme, empty segment, or pattern incapable of matching three segments
-is rejected with 5010 (5012 for `LIST` specifically). Accepting a wildcard
+is rejected with 5003. Accepting a wildcard
 here never grants, renews, or releases the matched lease — only the exact-route
 mutation operations change ownership.
 

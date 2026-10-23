@@ -1,117 +1,83 @@
 ## Wire Protocol
 
-### TLV Record Encoding
+### Message Header
 
-Frame payloads consist of one or more **TLV records** concatenated back-to-back.
-Each record is:
+Every Fitz message is one transport frame (one WebSocket binary message, or
+one `u32 BE` length-prefixed TCP frame) carrying a fixed 15-byte header
+followed by exactly `length` bytes of value:
 
-- **Type** (variable, 1 or 3 bytes):
-  - If `type <= 0xFE`: encoded as a single byte
-  - If `type > 0xFE`: escape byte `0xFF` followed by 2-byte big-endian u16
+```
+[u16 BE] type          verb or control identifier (see registry-acceptance.md)
+[u8]     flags         bit 0 ACK_REQUESTED; bits 1..7 reserved, MUST be 0
+[u64 BE] correlation   non-zero on requests and their responses; 0 on notifications and control
+[u32 BE] length        byte count of value
+[bytes]  value         domain or control fields, concatenated, exactly `length` bytes
+```
 
-**IMPORTANT:** The wire examples in this document show MessageTypes as 2-byte big-endian for readability. Conformant implementations MUST use the variable-length encoding: types 0–254 are 1 byte, types 255+ use the `0xFF` escape followed by `u16 BE`. See **Type Encoding Rules** at the end of the Constants section for decoder/encoder pseudocode.
-- **Length** (u16, big-endian): byte count of value (0..=65535)
-- **Value**: exactly `length` bytes
-
-### Message Framing (How Domain Operations Map to TLV)
-
-**CRITICAL: Every Fitz message is a single TLV record where:**
-- **Type** = MessageType (verb wire code: 100-111 for KV, 500-504 for Notice, etc.)
-- **Length** = Total byte count of domain payload (all fields concatenated)
-- **Value** = Domain-specific fields (as documented per domain)
-
-**TLV is NOT nested** - the entire domain payload is the TLV Value, pre-encoded.
+A frame carries exactly one message. There is no record list, no variable-width
+type, and no 64 KiB value cap: `length` is bounded only by the
+`max_message_bytes` the broker states in `HELLO`. A frame whose header does
+not match the bytes present, or a message longer than `max_message_bytes`, is
+a protocol error and the broker closes the connection.
 
 ### Request Correlation
 
-A request may be labelled with a client-generated identifier so its response can
-be matched by that identifier rather than by arrival order. The label is a
-separate `CORRELATE` record, so no domain payload changes and an uncorrelated
-request costs nothing.
-
-```
-[0x02][0x00 0x08][u64 BE correlation]   <- CORRELATE, 11 bytes
-[MessageType][Length][Payload]          <- the request it labels
-```
-
-The broker answers with the mirror form:
-
-```
-[0x03][0x00 0x08][u64 BE correlation]   <- CORRELATED
-[MessageType][Length][Payload]          <- the response
-```
+Every request carries a client-generated, non-zero `u64` correlation in the
+header. The broker echoes it unchanged on every frame that answers the request,
+including errors the broker synthesizes itself (busy, timeout, unavailable) and
+answers deferred arbitrarily long (a parked Queue `RESERVE`, a contended Lease
+`ACQUIRE` granted when the holder releases). Clients match responses by
+correlation, never by arrival order or by message type.
 
 **Client requirements**
 
-1. A `CORRELATE` record MUST immediately precede, **in the same transport
-   frame**, the record it labels. Both transports are message-bounded
-   (WebSocket natively; TCP via its `u32` BE outer length prefix), so this is
-   exact.
-2. The value is 8 bytes, big-endian. **Zero is reserved** and MUST NOT be sent.
-3. Identifiers MUST be unique among the requests a connection currently has in
+1. Correlation MUST be unique among the requests a connection currently has in
    flight. Reusing a live identifier yields undefined response routing; the
    broker does not police it.
-4. Clients MUST NOT send `CORRELATE` before observing `SERVER_HELLO` with
-   `CAP_CORRELATION`.
-5. A client MUST parse multiple TLV records from one transport frame. A frame
-   parser that rejects trailing bytes after the first record cannot read a
-   correlated response.
+2. Zero is reserved for frames that answer nothing. The broker still answers a
+   request sent with correlation 0, echoing 0, but the client then cannot tell
+   that answer from any other zero-correlated frame, so conformant clients
+   never send it.
+3. **A correlation may receive more than one frame.** Most requests are
+   answered once, but a domain may define a multi-phase answer, and every
+   phase carries the same identifier. A contended Lease `ACQUIRE` is answered
+   immediately with `Queued` and again later with the grant. A client MUST
+   route a correlated frame whose identifier is no longer pending by message
+   type instead of discarding it; dropping it loses the deferred grant.
+4. **Notifications are never correlated.** `NOTIFY` frames carry correlation 0
+   and answer no request. Clients MUST route them by message type and
+   subscription id, and MUST NOT treat a non-zero correlation as a
+   response-vs-notification discriminator.
+5. RPC `REQUEST` (302) and `RESPONSE` (303) keep their 16-byte UUID inside the
+   payload. That UUID is an end-to-end application identifier surviving
+   broker, worker, and broker again; `RESPONSE` frames are delivered with
+   correlation 0 and are matched by the UUID alone.
 
-**Broker guarantees**
+### Flags
 
-1. The broker emits `CORRELATED` **if and only if** the request carried
-   `CORRELATE`, echoing the identifier unchanged. It never volunteers one.
-2. Every frame answering a correlated request carries it, including errors the
-   broker synthesizes itself (timeout, backpressure, unavailable) and responses
-   deferred arbitrarily long — a parked Queue `RESERVE`, or a contended Lease
-   `ACQUIRE` granted when the holder releases.
-3. **A correlation may receive more than one frame.** Most requests are answered
-   once, but a domain may define a multi-phase answer, and both phases carry the
-   same identifier. A contended Lease `ACQUIRE` is answered immediately with
-   `Queued` and again later with the grant. Clients MUST therefore treat a
-   correlated frame whose identifier is no longer pending as routable rather
-   than as garbage: fall through to the normal message-type path so the
-   registered handler receives it. Dropping it loses the deferred grant.
-   RPC does the same thing with its own UUID, terminated by `stream_end`.
-4. **Notifications are never correlated.** `NOTIFY` frames answer no request.
-   Clients MUST route by message type and subscription id first, and MUST NOT
-   treat "has a correlation record" as a response-vs-notification discriminator.
-5. RPC `REQUEST`(302)/`RESPONSE`(303) keep their existing 16-byte UUID and are
-   not additionally frame-correlated. That UUID is an end-to-end application
-   identifier surviving broker→worker→broker; the correlation here is a
-   connection-level transport identifier. Neither subsumes the other.
+| Bit | Name | Meaning |
+|---:|---|---|
+| 0 | `ACK_REQUESTED` | On Notice `PUBLISH`: the broker answers with the common response envelope. Success means accepted for fan-out and never means delivered. Ignored on every other message type. |
+| 1–7 | reserved | MUST be 0. A later version assigns one only behind a capability bit. |
 
-**Errors.** Fitz has no skip-unknown-record rule and will not gain one — it
-would make record boundaries unverifiable. The broker closes the connection on a
-`CORRELATE` that is malformed, carries zero, labels another `CORRELATE`, or ends
-a transport frame with nothing after it. Closing is correct here and nowhere
-else: a misplaced label means the client's own request-to-response mapping is
-already ambiguous, so there is no caller left to answer.
+### Capabilities
 
-### Exclusive KV SCAN capability
-
-`CAP_KV_SCAN_EXCLUSIVE` (bit 2) advertises the implemented optional trailing
-`start_exclusive` boolean on KV SCAN. Clients MUST omit that byte when the
-capability is absent. Without the byte, starts remain inclusive. With the
-capability and `start_exclusive=true`, resume excludes the start key in the
-selected scan direction; this does not change transaction or snapshot scope.
-
-### Client-reported service name
-
-After observing `SERVER_HELLO` with `CAP_SESSION_METADATA`, a client MAY send
-`SESSION_METADATA` (message type 5) on the control channel. Its payload is one
-length-prefixed UTF-8 string containing the service name (1–128 bytes after
-trimming, with no control characters). The broker treats this as reported
-display metadata, not authenticated identity. Clients MUST NOT send this message
-when the capability is absent, so they remain compatible with older brokers.
+`CONNECT` carries the capability bits the client implements and `HELLO` the
+bits the broker implements. The set in force is the bitwise AND. No bits are
+defined in wire version 2: `broker_caps` is 0 and a client sends
+`client_caps` 0. Optional behavior added after 0.3.0 arrives as a capability
+bit that changes what a value may contain, never the byte layout, so an
+unknown bit is ignored rather than rejected.
 
 #### Message Structure
 
 ```
-[MessageType (u16 BE)][Length (u16 BE)][Payload (Length bytes)]
-│                     │                 │
-│                     │                 └─ Domain fields (concatenated)
-│                     └─ Total payload size
+[type (u16 BE)][flags (u8)][correlation (u64 BE)][length (u32 BE)][Value (length bytes)]
+│              │           │                      │                 │
+│              │           │                      │                 └─ Domain fields (concatenated)
+│              │           │                      └─ Byte count of value
+│              │           └─ Client-chosen, non-zero on requests
+│              └─ 0 unless ACK_REQUESTED
 └─ Verb wire code
 ```
 
@@ -132,8 +98,10 @@ Wire format specification:
 
 Actual bytes on wire:
 ```
-[0x00 0x68]                              (MessageType=104, KV PUT)
-[0x00 0x39]                              (Length=57 bytes)
+[0x00 0x68]                              (type=104, KV PUT)
+[0x00]                                   (flags=0)
+[0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x01]  (correlation=1)
+[0x00 0x00 0x00 0x39]                    (length=57 bytes)
   [0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x01]  (tx_id=1, u64 BE)
   [0x00 0x00 0x00 0x15]                  (route_len=21)
   [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]  (route="kv://prod/app/users", 21 bytes)
@@ -142,7 +110,7 @@ Actual bytes on wire:
   [0x00 0x00 0x00 0x05]                  (value_len=5)
   [61 6c 69 63 65]                       (value="alice", 5 bytes)
 
-Total frame size: 2 (type) + 2 (length) + 57 (payload) = 61 bytes
+Total frame size: 15 (header) + 57 (payload) = 72 bytes
 ```
 
 **Example 2: Notice SUBSCRIBE (MessageType=501)**
@@ -155,12 +123,14 @@ Wire format specification:
 
 Actual bytes on wire:
 ```
-[0x01 0xF5]                              (MessageType=501, Notice SUBSCRIBE)
-[0x00 0x18]                              (Length=24 bytes)
+[0x01 0xF5]                              (type=501, Notice SUBSCRIBE)
+[0x00]                                   (flags=0)
+[0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x02]  (correlation=2)
+[0x00 0x00 0x00 0x18]                    (length=24 bytes)
   [0x00 0x00 0x00 0x14]                  (route_pattern_len=20)
   [6e 6f 74 69 63 65 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 2a]  (pattern="notice://prod/app/*", 20 bytes)
 
-Total frame size: 2 (type) + 2 (length) + 24 (payload) = 28 bytes
+Total frame size: 15 (header) + 24 (payload) = 39 bytes
 ```
 
 **Example 3: KV BEGIN (MessageType=100)**
@@ -172,16 +142,18 @@ BEGIN selects scope and transaction mode only:
 [u8]      mode (0=ReadOnly, 1=ReadWrite)
 ```
 
-For `kv://prod/app/users` (19 UTF-8 bytes), the TLV frame is:
+For `kv://prod/app/users` (19 UTF-8 bytes), the message is:
 ```
-[0x64]                                   (MessageType=100, unsigned LEB128)
-[0x18]                                   (Length=24 bytes, unsigned LEB128)
+[0x00 0x64]                              (type=100, KV BEGIN)
+[0x00]                                   (flags=0)
+[0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x03]  (correlation=3)
+[0x00 0x00 0x00 0x18]                    (length=24 bytes)
   [0x00 0x00 0x00 0x13]                   (route_len=19)
   [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]
   [0x01]                                 (ReadWrite)
 ```
 
-Total frame size: 1 (type) + 1 (length) + 24 (payload) = 26 bytes.
+Total frame size: 15 (header) + 24 (payload) = 39 bytes.
 KV COMMIT requires `[u64 tx_id][u32 route_len][route][u8 persistence]`.
 Stream COMMIT requires `[u64 session_id][u8 persistence]`. Both use
 `0=Buffered` and `1=Sync`; omitted, invalid, or trailing fields are rejected.
@@ -199,53 +171,60 @@ Wire format specification:
 
 Actual bytes on wire:
 ```
-[0xFF 0x01 0x2E]                         (MessageType=302, RPC REQUEST)
-[0x00 0x30]                              (Length=48 bytes)
+[0x01 0x2E]                              (type=302, RPC REQUEST)
+[0x00]                                   (flags=0)
+[0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x04]  (correlation=4)
+[0x00 0x00 0x00 0x30]                    (length=48 bytes)
   [12 34 56 78 9a bc de f0 12 34 56 78 9a bc de f0]  (correlation_id, 16 bytes UUID)
   [0x00 0x00 0x00 0x15]                  (route_len=21)
   [72 70 63 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 77 6f 72 6b 65 72]  (route="rpc://prod/app/worker", 21 bytes)
   [0x00 0x00 0x00 0x03]                  (body_len=3)
   [66 6f 6f]                             (body="foo", 3 bytes)
 
-Total frame size: 3 (type) + 2 (length) + 48 (payload) = 53 bytes
+Total frame size: 15 (header) + 48 (payload) = 63 bytes
 ```
 
 #### Transport Layer Framing
 
 **WebSocket:**
 ```
-Binary WebSocket frame contains raw TLV message:
-[MessageType][Length][Payload]
+One binary WebSocket frame contains one message:
+[header 15 bytes][value]
 
 Example: Send KV PUT
-WebSocket binary frame body = 51 bytes (from Example 1 above)
+WebSocket binary frame body = 72 bytes (from Example 1 above)
 ```
 
 **TCP (with length-prefixed framing):**
 ```
-[Frame Length (u32 BE)][MessageType][Length][Payload]
+[frame_length (u32 BE)][header 15 bytes][value]
 │                       │
-│                       └─ TLV message
-└─ Total message size (including MessageType + Length + Payload)
+│                       └─ one message
+└─ header + value byte count (excludes the 4-byte prefix)
 
-Example: Send KV PUT (51 bytes TLV)
-[0x00 0x00 0x00 0x33]  (frame_length=51)
-[0x00 0x68]            (MessageType=104)
-[0x00 0x2F]            (Length=47)
-[...47 bytes payload...]
+Example: Send KV PUT (72-byte message)
+[0x00 0x00 0x00 0x48]  (frame_length=72)
+[0x00 0x68]            (type=104)
+[0x00]                 (flags=0)
+[...8 bytes correlation...]
+[0x00 0x00 0x00 0x39]  (length=57)
+[...57 bytes payload...]
 ```
 
 #### Reference Decoder Pseudocode
 
 ```python
 def decode_frame(frame_bytes):
-    """Decode a single TLV frame into a domain message."""
-    # Parse TLV header
+    """Decode one frame into a domain message."""
+    # Parse the fixed 15-byte header
     message_type = read_u16_be(frame_bytes[0:2])
-    length = read_u16_be(frame_bytes[2:4])
-    payload = frame_bytes[4:4+length]
-    
-    # Verify payload matches declared length
+    flags = frame_bytes[2]
+    correlation = read_u64_be(frame_bytes[3:11])
+    length = read_u32_be(frame_bytes[11:15])
+    payload = frame_bytes[15:]
+
+    if flags & 0xFE:
+        raise ProtocolError("Reserved flag bit set")
     if len(payload) != length:
         raise ProtocolError("Payload length mismatch")
     
@@ -332,11 +311,11 @@ def decode_notice_message(message_type, payload):
 
 **Key Insights for Implementers:**
 
-1. **Single TLV Level:** Each message is ONE TLV record, not nested TLVs
-2. **MessageType = Verb:** The TLV Type field IS the verb wire code (100-799)
-3. **Payload = Concatenated Fields:** Just concatenate domain fields in order (no internal TLV structure)
+1. **One message per frame:** the 15-byte header is followed by the whole value; nothing else is in the frame
+2. **type = Verb:** the header `type` field IS the verb wire code (100-799) or a control id (1-4)
+3. **Payload = Concatenated Fields:** Just concatenate domain fields in order (no internal record structure)
 4. **Length Validation:** Always verify `offset == len(payload)` after decoding (detects trailing data)
-5. **Transport Agnostic:** Same TLV message format for WebSocket and TCP (TCP adds outer length prefix)
+5. **Transport Agnostic:** Same header and value for WebSocket and TCP (TCP adds the outer length prefix)
 
 ### Primitive Encodings
 
@@ -359,9 +338,9 @@ Clients MUST:
 1. Encode all integers in big-endian byte order
 2. Consume all bytes in request payloads; error if trailing data remains
 3. Encode responses with exact length prefixes
-4. Handle both single-byte and escape-byte MessageTypes identically
-5. **Duplicate TLV tags are NOT permitted within a single frame.** If a TLV tag appears more than once in a frame the frame **MUST** be treated as malformed and the receiver **MUST** close the connection with a TLV parse error. **Rationale:** Fitz TLV disallows duplicate tags to keep decoding deterministic and to simplify client implementations and conformance testing.
-6. **A single TLV value MUST NOT exceed 65535 bytes (≈64 KiB).** Large payloads MUST be split across multiple frames or multiple operations — never by repeating the same TLV tag within a single frame (which would violate rule 5).
+4. Encode `type` as a plain `u16 BE`; there is no variable-width type encoding
+5. Send exactly one message per transport frame, with reserved flag bits zero, and reject a frame whose `length` does not match the bytes present
+6. Bound every message by the `max_message_bytes` the broker states in `HELLO`. Larger payloads are split across operations (Stream APPEND records, Queue messages, RPC response chunks), never across frames
 
 ### Response Format Convention
 
@@ -369,13 +348,18 @@ Clients MUST:
 
 1. **Status byte** (u8): 0=success, 1=error
 2. **If success (status=0):** Domain-specific success payload
-3. **If error (status=1):** Error message
+3. **If error (status=1):** the common error envelope
    ```
+   [u16 BE] code       the specific condition, see error-codes.md
+   [u8]     class      0 domain-specific, 1..10 the shared condition
+   [u8]     effect     0 NOT_APPLIED, 1 INDETERMINATE, 2 APPLIED
    [u32 BE] error_len
-   [bytes]  error_msg (UTF-8, human-readable)
+   [bytes]  error_msg (UTF-8, diagnostic only; clients MUST NOT branch on it)
    ```
 
-**Clients MUST check status byte first before parsing payload.**
+**Clients MUST check status byte first before parsing payload.** Retry only
+when `effect` is NOT_APPLIED, or when the operation is idempotent by the
+domain's own rules.
 
 **Exception: RPC Domain**
 RPC responses include a `correlation_id` field (16-byte UUID) to match responses to requests across multiple in-flight operations. See [RPC Domain](queue-rpc.md) for details on how RPC enables per-request correlation.
@@ -390,37 +374,35 @@ RPC responses include a `correlation_id` field (16-byte UUID) to match responses
 **Example (KV GET error):**
 ```
 [0x01]                    (status=1, error)
+[0x04 0x1c]               (code=1052, KEY_NOT_FOUND)
+[0x09]                    (class=9, NOT_FOUND)
+[0x00]                    (effect=0, NOT_APPLIED)
 [0x00 0x00 0x00 0x0d]     (error_len=13)
 [0x4b 0x65 0x79...]       ("Key not found")
 ```
 
 **Rationale:** Standardized error format across all domains simplifies client
-error handling and ensures consistent debugging experience. When the broker
-advertises `CAP_CORRELATION`, frame-level correlation provides per-request
-matching for every request/response verb. RPC additionally retains its own
-16-byte domain correlation identifier for end-to-end caller/worker routing.
+error handling and ensures consistent debugging experience. The header
+correlation provides per-request matching for every request/response verb.
+RPC additionally retains its own 16-byte domain identifier for end-to-end
+caller/worker routing.
 
-### Frame Size Limits
+### Message Size Limits
 
-**Default maximum frame size: 1 MB (1,048,576 bytes)**
+**Default maximum message size: 1 MiB (1,048,576 bytes), stated in `HELLO`**
 
 **Rules:**
-- Client MUST NOT send frames exceeding broker's limit
-- Broker MUST close connection if frame exceeds limit (transport error)
-- No negotiation protocol (clients assume 1 MB default)
-- Deployments with custom limits MUST document them
-- Clients SHOULD make `max_frame_size` configurable
+- The broker states `max_message_bytes` in `HELLO`; it bounds header plus value
+- Client MUST NOT send a message larger than `max_message_bytes`
+- Broker closes the connection on a larger message (transport error)
+- Deployments may change the limit; clients read it from `HELLO` rather than assuming it
+- Clients SHOULD still expose a local ceiling so an application cannot build a message the broker will refuse
 
 **Handling large payloads:**
-- Split across multiple operations (e.g., batch ENQUEUE)
-- Use streaming (e.g., Stream APPEND multiple records)
+- Split across multiple operations (Stream APPEND records, Queue messages)
+- RPC responses stream in chunks
 - Application-level chunking (not protocol-level)
-- For Queue/Notice/RPC: Keep payload under limit or use external blob storage with reference
-
-**Discovery:**
-- No runtime discovery mechanism
-- Clients assume 1 MB by default
-- Server documentation MUST specify if non-default
+- For Queue/Notice/RPC: keep the payload under the limit or use external blob storage with a reference
 
 ## Connection Lifecycle
 
@@ -453,77 +435,99 @@ DISCONNECTED --(open transport)--> CONNECTING --(CONNECT & accepted)--> AUTHENTI
 Notes:
 
 - Clients MUST handle transport failures and implement exponential backoff on reconnect.
-- **Multiplexing Support**: Clients MAY send multiple in-flight requests with
-  different message types. When `CAP_CORRELATION` is advertised, clients MAY
-  also send multiple same-message-type requests by assigning each live request
-  a unique non-zero frame correlation. Without that capability, clients MUST
-  keep at most one request per message type in flight on a connection.
+- **Multiplexing Support**: Clients MAY keep any number of requests in flight,
+  of any message types, each with a unique non-zero correlation. `HELLO`
+  states `max_in_flight`, the admission limit beyond which the broker answers
+  `BUSY` (class 5, effect NOT_APPLIED).
 
-### 2. Send CONNECT Record (FIRST MESSAGE)
+### 2. Send CONNECT (FIRST MESSAGE)
 
-Clients MUST send a **CONNECT** TLV record as the first message:
-
-```
-MessageType: 1 (CONNECT)
-Value: compact JWT string bytes (UTF-8), NO length prefix
-Length: JWT byte length
-```
-
-**Example (Authenticated Mode):**
+Clients MUST send `CONNECT` (type 1, flags 0, correlation 0) as the first
+message:
 
 ```
-[0x01]                    (MessageType=1)
-[0x00 0x63]               (Length=99, u16)
-[99 bytes of JWT...]
+[u16 BE] min_version      lowest wire version the client speaks (2)
+[u16 BE] max_version      highest wire version the client speaks (2)
+[u32 BE] client_caps      capability bits the client implements (0)
+[string] jwt              compact JWT; empty in anonymous mode
+[string] service_name     client-reported service name, may be empty
+[string] client_build     SDK name and version for diagnostics, may be empty
 ```
 
-**Example (Anonymous Mode - Empty JWT):**
+`string` is `[u32 BE len][UTF-8 bytes]`. `service_name` is display metadata
+shown in admin surfaces, never identity; clients SHOULD send it trimmed, at
+most 128 bytes, with no control characters.
+
+**Example (Anonymous Mode, no service name):**
 
 ```
-[0x01]                    (MessageType=1)
-[0x00 0x00]               (Length=0, u16)
-(no JWT bytes)
+[0x00 0x01]                              (type=1, CONNECT)
+[0x00]                                   (flags=0)
+[0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]  (correlation=0)
+[0x00 0x00 0x00 0x14]                    (length=20)
+  [0x00 0x02]                            (min_version=2)
+  [0x00 0x02]                            (max_version=2)
+  [0x00 0x00 0x00 0x00]                  (client_caps=0)
+  [0x00 0x00 0x00 0x00]                  (jwt: empty)
+  [0x00 0x00 0x00 0x00]                  (service_name: empty)
+  [0x00 0x00 0x00 0x00]                  (client_build: empty)
 ```
 
 **Constraints:**
 
-- CONNECT MUST be first frame sent
-- **Authenticated mode (`FITZ_AUTH_REQUIRED=true`):** JWT required, invalid JWT causes connection close
-- **Anonymous mode (`FITZ_AUTH_REQUIRED=false`):** JWT optional, empty or placeholder accepted
-- JWT payload MUST be valid UTF-8 (if present)
-- Clients SHOULD implement CONNECT timeout (5–10 seconds)
+- CONNECT MUST be the first message; a domain message before it closes the connection
+- **Authenticated mode (`FITZ_AUTH_REQUIRED=true`):** JWT required
+- **Anonymous mode (`FITZ_AUTH_REQUIRED=false`):** JWT may be empty
+- Clients SHOULD implement a CONNECT timeout (5–10 seconds) awaiting the answer
 
-### 3. Await Broker Confirmation
+### 3. Await HELLO or CONNECT_REJECTED
 
-**Session Confirmation Protocol:**
-Broker behavior:
+The broker answers every `CONNECT` with exactly one of:
 
-- **Valid CONNECT:** No explicit ACK message. Broker remains silent and is ready for requests.
-- **Invalid CONNECT:** Broker closes connection within 1 second (no response frame sent)
-- **No CONNECT within 10 seconds:** Broker closes connection with graceful shutdown
+- **`HELLO`** (type 2, correlation 0): the session is established.
+  ```
+  [u16 BE] version            the wire version in force (2)
+  [u32 BE] broker_caps        capability bits the broker implements
+  [u32 BE] max_message_bytes  largest message the broker accepts, header included
+  [u32 BE] max_in_flight      requests the broker admits before answering BUSY
+  [u64 BE] session_id         diagnostic identity shown in admin surfaces
+  ```
+  Readers MUST ignore trailing bytes after `session_id`, so a later version
+  can append limits without a new message type. `HELLO` is the only message
+  with that rule. The version in force is the highest value in both ranges.
+- **`CONNECT_REJECTED`** (type 3, correlation 0), after which the broker closes:
+  ```
+  [u16 BE] code     protocol block of error-codes.md: 0001 UNAUTHORIZED,
+                    0050 VERSION_MISMATCH, 0051 FAMILY_NOT_PROVISIONED
+  [string] message
+  ```
+- **No `CONNECT` within 10 seconds:** the broker closes the connection.
 
 Clients MUST:
 
-- Send CONNECT as the first frame after transport is established
-- **Immediately proceed to send domain requests** after sending CONNECT (do not wait for an ACK)
-- If the broker rejects the JWT, it closes the connection — the client discovers this when the transport drops or when the first domain response fails
-- If the connection closes within 1 second of CONNECT, treat as authentication failure
-- Do NOT retry with the same JWT after auth failure
-- Implement a CONNECT timeout of 5–10 seconds — if no domain response AND no connection close within this window, close and retry with backoff
+- Read `HELLO` before relying on `max_message_bytes` or `max_in_flight`. A
+  client MAY pipeline domain requests behind `CONNECT`; the broker serves
+  them only after a successful `CONNECT`, and discards them with the
+  connection on `CONNECT_REJECTED`
+- Surface `CONNECT_REJECTED` with its code and message
+- Do NOT retry with the same JWT after `0001`
+- Treat a close with neither `HELLO` nor `CONNECT_REJECTED` as a transport
+  failure: reconnect with backoff
 
 **Recommended client pattern:**
 
 ```
 1. Open transport (WebSocket/TCP)
-2. Send CONNECT frame with JWT
-3. Immediately send first domain request (e.g., KV BEGIN, Notice SUBSCRIBE)
-4. If domain response arrives → connection is authenticated and working
-5. If connection closes → auth failure, do NOT retry same JWT
-6. If neither within timeout → close, retry with backoff
+2. Send CONNECT
+3. Read the first message:
+   HELLO            → record version, caps, limits, session_id; the session is live
+   CONNECT_REJECTED → surface code and message; do not retry the same JWT on 0001
+4. Send domain requests, each with a unique non-zero correlation
+5. If neither answer arrives within the CONNECT timeout → close, retry with backoff
 ```
   **Session State After Successful CONNECT:**
   On successful CONNECT, broker creates session and MUST:
-- Assign unique session ID (internal use only)
+- Assign a unique session ID (returned in `HELLO` for diagnostics; not a credential)
 - Extract JWT identity context and resolve route family through server configuration
 - Establish normalized route-shaped permissions for all subsequent requests
 - Track active subscriptions, transactions, and resources
@@ -549,17 +553,15 @@ After successful CONNECT, client may send domain-specific requests.
 
 **Request Multiplexing:**
 
-- **Different message types**: Multiple requests may be in flight because their response types distinguish them.
-- **Same message type with `CAP_CORRELATION`**: Multiple requests may be in flight when each has a unique non-zero frame correlation.
-- **Same message type without `CAP_CORRELATION`**: At most one request may be in flight per connection. Same-type response order is not guaranteed.
-- **RPC has two distinct identifiers**: RPC REQUEST retains its explicit 16-byte UUID for end-to-end caller/worker routing. Frame correlation matches that client operation to broker response frames and does not replace the RPC UUID.
+- **Any mix of message types**: every request carries a unique non-zero correlation, so any number may be in flight up to `max_in_flight` from `HELLO`.
+- **RPC has two distinct identifiers**: RPC REQUEST retains its explicit 16-byte UUID for end-to-end caller/worker routing. `RESPONSE` frames carry correlation 0 and are matched by that UUID.
 - **RPC registrations are session-scoped**: A worker reconnecting after disconnect or broker restart MUST send `Subscribe` again before it will receive new requests.
-- **Out-of-band messages**: Asynchronous notifications never carry frame correlation and clients MUST continue routing them by message type and subscription identifier.
+- **Out-of-band messages**: Notifications carry correlation 0 and clients MUST route them by message type and subscription identifier.
 - **Order guarantees**: The broker does not guarantee response order, including between requests with the same message type.
 
 ### 5. Receive Responses
 
-Each request receives one response frame. Response format is domain-specific (see domain specs).
+Each request receives at least one response frame carrying its correlation. Response format is domain-specific (see domain specs); every error uses the common envelope.
 
 ### 6. Close Connection
 
@@ -661,7 +663,7 @@ Clients MUST implement queueing, backoff, and bounded concurrency:
 
 Brokers signal backpressure through **domain error responses**. There is no separate backpressure frame. When a domain's internal queue is full, the broker returns a domain error in the standard response format:
 
-- RPC: `6003 = ERR_RPC_BACKPRESSURE`
+- RPC: `6005 = ERR_BUSY`
 - Queue: `4005 = ERR_QUEUE_FULL`
 - Other domains: connection close if internal buffers overflow
 
@@ -750,8 +752,8 @@ Payload: [tx_id][key][value]
    - Wire codes are stable ABI
    - Domain+Verb fully specifies behavior
 
-4. **TLV is the wire format** (like HTTP has headers+body)
-   - Type-Length-Value encoding
+4. **A fixed header plus value is the wire format** (like HTTP has headers+body)
+   - 15-byte header: type, flags, correlation, length
    - Binary efficient, not text-based
    - Extensible without version negotiation
 
@@ -776,7 +778,7 @@ Payload: [tx_id][key][value]
 | **Addressing** | URL path                        | Route (kv://realm/area/resource)       |
 | **Verb**       | GET, POST, PUT, DELETE          | MessageType (100=BEGIN, 104=PUT, etc.) |
 | **Transport**  | TCP + TLS                       | WebSocket or TCP + TLS                 |
-| **Format**     | Text (headers + body)           | Binary (TLV)                           |
+| **Format**     | Text (headers + body)           | Binary (fixed header + value)          |
 | **State**      | Stateless (cookies for session) | Explicit routing; some domains keep live session state |
 | **Operations** | Self-contained requests         | Self-contained requests                |
 
@@ -862,4 +864,4 @@ Clients MUST:
 ### MessageType Ranges Are Non-Overlapping
 
 Each domain occupies an exclusive 100-code block. The broker's mux layer routes by numeric range — **no overlap, no disambiguation needed**.
-**Clients MUST use the wire codes from the Constants & TLV Registry section.**
+**Clients MUST use the wire codes from the Constants & Message Registry section.**
