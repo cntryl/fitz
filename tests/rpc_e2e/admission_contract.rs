@@ -22,7 +22,7 @@ impl AdmissionFailure {
                 "domain at capacity: request was not accepted, retry with backoff",
             ),
             Self::Timeout => (
-                fitz::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                fitz::protocol::error_codes::rpc::ERR_TIMEOUT,
                 "domain timeout: request outcome unknown, do not blindly retry",
             ),
             Self::Unavailable => (
