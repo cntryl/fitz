@@ -297,7 +297,10 @@ impl NoticeDomain {
         )
     }
 
-    fn can_accept_without_reply(envelope: &Envelope) -> bool {
+    /// True when the sink accepts this envelope without waiting for an actor
+    /// reply (PUBLISH and internal domain events); ingress uses it to decide
+    /// whether delivery must be moved off the async worker.
+    pub(crate) fn can_accept_without_reply(envelope: &Envelope) -> bool {
         if envelope
             .payload::<crate::runtime::DomainPublishEvent>()
             .is_some()

@@ -152,7 +152,7 @@ impl StreamFamilyState {
     }
 
     pub(in crate::domains::stream::sink) fn stream_error_response(
-        error: impl Into<String>,
+        error: impl Into<crate::domains::stream::StreamClientError>,
     ) -> StreamClientResponseBody {
         StreamClientResponseBody::Error(error.into())
     }

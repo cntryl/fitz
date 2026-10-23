@@ -2,6 +2,7 @@ use super::common::*;
 
 #[tokio::test]
 pub(crate) async fn should_rebuild_stream_admin_from_durable_metadata_after_restart() {
+    // Arrange
     let tempdir = TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-stream-admin");
     let db_path = db_path.to_string_lossy().to_string();
@@ -18,10 +19,12 @@ pub(crate) async fn should_rebuild_stream_admin_from_durable_metadata_after_rest
     drop(engine);
     wait_for_stream_storage_release().await;
 
+    // Act
     let server = TestServer::start_with_local_storage(db_path)
         .await
         .expect("restart stream server");
 
+    // Assert
     let streams = server.runtime.stream_list_streams(None);
     let stream = streams
         .iter()
@@ -37,6 +40,7 @@ pub(crate) async fn should_rebuild_stream_admin_from_durable_metadata_after_rest
 
 #[tokio::test]
 pub(crate) async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
+    // Arrange
     let tempdir = TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-stream-resource");
     let db_path = db_path.to_string_lossy().to_string();
@@ -53,6 +57,7 @@ pub(crate) async fn should_preserve_monotonic_stream_resource_offsets_after_rest
     drop(engine);
     wait_for_stream_storage_release().await;
 
+    // Act
     let engine = open_local_stream_engine(db_path)
         .await
         .expect("reopen local stream engine");
@@ -62,6 +67,7 @@ pub(crate) async fn should_preserve_monotonic_stream_resource_offsets_after_rest
     append_for_owner(&mut actor, 10, 101, 1, Bytes::from_static(b"two"));
     commit_for_owner(&mut actor, 10, 101);
 
+    // Assert
     let records = actor
         .read(0, 10, None)
         .expect("read restarted stream")
@@ -78,6 +84,7 @@ pub(crate) async fn should_preserve_monotonic_stream_resource_offsets_after_rest
 
 #[tokio::test]
 pub(crate) async fn should_preserve_monotonic_stream_area_offsets_after_restart() {
+    // Arrange
     let tempdir = TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-stream-area");
     let db_path = db_path.to_string_lossy().to_string();
@@ -99,6 +106,7 @@ pub(crate) async fn should_preserve_monotonic_stream_area_offsets_after_restart(
     drop(engine);
     wait_for_stream_storage_release().await;
 
+    // Act
     let engine = open_local_stream_engine(db_path)
         .await
         .expect("reopen local stream engine");
@@ -108,6 +116,7 @@ pub(crate) async fn should_preserve_monotonic_stream_area_offsets_after_restart(
     append_for_owner(&mut orders, 10, 101, 1, Bytes::from_static(b"three"));
     commit_for_owner(&mut orders, 10, 101);
 
+    // Assert
     let records = store
         .read_area(1, "test", "events", 0, 10, None)
         .expect("read area stream")
@@ -122,6 +131,7 @@ pub(crate) async fn should_preserve_monotonic_stream_area_offsets_after_restart(
 
 #[tokio::test]
 pub(crate) async fn should_preserve_monotonic_stream_realm_offsets_after_restart() {
+    // Arrange
     let tempdir = TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-stream-realm");
     let db_path = db_path.to_string_lossy().to_string();
@@ -143,6 +153,7 @@ pub(crate) async fn should_preserve_monotonic_stream_realm_offsets_after_restart
     drop(engine);
     wait_for_stream_storage_release().await;
 
+    // Act
     let engine = open_local_stream_engine(db_path)
         .await
         .expect("reopen local stream engine");
@@ -152,6 +163,7 @@ pub(crate) async fn should_preserve_monotonic_stream_realm_offsets_after_restart
     append_for_owner(&mut area_a, 10, 101, 1, Bytes::from_static(b"three"));
     commit_for_owner(&mut area_a, 10, 101);
 
+    // Assert
     let records = store
         .read_realm(1, "test", 0, 10, None)
         .expect("read realm stream")
@@ -166,6 +178,7 @@ pub(crate) async fn should_preserve_monotonic_stream_realm_offsets_after_restart
 
 #[tokio::test]
 pub(crate) async fn should_not_expose_uncommitted_values_given_restart() {
+    // Arrange
     let tempdir = TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-stream-uncommitted");
     let db_path = db_path.to_string_lossy().to_string();
@@ -181,6 +194,7 @@ pub(crate) async fn should_not_expose_uncommitted_values_given_restart() {
     drop(engine);
     wait_for_stream_storage_release().await;
 
+    // Act
     let engine = open_local_stream_engine(db_path)
         .await
         .expect("reopen local stream engine");
@@ -190,6 +204,7 @@ pub(crate) async fn should_not_expose_uncommitted_values_given_restart() {
     append_for_owner(&mut actor, 10, 101, 0, Bytes::from_static(b"committed"));
     commit_for_owner(&mut actor, 10, 101);
 
+    // Assert
     let records = actor
         .read(0, 10, None)
         .expect("read restarted stream")

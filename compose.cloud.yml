@@ -13,7 +13,7 @@ x-broker-common: &broker-common
     context: .
     dockerfile: Dockerfile
   restart: unless-stopped
-  stop_grace_period: 15s
+  stop_grace_period: 30s
   healthcheck:
     disable: true
 

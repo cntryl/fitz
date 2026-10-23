@@ -30,8 +30,8 @@ pub(crate) use sink::NoticeDomain;
 
 pub use metrics::NoticeMetrics;
 pub use protocol::{
-    DeliverMessage, NoticeClientNotification, NoticeClientRequest, NoticeClientResponse,
-    NoticeError, NoticeResponse, NotificationMessage,
+    DeliverMessage, NoticeClientError, NoticeClientErrorKind, NoticeClientNotification,
+    NoticeClientRequest, NoticeClientResponse, NoticeResponse, NotificationMessage,
 };
 
 /// Canonicalize a Notice route for authorization: scheme-qualified as given.

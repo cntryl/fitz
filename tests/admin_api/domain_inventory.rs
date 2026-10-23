@@ -3,6 +3,7 @@ use super::common::*;
 #[tokio::test]
 #[serial]
 async fn should_list_kv_realms_with_valid_cookie() {
+    // Arrange
     let runtime = test_runtime();
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
@@ -14,10 +15,12 @@ async fn should_list_kv_realms_with_valid_cookie() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload = String::from_utf8(body.to_vec()).unwrap();
@@ -27,6 +30,7 @@ async fn should_list_kv_realms_with_valid_cookie() {
 #[tokio::test]
 #[serial]
 async fn should_return_area_collection_route() {
+    // Arrange
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -37,16 +41,19 @@ async fn should_return_area_collection_route() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 #[serial]
 async fn should_return_resource_collection_route() {
+    // Arrange
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -57,10 +64,12 @@ async fn should_return_resource_collection_route() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -221,6 +230,7 @@ async fn should_return_schedule_resource_rollup_fields() {
 #[tokio::test]
 #[serial]
 async fn should_return_leaf_resource_detail() {
+    // Arrange
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -231,10 +241,12 @@ async fn should_return_leaf_resource_detail() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -373,6 +385,7 @@ async fn should_isolate_stream_area_watermarks_by_authorized_route_family() {
 #[tokio::test]
 #[serial]
 async fn should_return_kv_transactions_under_resource() {
+    // Arrange
     let runtime = test_runtime();
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
@@ -384,10 +397,12 @@ async fn should_return_kv_transactions_under_resource() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload = String::from_utf8(body.to_vec()).unwrap();
@@ -703,6 +718,7 @@ async fn should_not_leak_admin_resource_given_unauthorized_route_family() {
 #[tokio::test]
 #[serial]
 async fn should_return_queue_inflight_under_resource() {
+    // Arrange
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -713,10 +729,12 @@ async fn should_return_queue_inflight_under_resource() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
 }
 

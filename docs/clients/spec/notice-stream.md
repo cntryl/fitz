@@ -518,6 +518,12 @@ Response (status=2):
 
 **Commit Modes:**
 
+The mode byte is required on the wire. A COMMIT without it, or with any value
+other than 0 or 1, is rejected before the session is touched. An SDK may offer
+a convenience default in its API, but it must always encode the byte, and its
+documentation must name the mode it defaults to, because the choice is the
+durability contract.
+
 - **Sync (mode=1)**: COMMIT uses the broker's sync write policy before success is returned. Higher latency, stronger crash durability.
 - **Buffered (mode=0)**: COMMIT uses the broker's buffered write policy. Lower latency, best-effort durability until the buffered write is persisted.
 
@@ -791,7 +797,7 @@ class StreamSession:
 - **Watermarks**: Reads stop at the current committed watermark; reading past it returns an empty success
 - **Optimistic Concurrency**: `expected_offset` on APPEND prevents lost updates
 - **Filtered Replay**: `StreamFilterSet` clauses are conjunctive and operate on the optional append discriminator sidecar
-- **Persistence**: Sync commits wait for the configured local or cloud persistence boundary; Buffered commits can lose recent writes on a crash.
+- **Persistence**: Sync commits wait for the configured local or cloud persistence boundary; Buffered commits can lose recent writes on a crash. The family-global watermark that gates global-scope reads is advanced after the commit and retried on failure, so a Sync COMMIT can be acknowledged briefly before global-scope visibility catches up; the records themselves are already durable and recovery rebuilds the frontier from committed pages.
 - **Isolation**: Only one active append session exists per resource at a time; subscriptions are separate live session-scoped state
 - **Resume Model**: Clients track resume offsets locally; `ReadCursor` is response metadata, not a durable broker cursor
 

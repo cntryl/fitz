@@ -258,14 +258,14 @@ impl StreamFamilyState {
         let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
             return (
-                Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
+                Self::stream_error_response(StreamStoreError::SessionNotFound),
                 None,
                 false,
             );
         };
         let Some(actor) = self.actors.get_mut(&owner.key) else {
             return (
-                Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
+                Self::stream_error_response(StreamStoreError::SessionNotFound),
                 None,
                 false,
             );
@@ -309,9 +309,7 @@ impl StreamFamilyState {
         let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
             return StreamCommitOutcome {
-                response: Self::stream_error_response(
-                    StreamStoreError::SessionNotFound.client_message(),
-                ),
+                response: Self::stream_error_response(StreamStoreError::SessionNotFound),
                 notification: None,
                 admin_dirty: false,
                 watermark: None,
@@ -377,7 +375,7 @@ impl StreamFamilyState {
         let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
             return (
-                Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
+                Self::stream_error_response(StreamStoreError::SessionNotFound),
                 None,
                 false,
             );

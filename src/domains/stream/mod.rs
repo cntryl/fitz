@@ -64,10 +64,11 @@ pub use constants::{
 };
 pub(crate) use metrics::StreamMetrics;
 pub use protocol::{
-    AppendResponse, GetMetadataResponse, ReadResponse, StreamClientFrame, StreamClientNotification,
-    StreamClientRequest, StreamClientResponse, StreamClientResponseBody, StreamDiscriminator,
-    StreamError, StreamFilterClause, StreamFilterSet, StreamFilteredReason, StreamMessage,
-    StreamMetadata, StreamReadItem, StreamRecord, StreamSubscriptionFailure,
+    AppendResponse, GetMetadataResponse, ReadResponse, StreamClientError, StreamClientErrorKind,
+    StreamClientFrame, StreamClientNotification, StreamClientRequest, StreamClientResponse,
+    StreamClientResponseBody, StreamDiscriminator, StreamFilterClause, StreamFilterSet,
+    StreamFilteredReason, StreamMessage, StreamMetadata, StreamReadItem, StreamRecord,
+    StreamSubscriptionFailure,
 };
 pub(crate) use route_grammar::canonical_auth_route;
 pub use store::StreamStorageLayout;

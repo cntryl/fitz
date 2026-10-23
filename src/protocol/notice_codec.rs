@@ -9,8 +9,8 @@
 
 pub use crate::dispatch::wire::notice::NoticeResponse;
 use crate::dispatch::wire::notice::{
-    DeliverMessage, NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
-    UnsubscribeMessage,
+    DeliverMessage, NoticeClientErrorKind, NotificationMessage, PublishMessage, SubscribeMessage,
+    UnsubscribeAllMessage, UnsubscribeMessage,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -125,8 +125,8 @@ pub fn encode_response_into(response: &NoticeResponse, enc: &mut PayloadEncoder)
         }
         NoticeResponse::Error(e) => {
             return crate::protocol::error_codes::encode_error_body_into(
-                notice_error_code_for_message(e),
-                e,
+                notice_error_code(e.kind),
+                &e.message,
                 enc,
             );
         }
@@ -135,33 +135,15 @@ pub fn encode_response_into(response: &NoticeResponse, enc: &mut PayloadEncoder)
     enc.finish()
 }
 
-fn notice_error_code_for_message(message: &str) -> u16 {
+/// The wire code for each client-visible Notice error kind.
+const fn notice_error_code(kind: NoticeClientErrorKind) -> u16 {
     use crate::protocol::error_codes::notice;
 
-    match message {
-        "empty pattern" | "route must not contain control characters" => {
-            notice::ERR_INVALID_PATTERN
-        }
-        message
-            if message.starts_with("subscription pattern ")
-                || message.starts_with("invalid subscription pattern:") =>
-        {
-            notice::ERR_INVALID_PATTERN
-        }
-        message
-            if message.starts_with("notice subscription limit exceeded")
-                || message.starts_with("wildcard subscription limit exceeded") =>
-        {
-            notice::ERR_SUBSCRIPTION_LIMIT
-        }
-        "route family mismatch" => notice::ERR_INVALID_ROUTE,
-        message
-            if message.starts_with("invalid notice publish route:")
-                || message.starts_with("notice publish route ") =>
-        {
-            notice::ERR_INVALID_ROUTE
-        }
-        _ => notice::ERR_BACKEND_ERROR,
+    match kind {
+        NoticeClientErrorKind::InvalidRoute => notice::ERR_INVALID_ROUTE,
+        NoticeClientErrorKind::InvalidPattern => notice::ERR_INVALID_PATTERN,
+        NoticeClientErrorKind::SubscriptionLimit => notice::ERR_SUBSCRIPTION_LIMIT,
+        NoticeClientErrorKind::Backend => notice::ERR_BACKEND_ERROR,
     }
 }
 
@@ -340,7 +322,7 @@ mod tests {
         let response = encode_response(&NoticeResponse::SubscribeOk { subscription_id: 7 });
         let notification = encode_notify(7, &Route::new(route), b"hi");
         let error = encode_response(&NoticeResponse::Error(
-            "backend route cache unavailable".to_string(),
+            "backend route cache unavailable".into(),
         ));
 
         // Assert
@@ -366,7 +348,7 @@ mod tests {
     #[test]
     fn should_not_classify_notice_backend_message_from_incidental_route_word() {
         // Arrange
-        let response = NoticeResponse::Error("backend route cache unavailable".to_string());
+        let response = NoticeResponse::Error("backend route cache unavailable".into());
 
         // Act
         let encoded = encode_response(&response);
@@ -383,8 +365,7 @@ mod tests {
     #[test]
     fn should_classify_control_character_subscription_error_as_invalid_pattern() {
         // Arrange
-        let response =
-            NoticeResponse::Error("route must not contain control characters".to_string());
+        let response = NoticeResponse::Error("route must not contain control characters".into());
 
         // Act
         let encoded = encode_response(&response);

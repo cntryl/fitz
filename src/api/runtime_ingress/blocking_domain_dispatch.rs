@@ -12,9 +12,18 @@ impl DomainFrameDispatcher {
         mut envelope: crate::runtime::Envelope,
         started_at: Instant,
     ) -> Result<(), crate::runtime::router::RouteError> {
+        // Sinks that wait for a family-actor reply must not park a Tokio
+        // worker: Stream, Queue, and RPC always wait; Notice waits for every
+        // request except PUBLISH, which the sink accepts without a reply.
         let permits = match domain {
             DispatchDomain::Stream => &self.stream_dispatch_permits,
             DispatchDomain::Queue => &self.queue_dispatch_permits,
+            DispatchDomain::Rpc => &self.rpc_dispatch_permits,
+            DispatchDomain::Notice
+                if !crate::domains::notice::NoticeDomain::can_accept_without_reply(&envelope) =>
+            {
+                &self.notice_dispatch_permits
+            }
             _ => return router.route_to_domain(domain.as_str(), envelope),
         };
 

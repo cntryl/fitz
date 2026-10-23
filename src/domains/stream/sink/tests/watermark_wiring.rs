@@ -167,3 +167,34 @@ fn should_reject_client_routes_using_the_reserved_area_watermark_segment() {
         "resource '__area__' is reserved for internal broker use"
     );
 }
+
+#[test]
+fn should_service_watermark_coordination_on_the_commit_path_without_idle_tick() {
+    // Arrange
+    let context = setup_test_context();
+    let family = context.family;
+
+    // Act
+    seed_committed_stream_route(&context, "stream://bench/events/orders", 2, b"event");
+
+    // Assert: the inspection is enqueued right behind the COMMIT reply, so the
+    // family actor has had no idle tick in between. Coordination must already
+    // have run inside the commit delivery, not be parked for the idle handler.
+    let (pending, has_area_coordinator) =
+        context.sink.inspect_family_for_tests(family, move |state| {
+            let scope = crate::domains::stream::sink::model::StreamAreaScope {
+                family,
+                realm: "bench".to_owned(),
+                area: "events".to_owned(),
+            };
+            (
+                state.pending_watermark_commits.len(),
+                state.watermark_coordinators.area.contains_key(&scope),
+            )
+        });
+    assert_eq!(pending, 0, "commit left watermark coordination pending");
+    assert!(
+        has_area_coordinator,
+        "area coordinator was not notified on the commit path"
+    );
+}

@@ -1,5 +1,5 @@
 use super::model::NoticeSubscription;
-use crate::domains::notice::NoticeResponse;
+use crate::domains::notice::{NoticeClientError, NoticeResponse};
 use crate::domains::subscription_state::{
     RoutedSubscriptionSet, MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
 };
@@ -28,8 +28,10 @@ pub(super) fn subscription_limit_error(
                 "Rejected notice subscription because session limit was exceeded"
             );
             crate::observability::counter_inc("fitz_notice_subscription_limit_rejects_total");
-            return Some(NoticeResponse::Error(format!(
-                "notice subscription limit exceeded ({MAX_NOTICE_REGISTRATIONS_PER_SESSION} per session)"
+            return Some(NoticeResponse::Error(NoticeClientError::subscription_limit(
+                format!(
+                    "notice subscription limit exceeded ({MAX_NOTICE_REGISTRATIONS_PER_SESSION} per session)"
+                ),
             )));
         }
         Some(crate::domains::subscription_state::RegistrationLimit::Wildcard) => {
@@ -41,8 +43,10 @@ pub(super) fn subscription_limit_error(
                 "Rejected wildcard notice subscription because session limit was exceeded"
             );
             crate::observability::counter_inc("fitz_notice_wildcard_limit_rejects_total");
-            return Some(NoticeResponse::Error(format!(
-                "wildcard subscription limit exceeded ({MAX_WILDCARD_REGISTRATIONS_PER_SESSION} per session)"
+            return Some(NoticeResponse::Error(NoticeClientError::subscription_limit(
+                format!(
+                    "wildcard subscription limit exceeded ({MAX_WILDCARD_REGISTRATIONS_PER_SESSION} per session)"
+                ),
             )));
         }
         None => {}

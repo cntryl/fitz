@@ -111,7 +111,9 @@ impl NoticeFamilyState {
                     session = sub_msg.session_id.0,
                     "Rejected invalid subscription pattern"
                 );
-                crate::domains::notice::NoticeResponse::Error(error)
+                crate::domains::notice::NoticeResponse::Error(
+                    crate::domains::notice::NoticeClientError::invalid_pattern(error),
+                )
             })
     }
 
@@ -167,7 +169,9 @@ impl NoticeFamilyState {
                     families.remove(&sub_msg.family_id);
                 }
                 return (
-                    NoticeResponse::Error("subscription ID space exhausted".to_string()),
+                    NoticeResponse::Error(crate::domains::notice::NoticeClientError::backend(
+                        "subscription ID space exhausted",
+                    )),
                     false,
                 );
             };

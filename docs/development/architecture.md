@@ -102,6 +102,14 @@ unbounded async queue. Managed domain actors fail closed: a panic marks
 readiness unhealthy, stops new data-plane work, begins drain, and does not
 silently restart the failed actor.
 
+Durable commits run on the owning shard thread. A KV or Stream COMMIT with
+`Sync` persistence performs its WAL fsync (or `CloudStrict` acknowledgement)
+inside the family actor handler, so every family pinned to the same shard waits
+for it. The shard count is `min(available_parallelism, family_count)`. This is
+deliberate: commit ordering and writer fencing stay on one thread. When one
+family's fsync latency must not stall its shard-mates, provision fewer families
+per shard or have that workload choose `Buffered` commits.
+
 ### Metrics Boundaries
 
 Raw Prometheus is served by the dedicated unauthenticated

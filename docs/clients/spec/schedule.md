@@ -314,6 +314,12 @@ that their cron or payload is malformed when the broker could not service an
 otherwise valid request. Clients may classify 7010 as retryable, subject to the
 operation's normal replay-safety rules.
 
+Note the naming: in every other domain `ERR_BACKEND_ERROR` is fatal and must
+not be auto-retried. Schedule's 7010 instead plays the role of the other
+domains' saturation codes (`ERR_BUSY`, `ERR_QUEUE_FULL`,
+`ERR_RPC_BACKPRESSURE`). The code number and name are frozen on the wire, so
+clients must key retry behavior on the domain plus code, not on the name alone.
+
 `ERR_TIMEOUT` reports that the broker accepted the command but did not finish it
 before its deadline. The outcome is unknown: the command may still apply. It is
 deliberately NOT retryable, because 7010 means the request was declined and is

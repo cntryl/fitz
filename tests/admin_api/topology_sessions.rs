@@ -794,6 +794,7 @@ async fn should_return_exact_rpc_operation_detail_counts() {
 #[tokio::test]
 #[serial]
 async fn should_return_sessions_collection_only() {
+    // Arrange
     let runtime = test_runtime();
     let ingress = Arc::new(
         RuntimeIngress::new(true)
@@ -826,10 +827,12 @@ async fn should_return_sessions_collection_only() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = body::to_bytes(response.into_body()).await.unwrap();
@@ -851,6 +854,7 @@ async fn should_return_sessions_collection_only() {
 #[tokio::test]
 #[serial]
 async fn should_reject_removed_session_detail_route() {
+    // Arrange
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -861,9 +865,11 @@ async fn should_reject_removed_session_detail_route() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

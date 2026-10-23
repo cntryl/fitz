@@ -31,6 +31,7 @@ inferring settings from Compose files, tests, or source code.
 | FITZ_ROUTE_FAMILIES | Comma-separated u32 list, contiguous from 1 (example: 1,2,3) | 1 | Provisioned route-family allowlist accepted after identity resolution. |
 | FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when auth is enabled. |
 | FITZ_ROUTE_FAMILY_CLAIM | JWT claim key | tid | Default identity claim key used for route-family resolution. |
+| FITZ_RPC_CANCELLATION_GRACE_MS | Integer milliseconds, 0 through 86400000 | 5000 | Grace an RPC worker gets to acknowledge cancellation cleanup after a request times out or is cancelled. Invalid values log a warning and keep the default. See [rpc-cancellation-lifecycle.md](../development/rpc-cancellation-lifecycle.md). |
 
 Use 90 seconds as the external process-termination-grace baseline with the
 default drain grace, then increase it for peak session cleanup, domain teardown,
@@ -205,6 +206,27 @@ These keys are read in cloud provider builders when FITZ_STORAGE_MODE=cloud.
 | Provider-native region variables | Region fallback when `FITZ_STORAGE_REGION` is not set and the provider supports native region discovery. |
 | Provider-native credential variables | Credential fallback when credentials are supplied through the process environment. |
 | Provider-native project or account variables | Optional provider metadata when the selected backend requires it. |
+
+## MCP Control Plane
+
+These keys configure the optional MCP admin endpoint under `src/api/mcp`. Their
+semantics, defaults, and security requirements are documented in
+[mcp-control-plane.md](../admin/mcp-control-plane.md) and the pages under
+`docs/admin/mcp/`; this table only makes the names discoverable.
+
+| Key | Documented in |
+| --- | --- |
+| FITZ_MCP_HTTP_ENABLED, FITZ_MCP_HTTP_URL, FITZ_MCP_PUBLIC_URL, FITZ_MCP_ALLOWED_ORIGINS, FITZ_MCP_DOCUMENTATION_URL | [mcp-control-plane.md](../admin/mcp-control-plane.md) |
+| FITZ_MCP_OAUTH_ISSUER, FITZ_MCP_OAUTH_AUDIENCE, FITZ_MCP_OAUTH_PUBLIC_KEY_FILE, FITZ_MCP_BEARER_TOKEN_FILE | [mcp-control-plane.md](../admin/mcp-control-plane.md), [oauth-provider.md](../admin/mcp/oauth-provider.md) |
+| FITZ_MCP_PROVIDER_PUBLIC_KEY_FILE, FITZ_MCP_PROVIDER_TOKEN_FILE | [oauth-provider.md](../admin/mcp/oauth-provider.md) |
+| FITZ_MCP_MUTATIONS_ENABLED, FITZ_MCP_ACTION_TARGET, FITZ_MCP_ACTION_AUDIT_FILE | [mcp-control-plane.md](../admin/mcp-control-plane.md) |
+| FITZ_MCP_STDIO_BIN | [client-workflows.md](../admin/mcp/client-workflows.md) |
+
+## Fault Injection
+
+| Key | Allowed Values / Format | Default | Description |
+| --- | --- | --- | --- |
+| FITZ_DESTROYER_FAILPOINTS | `enabled` or unset | Unset | Enables the unauthenticated `POST /destroyer/failpoints/...` routes that panic a live domain actor to rehearse fail-closed behavior. Test-only; never set it on a broker that serves traffic. See [sessions-status-safety.md](../admin/api/sessions-status-safety.md#fault-injection-routes). |
 
 ## Compose-Only Convenience Key
 

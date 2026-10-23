@@ -50,6 +50,7 @@ impl StreamFamilyRuntime {
         if !self.watermark_coordinators.area.contains_key(&scope)
             && self.watermark_coordinators.area.len()
                 >= crate::domains::stream::MAX_WATERMARK_COORDINATORS
+            && !self.evict_idle_area_coordinator()
         {
             self.record_capacity_drop(family, realm, Some(area), "area");
             return;
@@ -101,6 +102,7 @@ impl StreamFamilyRuntime {
         if !self.watermark_coordinators.realm.contains_key(&scope)
             && self.watermark_coordinators.realm.len()
                 >= crate::domains::stream::MAX_WATERMARK_COORDINATORS
+            && !self.evict_idle_realm_coordinator()
         {
             self.record_capacity_drop(family, realm, None, "realm");
             return;
@@ -138,6 +140,29 @@ impl StreamFamilyRuntime {
         );
     }
 
+    /// Make room at the coordinator cap by dropping one coordinator whose
+    /// state is fully persisted. Returns false when every coordinator still
+    /// holds unflushed ranges or an armed timer.
+    fn evict_idle_area_coordinator(&mut self) -> bool {
+        let idle = self
+            .watermark_coordinators
+            .area
+            .iter()
+            .find(|(_, (actor, _))| actor.is_idle())
+            .map(|(scope, _)| scope.clone());
+        idle.is_some_and(|scope| self.watermark_coordinators.area.remove(&scope).is_some())
+    }
+
+    fn evict_idle_realm_coordinator(&mut self) -> bool {
+        let idle = self
+            .watermark_coordinators
+            .realm
+            .iter()
+            .find(|(_, (actor, _))| actor.is_idle())
+            .map(|(scope, _)| scope.clone());
+        idle.is_some_and(|scope| self.watermark_coordinators.realm.remove(&scope).is_some())
+    }
+
     fn record_capacity_drop(
         &mut self,
         family: RouteFamily,
@@ -167,13 +192,17 @@ impl StreamFamilyRuntime {
                 &commit.batch,
             );
         }
+        // This runs after every delivered envelope, so read the clock once
+        // for the whole sweep; each timer manager short-circuits when nothing
+        // is due.
+        let now = std::time::Instant::now();
         for (actor, context) in self.watermark_coordinators.area.values_mut() {
-            for timer in context.timer_manager().fired_timers() {
+            for timer in context.timer_manager().fired_timers_at(now) {
                 actor.on_timer(timer, context);
             }
         }
         for (actor, context) in self.watermark_coordinators.realm.values_mut() {
-            for timer in context.timer_manager().fired_timers() {
+            for timer in context.timer_manager().fired_timers_at(now) {
                 actor.on_timer(timer, context);
             }
         }

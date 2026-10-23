@@ -464,6 +464,7 @@ async fn should_reject_admin_logout_given_cross_origin() {
 #[tokio::test]
 #[serial]
 async fn should_require_auth_for_hierarchical_route() {
+    // Arrange
     let runtime = test_runtime();
     let req = hyper::http::Request::builder()
         .method(Method::GET)
@@ -471,10 +472,12 @@ async fn should_require_auth_for_hierarchical_route() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 

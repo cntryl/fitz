@@ -256,6 +256,12 @@ campaigns. The opt-in `memory` profile is a resource-pressure diagnostic whose
 retained physical write history can exhaust the store despite bounded logical
 workload state.
 
+The `bench-no-snapshot` Cargo feature compiles out the non-forced admin-snapshot
+sync in the RPC and Schedule sinks. It exists only to measure whether snapshot
+upkeep dominates a scaling collapse. No documented benchmark, workflow, or
+release build enables it, and a result produced with it is a diagnostic, never
+a comparable or gating row.
+
 Run a targeted benchmark:
 
 The opt-in `queue_drain_latency` target seeds a fresh Fast local-disk Queue,

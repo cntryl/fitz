@@ -18,7 +18,7 @@ impl NoticeFamilyState {
     }
 
     fn error_response(reason: &str) -> crate::domains::notice::NoticeResponse {
-        crate::domains::notice::NoticeResponse::Error(reason.to_string())
+        crate::domains::notice::NoticeResponse::Error(reason.into())
     }
 
     fn response_meta_for_source(
