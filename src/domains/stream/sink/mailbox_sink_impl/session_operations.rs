@@ -331,6 +331,7 @@ impl StreamFamilyState {
                     family: owner.key.family,
                     realm: owner.key.realm.clone(),
                     area: owner.key.area.clone(),
+                    targets: crate::domains::stream::sink::model::WatermarkTargets::both(),
                     batch: crate::domains::stream::protocol::BatchCommitted {
                         first_area_offset: commit.first_area_offset,
                         last_area_offset: commit.last_area_offset,

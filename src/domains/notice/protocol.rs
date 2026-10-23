@@ -239,10 +239,6 @@ impl NoticeClientError {
         }
     }
 
-    pub fn invalid_route(message: impl Into<String>) -> Self {
-        Self::new(NoticeClientErrorKind::InvalidRoute, message)
-    }
-
     pub fn invalid_pattern(message: impl Into<String>) -> Self {
         Self::new(NoticeClientErrorKind::InvalidPattern, message)
     }
@@ -378,5 +374,30 @@ mod response_tests {
         // Assert
         let expected = cases.iter().map(|(_, kind)| *kind).collect::<Vec<_>>();
         assert_eq!(kinds, expected);
+    }
+
+    #[test]
+    fn should_classify_real_pattern_compiler_errors_as_the_spec_documents() {
+        // Arrange: the spec keeps 3005 for malformed wildcard shapes and 3002
+        // for grammar errors, so the real producer must keep that split.
+        use super::{NoticeClientError, NoticeClientErrorKind as Kind};
+        let compile = |pattern: &str| {
+            crate::runtime::DomainKind::Notice
+                .descriptor()
+                .compile_registration_pattern(pattern)
+                .expect_err("pattern must be rejected")
+        };
+
+        // Act
+        let partial_wildcard = NoticeClientError::from(compile("notice://r/ord*ers/x")).kind;
+        let adjacent_double_star = NoticeClientError::from(compile("notice://r/**/**")).kind;
+        let control_character = NoticeClientError::from(compile("notice://r/a/b\u{1}")).kind;
+        let empty_segment = NoticeClientError::from(compile("notice://r//x")).kind;
+
+        // Assert
+        assert_eq!(partial_wildcard, Kind::Backend);
+        assert_eq!(adjacent_double_star, Kind::Backend);
+        assert_eq!(control_character, Kind::InvalidPattern);
+        assert_eq!(empty_segment, Kind::InvalidPattern);
     }
 }

@@ -19,6 +19,10 @@ pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_stream_notify_drops_total";
 /// operator-visible signal for a permanently degraded realm, since a
 /// per-family failure deliberately does not flip domain-wide health/liveness.
 pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_stream_family_failed_closed_total";
+/// Commits that could not reach a coordinator because every slot at the cap
+/// was busy; they are re-queued and serviced once a coordinator goes idle.
+pub const METRIC_WATERMARK_COORDINATION_DEFERRALS_TOTAL: &str =
+    "fitz_stream_watermark_coordination_deferrals_total";
 pub const METRIC_WATERMARK_COORDINATION_DROPS_TOTAL: &str =
     "fitz_stream_watermark_coordination_drops_total";
 pub const METRIC_MAINTENANCE_ATTEMPTS_TOTAL: &str = "fitz_stream_maintenance_attempts_total";

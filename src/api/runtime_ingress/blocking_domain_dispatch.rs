@@ -12,19 +12,8 @@ impl DomainFrameDispatcher {
         mut envelope: crate::runtime::Envelope,
         started_at: Instant,
     ) -> Result<(), crate::runtime::router::RouteError> {
-        // Sinks that wait for a family-actor reply must not park a Tokio
-        // worker: Stream, Queue, and RPC always wait; Notice waits for every
-        // request except PUBLISH, which the sink accepts without a reply.
-        let permits = match domain {
-            DispatchDomain::Stream => &self.stream_dispatch_permits,
-            DispatchDomain::Queue => &self.queue_dispatch_permits,
-            DispatchDomain::Rpc => &self.rpc_dispatch_permits,
-            DispatchDomain::Notice
-                if !crate::domains::notice::NoticeDomain::can_accept_without_reply(&envelope) =>
-            {
-                &self.notice_dispatch_permits
-            }
-            _ => return router.route_to_domain(domain.as_str(), envelope),
+        let Some(permits) = self.blocking_handoff_permits(domain, &envelope) else {
+            return router.route_to_domain(domain.as_str(), envelope);
         };
 
         let destination = envelope.destination().clone();
@@ -85,7 +74,7 @@ impl DomainFrameDispatcher {
             // handoff per family. Retain the family guard through completion,
             // including cancellation of the awaiting transport task.
             let _queue_guard = queue_guard;
-            let _stream_permit = if domain == DispatchDomain::Queue {
+            let _permit = if domain == DispatchDomain::Queue {
                 drop(permit);
                 None
             } else {
@@ -109,6 +98,30 @@ impl DomainFrameDispatcher {
                     crate::runtime::DeliveryError::ActorStopped,
                 ))
             }
+        }
+    }
+}
+
+impl DomainFrameDispatcher {
+    /// Sinks that wait for a family-actor reply must not park a Tokio worker.
+    /// Stream, Queue, and RPC always wait; Notice waits for every request
+    /// except PUBLISH, which the sink accepts without a reply. Returns `None`
+    /// for deliveries that are safe to route inline.
+    fn blocking_handoff_permits(
+        &self,
+        domain: DispatchDomain,
+        envelope: &crate::runtime::Envelope,
+    ) -> Option<&std::sync::Arc<tokio::sync::Semaphore>> {
+        match domain {
+            DispatchDomain::Stream => Some(&self.stream_dispatch_permits),
+            DispatchDomain::Queue => Some(&self.queue_dispatch_permits),
+            DispatchDomain::Rpc => Some(&self.rpc_dispatch_permits),
+            DispatchDomain::Notice
+                if !crate::domains::notice::NoticeDomain::can_accept_without_reply(envelope) =>
+            {
+                Some(&self.notice_dispatch_permits)
+            }
+            _ => None,
         }
     }
 }

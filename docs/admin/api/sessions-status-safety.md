@@ -105,6 +105,9 @@ the handler answers 404.
 - `GET /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}` - RPC operation detail.
 - `GET /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/workers` - RPC operation workers.
 - `GET /api/v1/{family}/rpc/pending` - Live pending RPC requests.
+- `GET /api/v1/{family}/schedule/missed` - Missed schedule occurrences.
+- `GET /api/v1/{family}/{scheme}/realms/{realm}/areas/{area}/resources/{resource}/compare` - Resource comparison view.
+- `POST /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/run` - Run a schedule occurrence now.
 - `GET /api/v1/{family}/rpc/calls` - RPC call observations.
 - `GET /api/v1/{family}/lease/search` - Lease search.
 - `GET /api/v1/{family}/notice/deliveries` - Notice delivery observations.
@@ -114,18 +117,20 @@ the handler answers 404.
 - `DELETE /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}` - Purge a queue dead letter.
 
 The current router does not implement admin commands for forcing KV rollback,
-Notice subscription cancellation, RPC request cancellation, Lease release,
-manual Schedule trigger, or Session close.
+Notice subscription cancellation, RPC request cancellation, Lease release, or
+Session close.
 
 ### Fault-Injection Routes
 These routes rehearse fail-closed behavior in tests. They are compiled into the
 broker but answer 404 unless the process starts with
 `FITZ_DESTROYER_FAILPOINTS=enabled`. When enabled they are matched before admin
 authentication, so anyone who can reach the HTTP listener can panic a live
-domain actor, which fails that actor closed and marks readiness unhealthy.
-Never enable them on a broker that serves traffic.
+domain actor, or every domain actor at once, which fails those actors closed
+and marks readiness unhealthy. Never enable them on a broker that serves
+traffic.
 
-- `POST /destroyer/failpoints/notice-actor-panic` - Panic every Notice family actor.
+- `POST /destroyer/failpoints/{scheme}-actor-panic` - Panic every actor of one domain, where `{scheme}` is `kv`, `queue`, `notice`, `stream`, `rpc`, `lease`, or `schedule`.
+- `POST /destroyer/failpoints/all-domain-actor-panic` - Panic every actor of every domain.
 - `POST /destroyer/failpoints/stream-family-{family}-actor-panic` - Panic one Stream family actor.
 - `POST /destroyer/failpoints/rpc-family-{family}-actor-panic` - Panic one RPC family actor.
 

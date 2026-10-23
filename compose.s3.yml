@@ -9,7 +9,7 @@ x-broker-common: &broker-common
   build:
     context: .
     dockerfile: Dockerfile
-  stop_grace_period: 30s
+  stop_grace_period: 90s
   healthcheck:
     disable: true
 
