@@ -5,6 +5,7 @@ mod admin_api {
     mod common;
     mod domain_inventory;
     mod domain_inventory_kv;
+    mod failpoints;
     mod family_troubleshooting;
     mod metrics_primary;
     mod queue_resource_actions;

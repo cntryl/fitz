@@ -91,6 +91,11 @@ where
             {
                 return Ok(not_found());
             }
+            // Panicking a live actor is a mutation of broker state; it needs
+            // the same authority as the other mutating admin routes.
+            if let Err(response) = require_wildcard_admin_with_origin(&req, &runtime) {
+                return Ok(*response);
+            }
             let family = match family {
                 Ok(family) => family,
                 Err(message) => return Ok(error_response(StatusCode::BAD_REQUEST, message)),
@@ -119,6 +124,9 @@ where
             if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
             {
                 return Ok(not_found());
+            }
+            if let Err(response) = require_wildcard_admin_with_origin(&req, &runtime) {
+                return Ok(*response);
             }
             runtime.panic_notice_actor_for_failpoint();
             Ok(json_response(
