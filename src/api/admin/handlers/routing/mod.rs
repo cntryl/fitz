@@ -85,17 +85,20 @@ where
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
+    if method == Method::POST && path.starts_with("/destroyer/failpoints/") {
+        if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref()) {
+            return Ok(not_found());
+        }
+        // Panicking a live actor is a mutation of broker state; every
+        // failpoint route needs the same authority as the other mutating
+        // admin routes.
+        if let Err(response) = require_wildcard_admin_with_origin(&req, &runtime) {
+            return Ok(*response);
+        }
+    }
+
     if method == Method::POST {
         if let Some((domain, family)) = parse_family_actor_failpoint_path(&path) {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
-            // Panicking a live actor is a mutation of broker state; it needs
-            // the same authority as the other mutating admin routes.
-            if let Err(response) = require_wildcard_admin_with_origin(&req, &runtime) {
-                return Ok(*response);
-            }
             let family = match family {
                 Ok(family) => family,
                 Err(message) => return Ok(error_response(StatusCode::BAD_REQUEST, message)),
@@ -121,83 +124,48 @@ where
         (Method::GET, "/startupz") => Ok(probes::handle_startup(runtime.as_ref())),
         (Method::GET, "/health") => Ok(probes::handle_health(runtime.as_ref())),
         (Method::POST, "/destroyer/failpoints/notice-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
-            if let Err(response) = require_wildcard_admin_with_origin(&req, &runtime) {
-                return Ok(*response);
-            }
             runtime.panic_notice_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "notice" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/queue-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_queue_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "queue" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/kv-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_kv_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "kv" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/lease-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_lease_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "lease" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/schedule-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_schedule_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "schedule" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/stream-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_stream_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "stream" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/rpc-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_rpc_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "rpc" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/all-domain-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_all_domain_actors_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domains": 7 }),
