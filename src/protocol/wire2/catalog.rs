@@ -254,7 +254,7 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn should_give_every_code_a_unique_number_and_a_class_matching_its_slot() {
+    fn should_keep_every_code_unique_with_its_slot_class() {
         // Arrange
         let entries = all_entries();
 
