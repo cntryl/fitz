@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn should_round_trip_connect_rejected_and_goaway() {
+    fn should_round_trip_the_broker_control_bodies() {
         // Arrange
         let rejected = ConnectRejected {
             code: 50,

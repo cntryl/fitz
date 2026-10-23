@@ -200,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn should_round_trip_a_request_header_with_correlation_and_value() {
+    fn should_round_trip_a_correlated_request_header() {
         // Arrange
         let value = b"payload";
 
