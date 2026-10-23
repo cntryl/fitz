@@ -243,15 +243,15 @@ impl ScheduleFailureCategory {
     #[must_use]
     pub const fn code(self) -> u16 {
         match self {
-            Self::NotFound => 7001,
-            Self::InvalidCron => 7002,
-            Self::Limit => 7003,
-            Self::Parse => 7004,
-            Self::InvalidTarget => 7005,
-            Self::InvalidSubscriptionPattern => 7006,
-            Self::SubscriptionLimit => 7007,
-            Self::InvalidDeliveryMode => 7008,
-            Self::Unauthorized => 7009,
+            Self::NotFound => 7050,
+            Self::InvalidCron => 7051,
+            Self::Limit => 7052,
+            Self::Parse => 7008,
+            Self::InvalidTarget => 7053,
+            Self::InvalidSubscriptionPattern => 7003,
+            Self::SubscriptionLimit => 7004,
+            Self::InvalidDeliveryMode => 7054,
+            Self::Unauthorized => 7001,
         }
     }
 }

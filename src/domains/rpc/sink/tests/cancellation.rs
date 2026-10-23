@@ -342,7 +342,7 @@ fn should_close_worker_only_after_deadline_cancellation_grace_expires() {
     assert_rpc_terminal_code_error(
         &caller_frames[0],
         correlation_id,
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
         RPC_TIMEOUT_ERROR,
     );
     assert_eq!(close_reasons, ["RPC cancellation grace period expired"]);

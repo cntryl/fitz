@@ -1,8 +1,10 @@
 use fitz::domains::stream::StreamClientResponseBody;
-use fitz::protocol::{payload_codec::PayloadDecoder, stream_codec::encode_response};
+use fitz::protocol::error_codes::{decode_wire_error, stream};
+use fitz::protocol::stream_codec::encode_response;
+use fitz::protocol::wire2::envelope::{Effect, ErrorClass};
 
 #[test]
-fn should_encode_append_conflict_with_versioned_domain_code() {
+fn should_encode_append_conflict_with_the_domain_code() {
     // Arrange
     let response = StreamClientResponseBody::Error("concurrency conflict".into());
 
@@ -10,15 +12,15 @@ fn should_encode_append_conflict_with_versioned_domain_code() {
     let payload = encode_response(601, &response);
 
     // Assert
-    let mut decoder = PayloadDecoder::new(&payload);
-    assert_eq!(decoder.get_u8().unwrap(), 2);
-    assert_eq!(decoder.get_u32().unwrap(), 2001);
-    assert_eq!(decoder.get_string().unwrap(), "concurrency conflict");
-    assert!(decoder.is_complete());
+    let error = decode_wire_error(&payload).expect("error envelope");
+    assert_eq!(error.code, stream::ERR_CONCURRENCY_CONFLICT);
+    assert_eq!(error.class, ErrorClass::Domain);
+    assert_eq!(error.effect, Effect::NotApplied);
+    assert_eq!(error.message, "concurrency conflict");
 }
 
 #[test]
-fn should_encode_commit_conflict_with_versioned_domain_code() {
+fn should_encode_commit_conflict_with_the_domain_code() {
     // Arrange
     let response = StreamClientResponseBody::Error("ERR_CONCURRENCY_CONFLICT".into());
 
@@ -26,9 +28,10 @@ fn should_encode_commit_conflict_with_versioned_domain_code() {
     let payload = encode_response(602, &response);
 
     // Assert
-    let mut decoder = PayloadDecoder::new(&payload);
-    assert_eq!(decoder.get_u8().unwrap(), 2);
-    assert_eq!(decoder.get_u32().unwrap(), 2001);
+    assert_eq!(
+        decode_wire_error(&payload).expect("error envelope").code,
+        stream::ERR_CONCURRENCY_CONFLICT
+    );
 }
 
 #[test]
@@ -42,9 +45,10 @@ fn should_not_classify_infrastructure_failure_by_incidental_conflict_wording() {
     let payload = encode_response(602, &response);
 
     // Assert
-    let mut decoder = PayloadDecoder::new(&payload);
-    assert_eq!(decoder.get_u8().unwrap(), 2);
-    assert_eq!(decoder.get_u32().unwrap(), 2012);
+    let error = decode_wire_error(&payload).expect("error envelope");
+    assert_eq!(error.code, stream::ERR_BACKEND_ERROR);
+    assert_eq!(error.class, ErrorClass::Backend);
+    assert_eq!(error.effect, Effect::Indeterminate);
 }
 
 #[test]
@@ -93,21 +97,22 @@ fn should_encode_real_store_commit_conflict_with_domain_code() {
     let payload = encode_response(602, &StreamClientResponseBody::Error(error.into()));
 
     // Assert
-    let mut decoder = PayloadDecoder::new(&payload);
-    assert_eq!(decoder.get_u8().unwrap(), 2);
-    assert_eq!(decoder.get_u32().unwrap(), 2001);
+    assert_eq!(
+        decode_wire_error(&payload).expect("error envelope").code,
+        stream::ERR_CONCURRENCY_CONFLICT
+    );
     assert!(second.has_active_session());
 }
 
 #[test]
-fn should_preserve_explicit_codes_for_every_stream_operation() {
+fn should_use_the_common_envelope_for_every_stream_operation() {
     // Arrange
     use fitz::protocol::payload_codec::PayloadEncoder;
     use fitz::protocol::stream_codec::encode_error_response_into;
     let cases = [
-        (2001, "unrelated wording"),
-        (2002, "concurrency conflict"),
-        (2012, "backend unavailable"),
+        (stream::ERR_CONCURRENCY_CONFLICT, "unrelated wording"),
+        (stream::ERR_SESSION_ALREADY_ACTIVE, "concurrency conflict"),
+        (stream::ERR_BACKEND_ERROR, "backend unavailable"),
     ];
 
     // Act
@@ -117,14 +122,10 @@ fn should_preserve_explicit_codes_for_every_stream_operation() {
                 encode_error_response_into(&mut PayloadEncoder::new(), operation, code, message);
 
             // Assert
-            let mut decoder = PayloadDecoder::new(&payload);
-            assert_eq!(
-                decoder.get_u8().unwrap(),
-                if operation == 604 { 1 } else { 2 }
-            );
-            assert_eq!(decoder.get_u32().unwrap(), u32::from(code));
-            assert_eq!(decoder.get_string().unwrap(), message);
-            assert!(decoder.is_complete());
+            assert_eq!(payload[0], 1, "status byte for operation {operation}");
+            let error = decode_wire_error(&payload).expect("error envelope");
+            assert_eq!(error.code, code);
+            assert_eq!(error.message, message);
         }
     }
 }

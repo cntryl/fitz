@@ -122,9 +122,13 @@ fn should_preserve_rpc_wire_golden_vectors() {
         ]
     );
     assert_eq!(response, [0, 0, 0, 0, 2, b'o', b'k']);
+    let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
     assert_eq!(
-        error,
-        [1, 0, 0, 23, 114, 0, 0, 0, 4, b'g', b'o', b'n', b'e']
+        (decoded.code, decoded.message.as_str()),
+        (
+            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+            "gone"
+        )
     );
 }
 

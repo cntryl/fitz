@@ -235,34 +235,6 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_unknown_ack_effect_after_plain_commit_error() {
-        // Arrange
-        let mut report = reserved_report();
-        let mut encoder = fitz::protocol::payload_codec::PayloadEncoder::new();
-        encoder.put_u8(1);
-        encoder.put_string("storage commit outcome unknown");
-        let body = encoder.finish();
-        // Act
-        report
-            .observe_ack(super::super::super::io::AckProgress::FrameReceived)
-            .unwrap();
-        let result =
-            super::super::super::io::validate_ack_payload(&body, |state| report.observe_ack(state));
-        let artifact = failure_artifact(&mut report);
-        // Assert
-        assert!(result.is_err());
-        assert_eq!(
-            artifact["current_reserved"]["ack_state"],
-            "error_response_validated"
-        );
-        assert_eq!(
-            artifact["current_reserved"]["ack_application_effect"],
-            "unconfirmed"
-        );
-        assert_eq!(artifact["accounting"]["acknowledged"], 0);
-    }
-
-    #[test]
     fn should_not_claim_a_valid_ack_response_after_malformed_frame() {
         // Arrange
         let mut report = reserved_report();

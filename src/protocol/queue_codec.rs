@@ -78,7 +78,7 @@ pub fn parse_request(
 
 /// Encode Queue response to bytes
 #[must_use]
-pub fn encode_response(message_type: u16, response: &QueueResponse) -> Vec<u8> {
+pub fn encode_response(_message_type: u16, response: &QueueResponse) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
@@ -137,12 +137,7 @@ pub fn encode_response(message_type: u16, response: &QueueResponse) -> Vec<u8> {
         | QueueResponse::QueueNotFound
         | QueueResponse::Error { .. } => {
             let (code, message) = queue_error_code_and_message(response);
-            if matches!(message_type, msg_type::ENQUEUE | msg_type::RESERVE) {
-                return crate::protocol::error_codes::encode_error_body(code, &message);
-            }
-            buf.put_u8(1);
-            buf.put_u32(usize_to_u32_saturating(message.len()));
-            buf.put_slice(message.as_bytes());
+            return crate::protocol::error_codes::encode_error_body(code, &message);
         }
     }
     buf
@@ -803,12 +798,13 @@ mod tests {
                 0, 0, 0, 0, 0, 0, 0, 3,
             ]
         );
+        let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
         assert_eq!(
-            error,
-            [
-                1, 0, 0, 15, 164, 0, 0, 0, 13, b'Q', b'u', b'e', b'u', b'e', b'N', b'o', b't',
-                b'F', b'o', b'u', b'n', b'd',
-            ]
+            (decoded.code, decoded.message.as_str()),
+            (
+                crate::protocol::error_codes::queue::ERR_QUEUE_NOT_FOUND,
+                "QueueNotFound"
+            )
         );
     }
 }

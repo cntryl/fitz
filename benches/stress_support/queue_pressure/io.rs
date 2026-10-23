@@ -3,7 +3,7 @@ use super::super::durable::{
 };
 use super::super::types::{BenchFailure, FailureKind};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
-use fitz::protocol::error_codes::queue::ERR_QUEUE_FULL;
+use fitz::protocol::error_codes::queue::ERR_BUSY;
 use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::testkit::TestClient;
 use std::future::Future;
@@ -36,7 +36,7 @@ pub(super) async fn enqueue(
     )
     .await?;
     if body.first().copied() != Some(0)
-        && error_code(&body, "Queue ENQUEUE")? == u32::from(ERR_QUEUE_FULL)
+        && error_code(&body, "Queue ENQUEUE")? == u32::from(ERR_BUSY)
     {
         return Ok(None);
     }
@@ -100,7 +100,7 @@ pub(super) enum Reservation {
 pub(super) async fn reserve(client: &mut TestClient) -> Result<Reservation, BenchFailure> {
     let body = request(client, &build_queue_dequeue(ROUTE), 202).await?;
     if body.first().copied() != Some(0)
-        && error_code(&body, "Queue RESERVE")? == u32::from(ERR_QUEUE_FULL)
+        && error_code(&body, "Queue RESERVE")? == u32::from(ERR_BUSY)
     {
         return Ok(Reservation::Rejected);
     }

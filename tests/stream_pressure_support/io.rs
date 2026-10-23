@@ -31,12 +31,7 @@ fn write_data(body: &[u8]) -> Result<Vec<u8>, String> {
     let mut decoder = PayloadDecoder::new(body);
     let status = decoder.get_u8()?;
     if status != 0 {
-        if status != 2 {
-            return Err("invalid versioned Stream error".into());
-        }
-        let code = decoder.get_u32()?;
-        let detail = decoder.get_string_ref()?;
-        complete(&decoder)?;
+        let (code, detail) = fitz::protocol::error_codes::decode_error_body(body)?;
         return Err(format!("Stream error code {code}: {detail}"));
     }
     let data = decoder.get_bytes()?.to_vec();

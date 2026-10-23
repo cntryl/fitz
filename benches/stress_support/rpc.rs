@@ -81,7 +81,7 @@ impl RpcDriver {
                 let response = parse_response(&frame, caller_uuid)?;
                 let (code, message) =
                     decode_error_body(&response.body).map_err(BenchFailure::validation)?;
-                return if code == rpc::ERR_RPC_BACKPRESSURE {
+                return if code == rpc::ERR_BUSY {
                     Ok(StepOutcome::CapacityRejected(u32::from(code)))
                 } else {
                     Err(BenchFailure::verification(format!(

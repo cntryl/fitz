@@ -163,14 +163,18 @@ fn synthesized_error_code(case: &DomainIngressCase, frame: &FrameContext) -> u32
         return u32::from(code);
     }
 
-    let body = &frame.payload;
-    assert_eq!(
-        body[0],
-        if case.domain == "stream" { 2 } else { 1 },
-        "{} should send an error body",
-        case.domain
-    );
-    u32::from_be_bytes([body[1], body[2], body[3], body[4]])
+    let (code, _) = crate::protocol::error_codes::decode_error_body(&frame.payload)
+        .unwrap_or_else(|error| panic!("{} should send an error body: {error}", case.domain));
+    u32::from(code)
+}
+
+/// A code a compliant client may re-send after: the catalog says nothing was
+/// applied. Timeouts and backend failures are indeterminate and never qualify.
+fn documented_retryable(code: u32) -> bool {
+    u16::try_from(code)
+        .ok()
+        .and_then(crate::protocol::wire2::catalog::lookup)
+        .is_some_and(|entry| entry.effect == crate::protocol::wire2::envelope::Effect::NotApplied)
 }
 
 #[test]
@@ -232,13 +236,6 @@ impl MailboxSink for CapturingInboxSink {
         self.deliver(envelope)
     }
 }
-
-/// `REQ-PROTO-012`'s retryable set. A timeout must never answer with one of
-/// these: they tell a compliant client the request was never accepted. A
-/// backpressure rejection must always answer with one, for the same reason.
-const DOCUMENTED_RETRYABLE_CODES: [u32; 12] = [
-    1004, 1014, 2014, 3006, 4005, 5001, 5007, 6001, 6002, 6003, 6004, 7010,
-];
 
 struct AlwaysTimingOutSink;
 
@@ -565,7 +562,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
         // client re-sends and duplicates the side effect. Only queue ACK is
         // deduplicated.
         assert!(
-            !DOCUMENTED_RETRYABLE_CODES.contains(&code),
+            !documented_retryable(code),
             "{} answered a timeout with retryable code {code}; a compliant client \
              would re-send a command that may already have applied",
             case.domain
@@ -648,7 +645,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
         // a compliant client give up on a request it could safely re-send.
         let code = synthesized_error_code(&case, &frames[0]);
         assert!(
-            DOCUMENTED_RETRYABLE_CODES.contains(&code),
+            documented_retryable(code),
             "{} rejected a never-enqueued request with fatal code {code}; a compliant \
              client will not retry",
             case.domain

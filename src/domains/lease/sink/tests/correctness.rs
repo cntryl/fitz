@@ -225,7 +225,7 @@ fn should_reject_lease_subscription_before_allocating_family_state() {
     // Assert
     assert_eq!(
         code,
-        crate::dispatch::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE
+        crate::dispatch::protocol::error_codes::lease::ERR_INVALID_PATTERN
     );
     assert!(sink.watch_families_are_empty_for_tests());
 }

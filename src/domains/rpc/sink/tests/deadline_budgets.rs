@@ -309,10 +309,7 @@ fn should_release_queued_dispatch_credit_on_timeout() {
     assert_eq!(frames.len(), 1);
     let response = parse_forwarded_rpc_response(&frames[0]);
     let (error_code, _) = crate::protocol::rpc_codec::decode_error_body(&response.body).unwrap();
-    assert_eq!(
-        error_code,
-        crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT
-    );
+    assert_eq!(error_code, crate::protocol::error_codes::rpc::ERR_TIMEOUT);
     assert!(available.is_some());
     assert_eq!(runtime.core.state.registration_count(), 1);
     assert_eq!(runtime.core.state.live_request_count(), 0);

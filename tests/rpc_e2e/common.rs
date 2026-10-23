@@ -28,7 +28,7 @@ pub(crate) fn assert_rpc_timeout_error_frame(frame: &[u8], expected_correlation_
 
     let (code, message) =
         fitz::protocol::rpc_codec::decode_error_body(&response.body).expect("parse rpc error body");
-    assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_RPC_TIMEOUT);
+    assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_TIMEOUT);
     assert_eq!(message, "Worker did not reply within timeout period");
 }
 

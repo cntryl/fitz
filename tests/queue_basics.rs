@@ -439,7 +439,7 @@ fn should_allocate_queue_error_codes_from_documented_range() {
         error_queue::ERR_INFLIGHT_EXPIRED,
         error_queue::ERR_MESSAGE_NOT_FOUND,
         error_queue::ERR_QUEUE_NOT_FOUND,
-        error_queue::ERR_QUEUE_FULL,
+        error_queue::ERR_BUSY,
         error_queue::ERR_UNAUTHORIZED,
     ];
 
@@ -448,9 +448,9 @@ fn should_allocate_queue_error_codes_from_documented_range() {
 
     // Assert
     assert!(all_allocated_to_queue);
-    assert_eq!(error_queue::ERR_INVALID_TOKEN, 4001);
-    assert_eq!(error_queue::ERR_INFLIGHT_EXPIRED, 4002);
-    assert_eq!(error_queue::ERR_MESSAGE_NOT_FOUND, 4003);
-    assert_eq!(error_queue::ERR_QUEUE_NOT_FOUND, 4004);
-    assert_eq!(error_queue::ERR_UNAUTHORIZED, 4009);
+    assert_eq!(error_queue::ERR_INVALID_TOKEN, 4050);
+    assert_eq!(error_queue::ERR_INFLIGHT_EXPIRED, 4051);
+    assert_eq!(error_queue::ERR_MESSAGE_NOT_FOUND, 4052);
+    assert_eq!(error_queue::ERR_QUEUE_NOT_FOUND, 4053);
+    assert_eq!(error_queue::ERR_UNAUTHORIZED, 4001);
 }

@@ -121,7 +121,7 @@ pub(super) fn should_forward_timeout_error_given_expired_pending_request() {
     assert!(error_response.stream_end);
     assert_rpc_code_error(
         error_response.body.as_ref(),
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
         RPC_TIMEOUT_ERROR,
     );
 }
@@ -171,7 +171,7 @@ pub(super) fn should_forward_timeout_error_given_expired_queued_request() {
     assert_eq!(error_response.correlation_id, correlation_id);
     assert_rpc_code_error(
         error_response.body.as_ref(),
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
         RPC_TIMEOUT_ERROR,
     );
 }
@@ -301,7 +301,7 @@ pub(super) fn should_reject_rpc_request_when_pending_capacity_reached() {
     assert_rpc_terminal_code_error(
         &reply_frames[0],
         correlation_id,
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
         RPC_BACKPRESSURE_ERROR,
     );
 }

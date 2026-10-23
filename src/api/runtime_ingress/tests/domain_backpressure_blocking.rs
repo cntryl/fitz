@@ -214,7 +214,9 @@ fn assert_rejected_before_enqueue_when_handoff_full(domain: &'static str) {
     assert_eq!(sink.accepted.load(Ordering::SeqCst), 0);
     let frames = client_frames.lock().expect("captured frames");
     assert_eq!(frames.len(), 1);
-    assert!(DOCUMENTED_RETRYABLE_CODES.contains(&synthesized_error_code(&case, &frames[0])));
+    assert!(documented_retryable(synthesized_error_code(
+        &case, &frames[0]
+    )));
 }
 
 #[test]

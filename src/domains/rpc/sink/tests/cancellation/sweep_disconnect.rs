@@ -101,12 +101,12 @@ fn should_survive_sweep_when_redispatch_cleans_up_worker_with_collected_cancella
     for (id, code, message) in [
         (
             aware_id,
-            crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            crate::protocol::error_codes::rpc::ERR_TIMEOUT,
             RPC_TIMEOUT_ERROR,
         ),
         (
             legacy_id,
-            crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            crate::protocol::error_codes::rpc::ERR_TIMEOUT,
             RPC_TIMEOUT_ERROR,
         ),
         (

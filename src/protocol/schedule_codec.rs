@@ -145,7 +145,7 @@ pub fn encode_response(message_type: u16, response: &ScheduleResponse) -> Vec<u8
 
 pub fn encode_response_into(
     enc: &mut PayloadEncoder,
-    message_type: u16,
+    _message_type: u16,
     response: &ScheduleResponse,
 ) -> Vec<u8> {
     enc.clear();
@@ -192,15 +192,11 @@ pub fn encode_response_into(
             enc.put_u8(0);
         }
         ScheduleResponse::Error(e) => {
-            if message_type == 702 {
-                return crate::protocol::error_codes::encode_error_body_into(
-                    e.category.code(),
-                    &e.message,
-                    enc,
-                );
-            }
-            enc.put_u8(1);
-            enc.put_string(&e.message);
+            return crate::protocol::error_codes::encode_error_body_into(
+                e.category.code(),
+                &e.message,
+                enc,
+            );
         }
     }
 
@@ -444,15 +440,16 @@ mod tests {
         let payload = encode_response(702, &response);
 
         // Assert
-        assert_eq!(payload[0], 1);
         assert_eq!(
-            &payload[1..5],
-            &u32::from(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND).to_be_bytes()
+            crate::protocol::error_codes::decode_error_body(&payload)
+                .expect("error envelope")
+                .0,
+            schedule_error_codes::ERR_SCHEDULE_NOT_FOUND
         );
     }
 
     #[test]
-    fn should_encode_plain_schedule_error_for_non_list_operation() {
+    fn should_encode_coded_schedule_error_for_every_operation() {
         // Arrange
         let response = ScheduleResponse::Error(ScheduleFailure::new(
             ScheduleFailureCategory::NotFound,
@@ -460,11 +457,15 @@ mod tests {
         ));
 
         // Act
-        let payload = encode_response(701, &response);
+        let payloads = [700, 701, 703, 704, 706, 707].map(|op| encode_response(op, &response));
 
         // Assert
-        assert_eq!(&payload[..5], &[1, 0, 0, 0, 18]);
-        assert_eq!(&payload[5..], b"schedule not found");
+        for payload in payloads {
+            let (code, message) =
+                crate::protocol::error_codes::decode_error_body(&payload).expect("coded error");
+            assert_eq!(code, schedule_error_codes::ERR_SCHEDULE_NOT_FOUND);
+            assert_eq!(message, "schedule not found");
+        }
     }
 
     #[test]
@@ -499,7 +500,11 @@ mod tests {
                 b'e', b':', b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i',
             ]
         );
-        assert_eq!(error, [1, 0, 0, 27, 89, 0, 0, 0, 4, b'g', b'o', b'n', b'e']);
+        let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
+        assert_eq!(
+            (decoded.code, decoded.message.as_str()),
+            (schedule_error_codes::ERR_SCHEDULE_NOT_FOUND, "gone")
+        );
     }
 
     #[test]

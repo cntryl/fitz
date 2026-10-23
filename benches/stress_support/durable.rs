@@ -138,9 +138,9 @@ fn require_coded_ok(body: &[u8], operation: &str, status: u8) -> Result<(), Benc
 }
 
 pub(super) fn error_code(body: &[u8], operation: &str) -> Result<u32, BenchFailure> {
-    coded_error(body, 1)
-        .map(|(code, _)| code)
-        .map_err(|error| malformed_error(body, operation, &error))
+    fitz::protocol::error_codes::decode_error_body(body)
+        .map(|(code, _)| u32::from(code))
+        .map_err(|error| BenchFailure::validation(format!("{operation}: {error}")))
 }
 
 fn malformed_error(body: &[u8], operation: &str, error: &BenchFailure) -> BenchFailure {
@@ -170,35 +170,16 @@ pub(super) fn require_legacy_ok(body: &[u8], operation: &str) -> Result<(), Benc
     if body.first().copied() == Some(0) {
         return Ok(());
     }
-    let detail = match (plain_error(body), coded_error(body, 1)) {
-        (Ok(message), Err(_)) => format!("{operation} failed: {message}"),
-        (Err(_), Ok((code, message))) => format!("{operation} failed: code {code}: {message}"),
-        (Ok(_), Ok(_)) => {
-            return Err(malformed_error(
-                body,
-                operation,
-                &BenchFailure::validation("ambiguous plain/coded error envelope"),
-            ));
-        }
-        (Err(plain), Err(coded)) => {
-            return Err(malformed_error(
-                body,
-                operation,
-                &BenchFailure::validation(format!("plain: {plain}; coded: {coded}")),
-            ));
-        }
-    };
-    Err(BenchFailure::domain_error(detail))
-}
-
-fn plain_error(body: &[u8]) -> Result<&str, BenchFailure> {
-    let mut decoder = PayloadDecoder::new(body);
-    if decoder.get_u8().map_err(BenchFailure::validation)? != 1 {
-        return Err(BenchFailure::validation("expected a plain error status"));
+    match fitz::protocol::error_codes::decode_error_body(body) {
+        Ok((code, message)) => Err(BenchFailure::domain_error(format!(
+            "{operation} failed: code {code}: {message}"
+        ))),
+        Err(error) => Err(malformed_error(
+            body,
+            operation,
+            &BenchFailure::validation(error),
+        )),
     }
-    let message = decoder.get_string_ref().map_err(BenchFailure::validation)?;
-    complete(&decoder)?;
-    Ok(message)
 }
 
 pub(super) fn complete(decoder: &PayloadDecoder<'_>) -> Result<(), BenchFailure> {

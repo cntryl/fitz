@@ -97,7 +97,7 @@ fn should_reject_budget_expired_in_actor_mailbox_before_claiming_capacity() {
     assert_rpc_terminal_code_error(
         &caller[0],
         id,
-        crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        crate::protocol::error_codes::rpc::ERR_TIMEOUT,
         RPC_BUDGET_EXPIRED_ERROR,
     );
 }

@@ -200,7 +200,7 @@ where
         .expect("read committed stream history");
 
     // Assert
-    assert_eq!(code, 2001);
+    assert_eq!(code, 2050);
     let read = parse_stream_read_response(&read_response);
     let bodies: Vec<Vec<u8>> = read.records.into_iter().map(|record| record.body).collect();
     assert_eq!(bodies, vec![b"client-1-event".to_vec()]);
@@ -231,7 +231,7 @@ where
     let (code, _message) = parse_stream_error(&append_response);
 
     // Assert
-    assert_eq!(code, 2001);
+    assert_eq!(code, 2050);
 }
 
 pub(crate) async fn should_return_session_not_found_given_append_to_unknown_session<C>(

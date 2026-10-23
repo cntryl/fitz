@@ -107,9 +107,9 @@ fn skip_uuid(dec: &mut PayloadDecoder<'_>) -> Result<(), String> {
 }
 
 fn put_error_body(buf: &mut BytesMut, code: u16, message: &str) {
-    buf.put_u8(1);
-    buf.put_u32(u32::from(code));
-    put_payload_string(buf, message);
+    buf.put_slice(&crate::protocol::error_codes::encode_error_body(
+        code, message,
+    ));
 }
 
 fn payload_buffer(payload_len: usize) -> BytesMut {
@@ -129,7 +129,8 @@ pub fn response_body_capacity(response: &RpcClientResponseBody) -> usize {
 /// Return the exact payload size for a standard Fitz error body.
 #[must_use]
 pub fn error_body_capacity(message: &str) -> usize {
-    U8_LEN + U32_LEN + encoded_string_len(message)
+    // status, u16 code, class, effect, u32 length, message
+    1 + 2 + 1 + 1 + 4 + message.len()
 }
 
 /// Return the exact payload size for an RPC request delivery payload.

@@ -84,7 +84,7 @@ pub fn terminal(
         return Ok(true);
     }
     let (code, message) = fitz::protocol::error_codes::decode_error_body(&response)?;
-    if code != fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE {
+    if code != fitz::protocol::error_codes::rpc::ERR_BUSY {
         return Err(format!("unexpected terminal {code}: {message}"));
     }
     Ok(false)

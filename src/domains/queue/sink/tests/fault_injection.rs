@@ -373,14 +373,10 @@ fn should_reject_stale_ack_after_visibility_expiry_already_released_inflight_to_
     // Assert
     // The stale ACK is rejected rather than silently succeeding or
     // deleting a message a live consumer now owns.
-    let mut decoder =
-        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(ack_frame.payload.as_ref());
-    assert_eq!(
-        decoder.get_u8().expect("ack status"),
-        1,
-        "stale ack must fail"
-    );
-    assert_eq!(decoder.get_string().expect("ack error"), "NotFound");
+    let (_, ack_error) =
+        crate::dispatch::protocol::error_codes::decode_error_body(ack_frame.payload.as_ref())
+            .expect("stale ack must fail with an error envelope");
+    assert_eq!(ack_error, "NotFound");
 
     // The message must still exist exactly once: a fresh reserve can pick it
     // up with a new token.

@@ -177,7 +177,7 @@ impl RpcFamilyRuntime<'_> {
 
         self.forward_pending_error_deliveries(
             timeout_result.timeout_deliveries,
-            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
             RPC_TIMEOUT_ERROR,
             "rpc_timeout_errors_forwarded_total",
             "rpc_timeout_errors_dropped_total",

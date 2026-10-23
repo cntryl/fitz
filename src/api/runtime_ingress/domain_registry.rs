@@ -179,7 +179,7 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Queue.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::queue::ERR_UNAUTHORIZED,
-        backpressure_error_code: crate::protocol::error_codes::queue::ERR_QUEUE_FULL,
+        backpressure_error_code: crate::protocol::error_codes::queue::ERR_BUSY,
         indeterminate_error_code: crate::protocol::error_codes::queue::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
         canonical_auth_route: crate::domains::queue::canonical_auth_route,
@@ -218,7 +218,7 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Rpc.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
-        backpressure_error_code: crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        backpressure_error_code: crate::protocol::error_codes::rpc::ERR_BUSY,
         indeterminate_error_code: crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
         canonical_auth_route: crate::domains::rpc::canonical_auth_route,
@@ -231,7 +231,7 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Lease.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::lease::ERR_UNAUTHORIZED,
-        backpressure_error_code: crate::protocol::error_codes::lease::ERR_QUEUE_FULL,
+        backpressure_error_code: crate::protocol::error_codes::lease::ERR_BUSY,
         indeterminate_error_code: crate::protocol::error_codes::lease::ERR_TIMEOUT,
         extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
         canonical_auth_route: crate::domains::lease::canonical_auth_route,
@@ -244,7 +244,7 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Schedule.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
-        backpressure_error_code: crate::protocol::error_codes::schedule::ERR_BACKEND_ERROR,
+        backpressure_error_code: crate::protocol::error_codes::schedule::ERR_BUSY,
         indeterminate_error_code: crate::protocol::error_codes::schedule::ERR_TIMEOUT,
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
         canonical_auth_route: crate::domains::schedule::canonical_auth_route,

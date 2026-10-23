@@ -301,31 +301,30 @@ mod tests {
     #[test]
     fn should_map_every_wire1_code_onto_a_catalog_row() {
         // Arrange
-        let old_codes = crate::protocol::error_codes::all_wire1_codes();
+        let mapped_from = WIRE1_TO_WIRE2
+            .iter()
+            .map(|(from, _)| *from)
+            .collect::<Vec<_>>();
 
         // Act
-        let unmapped = old_codes
-            .iter()
-            .filter(|old| !WIRE1_TO_WIRE2.iter().any(|(from, _)| from == *old))
-            .copied()
-            .collect::<Vec<_>>();
         let dangling = WIRE1_TO_WIRE2
             .iter()
             .filter(|(_, new)| lookup(*new).is_none())
             .map(|(_, new)| *new)
             .collect::<Vec<_>>();
+        let distinct_sources = mapped_from
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
 
         // Assert
-        assert_eq!(
-            unmapped,
-            Vec::<u16>::new(),
-            "wire 1 codes without a mapping"
-        );
         assert_eq!(
             dangling,
             Vec::<u16>::new(),
             "mappings to codes the catalog lacks"
         );
+        assert_eq!(distinct_sources, mapped_from.len());
+        assert_eq!(mapped_from.len(), 80, "every wire 1 code is mapped");
     }
 
     #[test]

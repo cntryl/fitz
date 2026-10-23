@@ -18,7 +18,7 @@ impl AdmissionFailure {
                 "unauthorized: permission denied",
             ),
             Self::Backpressure => (
-                fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                fitz::protocol::error_codes::rpc::ERR_BUSY,
                 "domain at capacity: request was not accepted, retry with backoff",
             ),
             Self::Timeout => (
@@ -215,7 +215,7 @@ async fn exercise_concurrent_failures<C: RpcConnector + FrameReceivingConnector>
         assert!(response.stream_end);
         let (code, _) = fitz::protocol::rpc_codec::decode_error_body(&response.body)
             .expect("decode error body");
-        assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE);
+        assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_BUSY);
     }
     assert!(pending.is_empty());
     assert!(

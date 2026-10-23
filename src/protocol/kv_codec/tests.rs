@@ -437,7 +437,12 @@ fn should_encode_read_only_write_with_canonical_error_code() {
 
     // Assert
     assert_eq!(encoded[0], 1);
-    assert_eq!(u32::from_be_bytes(encoded[1..5].try_into().unwrap()), 1005);
+    assert_eq!(
+        crate::protocol::error_codes::decode_error_body(&encoded)
+            .expect("error envelope")
+            .0,
+        crate::protocol::error_codes::kv::ERR_WRITE_IN_READONLY
+    );
 }
 
 #[test]
@@ -451,7 +456,12 @@ fn should_not_infer_read_only_write_from_backend_message() {
     let encoded = encode_response(&response);
 
     // Assert
-    assert_eq!(u32::from_be_bytes(encoded[1..5].try_into().unwrap()), 1009);
+    assert_eq!(
+        crate::protocol::error_codes::decode_error_body(&encoded)
+            .expect("error envelope")
+            .0,
+        crate::protocol::error_codes::kv::ERR_BACKEND_ERROR
+    );
 }
 
 #[test]
@@ -484,12 +494,12 @@ fn should_preserve_kv_wire_golden_vectors() {
             b'e', b'/', b'a', b'/', b'r', b'e', b's', 0, 0, 0, 0, 0, 0, 0, 2,
         ]
     );
+    let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
     assert_eq!(
-        error,
-        [
-            1, 0, 0, 3, 237, 0, 0, 0, 37, b'C', b'a', b'n', b'n', b'o', b't', b' ', b'w', b'r',
-            b'i', b't', b'e', b' ', b'i', b'n', b' ', b'r', b'e', b'a', b'd', b'-', b'o', b'n',
-            b'l', b'y', b' ', b't', b'r', b'a', b'n', b's', b'a', b'c', b't', b'i', b'o', b'n',
-        ]
+        (decoded.code, decoded.message.as_str()),
+        (
+            crate::protocol::error_codes::kv::ERR_WRITE_IN_READONLY,
+            "Cannot write in read-only transaction"
+        )
     );
 }

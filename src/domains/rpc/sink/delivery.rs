@@ -43,19 +43,19 @@ const REJECTION_SPECS: [RejectionSpec; 5] = [
     },
     RejectionSpec {
         metric: "rpc_requests_rejected_backpressure_total",
-        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
         message: RPC_BACKPRESSURE_ERROR,
         reason: "global pending capacity",
     },
     RejectionSpec {
         metric: "rpc_requests_rejected_backpressure_total",
-        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
         message: RPC_BACKPRESSURE_ERROR,
         reason: "route pending capacity",
     },
     RejectionSpec {
         metric: "rpc_requests_rejected_expired_budget_total",
-        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
         message: super::state_model::RPC_BUDGET_EXPIRED_ERROR,
         reason: "request budget expired before dispatch",
     },
@@ -167,7 +167,7 @@ impl RpcFamilyRuntime<'_> {
         // The admin surface reads one aggregate name. Without this, admission
         // control rejections were invisible in `backpressure_rejects_total`
         // even though they are exactly what it is meant to report.
-        if spec.error_code == crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE {
+        if spec.error_code == crate::dispatch::protocol::error_codes::rpc::ERR_BUSY {
             self.counter_inc(RPC_BACKPRESSURE_REJECTS_METRIC);
         }
         tracing::warn!(
@@ -322,7 +322,7 @@ impl RpcFamilyRuntime<'_> {
             envelope,
             *meta,
             &req,
-            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+            crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
             RPC_BACKPRESSURE_ERROR,
         )
     }
@@ -538,7 +538,7 @@ impl RpcFamilyRuntime<'_> {
                                 caller_session_id: pending.dispatch_info.caller_session_id,
                                 caller_inbox_addr,
                             }],
-                            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                            crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
                             RPC_BACKPRESSURE_ERROR,
                             "rpc_backpressure_errors_forwarded_total",
                             "rpc_backpressure_errors_dropped_total",

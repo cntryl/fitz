@@ -474,7 +474,7 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
     assert_rpc_terminal_code_error(
         &caller_three_frames[0],
         caller_three_request.correlation_id,
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
         RPC_BACKPRESSURE_ERROR,
     );
 }

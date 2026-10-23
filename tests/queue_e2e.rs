@@ -341,11 +341,9 @@ where
 }
 
 fn decode_plain_queue_error(data: &[u8]) -> String {
-    assert_eq!(data.first(), Some(&1));
-    assert!(data.len() >= 5);
-    let length = u32::from_be_bytes(data[1..5].try_into().expect("error length")) as usize;
-    assert_eq!(data.len(), 5 + length);
-    String::from_utf8(data[5..].to_vec()).expect("UTF-8 queue error")
+    fitz::protocol::error_codes::decode_error_body(data)
+        .expect("queue error envelope")
+        .1
 }
 
 async fn should_deliver_queue_notification_for_overlapping_wildcards<C>(server: &TestServer)

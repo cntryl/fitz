@@ -83,11 +83,12 @@ where
     for response in responses {
         let (_msg_type, status, data) = parse_schedule_response(&response);
         assert_ne!(status, 0, "Expected failure for invalid cron expression");
-        assert!(data.len() >= 5);
-        let length =
-            u32::from_be_bytes(data[1..5].try_into().expect("schedule error length")) as usize;
-        assert_eq!(data.len(), 5 + length);
-        let message = String::from_utf8(data[5..].to_vec()).expect("schedule error UTF-8");
+        let (code, message) =
+            fitz::protocol::error_codes::decode_error_body(&data).expect("coded schedule error");
+        assert_eq!(
+            code,
+            fitz::protocol::error_codes::schedule::ERR_INVALID_CRON
+        );
         assert_ne!(message, "");
     }
 }
@@ -410,11 +411,11 @@ where
     assert_eq!(retained_delivery.body.as_slice(), b"retained");
 }
 
-fn uncoded_schedule_error_payload(message: &[u8]) -> Vec<u8> {
-    let mut payload = vec![1_u8];
-    payload.extend_from_slice(&u32::try_from(message.len()).expect("length").to_be_bytes());
-    payload.extend_from_slice(message);
-    payload
+fn coded_limit_error_payload(message: &str) -> Vec<u8> {
+    fitz::protocol::error_codes::encode_error_body(
+        fitz::protocol::error_codes::schedule::ERR_SUBSCRIPTION_LIMIT,
+        message,
+    )
 }
 
 async fn subscribe_schedule_payload(client: &mut TcpScheduleConnector, route: &str) -> Vec<u8> {
@@ -427,7 +428,7 @@ async fn subscribe_schedule_payload(client: &mut TcpScheduleConnector, route: &s
 }
 
 #[tokio::test]
-async fn should_return_pre_373_wildcard_limit_bytes_on_129th_wildcard_subscribe() {
+async fn should_return_the_coded_limit_on_the_129th_wildcard_subscribe() {
     // Arrange
     let server = TestServer::start().await.expect("start");
     let mut client = TcpScheduleConnector::connect(&server)
@@ -446,12 +447,12 @@ async fn should_return_pre_373_wildcard_limit_bytes_on_129th_wildcard_subscribe(
     // Assert
     assert_eq!(
         payload,
-        uncoded_schedule_error_payload(b"wildcard subscription limit exceeded (128 per session)")
+        coded_limit_error_payload("wildcard subscription limit exceeded (128 per session)")
     );
 }
 
 #[tokio::test]
-async fn should_return_total_limit_bytes_on_1025th_exact_subscribe() {
+async fn should_return_the_coded_limit_on_the_1025th_exact_subscribe() {
     // Arrange
     let server = TestServer::start().await.expect("start");
     let mut client = TcpScheduleConnector::connect(&server)
@@ -473,7 +474,7 @@ async fn should_return_total_limit_bytes_on_1025th_exact_subscribe() {
     // Assert
     assert_eq!(
         payload,
-        uncoded_schedule_error_payload(b"total subscription limit exceeded (1024 per session)")
+        coded_limit_error_payload("total subscription limit exceeded (1024 per session)")
     );
 }
 
