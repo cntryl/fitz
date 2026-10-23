@@ -74,11 +74,7 @@ fn should_keep_message_manifest_stable() {
     let mut actual = String::new();
 
     // Act
-    // Capability-gated additions have separate assertions below.
-    for entry in MESSAGE_MANIFEST
-        .iter()
-        .filter(|entry| entry.message_id != MessageType::SESSION_METADATA.as_u16())
-    {
+    for entry in MESSAGE_MANIFEST {
         let _ = writeln!(
             actual,
             "{entry:?} channel={:?}",
@@ -86,9 +82,6 @@ fn should_keep_message_manifest_stable() {
         );
     }
     for id in 0..=999_u16 {
-        if id == MessageType::SESSION_METADATA.as_u16() {
-            continue;
-        }
         let message_type = MessageType::new(id);
         let client = manifest::client_entry(message_type).map(|entry| entry.message_id);
         if client != Err("unsupported message type") {
@@ -120,17 +113,23 @@ fn should_keep_idempotency_classification_stable() {
 }
 
 #[test]
-fn should_register_negotiated_session_metadata_as_control() {
+fn should_register_broker_control_answers_as_server_to_client() {
     // Arrange
-    let message_type = MessageType::SESSION_METADATA;
-    let mapping = TypeMapping::new();
+    let broker_controls = [
+        MessageType::HELLO,
+        MessageType::CONNECT_REJECTED,
+        MessageType::GOAWAY,
+    ];
 
     // Act
-    let entry = manifest::client_entry(message_type).unwrap();
+    let entries = broker_controls.map(|message_type| manifest::entry(message_type).unwrap());
 
     // Assert
-    assert_eq!(message_type.as_u16(), 5);
-    assert_eq!(entry.domain, "control");
-    assert_eq!(entry.route_scheme, None);
-    assert_eq!(mapping.get_channel(5), mapping.get_channel(1));
+    assert_eq!(broker_controls.map(|m| m.as_u16()), [2, 3, 4]);
+    for entry in entries {
+        assert_eq!(entry.domain, "control");
+        assert_eq!(entry.direction, manifest::ManifestDirection::ServerToClient);
+        assert_eq!(entry.route_scheme, None);
+    }
+    assert!(manifest::client_entry(MessageType::HELLO).is_err());
 }

@@ -16,6 +16,14 @@ pub mod header;
 /// The wire version these codecs implement.
 pub const WIRE_VERSION: u16 = 2;
 
+/// Capability bits this broker implements. Wire format 2 ships none: every
+/// behavior in the design is base protocol.
+pub const BROKER_CAPABILITIES: u32 = 0;
+
+/// Largest message value the broker accepts or frames until the limit is
+/// wired through configuration.
+pub const DEFAULT_MAX_MESSAGE_BYTES: u32 = 1024 * 1024;
+
 /// Control message identifiers. Verb identifiers for the domains stay as they
 /// are in the manifest; only the control block changes in wire format 2.
 pub mod control {

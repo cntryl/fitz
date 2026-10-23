@@ -25,13 +25,11 @@ use serde::{Deserialize, Serialize};
 
 /// True for a broker frame that answers no request.
 ///
-/// `SERVER_HELLO` is pushed unsolicited on every new session. Real clients drop
-/// inbound frames whose message type they do not recognise, so a request/response
-/// helper must skip it rather than mistake it for the response it is waiting on.
+/// `HELLO` answers CONNECT on every new session. A request/response helper
+/// must skip it rather than mistake it for the response it is waiting on.
 fn is_unsolicited_control_frame(frame: &[u8]) -> bool {
-    crate::protocol::wire2::header::MessageHeader::decode(frame).is_ok_and(|header| {
-        header.message_type == crate::protocol::tlv::MessageType::SERVER_HELLO.as_u16()
-    })
+    crate::protocol::wire2::header::MessageHeader::decode(frame)
+        .is_ok_and(|header| header.message_type == crate::protocol::wire2::control::HELLO)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -490,15 +488,30 @@ impl Default for TlvFrameBuilder {
     }
 }
 
-/// Build CONNECT message (`msg_type` 1).
-/// The legacy route argument is ignored; CONNECT carries only the JWT payload.
+/// Build the wire format 2 CONNECT message carrying `jwt_token`.
+/// The legacy realm argument is ignored.
 #[must_use]
 pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
-    // CONNECT frame: [msg_type: 1][length: u16 BE][JWT string bytes]
-    // Server expects JWT as plain UTF-8 string, no additional structure
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(1, jwt_token.as_bytes()); // msg_type 1 = CONNECT
+    builder.encode_field(
+        crate::protocol::wire2::control::CONNECT,
+        &connect_body(jwt_token, ""),
+    );
     builder.build()
+}
+
+/// Encode a wire format 2 CONNECT body for this broker's version.
+#[must_use]
+pub fn connect_body(jwt_token: &str, service_name: &str) -> Vec<u8> {
+    crate::protocol::wire2::handshake::Connect {
+        min_version: crate::protocol::wire2::WIRE_VERSION,
+        max_version: crate::protocol::wire2::WIRE_VERSION,
+        client_caps: 0,
+        jwt: jwt_token.to_owned(),
+        service_name: service_name.to_owned(),
+        client_build: "fitz-testkit".to_owned(),
+    }
+    .encode()
 }
 
 /// Generate a provider-shaped test JWT for a single partition string.

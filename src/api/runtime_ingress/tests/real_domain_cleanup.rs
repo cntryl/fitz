@@ -645,7 +645,7 @@ fn should_set_permissions_on_connect_with_valid_token() {
                 50,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt.clone()),
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -696,7 +696,7 @@ fn should_set_permissions_on_connect_for_auth0_shape() {
                     57,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -739,7 +739,7 @@ fn should_set_permissions_on_connect_for_entra_delegated_shape() {
                     58,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -782,7 +782,7 @@ fn should_set_permissions_on_connect_for_entra_app_only_shape() {
                     59,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -833,7 +833,7 @@ fn should_set_permissions_on_connect_for_cognito_shape() {
                     64,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -886,7 +886,7 @@ fn should_set_permissions_on_connect_for_okta_shape() {
                     65,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -941,7 +941,7 @@ fn should_assign_route_families_from_verified_claims() {
                     52,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt_a),
+                    connect_payload(&jwt_a),
                     None
                 )
                 .await,
@@ -953,7 +953,7 @@ fn should_assign_route_families_from_verified_claims() {
                     53,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt_b),
+                    connect_payload(&jwt_b),
                     None
                 )
                 .await,

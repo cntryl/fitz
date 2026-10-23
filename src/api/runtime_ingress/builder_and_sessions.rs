@@ -25,6 +25,7 @@ impl RuntimeIngress {
             auth_claims_config: crate::auth::AuthClaimsConfig::default(),
             route_family_resolver: crate::auth::RouteFamilyResolverConfig::default(),
             connect_diagnostics_budget: Arc::default(),
+            router: None,
         };
         let cleanup = super::session_cleanup_coordinator::SessionCleanupCoordinator {
             pending_session_cleanups: Arc::new(DashMap::new()),
@@ -81,6 +82,7 @@ impl RuntimeIngress {
     #[must_use]
     pub fn with_router(mut self, router: Arc<crate::runtime::Router>) -> Self {
         self.cleanup.router = Some(router.clone());
+        self.authenticator.router = Some(router.clone());
         self.dispatcher.router = Some(router);
         self
     }

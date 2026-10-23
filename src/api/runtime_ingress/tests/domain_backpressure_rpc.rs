@@ -100,7 +100,7 @@ async fn should_preserve_transport_rpc_stamp_across_dispatch_paths() {
                         session_id,
                         ChannelId::Control,
                         crate::protocol::tlv::MessageType::CONNECT,
-                        Bytes::new(),
+                        connect_payload(""),
                         None,
                     )
                     .await;

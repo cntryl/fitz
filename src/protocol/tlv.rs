@@ -19,15 +19,14 @@ impl MessageType {
     pub const ESCAPE_MARKER: u8 = 0xFF;
     pub const MAX_SINGLE_BYTE: u16 = 0xFE;
 
-    pub const CONNECT: MessageType = MessageType(1); // control connect message
-    /// Client-to-server record labelling the request record that follows it.
-    pub const CORRELATE: MessageType = MessageType(2);
-    /// Server-to-client record echoing a request's correlation onto its response.
-    pub const CORRELATED: MessageType = MessageType(3);
-    /// Server-to-client capability advertisement sent once on CONNECT success.
-    pub const SERVER_HELLO: MessageType = MessageType(4);
-    /// Client-reported name for the connected service, when negotiated.
-    pub const SESSION_METADATA: MessageType = MessageType(5);
+    /// Client to broker, first message on a connection.
+    pub const CONNECT: MessageType = MessageType(super::wire2::control::CONNECT);
+    /// Broker to client, answers an accepted `CONNECT`.
+    pub const HELLO: MessageType = MessageType(super::wire2::control::HELLO);
+    /// Broker to client, answers a refused `CONNECT`; the connection then closes.
+    pub const CONNECT_REJECTED: MessageType = MessageType(super::wire2::control::CONNECT_REJECTED);
+    /// Broker to client at any time after `HELLO`: drain, forced close, or a limit change.
+    pub const GOAWAY: MessageType = MessageType(super::wire2::control::GOAWAY);
 
     #[inline]
     #[must_use]

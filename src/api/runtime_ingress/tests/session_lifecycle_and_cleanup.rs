@@ -85,6 +85,11 @@ impl MailboxSink for CleanupTrackingSink {
     }
 }
 
+/// A wire format 2 CONNECT body for this broker's version.
+pub(super) fn connect_payload(jwt: &str) -> Bytes {
+    Bytes::from(crate::testkit::transport::connect_body(jwt, ""))
+}
+
 pub(super) fn make_session_info(id: u64, kind: TransportKind) -> SessionInfo {
     SessionInfo {
         session_id: id,
@@ -467,7 +472,7 @@ pub(super) fn should_process_frame() {
                 2,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt),
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -529,7 +534,7 @@ pub(super) fn should_call_event_handler() {
                 3,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt),
+                connect_payload(&jwt),
                 None,
             )
             .await;

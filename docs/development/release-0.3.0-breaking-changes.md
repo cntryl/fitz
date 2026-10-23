@@ -15,7 +15,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | ID | Change | Why | Status | Issue |
 | --- | --- | --- | --- | --- |
 | W-01 | Fixed 15-byte message header replaces TLV records and `CORRELATE`/`CORRELATED` | One parser, mandatory correlation, `u32` length | landing: broker decodes and encodes the header on both transports; a zero correlation on a request is still tolerated until every SDK sends one; `max_message_bytes` is a 1 MiB constant until C-01 | |
-| W-02 | Structured `CONNECT` with version range, capabilities, JWT, service name, client build; `HELLO` or `CONNECT_REJECTED` always answers it | Negotiation and an explicit failure signal | proposed | |
+| W-02 | Structured `CONNECT` with version range, capabilities, JWT, service name, client build; `HELLO` or `CONNECT_REJECTED` always answers it | Negotiation and an explicit failure signal | landing: broker parses CONNECT, negotiates the version, answers HELLO with version, capabilities, limits, and session id, and answers CONNECT_REJECTED with a protocol-block code before closing; in anonymous mode a non-CONNECT first frame still opens the session implicitly | |
 | W-03 | One response envelope: `[status][u16 code][u8 effect][string message]` | Removes three layouts and length sniffing | proposed | |
 | W-04 | Shared error slots x01..x10 across every domain block; domain codes from x50; full old-to-new mapping | One retry table for every SDK | spec written: `docs/clients/spec/error-codes.md` | |
 | W-05 | Schedule CREATE, CANCEL, SUBSCRIBE, UNSUBSCRIBE, CREATE_BATCH, and LIST errors become coded | Clients stop parsing messages | proposed | |
@@ -27,7 +27,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-11 | Notice `ACK_REQUESTED` header flag for PUBLISH | Observable drops on request | proposed | |
 | W-12 | Notice malformed-wildcard patterns become `INVALID_PATTERN` | Ends the frozen-3005 exception | proposed | |
 | W-13 | Stream "route family mismatch" becomes `INVALID_ROUTE` instead of `BACKEND` | Client error, not backend failure | proposed | |
-| W-14 | `SESSION_METADATA` record folded into `CONNECT` | One handshake step | proposed | |
+| W-14 | `SESSION_METADATA` record folded into `CONNECT` | One handshake step | landed: the service name travels in CONNECT; the record, its capability bit, and `CORRELATE`/`CORRELATED`/`SERVER_HELLO` are gone | |
 | W-15 | Lease `RENEW` canonical; `QUEUE_FULL` (5007) renamed `WAITERS_LIMIT` | Naming drift | proposed | |
 | W-16 | Queue `ENQUEUE_BATCH` (201) reservation retired; id never reused | Design 5.10 | decided | |
 | W-17 | Error envelope carries an explicit `u8 class` alongside the decimal code | Design 5.3 | decided | |

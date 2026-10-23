@@ -76,8 +76,13 @@ fn should_build_connect_frame() {
     // Assert
     let (header, value) =
         crate::protocol::wire2::header::decode_message(&frame, u32::MAX).expect("one message");
-    assert_eq!(header.message_type, 1);
-    assert_eq!(value, jwt.as_bytes());
+    let connect = crate::protocol::wire2::handshake::Connect::decode(value).expect("CONNECT body");
+    assert_eq!(
+        header.message_type,
+        crate::protocol::wire2::control::CONNECT
+    );
+    assert_eq!(connect.jwt, jwt);
+    assert_eq!(connect.max_version, crate::protocol::wire2::WIRE_VERSION);
 }
 
 #[test]

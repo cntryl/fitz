@@ -106,20 +106,15 @@ impl Ingress for RuntimeIngress {
 
         // First frame on the session, before any domain response can be queued
         // behind it on the single outbound channel, so the client always sees
-        // the capability advertisement ahead of any answer.
+        // HELLO ahead of any answer.
         if authenticated.session_established {
             self.domain_frame_dispatcher()
-                .announce_server_hello(session_id, route_family);
+                .announce_hello(session_id, route_family);
         }
-
-        if msg_type == crate::protocol::tlv::MessageType::SESSION_METADATA {
-            return self.domain_frame_dispatcher().update_session_metadata(
-                session_id,
-                channel_id,
-                &message_payload,
-            );
+        if let Some(service_name) = &authenticated.service_name {
+            self.domain_frame_dispatcher()
+                .apply_service_name(session_id, service_name);
         }
-
         if let Some(frame) = &notify_frame {
             debug!(
                 session_id = session_id,
@@ -130,6 +125,11 @@ impl Ingress for RuntimeIngress {
             }
             // We've performed auth as a side-effect (anonymous or JWT on any frame)
             // and should continue processing the current message.
+        }
+
+        // CONNECT is fully answered by HELLO; it carries nothing for a domain.
+        if msg_type == crate::protocol::tlv::MessageType::CONNECT {
+            return IngressDecision::Accept;
         }
 
         let should_notify_handler_late = should_notify_handler && notify_frame.is_none();

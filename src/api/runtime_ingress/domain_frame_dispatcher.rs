@@ -97,30 +97,15 @@ impl RuntimeIngress {
 }
 
 impl DomainFrameDispatcher {
-    pub(super) fn update_session_metadata(
-        &self,
-        session_id: u64,
-        channel_id: crate::protocol::frame::ChannelId,
-        payload: &[u8],
-    ) -> IngressDecision {
-        if channel_id != crate::protocol::frame::ChannelId::Control {
-            return IngressDecision::Close(
-                "session metadata must use the control channel".to_string(),
-            );
-        }
-        let service_name = match crate::protocol::session_metadata::decode_service_name(payload) {
-            Ok(service_name) => service_name,
-            Err(error) => return IngressDecision::Close(error),
-        };
+    /// Record the service name a client reported in CONNECT.
+    pub(super) fn apply_service_name(&self, session_id: u64, service_name: &str) {
         let Some(session) = self.registry.session(session_id) else {
-            return IngressDecision::Close(format!("unknown session: {session_id}"));
+            return;
         };
-
-        session.metadata.set_service_name(service_name);
+        session.metadata.set_service_name(service_name.to_owned());
         if let Some(admin_read_model) = &self.registry.admin_read_model {
             admin_read_model.record_session_update(&session);
         }
-        IngressDecision::Accept
     }
 
     pub(super) fn dispatch_timeout_outcome() -> &'static str {
@@ -299,19 +284,12 @@ impl DomainFrameDispatcher {
         )
     }
 
-    /// Announce this broker's protocol version and capabilities, once, on a
-    /// newly authenticated session.
+    /// Answer an accepted CONNECT with HELLO: the version in force, the
+    /// broker's capabilities, and the limits the client must respect.
     ///
-    /// Unsolicited and unconditional. Every client shipping today drops inbound
-    /// frames whose message type it does not know, so an old client ignores this
-    /// and keeps working, while a new client uses its arrival as the signal that
-    /// correlation is available. That is why the capability advertisement flows
-    /// server-to-client: a client-sent probe would be an unknown message type to
-    /// an older broker, which closes the connection rather than ignoring it.
-    ///
-    /// Best-effort by design. This is an advertisement, not a response: if it
-    /// cannot be delivered the session still works, uncorrelated.
-    pub(super) fn announce_server_hello(
+    /// Sent before any domain response can be queued behind it on the single
+    /// outbound channel, so the client always reads HELLO first.
+    pub(super) fn announce_hello(
         &self,
         session_id: u64,
         route_family: crate::runtime::routing::RouteFamily,
@@ -319,31 +297,21 @@ impl DomainFrameDispatcher {
         let Some(router) = &self.router else {
             return;
         };
-        let payload = Bytes::from(crate::protocol::correlation::encode_server_hello(
-            crate::protocol::correlation::PROTOCOL_VERSION,
-            crate::protocol::correlation::SUPPORTED_CAPABILITIES,
-        ));
-        let frame = crate::runtime::EncodedClientFrame::new(
-            crate::runtime::ClientFrameMeta::new(
-                session_id,
-                crate::runtime::ClientChannel::Control,
-                crate::protocol::tlv::MessageType::SERVER_HELLO.as_u16(),
-                route_family,
-            ),
-            payload,
-        );
-        let inbox = crate::runtime::routing::RouteAddress::new(
+        let hello = crate::protocol::wire2::handshake::Hello {
+            version: crate::protocol::wire2::WIRE_VERSION,
+            broker_caps: crate::protocol::wire2::BROKER_CAPABILITIES,
+            max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES,
+            max_in_flight: u32::try_from(BLOCKING_DOMAIN_DISPATCH_CONCURRENCY).unwrap_or(u32::MAX),
+            session_id,
+        };
+        announce_control_frame(
+            router,
+            session_id,
             route_family,
-            self.cached_session_inbox_route(session_id),
+            crate::protocol::wire2::control::HELLO,
+            Bytes::from(hello.encode()),
+            "HELLO",
         );
-        let envelope = crate::runtime::envelope::Envelope::new(inbox, frame);
-        if let Err(error) = router.route(envelope) {
-            debug!(
-                session_id = session_id,
-                error = %error,
-                "Ingress: could not announce SERVER_HELLO; session continues uncorrelated"
-            );
-        }
     }
 
     pub(super) fn send_domain_error_frame(
@@ -831,5 +799,65 @@ impl DomainFrameDispatcher {
             crate::domains::kv::TxMode::ReadOnly => crate::auth::Access::Read,
             crate::domains::kv::TxMode::ReadWrite => crate::auth::Access::Write,
         })
+    }
+}
+
+/// Answer a refused CONNECT with `CONNECT_REJECTED`. The session closes right
+/// after, so this is the client's only explanation.
+pub(super) fn announce_connect_rejected(
+    router: &crate::runtime::Router,
+    session_id: u64,
+    route_family: crate::runtime::routing::RouteFamily,
+    code: u16,
+    message: &str,
+) {
+    let body = crate::protocol::wire2::handshake::ConnectRejected {
+        code,
+        message: message.to_owned(),
+    };
+    announce_control_frame(
+        router,
+        session_id,
+        route_family,
+        crate::protocol::wire2::control::CONNECT_REJECTED,
+        Bytes::from(body.encode()),
+        "CONNECT_REJECTED",
+    );
+}
+
+/// Route one broker control frame (correlation 0) to a session's inbox.
+/// Best-effort: a control frame that cannot be delivered does not change
+/// session state.
+fn announce_control_frame(
+    router: &crate::runtime::Router,
+    session_id: u64,
+    route_family: crate::runtime::routing::RouteFamily,
+    message_type: u16,
+    payload: Bytes,
+    name: &'static str,
+) {
+    let frame = crate::runtime::EncodedClientFrame::new(
+        crate::runtime::ClientFrameMeta::new(
+            session_id,
+            crate::runtime::ClientChannel::Control,
+            message_type,
+            route_family,
+        ),
+        payload,
+    );
+    let inbox = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::session_inbox_address(route_family, session_id)
+            .route()
+            .clone(),
+    );
+    let envelope = crate::runtime::envelope::Envelope::new(inbox, frame);
+    if let Err(error) = router.route(envelope) {
+        debug!(
+            session_id = session_id,
+            control = name,
+            error = %error,
+            "Ingress: could not deliver control frame"
+        );
     }
 }

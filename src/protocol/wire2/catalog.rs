@@ -65,18 +65,32 @@ const fn shared_rows(block: u16) -> [CodeEntry; 10] {
     ]
 }
 
+/// Protocol-block codes beyond the shared slots, by name.
+pub const VERSION_MISMATCH: u16 = 50;
+pub const FAMILY_NOT_PROVISIONED: u16 = 51;
+pub const CONNECT_TIMEOUT: u16 = 52;
+pub const MESSAGE_TOO_LARGE: u16 = 53;
+pub const DRAINING: u16 = 54;
+pub const FORCED_CLOSE: u16 = 55;
+pub const LIMIT_CHANGED: u16 = 56;
+
 /// Protocol-block codes beyond the shared slots.
 pub const PROTOCOL_ROWS: [CodeEntry; 7] = {
     use Effect::{Indeterminate as Ind, NotApplied as No};
     use ErrorClass as C;
     [
-        row(50, "VERSION_MISMATCH", C::Unsupported, No),
-        row(51, "FAMILY_NOT_PROVISIONED", C::InvalidRoute, No),
-        row(52, "CONNECT_TIMEOUT", C::BadRequest, No),
-        row(53, "MESSAGE_TOO_LARGE", C::BadRequest, No),
-        row(54, "DRAINING", C::Busy, No),
-        row(55, "FORCED_CLOSE", C::Backend, Ind),
-        row(56, "LIMIT_CHANGED", C::Unsupported, No),
+        row(VERSION_MISMATCH, "VERSION_MISMATCH", C::Unsupported, No),
+        row(
+            FAMILY_NOT_PROVISIONED,
+            "FAMILY_NOT_PROVISIONED",
+            C::InvalidRoute,
+            No,
+        ),
+        row(CONNECT_TIMEOUT, "CONNECT_TIMEOUT", C::BadRequest, No),
+        row(MESSAGE_TOO_LARGE, "MESSAGE_TOO_LARGE", C::BadRequest, No),
+        row(DRAINING, "DRAINING", C::Busy, No),
+        row(FORCED_CLOSE, "FORCED_CLOSE", C::Backend, Ind),
+        row(LIMIT_CHANGED, "LIMIT_CHANGED", C::Unsupported, No),
     ]
 };
 

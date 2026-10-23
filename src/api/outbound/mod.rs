@@ -386,7 +386,8 @@ fn outbound_retry_backoff(attempt: usize) -> Option<Duration> {
 /// process; the real fix always lives at the source, which must paginate.
 /// The largest value the broker will frame until the negotiated limit is
 /// wired through configuration.
-pub(super) const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_MESSAGE_BYTES: usize =
+    crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize;
 
 /// Frame one message: the 15-byte header, then exactly `payload`.
 pub(super) fn encode_message_frame(

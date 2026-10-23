@@ -40,7 +40,7 @@ fn should_reject_connect_with_unprovisioned_resolved_route_family() {
                 55,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt),
+                connect_payload(&jwt),
                 None,
             )
             .await
@@ -73,7 +73,7 @@ fn should_reject_connect_with_unmapped_identity_claim() {
                 56,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt),
+                connect_payload(&jwt),
                 None,
             )
             .await
@@ -120,7 +120,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
                     60,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt_for("tenant-a")),
+                    connect_payload(&jwt_for("tenant-a")),
                     None
                 )
                 .await,
@@ -132,7 +132,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
                     61,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt_for("tenant-b")),
+                    connect_payload(&jwt_for("tenant-b")),
                     None
                 )
                 .await,
@@ -153,7 +153,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
                     62,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt_for("tenant-b")),
+                    connect_payload(&jwt_for("tenant-b")),
                     None
                 )
                 .await,
@@ -165,7 +165,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
                     63,
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt_for("tenant-a")),
+                    connect_payload(&jwt_for("tenant-a")),
                     None
                 )
                 .await,
@@ -205,7 +205,7 @@ fn should_reject_connect_with_malformed_permissions() {
                 51,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt.clone()),
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -238,7 +238,7 @@ fn should_reject_connect_when_issuer_cannot_derive_jwks() {
                 54,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt),
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -301,7 +301,7 @@ fn should_set_permissions_on_connect_with_issuer_valid_signature() {
                 80,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt.clone()),
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -380,7 +380,7 @@ async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
                 82,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt),
+                connect_payload(&jwt),
                 None,
             )
             .await
@@ -467,7 +467,7 @@ fn should_reject_connect_with_issuer_invalid_signature() {
                 81,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt.clone()),
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -524,7 +524,7 @@ fn should_update_session_actor_on_connect() {
                 61,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt.clone()),
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -568,7 +568,7 @@ fn should_allow_stream_followup_after_begin_without_global_stream_write_permissi
                 62,
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt),
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -716,7 +716,7 @@ async fn should_allow_anonymous_access_when_auth_not_required() {
             1,
             ChannelId::Control,
             crate::protocol::tlv::MessageType::CONNECT,
-            Bytes::from(jwt),
+            connect_payload(jwt),
             None,
         )
         .await;
