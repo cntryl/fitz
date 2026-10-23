@@ -1,6 +1,6 @@
 # Fitz 0.3.0 Breaking Changes Ledger
 
-Status: **gathering**. Every change that breaks a client, a stored format, an
+Status: **gathering**. Tracking issue: [#497](https://github.com/cntryl/fitz/issues/497), milestone `v0.3.0`. Every change that breaks a client, a stored format, an
 operator surface, or the Rust embedding API lands here before it lands in code.
 A row moves to `landed` only when its PR merges to `feature/0.3.0-wire-format`
 with tests and a migration-guide entry. Rows are never deleted; a rejected
