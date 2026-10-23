@@ -123,10 +123,11 @@ Session close.
 ### Fault-Injection Routes
 These routes rehearse fail-closed behavior in tests. They are compiled into the
 broker but answer 404 unless the process starts with
-`FITZ_DESTROYER_FAILPOINTS=enabled`. When enabled they are matched before admin
-authentication, so anyone who can reach the HTTP listener can panic a live
-domain actor, or every domain actor at once, which fails those actors closed
-and marks readiness unhealthy. Never enable them on a broker that serves
+`FITZ_DESTROYER_FAILPOINTS=enabled`. When enabled they require a wildcard
+admin session and a same-origin request, exactly like the other mutating admin
+routes. A successful call panics a live domain actor, or every domain actor at
+once, which fails those actors closed and marks readiness unhealthy. Never
+enable them on a broker that serves
 traffic.
 
 - `POST /destroyer/failpoints/{scheme}-actor-panic` - Panic every actor of one domain, where `{scheme}` is `kv`, `queue`, `notice`, `stream`, `rpc`, `lease`, or `schedule`.

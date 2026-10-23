@@ -226,7 +226,7 @@ semantics, defaults, and security requirements are documented in
 
 | Key | Allowed Values / Format | Default | Description |
 | --- | --- | --- | --- |
-| FITZ_DESTROYER_FAILPOINTS | `enabled` or unset | Unset | Enables the unauthenticated `POST /destroyer/failpoints/...` routes that panic a live domain actor to rehearse fail-closed behavior. Test-only; never set it on a broker that serves traffic. See [sessions-status-safety.md](../admin/api/sessions-status-safety.md#fault-injection-routes). |
+| FITZ_DESTROYER_FAILPOINTS | `enabled` or unset | Unset | Enables the `POST /destroyer/failpoints/...` routes that panic a live domain actor to rehearse fail-closed behavior. They require a wildcard admin session and a same-origin request. Test-only; never set it on a broker that serves traffic. See [sessions-status-safety.md](../admin/api/sessions-status-safety.md#fault-injection-routes). |
 
 ## Compose-Only Convenience Key
 
