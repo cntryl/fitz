@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_unknown_status_class_effect_and_trailing_bytes() {
+    fn should_reject_every_malformed_error_envelope() {
         // Arrange
         let mut unknown_class = encode_error(&sample_error());
         unknown_class[3] = 11;
