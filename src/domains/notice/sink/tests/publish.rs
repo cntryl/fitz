@@ -93,6 +93,49 @@ fn should_accept_notice_publish_without_waiting_for_subscriber_delivery() {
 }
 
 #[test]
+fn should_wait_for_the_actor_when_a_publish_requests_an_ack() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+    let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+    let publish = |ack_requested: bool| {
+        Envelope::from_route(
+            publisher_address.clone(),
+            notice_address.clone(),
+            crate::domains::notice::NoticeClientRequest::new(
+                crate::runtime::ClientFrameMeta::new(
+                    11,
+                    crate::runtime::ClientChannel::Pub,
+                    500,
+                    family,
+                )
+                .with_ack_requested(ack_requested),
+                Ok(
+                    crate::domains::notice::protocol::NotificationMessage::Publish(
+                        crate::domains::notice::protocol::PublishMessage::new(
+                            family,
+                            Route::new("notice://acme/app/events"),
+                            Bytes::from_static(b"hello"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    };
+
+    // Act
+    let fire_and_forget = NoticeDomain::can_accept_without_reply(&publish(false));
+    let acknowledged = NoticeDomain::can_accept_without_reply(&publish(true));
+
+    // Assert
+    assert!(fire_and_forget);
+    assert!(
+        !acknowledged,
+        "an acknowledged publish must wait for the actor's answer"
+    );
+}
+
+#[test]
 fn should_deliver_large_notice_fanout_across_bounded_jobs() {
     // Arrange
     let family = RouteFamily::new(1);

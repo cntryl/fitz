@@ -21,7 +21,9 @@
 [bytes]   payload
 ```
 
-**No success frame.** PUBLISH is fire-and-forget. An accepted PUBLISH fans out to matching subscribers and produces no response. The client MUST NOT wait for a response after sending PUBLISH.
+**No success frame by default.** PUBLISH is fire-and-forget. An accepted PUBLISH fans out to matching subscribers and produces no response. The client MUST NOT wait for a response after sending PUBLISH unless it set `ACK_REQUESTED`.
+
+**`ACK_REQUESTED` (header flag bit 0).** A PUBLISH sent with the flag is answered on message type 500 with the common envelope and the request's correlation. Success (`[u8 0]`) means the broker accepted the publish for fan-out; it never means a subscriber received it, and a publish with no matching subscriber is still acknowledged. A rejected publish answers the same error envelope as below. The flag costs one actor round trip per publish, so clients SHOULD leave it clear on hot paths and set it where a publisher needs to observe drops.
 
 A PUBLISH the broker rejects before fan-out is answered with a PUBLISH (500) error frame that uses the coded error envelope:
 

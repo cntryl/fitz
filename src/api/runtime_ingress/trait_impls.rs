@@ -55,7 +55,7 @@ impl Ingress for RuntimeIngress {
             channel_id,
             msg_type,
             message_payload,
-            correlation,
+            crate::protocol::wire2::header::HeaderLabels::correlated(correlation),
             std::time::Instant::now(),
         )
         .await
@@ -67,9 +67,10 @@ impl Ingress for RuntimeIngress {
         channel_id: ChannelId,
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
-        correlation: Option<std::num::NonZeroU64>,
+        labels: crate::protocol::wire2::header::HeaderLabels,
         received_at: std::time::Instant,
     ) -> IngressDecision {
+        let crate::protocol::wire2::header::HeaderLabels { correlation, flags } = labels;
         let _ingress_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_INGRESS_FRAME_TOTAL_LATENCY);
         // Record frame received counter
@@ -143,6 +144,7 @@ impl Ingress for RuntimeIngress {
                     msg_type,
                     DomainDispatchPayload::Shared(&message_payload),
                     correlation,
+                    flags,
                     received_at,
                 )
                 .await
@@ -166,6 +168,7 @@ impl Ingress for RuntimeIngress {
                 msg_type,
                 DomainDispatchPayload::Owned(message_payload),
                 correlation,
+                flags,
                 received_at,
             )
             .await

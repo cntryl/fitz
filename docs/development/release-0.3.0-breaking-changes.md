@@ -19,17 +19,17 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-03 | One response envelope: `[status][u16 code][u8 effect][string message]` | Removes three layouts and length sniffing | landed: every domain encodes `[1][u16 code][u8 class][u8 effect][string]`; Stream status 2 and the Schedule and Queue uncoded layouts are gone | |
 | W-04 | Shared error slots x01..x10 across every domain block; domain codes from x50; full old-to-new mapping | One retry table for every SDK | landed in code: `src/protocol/error_codes.rs` carries the catalog numbering; `WIRE1_TO_WIRE2` in the catalog maps every old code | |
 | W-05 | Schedule CREATE, CANCEL, SUBSCRIBE, UNSUBSCRIBE, CREATE_BATCH, and LIST errors become coded | Clients stop parsing messages | landed: every Schedule verb returns the coded envelope | |
-| W-06 | Schedule `LIST` takes the cursor form; `LIST_V2` (707) retired | One list verb | proposed | |
+| W-06 | Schedule `LIST` takes the cursor form; `LIST_V2` (707) retired | One list verb | landed | 702 accepts an empty payload for the first page; 707 is unassigned and never reused |
 | W-07 | Stream READ uses the common envelope; generation-2 `status=2` retired | One envelope | landed: READ uses the common envelope | |
-| W-08 | KV SCAN options byte with `start_exclusive`; `CAP_KV_SCAN_EXCLUSIVE` retired | No capability-gated trailing byte | proposed | |
+| W-08 | KV SCAN options byte with `start_exclusive`; `CAP_KV_SCAN_EXCLUSIVE` retired | No capability-gated trailing byte | landed | `[u8 options]` replaces `[u8 reverse][u8 start_exclusive?]`; bit 0 reverse, bit 1 start_exclusive, reserved bits rejected |
 | W-09 | RPC budget and cancellation fields in the base layout; `CAP_RPC_CANCELLATION` retired | Base protocol | proposed | |
 | W-10 | `BUSY` with `effect=NOT_APPLIED` in every domain; no connection close on overflow | Spec and code agree | landed for codes: `BUSY` is `x005` in every block with `effect = NOT_APPLIED`; connection-close-on-overflow was already gone | |
-| W-11 | Notice `ACK_REQUESTED` header flag for PUBLISH | Observable drops on request | proposed | |
+| W-11 | Notice `ACK_REQUESTED` header flag for PUBLISH | Observable drops on request | landed | Success means accepted for fan-out, never delivered; the flag forces the replying actor path |
 | W-12 | Notice malformed-wildcard patterns become `INVALID_PATTERN` | Ends the frozen-3005 exception | landed: every pattern the compiler rejects is `INVALID_PATTERN` (3003) | |
 | W-13 | Stream "route family mismatch" becomes `INVALID_ROUTE` instead of `BACKEND` | Client error, not backend failure | landed: `INVALID_ROUTE` (2002) | |
 | W-14 | `SESSION_METADATA` record folded into `CONNECT` | One handshake step | landed: the service name travels in CONNECT; the record, its capability bit, and `CORRELATE`/`CORRELATED`/`SERVER_HELLO` are gone | |
 | W-15 | Lease `RENEW` canonical; `QUEUE_FULL` (5007) renamed `WAITERS_LIMIT` | Naming drift | landed: `WAITERS_LIMIT` is 5056; `RENEW` wording follows in the spec pass | |
-| W-16 | Queue `ENQUEUE_BATCH` (201) reservation retired; id never reused | Design 5.10 | decided | |
+| W-16 | Queue `ENQUEUE_BATCH` (201) reservation retired; id never reused | Design 5.10 | landed | Docs only: the broker never implemented 201 |
 | W-17 | Error envelope carries an explicit `u8 class` alongside the decimal code | Design 5.3 | landed: the envelope carries the explicit `class` byte | |
 | W-18 | Server control message `GOAWAY {code, grace_ms, reason}` | Design 5.12 | decided | |
 | W-19 | No `retry_after` hint; no route family in `HELLO`; `REAUTH` deferred as an additive verb | Design 5.4, 5.9, 5.12 | decided | |

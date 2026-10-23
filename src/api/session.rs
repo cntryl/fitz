@@ -52,7 +52,10 @@ pub async fn process_session_frame_at(
             channel,
             message.msg_type,
             message.payload,
-            message.correlation,
+            crate::protocol::wire2::header::HeaderLabels {
+                correlation: message.correlation,
+                flags: message.flags,
+            },
             received_at,
         )
         .await;

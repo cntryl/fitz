@@ -394,6 +394,7 @@ impl TestWebSocketClient {
 pub struct TlvFrameBuilder {
     message: Option<Vec<u8>>,
     correlation: Option<std::num::NonZeroU64>,
+    flags: crate::protocol::wire2::header::HeaderFlags,
 }
 
 impl TlvFrameBuilder {
@@ -402,6 +403,7 @@ impl TlvFrameBuilder {
         Self {
             message: None,
             correlation: None,
+            flags: crate::protocol::wire2::header::HeaderFlags::none(),
         }
     }
 
@@ -409,6 +411,13 @@ impl TlvFrameBuilder {
     #[must_use]
     pub fn with_correlation(mut self, correlation: u64) -> Self {
         self.correlation = std::num::NonZeroU64::new(correlation);
+        self
+    }
+
+    /// Set the header flags on the message.
+    #[must_use]
+    pub fn with_flags(mut self, flags: crate::protocol::wire2::header::HeaderFlags) -> Self {
+        self.flags = flags;
         self
     }
 
@@ -422,7 +431,7 @@ impl TlvFrameBuilder {
         );
         self.message = Some(crate::protocol::wire2::header::encode_message(
             msg_type,
-            crate::protocol::wire2::header::HeaderFlags::none(),
+            self.flags,
             self.correlation,
             value,
         ));

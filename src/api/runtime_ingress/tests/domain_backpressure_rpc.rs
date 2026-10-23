@@ -114,7 +114,7 @@ async fn should_preserve_transport_rpc_stamp_across_dispatch_paths() {
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
                     case.payload,
-                    None,
+                    crate::protocol::wire2::header::HeaderLabels::none(),
                     received_at,
                 )
                 .await;

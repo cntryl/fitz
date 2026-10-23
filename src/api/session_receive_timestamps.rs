@@ -37,7 +37,7 @@ impl Ingress for StampingIngress {
         _channel_id: crate::protocol::frame::ChannelId,
         _msg_type: MessageType,
         _message_payload: Bytes,
-        _correlation: Option<std::num::NonZeroU64>,
+        _labels: crate::protocol::wire2::header::HeaderLabels,
         received_at: Instant,
     ) -> IngressDecision {
         let first = {

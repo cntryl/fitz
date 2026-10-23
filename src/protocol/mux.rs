@@ -26,9 +26,10 @@ pub struct ChannelMessage {
     pub channel: ChannelId,
     pub msg_type: MessageType,
     pub payload: Bytes,
-    /// Correlation from the `CORRELATE` record that immediately preceded this
-    /// one, if the client labelled the request.
+    /// Correlation from the message header, if the client labelled the request.
     pub correlation: Option<std::num::NonZeroU64>,
+    /// Header flags; only `ACK_REQUESTED` is defined.
+    pub flags: crate::protocol::wire2::header::HeaderFlags,
 }
 
 impl ChannelMessage {
@@ -39,13 +40,21 @@ impl ChannelMessage {
             msg_type,
             payload,
             correlation: None,
+            flags: crate::protocol::wire2::header::HeaderFlags::none(),
         }
     }
 
-    /// Attach the correlation decoded from the preceding record.
+    /// Attach the correlation decoded from the message header.
     #[must_use]
     pub fn with_correlation(mut self, correlation: Option<std::num::NonZeroU64>) -> Self {
         self.correlation = correlation;
+        self
+    }
+
+    /// Attach the flags decoded from the message header.
+    #[must_use]
+    pub fn with_flags(mut self, flags: crate::protocol::wire2::header::HeaderFlags) -> Self {
+        self.flags = flags;
         self
     }
 }

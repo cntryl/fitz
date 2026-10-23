@@ -48,6 +48,34 @@ impl HeaderFlags {
     }
 }
 
+/// The header fields a client chooses per message: the correlation that ties
+/// answers back to the request, and the flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HeaderLabels {
+    pub correlation: Option<NonZeroU64>,
+    pub flags: HeaderFlags,
+}
+
+impl HeaderLabels {
+    /// Uncorrelated, no flags: a notification or control message.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            correlation: None,
+            flags: HeaderFlags::none(),
+        }
+    }
+
+    /// Correlated, no flags.
+    #[must_use]
+    pub const fn correlated(correlation: Option<NonZeroU64>) -> Self {
+        Self {
+            correlation,
+            flags: HeaderFlags::none(),
+        }
+    }
+}
+
 /// One message header: who it is for, whether it answers something, and how
 /// long the value is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

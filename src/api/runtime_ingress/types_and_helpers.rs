@@ -170,6 +170,8 @@ pub(super) struct DomainDispatchRequest<'a> {
     /// Correlation the client attached to this request, echoed onto every
     /// frame answering it - including ingress-synthesized errors.
     pub(super) correlation: Option<std::num::NonZeroU64>,
+    /// Header flags the client set on this request.
+    pub(super) flags: crate::protocol::wire2::header::HeaderFlags,
     pub(super) received_at: std::time::Instant,
 }
 
@@ -276,8 +278,9 @@ pub trait Ingress: Send + Sync {
 
     /// Called for every demultiplexed channel message.
     ///
-    /// `correlation` is the client-generated identifier from the `CORRELATE`
-    /// record that preceded this one, when the client labelled the request.
+    /// `correlation` is the client-generated identifier from the message
+    /// header, when the client labelled the request. Header flags reach an
+    /// implementation only through [`Self::on_frame_received_at`].
     async fn on_frame(
         &self,
         session_id: u64,
@@ -298,7 +301,7 @@ pub trait Ingress: Send + Sync {
         channel_id: ChannelId,
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
-        correlation: Option<std::num::NonZeroU64>,
+        labels: crate::protocol::wire2::header::HeaderLabels,
         _received_at: std::time::Instant,
     ) -> IngressDecision {
         self.on_frame(
@@ -306,7 +309,7 @@ pub trait Ingress: Send + Sync {
             channel_id,
             msg_type,
             message_payload,
-            correlation,
+            labels.correlation,
         )
         .await
     }

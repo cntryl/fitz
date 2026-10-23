@@ -397,7 +397,11 @@ impl Session {
             u128_to_u64_saturating(mux_start.elapsed().as_micros()),
         );
         message
-            .map(|message| message.with_correlation(header.correlation))
+            .map(|message| {
+                message
+                    .with_correlation(header.correlation)
+                    .with_flags(header.flags)
+            })
             .map_err(|error| {
                 warn!(session_id = self.info.session_id, error = ?error, "Mux routing error");
                 SessionError::Mux(error)

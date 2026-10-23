@@ -125,6 +125,7 @@ impl DomainFrameDispatcher {
         msg_type: crate::protocol::tlv::MessageType,
         payload: DomainDispatchPayload<'_>,
         correlation: Option<std::num::NonZeroU64>,
+        flags: crate::protocol::wire2::header::HeaderFlags,
         received_at: Instant,
     ) -> Result<(), IngressDecision> {
         let Some(router) = &self.router else {
@@ -159,6 +160,7 @@ impl DomainFrameDispatcher {
                     msg_type,
                     payload,
                     correlation,
+                    flags,
                     received_at,
                 };
                 self.authorize_and_dispatch_domain_frame(dispatch).await
@@ -559,6 +561,7 @@ impl DomainFrameDispatcher {
             msg_type,
             payload,
             correlation,
+            flags,
             received_at,
         } = dispatch;
         let (addr, source, descriptor) = self.dispatch_addressing(session_id, route_family, domain);
@@ -582,6 +585,7 @@ impl DomainFrameDispatcher {
                     source: source.clone(),
                     destination: addr.clone(),
                     correlation,
+                    ack_requested: flags.is_ack_requested(),
                     received_at,
                 });
             let reply_claim = envelope.reply_claim();
