@@ -18,6 +18,9 @@ pub struct SessionOutboundSink {
     tx: mpsc::Sender<Bytes>,
     close_signal: Option<tokio::sync::watch::Sender<Option<&'static str>>>,
     frame_loop: frame_loop::FrameLoopClock,
+    /// The largest message, header included, this sink will frame: the same
+    /// limit HELLO advertised to the client.
+    max_message_bytes: usize,
 }
 
 impl SessionOutboundSink {
@@ -27,7 +30,15 @@ impl SessionOutboundSink {
             tx,
             close_signal: None,
             frame_loop: frame_loop::FrameLoopClock::default(),
+            max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
         }
+    }
+
+    /// Bound framed messages by the configured, advertised limit.
+    #[must_use]
+    pub fn with_max_message_bytes(mut self, max_message_bytes: usize) -> Self {
+        self.max_message_bytes = max_message_bytes;
+        self
     }
 
     /// Marks this session's frame loop busy until the returned guard drops.
@@ -48,6 +59,7 @@ impl SessionOutboundSink {
                 tx,
                 close_signal: Some(close_signal),
                 frame_loop: frame_loop::FrameLoopClock::default(),
+                max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
             },
             receiver,
         )
@@ -208,7 +220,12 @@ impl SessionOutboundSink {
             "Outbound sink: encoding TLV response for session"
         );
         let encode_start = Self::encode_latency_start();
-        let bytes = encode_message_frame(ctx.msg_type.as_u16(), ctx.correlation, &ctx.payload)?;
+        let bytes = encode_message_frame(
+            ctx.msg_type.as_u16(),
+            ctx.correlation,
+            &ctx.payload,
+            self.max_message_bytes,
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(ctx.session_id, &bytes)
     }
@@ -229,6 +246,7 @@ impl SessionOutboundSink {
             frame.meta.message_type,
             frame.meta.correlation,
             &frame.payload,
+            self.max_message_bytes,
         )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(frame.meta.session_id, &bytes)
@@ -258,7 +276,7 @@ impl SessionOutboundSink {
         correlation: Option<std::num::NonZeroU64>,
         payload: &[u8],
     ) -> Result<(), DeliveryError> {
-        let bytes = encode_message_frame(msg_type, correlation, payload)?;
+        let bytes = encode_message_frame(msg_type, correlation, payload, self.max_message_bytes)?;
         self.send_encoded_frame(session_id, &bytes)
     }
 
@@ -378,21 +396,23 @@ fn outbound_retry_backoff(attempt: usize) -> Option<Duration> {
 /// any aggregate-overflow bug in any domain - a schedule listing, a large read
 /// page - into a broker panic. Framing must fail the one delivery, never the
 /// process; the real fix always lives at the source, which must paginate.
-/// The largest value the broker will frame until the negotiated limit is
-/// wired through configuration.
-pub(super) const MAX_MESSAGE_BYTES: usize =
+/// The limit a sink frames against until configuration sets one.
+pub(super) const DEFAULT_MAX_MESSAGE_BYTES: usize =
     crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize;
 
-/// Frame one message: the 15-byte header, then exactly `payload`.
+/// Frame one message: the 15-byte header, then exactly `payload`, bounded by
+/// `max_message_bytes` with the header counted.
 pub(super) fn encode_message_frame(
     msg_type: u16,
     correlation: Option<std::num::NonZeroU64>,
     payload: &[u8],
+    max_message_bytes: usize,
 ) -> Result<Bytes, DeliveryError> {
-    if payload.len() > MAX_MESSAGE_BYTES {
+    let max_payload = max_message_bytes.saturating_sub(crate::protocol::wire2::header::HEADER_LEN);
+    if payload.len() > max_payload {
         return Err(DeliveryError::InvalidPayload {
             len: payload.len(),
-            max: MAX_MESSAGE_BYTES,
+            max: max_payload,
         });
     }
     Ok(Bytes::from(crate::protocol::wire2::header::encode_message(
@@ -603,10 +623,10 @@ mod tests {
     #[test]
     fn should_reject_an_oversized_message_instead_of_panicking() {
         // Arrange
-        let payload = vec![0x5a; MAX_MESSAGE_BYTES + 1];
+        let payload = vec![0x5a; DEFAULT_MAX_MESSAGE_BYTES + 1];
 
         // Act
-        let result = encode_message_frame(701, None, &payload);
+        let result = encode_message_frame(701, None, &payload, DEFAULT_MAX_MESSAGE_BYTES);
 
         // Assert
         let Err(error) = result else {

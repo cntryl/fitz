@@ -126,6 +126,8 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-024 (T1)** A client reports its service name in the `service_name` field of `CONNECT`: empty, or 1–128 bytes after trimming with no control characters. There is no separate metadata message.
 
+**REQ-PROTO-025 (T1)** The client MUST decode `GOAWAY` (4), surface its code and `grace_ms`, and on `DRAINING` finish in-flight work and reconnect within the grace. It MUST NOT fail pending requests on receipt.
+
 ---
 
 ## 2. API Completeness

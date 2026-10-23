@@ -395,7 +395,7 @@ caller/worker routing.
 - The broker states `max_message_bytes` in `HELLO`; it bounds header plus value
 - Client MUST NOT send a message larger than `max_message_bytes`
 - Broker closes the connection on a larger message (transport error)
-- Deployments may change the limit; clients read it from `HELLO` rather than assuming it
+- Deployments set the limit with `FITZ_MAX_MESSAGE_BYTES`; clients read it from `HELLO` rather than assuming it
 - Clients SHOULD still expose a local ceiling so an application cannot build a message the broker will refuse
 
 **Handling large payloads:**
@@ -562,6 +562,22 @@ After successful CONNECT, client may send domain-specific requests.
 ### 5. Receive Responses
 
 Each request receives at least one response frame carrying its correlation. Response format is domain-specific (see domain specs); every error uses the common envelope.
+
+### Broker-initiated GOAWAY
+
+At any time after `HELLO` the broker may send `GOAWAY` (type 4, correlation 0):
+
+```
+[u16 BE] code       protocol block of error-codes.md: 0054 DRAINING, 0055 FORCED_CLOSE, 0056 LIMIT_CHANGED
+[u32 BE] grace_ms   how long the broker keeps serving before it closes; 0 means now
+[string] reason     diagnostic only
+```
+
+`DRAINING` reaches every live session the moment a planned drain begins; the
+broker keeps answering requests for `grace_ms` and then closes. Clients
+SHOULD finish in-flight work and reconnect within the grace. `GOAWAY` is not
+an error on any pending request: those are answered or lost with the
+connection as usual.
 
 ### 6. Close Connection
 

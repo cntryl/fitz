@@ -195,6 +195,7 @@ State handling rules:
 Clients should handle these cases explicitly:
 
 - `CONNECT` rejected: read `CONNECT_REJECTED`, surface its code and message, and expect the close.
+- `GOAWAY` received: the broker is draining; finish in-flight work and reconnect within `grace_ms`.
 - Domain frame sent before `CONNECT`: expect connection close.
 - Malformed or unsupported stream `Read` filter: expect a typed stream error response (2055 or 2056) and keep the connection open.
 - Partial TCP frame: keep buffering until complete or the socket closes.

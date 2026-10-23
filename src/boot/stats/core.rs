@@ -375,6 +375,15 @@ impl Runtime {
             self.drain_started_epoch_ms.store(started, Ordering::SeqCst);
             self.drain_deadline_epoch_ms
                 .store(started.saturating_add(grace_ms), Ordering::SeqCst);
+            // Every live client learns of the drain now, with the grace it has
+            // to finish and reconnect, instead of discovering it at the close.
+            if let Some(ingress) = self.ingress.read().as_ref() {
+                ingress.announce_goaway(
+                    crate::protocol::wire2::catalog::DRAINING,
+                    u32::try_from(grace_ms).unwrap_or(u32::MAX),
+                    &self.drain_close_reason(),
+                );
+            }
         }
     }
 

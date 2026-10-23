@@ -344,7 +344,7 @@ pub(super) async fn handle_tcp_connection(
 
     let (sink, close_signal) =
         crate::api::outbound::SessionOutboundSink::with_close_signal(outbound_tx.clone());
-    let sink = Arc::new(sink);
+    let sink = Arc::new(sink.with_max_message_bytes(config.max_frame_size));
     let initial_family = ingress
         .get_route_family(session_id)
         .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));

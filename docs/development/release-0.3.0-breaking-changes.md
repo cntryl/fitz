@@ -31,7 +31,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-15 | Lease `RENEW` canonical; `QUEUE_FULL` (5007) renamed `WAITERS_LIMIT` | Naming drift | landed: `WAITERS_LIMIT` is 5056; `RENEW` wording follows in the spec pass | |
 | W-16 | Queue `ENQUEUE_BATCH` (201) reservation retired; id never reused | Design 5.10 | landed | Docs only: the broker never implemented 201 |
 | W-17 | Error envelope carries an explicit `u8 class` alongside the decimal code | Design 5.3 | landed: the envelope carries the explicit `class` byte | |
-| W-18 | Server control message `GOAWAY {code, grace_ms, reason}` | Design 5.12 | decided | |
+| W-18 | Server control message `GOAWAY {code, grace_ms, reason}` | Design 5.12 | landed | `Runtime::begin_drain` sends GOAWAY DRAINING with the grace and close reason to every live session; FORCED_CLOSE and LIMIT_CHANGED are defined but not yet emitted |
 | W-19 | No `retry_after` hint; no route family in `HELLO`; `REAUTH` deferred as an additive verb | Design 5.4, 5.9, 5.12 | decided | |
 | W-20 | Stream `MAX_EVENT_SIZE` (61,247 bytes) still derives from the wire-1 64 KiB value cap; raise it to track `max_message_bytes` | Follows W-01, C-01 | proposed | Additive for clients; `READ_RESPONSE_TOO_LARGE` already means larger than `max_message_bytes` |
 
@@ -51,7 +51,7 @@ Storage rows follow the Midge work tracked in that repository and the
 
 | ID | Change | Why | Status | Issue |
 | --- | --- | --- | --- | --- |
-| C-01 | `max_message_bytes` becomes a configured, advertised limit; default stays 1 MiB | Design 5.7 | decided | |
+| C-01 | `max_message_bytes` becomes a configured, advertised limit; default stays 1 MiB | Design 5.7 | landed | `FITZ_MAX_MESSAGE_BYTES` (64 KiB to 4 GiB, default 1 MiB) bounds the transport, the outbound sink, and the HELLO advertisement |
 
 ## Rust embedding API
 

@@ -88,6 +88,9 @@ pub(super) struct DomainFrameDispatcher {
     pub(super) notice_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
     pub(super) queue_family_dispatch:
         std::sync::Arc<dashmap::DashMap<u32, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+    /// The limit HELLO advertises: the largest message, header included, the
+    /// transport accepts and the outbound sink frames.
+    pub(super) max_message_bytes: u32,
 }
 
 impl RuntimeIngress {
@@ -306,7 +309,7 @@ impl DomainFrameDispatcher {
         let hello = crate::protocol::wire2::handshake::Hello {
             version: crate::protocol::wire2::WIRE_VERSION,
             broker_caps: crate::protocol::wire2::BROKER_CAPABILITIES,
-            max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES,
+            max_message_bytes: self.max_message_bytes,
             max_in_flight: u32::try_from(BLOCKING_DOMAIN_DISPATCH_CONCURRENCY).unwrap_or(u32::MAX),
             session_id,
         };
@@ -318,6 +321,32 @@ impl DomainFrameDispatcher {
             Bytes::from(hello.encode()),
             "HELLO",
         );
+    }
+
+    /// Tell every live session the broker is going away and how long it will
+    /// keep serving. Best-effort, like every other control frame.
+    pub(super) fn announce_goaway(&self, code: u16, grace_ms: u32, reason: &str) {
+        let Some(router) = &self.router else {
+            return;
+        };
+        let payload = Bytes::from(
+            crate::protocol::wire2::handshake::GoAway {
+                code,
+                grace_ms,
+                reason: reason.to_owned(),
+            }
+            .encode(),
+        );
+        for session in self.registry.active_sessions() {
+            announce_control_frame(
+                router,
+                session.session_id,
+                session.route_family,
+                crate::protocol::wire2::control::GOAWAY,
+                payload.clone(),
+                "GOAWAY",
+            );
+        }
     }
 
     pub(super) fn send_domain_error_frame(

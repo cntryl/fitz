@@ -335,6 +335,7 @@ impl SessionOutboundSink {
             crate::protocol::queue_codec::msg_type::NOTIFY,
             None,
             &payload,
+            self.max_message_bytes,
         )?;
         Self::observe_encode_latency(encode_start);
         // Best-effort: this is delivered synchronously from the Queue domain

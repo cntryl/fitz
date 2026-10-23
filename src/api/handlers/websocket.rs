@@ -344,7 +344,7 @@ where
 
     let (sink, mut close_signal) =
         crate::api::outbound::SessionOutboundSink::with_close_signal(outbound_tx.clone());
-    let sink = Arc::new(sink);
+    let sink = Arc::new(sink.with_max_message_bytes(config.max_frame_size));
     let mut inbox_route =
         crate::runtime::routing::session_inbox_address(session.info().route_family, session_id);
     tracing::debug!(
