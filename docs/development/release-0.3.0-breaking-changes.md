@@ -25,8 +25,8 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-09 | RPC budget and cancellation fields in the base layout; `CAP_RPC_CANCELLATION` retired | Base protocol | proposed | |
 | W-10 | `BUSY` with `effect=NOT_APPLIED` in every domain; no connection close on overflow | Spec and code agree | landed for codes: `BUSY` is `x005` in every block with `effect = NOT_APPLIED`; connection-close-on-overflow was already gone | |
 | W-11 | Notice `ACK_REQUESTED` header flag for PUBLISH | Observable drops on request | proposed | |
-| W-12 | Notice malformed-wildcard patterns become `INVALID_PATTERN` | Ends the frozen-3005 exception | proposed | |
-| W-13 | Stream "route family mismatch" becomes `INVALID_ROUTE` instead of `BACKEND` | Client error, not backend failure | proposed | |
+| W-12 | Notice malformed-wildcard patterns become `INVALID_PATTERN` | Ends the frozen-3005 exception | landed: every pattern the compiler rejects is `INVALID_PATTERN` (3003) | |
+| W-13 | Stream "route family mismatch" becomes `INVALID_ROUTE` instead of `BACKEND` | Client error, not backend failure | landed: `INVALID_ROUTE` (2002) | |
 | W-14 | `SESSION_METADATA` record folded into `CONNECT` | One handshake step | landed: the service name travels in CONNECT; the record, its capability bit, and `CORRELATE`/`CORRELATED`/`SERVER_HELLO` are gone | |
 | W-15 | Lease `RENEW` canonical; `QUEUE_FULL` (5007) renamed `WAITERS_LIMIT` | Naming drift | landed: `WAITERS_LIMIT` is 5056; `RENEW` wording follows in the spec pass | |
 | W-16 | Queue `ENQUEUE_BATCH` (201) reservation retired; id never reused | Design 5.10 | decided | |

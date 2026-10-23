@@ -212,6 +212,7 @@ fn stream_error_code(kind: StreamClientErrorKind) -> u16 {
     use crate::protocol::error_codes::stream;
 
     match kind {
+        StreamClientErrorKind::InvalidRoute => stream::ERR_INVALID_ROUTE,
         StreamClientErrorKind::ConcurrencyConflict => stream::ERR_CONCURRENCY_CONFLICT,
         StreamClientErrorKind::SessionAlreadyActive => stream::ERR_SESSION_ALREADY_ACTIVE,
         StreamClientErrorKind::SessionNotFound => stream::ERR_SESSION_NOT_FOUND,

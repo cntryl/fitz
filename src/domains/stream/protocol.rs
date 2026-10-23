@@ -582,6 +582,8 @@ pub const ERR_READ_RESPONSE_TOO_LARGE: &str = "ERR_READ_RESPONSE_TOO_LARGE";
 /// each kind to its numeric code; the domain never deals in numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamClientErrorKind {
+    /// Route shape, scheme, or route family mismatch.
+    InvalidRoute,
     ConcurrencyConflict,
     SessionAlreadyActive,
     SessionNotFound,
@@ -645,6 +647,7 @@ fn classify_stream_error_message(message: &str) -> StreamClientErrorKind {
         "session not found" => Kind::SessionNotFound,
         "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => Kind::ConcurrencyConflict,
         "resource not found" => Kind::ResourceNotFound,
+        "route family mismatch" => Kind::InvalidRoute,
         "empty pattern" => Kind::InvalidSubscriptionPattern,
         message if message.starts_with("invalid read ") || message.starts_with("read bound ") => {
             Kind::InvalidReadBound
@@ -801,7 +804,7 @@ mod tests {
                 "backend concurrency conflict diagnostic unavailable",
                 Kind::Backend,
             ),
-            ("route family mismatch", Kind::Backend),
+            ("route family mismatch", Kind::InvalidRoute),
         ];
 
         // Act
