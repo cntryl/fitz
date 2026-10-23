@@ -6,7 +6,7 @@ use uuid::Uuid;
 mod stream_commit;
 
 fn frame(message_type: u16, payload: &[u8]) -> Vec<u8> {
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(message_type, payload);
     builder.build()
 }
@@ -45,7 +45,7 @@ fn worker_cleanup_ack(correlation_id: Uuid) -> Vec<u8> {
 }
 
 fn assert_lifecycle(frame_bytes: &[u8], kind: u8, correlation_id: Uuid, value: u8) {
-    let mut parser = TlvFrameParser::new(frame_bytes);
+    let mut parser = FrameParser::new(frame_bytes);
     let (message_type, payload) = parser.next_field().expect("lifecycle frame");
     assert_eq!(message_type, 305);
     assert!(parser.next_field().is_none());

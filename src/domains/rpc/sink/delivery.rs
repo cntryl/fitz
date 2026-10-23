@@ -398,7 +398,7 @@ impl RpcFamilyRuntime<'_> {
             let request_ctx = FrameContext::new(
                 worker.session_id,
                 crate::dispatch::protocol::frame::ChannelId::Rpc,
-                crate::dispatch::protocol::tlv::MessageType::new(RPC_MSG_TYPE_REQUEST),
+                crate::dispatch::protocol::message::MessageType::new(RPC_MSG_TYPE_REQUEST),
                 crate::dispatch::protocol::rpc_codec::encode_worker_request_payload(
                     req,
                     remaining_budget_ms,

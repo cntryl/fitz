@@ -165,7 +165,7 @@ pub(super) struct DomainDispatchRequest<'a> {
     pub(super) route_family: crate::runtime::routing::RouteFamily,
     pub(super) domain: DispatchDomain,
     pub(super) policy: AuthorizationPolicy,
-    pub(super) msg_type: crate::protocol::tlv::MessageType,
+    pub(super) msg_type: crate::protocol::message::MessageType,
     pub(super) payload: DomainDispatchPayload<'a>,
     /// Correlation the client attached to this request, echoed onto every
     /// frame answering it - including ingress-synthesized errors.
@@ -285,7 +285,7 @@ pub trait Ingress: Send + Sync {
         &self,
         session_id: u64,
         channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         message_payload: Bytes,
         correlation: Option<std::num::NonZeroU64>,
     ) -> IngressDecision;
@@ -299,7 +299,7 @@ pub trait Ingress: Send + Sync {
         &self,
         session_id: u64,
         channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         message_payload: Bytes,
         labels: crate::protocol::wire2::header::HeaderLabels,
         _received_at: std::time::Instant,

@@ -2,7 +2,7 @@
 //!
 //! Minimal TLV frame builders and parsers reused by tier4 benches.
 
-use crate::testkit::transport::{TlvFrameBuilder, TlvFrameParser};
+use crate::testkit::transport::{FrameBuilder, FrameParser};
 use bytes::BufMut;
 use bytes::Bytes;
 
@@ -32,7 +32,7 @@ fn u32_to_usize(value: u32) -> usize {
 /// This function panics when the frame does not contain a single TLV field.
 #[must_use]
 pub fn extract_single_tlv_field(frame: &[u8]) -> (u16, Bytes) {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser.next_field_ref().expect("single TLV field");
     (msg_type, Bytes::copy_from_slice(payload))
 }
@@ -46,7 +46,7 @@ pub fn build_kv_begin(route: &str, mode: u8) -> Vec<u8> {
     payload.extend_from_slice(route.as_bytes());
     payload.push(mode);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(100, &payload);
     builder.build()
 }
@@ -64,7 +64,7 @@ pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8
     payload.extend_from_slice(&(u32_len(value.len())).to_be_bytes());
     payload.extend_from_slice(value);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(104, &payload);
     builder.build()
 }
@@ -79,7 +79,7 @@ pub fn build_kv_commit(tx_id: u64, route: &str, persistence: u8) -> Vec<u8> {
     payload.extend_from_slice(route.as_bytes());
     payload.push(persistence);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(101, &payload);
     builder.build()
 }
@@ -93,7 +93,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
     payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(102, &payload);
     builder.build()
 }
@@ -102,7 +102,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
 /// Format: [u8 status][optional data...]
 #[must_use]
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
@@ -143,7 +143,7 @@ pub fn build_notice_publish(route: &str, data: &[u8]) -> Vec<u8> {
     buf.put_u32(u32_len(data.len()));
     buf.put_slice(data);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(500, &buf);
     builder.build()
 }
@@ -156,7 +156,7 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(501, &buf);
     builder.build()
 }
@@ -167,7 +167,7 @@ pub fn build_notice_unsubscribe(subscription_id: u64) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u64(subscription_id);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(502, &buf);
     builder.build()
 }
@@ -175,7 +175,7 @@ pub fn build_notice_unsubscribe(subscription_id: u64) -> Vec<u8> {
 /// Parse NOTICE response
 #[must_use]
 pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if payload.is_empty() { 1 } else { payload[0] };
@@ -221,7 +221,7 @@ pub struct NoticeDelivery {
 pub fn parse_notice_delivery(frame: &[u8]) -> Result<NoticeDelivery, String> {
     use crate::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field_ref()
         .ok_or_else(|| "Missing notice delivery frame".to_string())?;
@@ -256,7 +256,7 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
     payload.extend_from_slice(data);
     payload.push(0); // has_delay = false
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(200, &payload);
     builder.build()
 }
@@ -273,7 +273,7 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
     payload.push(0); // has_batch_size = false
     payload.push(0); // has_wait_seconds = false
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(202, &payload);
     builder.build()
 }
@@ -286,7 +286,7 @@ pub fn build_queue_watch(queue_name: &str) -> Vec<u8> {
     payload.extend_from_slice(&(u32_len(pattern.len())).to_be_bytes());
     payload.extend_from_slice(pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(207, &payload);
     builder.build()
 }
@@ -304,7 +304,7 @@ pub fn build_queue_dequeue_batch(queue_name: &str, batch_size: u32) -> Vec<u8> {
     payload.extend_from_slice(&batch_size.to_be_bytes());
     payload.push(0); // has_wait_seconds = false
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(202, &payload);
     builder.build()
 }
@@ -319,7 +319,7 @@ pub fn build_queue_complete(queue_name: &str, message_id: u64, token: u64) -> Ve
     payload.extend_from_slice(&message_id.to_be_bytes());
     payload.extend_from_slice(&token.to_be_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(204, &payload);
     builder.build()
 }
@@ -327,7 +327,7 @@ pub fn build_queue_complete(queue_name: &str, message_id: u64, token: u64) -> Ve
 /// Parse QUEUE response
 #[must_use]
 pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if payload.is_empty() { 1 } else { payload[0] };
@@ -351,7 +351,7 @@ pub fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: i32)
     buf.put_u64(u64_from_i32(ttl_secs));
     buf.put_u32(0);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(400, &buf);
     builder.build()
 }
@@ -369,7 +369,7 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
 
     buf.put_u64(token);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(402, &buf);
     builder.build()
 }
@@ -388,7 +388,7 @@ pub fn build_lease_extend(route: &str, owner_id: &str, token: u64, ttl_secs: i32
     buf.put_u64(token);
     buf.put_u64(u64_from_i32(ttl_secs));
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(401, &buf);
     builder.build()
 }
@@ -400,7 +400,7 @@ pub fn build_lease_query(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(403, &buf);
     builder.build()
 }
@@ -408,7 +408,7 @@ pub fn build_lease_query(route: &str) -> Vec<u8> {
 /// Parse LEASE response: (`msg_type`, `status`, `data`)
 #[must_use]
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if payload.is_empty() { 1 } else { payload[0] };
@@ -496,7 +496,7 @@ pub fn build_rpc_subscribe_with_max_concurrent(worker_addr: &str, max_concurrent
     buf.put_u32(max_concurrent);
     buf.put_u8(0); // no cancellation support
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(300, &buf);
     builder.build()
 }
@@ -517,7 +517,7 @@ pub fn build_rpc_request(route: &str, payload: &[u8]) -> Vec<u8> {
     buf.put_slice(payload);
     buf.put_u8(0); // no caller budget
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(302, &buf);
     builder.build()
 }
@@ -544,7 +544,7 @@ pub fn build_rpc_response_frame_bytes(correlation_id: uuid::Uuid, body: Bytes) -
 /// Parse RPC response
 #[must_use]
 pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if payload.is_empty() { 1 } else { payload[0] };
@@ -562,7 +562,7 @@ pub fn build_stream_begin(route: &str) -> Vec<u8> {
     buf.put_slice(route.as_bytes());
     buf.put_u8(0);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(600, &buf);
     builder.build()
 }
@@ -595,7 +595,7 @@ pub fn build_stream_append_with_metadata(
         None => buf.put_u8(0),
     }
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(601, &buf);
     builder.build()
 }
@@ -607,7 +607,7 @@ pub fn build_stream_commit(session_id: u64, mode: u8) -> Vec<u8> {
     buf.put_u64(session_id);
     buf.put_u8(mode);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(602, &buf);
     builder.build()
 }
@@ -615,7 +615,7 @@ pub fn build_stream_commit(session_id: u64, mode: u8) -> Vec<u8> {
 /// Build STREAM ROLLBACK frame (`msg_type` 603).
 #[must_use]
 pub fn build_stream_rollback(session_id: u64) -> Vec<u8> {
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(603, &session_id.to_be_bytes());
     builder.build()
 }
@@ -636,7 +636,7 @@ pub fn build_stream_read_with_limit(route: &str, start_offset: u64, limit: u64) 
     buf.put_u64(limit);
     buf.put_u8(0);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(604, &buf);
     builder.build()
 }
@@ -683,7 +683,7 @@ pub fn build_stream_read_with_snapshot_cursor(
         None => buf.put_u8(0),
     }
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(604, &buf);
     builder.build()
 }
@@ -695,7 +695,7 @@ pub fn build_stream_last(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(605, &buf);
     builder.build()
 }
@@ -707,7 +707,7 @@ pub fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(606, &buf);
     builder.build()
 }
@@ -719,7 +719,7 @@ pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(607, &buf);
     builder.build()
 }
@@ -731,7 +731,7 @@ pub fn build_stream_unsubscribe(route_pattern: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(608, &buf);
     builder.build()
 }
@@ -739,7 +739,7 @@ pub fn build_stream_unsubscribe(route_pattern: &str) -> Vec<u8> {
 /// Parse STREAM response
 #[must_use]
 pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if payload.is_empty() { 1 } else { payload[0] };
@@ -884,7 +884,7 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
     buf.put_u32(u32_len(payload.len()));
     buf.put_slice(payload);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(700, &buf);
     builder.build()
 }
@@ -907,7 +907,7 @@ pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
         buf.put_slice(payload);
     }
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(706, &buf);
     builder.build()
 }
@@ -915,7 +915,7 @@ pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
 /// Parse SCHEDULE response
 #[must_use]
 pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if payload.is_empty() { 1 } else { payload[0] };

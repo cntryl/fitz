@@ -33,7 +33,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-17 | Error envelope carries an explicit `u8 class` alongside the decimal code | Design 5.3 | landed: the envelope carries the explicit `class` byte | |
 | W-18 | Server control message `GOAWAY {code, grace_ms, reason}` | Design 5.12 | landed | `Runtime::begin_drain` sends GOAWAY DRAINING with the grace and close reason to every live session; FORCED_CLOSE and LIMIT_CHANGED are defined but not yet emitted |
 | W-19 | No `retry_after` hint; no route family in `HELLO`; `REAUTH` deferred as an additive verb | Design 5.4, 5.9, 5.12 | decided | |
-| W-20 | Stream `MAX_EVENT_SIZE` (61,247 bytes) still derives from the wire-1 64 KiB value cap; raise it to track `max_message_bytes` | Follows W-01, C-01 | proposed | Additive for clients; `READ_RESPONSE_TOO_LARGE` already means larger than `max_message_bytes` |
+| W-20 | Stream `MAX_EVENT_SIZE` (61,247 bytes) still derives from the wire-1 64 KiB value cap; raise it to track `max_message_bytes` | Follows W-01, C-01 | deferred | Additive for clients, so it needs no wire break and can land in any later release. Safe as is: the 64 KiB floor on `FITZ_MAX_MESSAGE_BYTES` keeps every stored event deliverable. Raising it needs the configured limit plumbed into the Stream and Schedule domains |
 
 ## Storage (Midge)
 
@@ -57,7 +57,8 @@ Storage rows follow the Midge work tracked in that repository and the
 
 | ID | Change | Why | Status | Issue |
 | --- | --- | --- | --- | --- |
-| R-01 | `StreamClientError` and `NoticeClientError` kinds map to the new code table | Follows W-04 | proposed | |
+| R-01 | `StreamClientError` and `NoticeClientError` kinds map to the new code table | Follows W-04 | landed | Landed with W-04/W-12/W-13 |
+| R-02 | `protocol::tlv` codec retired: `MessageType` and `WireMessage` live in `protocol::message`; testkit `FrameBuilder`/`FrameParser` | Follows W-01 | landed | The `tier1_hotpath_tlv` and `tier2_subsystem_tlv_pipeline` bench targets keep their names because the workflows name them; renaming needs an authorized workflow change |
 
 ## Release gates for 0.3.0
 

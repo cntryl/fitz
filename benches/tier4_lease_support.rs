@@ -14,7 +14,7 @@ use fitz::benchkit::{
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::testkit::transport::TlvFrameParser;
+use fitz::testkit::transport::FrameParser;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use futures_util::future::join_all;
 use std::sync::Arc;
@@ -86,7 +86,7 @@ fn assert_release_body(body: &[u8]) {
 }
 
 fn network_body(response: &[u8], expected_type: u16) -> Bytes {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
     let (message_type, body) = parser.next_field_ref().expect("Lease response field");
     assert_eq!(
         message_type, expected_type,

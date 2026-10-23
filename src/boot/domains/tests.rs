@@ -258,7 +258,7 @@ fn should_reject_new_work_after_domain_actor_panic() {
             FrameContext::new(
                 warmup_session,
                 crate::protocol::frame::ChannelId::Pub,
-                crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+                crate::protocol::message::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
                 encode_kv_begin(warmup_route),
                 family,
             ),
@@ -276,7 +276,7 @@ fn should_reject_new_work_after_domain_actor_panic() {
         FrameContext::new(
             recovery_session,
             crate::protocol::frame::ChannelId::Pub,
-            crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            crate::protocol::message::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(recovery_route),
             family,
         ),

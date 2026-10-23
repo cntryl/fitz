@@ -190,7 +190,7 @@ impl KvFamilyRuntime<'_> {
             let notify_ctx = FrameContext::new(
                 session_id,
                 crate::dispatch::protocol::frame::ChannelId::Sub,
-                crate::dispatch::protocol::tlv::MessageType::new(
+                crate::dispatch::protocol::message::MessageType::new(
                     crate::dispatch::protocol::kv::msg_type::NOTIFY,
                 ),
                 bytes::Bytes::from(payload),

@@ -79,7 +79,7 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
         FrameContext::new(
             1,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             bytes::Bytes::from(caller_one_payload),
             family,
         ),
@@ -91,7 +91,7 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
         FrameContext::new(
             2,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             bytes::Bytes::from(caller_two_payload),
             family,
         ),
@@ -186,7 +186,7 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
         FrameContext::new(
             1,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             caller_one_payload.clone(),
             family,
         ),
@@ -198,7 +198,7 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
         FrameContext::new(
             2,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             caller_two_payload.clone(),
             family,
         ),
@@ -295,7 +295,7 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
         FrameContext::new(
             1,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             caller_one_payload.clone(),
             family,
         ),
@@ -307,7 +307,7 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
         FrameContext::new(
             2,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             caller_two_payload.clone(),
             family,
         ),
@@ -319,7 +319,7 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),
@@ -437,7 +437,7 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
         FrameContext::new(
             1,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             caller_one_payload,
             family,
         ),
@@ -449,7 +449,7 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
         FrameContext::new(
             2,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             caller_two_payload,
             family,
         ),
@@ -461,7 +461,7 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
         FrameContext::new(
             3,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             caller_three_payload,
             family,
         ),
@@ -546,7 +546,7 @@ fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_w
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -617,7 +617,7 @@ fn should_forward_response_to_original_request_source_given_noncanonical_inbox_r
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -651,7 +651,7 @@ fn should_forward_response_to_original_request_source_given_noncanonical_inbox_r
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),

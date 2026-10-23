@@ -1,7 +1,7 @@
 use super::super::durable::{complete, empty_legacy_success, payload, request, require_legacy_ok};
 use super::super::types::BenchFailure;
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::{TestClient, TlvFrameBuilder, TlvFrameParser};
+use fitz::testkit::{FrameBuilder, FrameParser, TestClient};
 use std::future::Future;
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ pub async fn bounded<T>(
 pub fn frame(kind: u16, route: &str) -> Vec<u8> {
     let mut encoder = PayloadEncoder::new();
     encoder.put_string(route);
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(kind, &encoder.finish());
     builder.build()
 }
@@ -43,7 +43,7 @@ pub async fn create(
     encoder.put_string(CRON);
     encoder.put_u8(mode);
     encoder.put_bytes(&payload(index, generation));
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(700, &encoder.finish());
     empty_legacy_success(
         &bounded(request(client, &builder.build(), 700)).await?,
@@ -78,7 +78,7 @@ pub fn delivery(
     generation: u64,
     count: usize,
 ) -> Result<usize, BenchFailure> {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (kind, body) = parser
         .next_field_ref()
         .ok_or_else(|| BenchFailure::validation("missing delivery field"))?;
@@ -124,7 +124,7 @@ pub async fn verify_definitions(
         let mut encoder = PayloadEncoder::new();
         encoder.put_optional_string(cursor.as_deref());
         encoder.put_optional_u64(Some(16));
-        let mut builder = TlvFrameBuilder::new();
+        let mut builder = FrameBuilder::new();
         builder.encode_field(702, &encoder.finish());
         let body = bounded(request(client, &builder.build(), 702)).await?;
         require_legacy_ok(&body, "Schedule LIST")?;

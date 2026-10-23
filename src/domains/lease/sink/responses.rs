@@ -24,7 +24,7 @@ impl LeaseFamilyRuntime<'_> {
             FrameContext::new(
                 waiter.owner_session_id,
                 crate::protocol::test_support::channel_id_from_client(waiter.channel),
-                crate::dispatch::protocol::tlv::MessageType::new(
+                crate::dispatch::protocol::message::MessageType::new(
                     crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
                 ),
                 bytes::Bytes::from(response_bytes),
@@ -79,7 +79,7 @@ impl LeaseFamilyRuntime<'_> {
             FrameContext::new(
                 meta.session_id,
                 crate::protocol::test_support::channel_id_from_client(meta.channel),
-                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::message::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )

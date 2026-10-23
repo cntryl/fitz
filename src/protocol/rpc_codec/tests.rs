@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::tlv::MessageType;
+use crate::protocol::message::MessageType;
 
 fn decode_single_frame(frame: &[u8]) -> (MessageType, Bytes) {
     let (header, value) =

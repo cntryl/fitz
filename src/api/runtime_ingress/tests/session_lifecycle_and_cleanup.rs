@@ -9,8 +9,8 @@ pub(super) use crate::domains::rpc::sink::RpcDomain;
 pub(super) use crate::domains::schedule::sink::ScheduleDomain;
 pub(super) use crate::domains::stream::sink::StreamDomain;
 pub(super) use crate::protocol::frame::ChannelId;
+pub(super) use crate::protocol::message::MessageType;
 pub(super) use crate::protocol::payload_codec::PayloadEncoder;
-pub(super) use crate::protocol::tlv::MessageType;
 pub(super) use crate::protocol::FrameContext;
 pub(super) use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::{DeliveryError, Envelope, Mailbox, MailboxSink};
@@ -471,7 +471,7 @@ pub(super) fn should_process_frame() {
             .on_frame(
                 2,
                 ChannelId::Control,
-                crate::protocol::tlv::MessageType::CONNECT,
+                crate::protocol::message::MessageType::CONNECT,
                 connect_payload(&jwt),
                 None,
             )
@@ -492,7 +492,7 @@ async fn should_reject_unknown_session() {
         .on_frame(
             999,
             ChannelId::Control,
-            crate::protocol::tlv::MessageType::new(42),
+            crate::protocol::message::MessageType::new(42),
             Bytes::from("test"),
             None,
         )
@@ -533,7 +533,7 @@ pub(super) fn should_call_event_handler() {
             .on_frame(
                 3,
                 ChannelId::Control,
-                crate::protocol::tlv::MessageType::CONNECT,
+                crate::protocol::message::MessageType::CONNECT,
                 connect_payload(&jwt),
                 None,
             )

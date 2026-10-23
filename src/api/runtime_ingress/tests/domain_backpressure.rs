@@ -145,7 +145,10 @@ fn domain_ingress_cases() -> Vec<DomainIngressCase> {
 
 fn synthesized_error_code(case: &DomainIngressCase, frame: &FrameContext) -> u32 {
     if case.domain == "rpc" && case.msg_type == 302 {
-        assert_eq!(frame.msg_type, crate::protocol::tlv::MessageType::new(303));
+        assert_eq!(
+            frame.msg_type,
+            crate::protocol::message::MessageType::new(303)
+        );
         assert!(frame.correlation.is_none());
         let expected_id = crate::protocol::rpc_codec::extract_request_correlation_id(&case.payload)
             .expect("RPC request UUID");
@@ -205,7 +208,7 @@ fn should_absorb_transient_domain_mailbox_backpressure_for_each_domain() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload,
                     None,
                 )
@@ -290,7 +293,7 @@ impl MailboxSink for RpcReplyThenUnavailableSink {
             .try_reply_to(FrameContext::new(
                 self.session_id,
                 ChannelId::Rpc,
-                crate::protocol::tlv::MessageType::new(303),
+                crate::protocol::message::MessageType::new(303),
                 Bytes::from(payload),
                 RouteFamily::new(1),
             ))
@@ -346,7 +349,7 @@ fn should_suppress_unavailable_rpc_failure_after_domain_terminal_claim() {
             .on_frame(
                 session_id,
                 case.channel_id,
-                crate::protocol::tlv::MessageType::new(case.msg_type),
+                crate::protocol::message::MessageType::new(case.msg_type),
                 case.payload.clone(),
                 None,
             )
@@ -363,7 +366,7 @@ fn should_suppress_unavailable_rpc_failure_after_domain_terminal_claim() {
     );
     assert_eq!(
         frames[0].msg_type,
-        crate::protocol::tlv::MessageType::new(303)
+        crate::protocol::message::MessageType::new(303)
     );
     assert_eq!(
         synthesized_error_code(&case, &frames[0]),
@@ -378,7 +381,7 @@ impl MailboxSink for ReplyThenTimeoutSink {
             .try_reply_to(FrameContext::new(
                 self.session_id,
                 self.channel_id,
-                crate::protocol::tlv::MessageType::new(self.msg_type),
+                crate::protocol::message::MessageType::new(self.msg_type),
                 Bytes::from_static(&[0]),
                 RouteFamily::new(1),
             ))
@@ -437,7 +440,7 @@ fn should_not_emit_a_second_terminal_response_after_the_domain_replied_for_each_
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     None,
                 )
@@ -485,7 +488,7 @@ fn should_surface_sustained_high_lane_domain_mailbox_backpressure_for_each_domai
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload,
                     None,
                 )
@@ -542,7 +545,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     None,
                 )
@@ -630,7 +633,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     None,
                 )
@@ -724,7 +727,7 @@ fn should_answer_terminal_delivery_failures_without_killing_the_session() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     None,
                 )
@@ -785,7 +788,7 @@ fn should_answer_unroutable_domain_frame_without_killing_the_session() {
             .on_frame(
                 session_id,
                 case.channel_id,
-                crate::protocol::tlv::MessageType::new(case.msg_type),
+                crate::protocol::message::MessageType::new(case.msg_type),
                 case.payload,
                 None,
             )
@@ -839,7 +842,7 @@ fn should_echo_correlation_on_ingress_synthesized_errors_for_each_domain() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     correlation,
                 )

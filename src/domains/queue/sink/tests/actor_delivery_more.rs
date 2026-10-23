@@ -714,7 +714,7 @@ fn should_report_a_stopped_actor_rather_than_admission_backpressure() {
         crate::dispatch::protocol::frame_context::FrameContext::new(
             1,
             crate::dispatch::protocol::frame::ChannelId::Pub,
-            crate::dispatch::protocol::tlv::MessageType::new(401),
+            crate::dispatch::protocol::message::MessageType::new(401),
             bytes::Bytes::new(),
             RouteFamily::new(1),
         ),

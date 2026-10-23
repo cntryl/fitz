@@ -431,7 +431,7 @@ mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::frame_context::FrameContext;
-    use crate::protocol::tlv::MessageType;
+    use crate::protocol::message::MessageType;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
     fn test_envelope(payload: Bytes) -> Envelope {

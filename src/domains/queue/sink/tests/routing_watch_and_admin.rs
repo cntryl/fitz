@@ -1,6 +1,6 @@
 use super::*;
 pub(super) use crate::dispatch::protocol::frame::ChannelId;
-pub(super) use crate::dispatch::protocol::tlv::MessageType;
+pub(super) use crate::dispatch::protocol::message::MessageType;
 pub(super) use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::Mailbox;
 pub(super) use bytes::{BufMut, Bytes};

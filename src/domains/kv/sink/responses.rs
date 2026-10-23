@@ -26,7 +26,7 @@ impl KvFamilyRuntime<'_> {
             FrameContext::new(
                 meta.session_id,
                 crate::protocol::test_support::channel_id_from_client(meta.channel),
-                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::message::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )

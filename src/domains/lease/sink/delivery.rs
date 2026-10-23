@@ -59,7 +59,7 @@ impl LeaseFamilyRuntime<'_> {
                 let notify_ctx = FrameContext::new(
                     session_id,
                     crate::dispatch::protocol::frame::ChannelId::Sub,
-                    crate::dispatch::protocol::tlv::MessageType::new(
+                    crate::dispatch::protocol::message::MessageType::new(
                         crate::dispatch::protocol::lease_codec::msg_type::NOTIFY,
                     ),
                     bytes::Bytes::from(notify_payload),

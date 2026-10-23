@@ -38,7 +38,7 @@ pub fn build_kv_begin(route: &str, mode: u8) -> Vec<u8> {
     payload.extend_from_slice(route.as_bytes());
     payload.push(mode);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(100, &payload);
     builder.build()
 }
@@ -55,7 +55,7 @@ pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8
     payload.extend_from_slice(&(u32_len(value.len())).to_be_bytes());
     payload.extend_from_slice(value);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(104, &payload);
     builder.build()
 }
@@ -70,7 +70,7 @@ pub fn build_kv_get(tx_id: u64, route: &str, key: &[u8]) -> Vec<u8> {
     payload.extend_from_slice(&(u32_len(key.len())).to_be_bytes());
     payload.extend_from_slice(key);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(103, &payload);
     builder.build()
 }
@@ -84,7 +84,7 @@ pub fn build_kv_commit(tx_id: u64, route: &str, persistence: u8) -> Vec<u8> {
     payload.extend_from_slice(route.as_bytes());
     payload.push(persistence);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(101, &payload);
     builder.build()
 }
@@ -95,7 +95,7 @@ pub fn build_kv_subscribe(route_pattern: &str) -> Vec<u8> {
     payload.extend_from_slice(&(u32_len(route_pattern.len())).to_be_bytes());
     payload.extend_from_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(109, &payload);
     builder.build()
 }
@@ -106,7 +106,7 @@ pub fn build_kv_unsubscribe(route_pattern: &str) -> Vec<u8> {
     payload.extend_from_slice(&(u32_len(route_pattern.len())).to_be_bytes());
     payload.extend_from_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(110, &payload);
     builder.build()
 }
@@ -119,7 +119,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
     payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(102, &payload);
     builder.build()
 }
@@ -127,7 +127,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
 /// Parse KV response
 /// Format: [u8 status][optional data...]
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
@@ -179,7 +179,7 @@ pub struct KvWatchDelivery {
 pub fn parse_kv_watch_delivery(frame: &[u8]) -> Result<KvWatchDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field()
         .ok_or_else(|| "Missing KV watch delivery frame".to_string())?;

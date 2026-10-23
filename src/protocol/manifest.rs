@@ -4,7 +4,7 @@
 //! bucketing, but they must never decide whether a message is supported or
 //! which domain is authorized to receive it.
 
-use super::tlv::MessageType;
+use super::message::MessageType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestDirection {

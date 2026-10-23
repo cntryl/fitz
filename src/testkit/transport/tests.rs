@@ -35,7 +35,7 @@ async fn websocket_upgrade_status_for_addr(
 #[test]
 fn should_encode_a_wire2_message_frame() {
     // Arrange
-    let mut builder = TlvFrameBuilder::new().with_correlation(7);
+    let mut builder = FrameBuilder::new().with_correlation(7);
     builder.encode_field(100, b"test_value");
 
     // Act
@@ -52,12 +52,12 @@ fn should_encode_a_wire2_message_frame() {
 #[test]
 fn should_parse_the_single_message_in_a_frame() {
     // Arrange
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(200, b"another_value");
     let frame = builder.build();
 
     // Act
-    let mut parser = TlvFrameParser::new(&frame);
+    let mut parser = FrameParser::new(&frame);
     let fields = parser.parse_all();
 
     // Assert
@@ -150,7 +150,7 @@ async fn should_keep_authenticated_websocket_open_beyond_connect_deadline() {
     );
     payload.extend_from_slice(route.as_bytes());
     payload.push(1);
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(100, &payload);
 
     // Act

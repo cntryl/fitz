@@ -29,7 +29,7 @@ fn should_include_client_reported_service_name_in_active_sessions() {
             .on_frame(
                 session_id,
                 ChannelId::Control,
-                crate::protocol::tlv::MessageType::CONNECT,
+                crate::protocol::message::MessageType::CONNECT,
                 Bytes::from(crate::testkit::transport::connect_body(
                     &jwt,
                     "orders-worker",

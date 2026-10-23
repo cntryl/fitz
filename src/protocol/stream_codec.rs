@@ -457,7 +457,7 @@ mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::manifest::{self, ManifestDecoder, ManifestDirection};
-    use crate::protocol::tlv::MessageType;
+    use crate::protocol::message::MessageType;
     use bytes::Bytes;
 
     const ROUTE_BYTES: &[u8] = b"\0\0\0\x0estream://r/a/x";

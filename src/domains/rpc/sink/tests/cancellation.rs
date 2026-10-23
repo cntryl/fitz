@@ -42,7 +42,7 @@ fn rpc_frame(
     FrameContext::new(
         session_id,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(message_type),
+        crate::dispatch::protocol::message::MessageType::new(message_type),
         payload,
         family,
     )

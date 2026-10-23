@@ -141,10 +141,11 @@ use cntryl_stress::{black_box, stress_main, stress, StressContext};
 #[stress(tier = 1, name = "decode_one_64b", max_allocs_per_op = 0, max_bytes_per_op = 0)]
 fn should_decode_one_64b(ctx: &mut StressContext) {
     let frame = build_frame(64);
-    let decoder = TlvDecoder::new();
 
     ctx.parameter("payload_size", 64);
-    ctx.measure("decode_one_64b", || black_box(decoder.decode_one(black_box(&frame)).unwrap()));
+    ctx.measure("decode_one_64b", || {
+        black_box(decode_message(black_box(&frame), u32::MAX).unwrap())
+    });
 }
 
 #[stress(tier = 3)]

@@ -391,13 +391,13 @@ impl TestWebSocketClient {
 /// TLV encoder for building protocol frames
 /// Builds one wire format 2 message: a 15-byte header followed by the value.
 /// One message per transport frame, so `encode_field` may be called once.
-pub struct TlvFrameBuilder {
+pub struct FrameBuilder {
     message: Option<Vec<u8>>,
     correlation: Option<std::num::NonZeroU64>,
     flags: crate::protocol::wire2::header::HeaderFlags,
 }
 
-impl TlvFrameBuilder {
+impl FrameBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -447,12 +447,12 @@ impl TlvFrameBuilder {
 }
 
 /// Reads the one wire format 2 message in a frame.
-pub struct TlvFrameParser<'a> {
+pub struct FrameParser<'a> {
     buf: &'a [u8],
     consumed: bool,
 }
 
-impl<'a> TlvFrameParser<'a> {
+impl<'a> FrameParser<'a> {
     #[must_use]
     pub fn new(buf: &'a [u8]) -> Self {
         Self {
@@ -491,7 +491,7 @@ impl<'a> TlvFrameParser<'a> {
     }
 }
 
-impl Default for TlvFrameBuilder {
+impl Default for FrameBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -501,7 +501,7 @@ impl Default for TlvFrameBuilder {
 /// The legacy realm argument is ignored.
 #[must_use]
 pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(
         crate::protocol::wire2::control::CONNECT,
         &connect_body(jwt_token, ""),

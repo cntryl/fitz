@@ -4,7 +4,7 @@ use super::{complete, empty_legacy_success, payload, request, require_legacy_ok}
 use crate::stress_support::types::{BenchFailure, StepOutcome};
 use fitz::benchkit::build_schedule_create;
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::{TestClient, TlvFrameBuilder};
+use fitz::testkit::{FrameBuilder, TestClient};
 use std::net::SocketAddr;
 
 const CRON: &str = "0 0 1 1 *";
@@ -23,7 +23,7 @@ impl ScheduleDriver {
         let route = format!("schedule://stress-bench/timing/lane-{lane}/run");
         let mut encoder = PayloadEncoder::new();
         encoder.put_string(&route);
-        let mut frame = TlvFrameBuilder::new();
+        let mut frame = FrameBuilder::new();
         frame.encode_field(701, &encoder.finish());
         let mut driver = Self {
             client: TestClient::new(addr)
@@ -66,7 +66,7 @@ impl ScheduleDriver {
             let mut encoder = PayloadEncoder::new();
             encoder.put_optional_string(cursor.as_deref());
             encoder.put_optional_u64(Some(PAGE_LIMIT));
-            let mut frame = TlvFrameBuilder::new();
+            let mut frame = FrameBuilder::new();
             frame.encode_field(702, &encoder.finish());
             let body = request(&mut self.client, &frame.build(), 702).await?;
             require_legacy_ok(&body, "Schedule LIST")?;

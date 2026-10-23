@@ -331,8 +331,8 @@ mod tests {
     use crate::protocol::error_codes::schedule as schedule_error_codes;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::frame_context::FrameContext;
+    use crate::protocol::message::MessageType;
     use crate::protocol::payload_codec::PayloadEncoder;
-    use crate::protocol::tlv::MessageType;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use crate::session::SessionId;
     use bytes::Bytes;

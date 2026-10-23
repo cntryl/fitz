@@ -107,7 +107,7 @@ pub(crate) fn assert_rpc_control_validation_error_response(
     expected_code: u16,
     expected_message: &str,
 ) {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser
         .next_field()
         .expect("RPC control validation response");

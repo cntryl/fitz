@@ -125,7 +125,7 @@ impl IngressDomainPolicy {
     }
 
     pub(super) fn dispatch_spec_for_msg_type(
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
     ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
         let Some(dispatch) = crate::dispatch::client_dispatch(msg_type)? else {
             return Ok(None);
@@ -139,7 +139,7 @@ impl IngressDomainPolicy {
     }
 
     pub(crate) fn descriptor_for_msg_type(
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
     ) -> Result<Option<&'static IngressDomainDescriptor>, &'static str> {
         let entry = crate::protocol::manifest::client_entry(msg_type)?;
         let Some(domain) = Self::domain_from_manifest_name(entry.domain) else {
@@ -303,7 +303,7 @@ mod tests {
             session_id: 7,
             channel_id: ChannelId::Lease,
             route_family: family,
-            msg_type: crate::protocol::tlv::MessageType::new(msg_type),
+            msg_type: crate::protocol::message::MessageType::new(msg_type),
             payload,
             source: crate::runtime::routing::RouteAddress::new(
                 family,
@@ -440,7 +440,7 @@ mod tests {
             .iter()
             .map(|(msg_type, _)| {
                 IngressDomainPolicy::dispatch_spec_for_msg_type(
-                    crate::protocol::tlv::MessageType::new(*msg_type),
+                    crate::protocol::message::MessageType::new(*msg_type),
                 )
                 .expect("dispatch policy should resolve")
                 .map(|spec| (spec.domain, spec.policy))
@@ -468,7 +468,7 @@ mod tests {
             .iter()
             .map(|msg_type| {
                 IngressDomainPolicy::dispatch_spec_for_msg_type(
-                    crate::protocol::tlv::MessageType::new(*msg_type),
+                    crate::protocol::message::MessageType::new(*msg_type),
                 )
                 .expect_err("message type should be rejected")
             })
@@ -476,7 +476,7 @@ mod tests {
         let expected = cases
             .iter()
             .map(|msg_type| {
-                if crate::protocol::manifest::entry(crate::protocol::tlv::MessageType::new(
+                if crate::protocol::manifest::entry(crate::protocol::message::MessageType::new(
                     *msg_type,
                 ))
                 .is_some()

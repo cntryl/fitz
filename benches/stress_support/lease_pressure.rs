@@ -10,7 +10,7 @@ use fitz::benchkit::{
 };
 use fitz::protocol::error_codes::lease;
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::{TestClient, TlvFrameBuilder};
+use fitz::testkit::{FrameBuilder, TestClient};
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use serde::Serialize;
 use std::future::Future;
@@ -149,7 +149,7 @@ fn waiting(owner: &str) -> Vec<u8> {
     e.put_string(owner);
     e.put_u64(30);
     e.put_u32(30);
-    let mut f = TlvFrameBuilder::new();
+    let mut f = FrameBuilder::new();
     f.encode_field(400, &e.finish());
     f.build()
 }

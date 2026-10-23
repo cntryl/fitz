@@ -51,7 +51,7 @@ fn should_keep_rpc_receive_stamp_across_backpressure_retry() {
             .on_frame(
                 session_id,
                 case.channel_id,
-                crate::protocol::tlv::MessageType::new(case.msg_type),
+                crate::protocol::message::MessageType::new(case.msg_type),
                 case.payload,
                 None,
             )
@@ -99,7 +99,7 @@ async fn should_preserve_transport_rpc_stamp_across_dispatch_paths() {
                     .on_frame(
                         session_id,
                         ChannelId::Control,
-                        crate::protocol::tlv::MessageType::CONNECT,
+                        crate::protocol::message::MessageType::CONNECT,
                         connect_payload(""),
                         None,
                     )
@@ -112,7 +112,7 @@ async fn should_preserve_transport_rpc_stamp_across_dispatch_paths() {
                 .on_frame_received_at(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload,
                     crate::protocol::wire2::header::HeaderLabels::none(),
                     received_at,

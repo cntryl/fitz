@@ -107,7 +107,7 @@ pub(crate) fn build_stream_last(route: &str) -> Vec<u8> {
     buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(605, &buf);
     builder.build()
 }
@@ -117,7 +117,7 @@ pub(crate) fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(606, &buf);
     builder.build()
 }
@@ -126,7 +126,7 @@ pub(crate) fn build_stream_rollback(session_id: u64) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u64(session_id);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(603, &buf);
     builder.build()
 }
@@ -150,7 +150,7 @@ pub(crate) fn build_stream_read_with_options(
         None => buf.put_u8(0),
     }
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(604, &buf);
     builder.build()
 }
@@ -178,7 +178,7 @@ pub(crate) fn build_stream_read_with_raw_filter(
     buf.put_u32(usize_to_u32_saturating(filter.len()));
     buf.put_slice(filter);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(604, &buf);
     builder.build()
 }

@@ -15,7 +15,7 @@ use fitz::protocol::error_codes::decode_error_body;
 use fitz::protocol::queue_codec::parse_request as parse_queue_request;
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::domain_internals::queue::QueueActor;
-use fitz::testkit::{TestClient, TestServer, TestWebSocketClient, TlvFrameParser};
+use fitz::testkit::{FrameParser, TestClient, TestServer, TestWebSocketClient};
 use futures_util::future::join_all;
 use std::time::Instant;
 
@@ -201,7 +201,7 @@ pub(crate) fn measure_encoded_lifecycle(
 }
 
 fn dispatch_encoded(actor: &mut QueueActor, session_id: u64, frame: &[u8]) -> QueueResponse {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser.next_field_ref().expect("one Queue TLV field");
     assert!(
         parser.next_field_ref().is_none(),
@@ -506,7 +506,7 @@ fn assert_success_response(
     expected_message_type: u16,
     minimum_len: usize,
 ) -> Result<&[u8], String> {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let Some((message_type, payload)) = parser.next_field_ref() else {
         return Err("Queue response field is missing".to_string());
     };

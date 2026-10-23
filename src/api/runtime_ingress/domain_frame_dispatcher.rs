@@ -45,7 +45,7 @@ impl DomainDispatchBackpressurePolicy {
 pub(super) struct DomainErrorFrame<'a> {
     pub(super) session_id: u64,
     pub(super) channel_id: crate::protocol::frame::ChannelId,
-    pub(super) msg_type: crate::protocol::tlv::MessageType,
+    pub(super) msg_type: crate::protocol::message::MessageType,
     pub(super) route_family: crate::runtime::routing::RouteFamily,
     pub(super) domain: DispatchDomain,
     pub(super) router: &'a crate::runtime::Router,
@@ -125,7 +125,7 @@ impl DomainFrameDispatcher {
         session_id: u64,
         channel_id: ChannelId,
         route_family: crate::runtime::routing::RouteFamily,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         payload: DomainDispatchPayload<'_>,
         correlation: Option<std::num::NonZeroU64>,
         flags: crate::protocol::wire2::header::HeaderFlags,
@@ -138,7 +138,7 @@ impl DomainFrameDispatcher {
         // CONNECT is consumed by the session authenticator and is not a
         // domain message. Every other client message must be present in the
         // exact protocol manifest.
-        if msg_type == crate::protocol::tlv::MessageType::CONNECT {
+        if msg_type == crate::protocol::message::MessageType::CONNECT {
             return Ok(());
         }
 
@@ -176,7 +176,7 @@ impl DomainFrameDispatcher {
     }
 
     pub(super) fn domain_dispatch_for_msg_type(
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
     ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
         crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::dispatch_spec_for_msg_type(
             msg_type,
@@ -377,7 +377,7 @@ impl DomainFrameDispatcher {
                 // REQUEST has no success ACK. All broker-synthesized failures use
                 // the RPC UUID in a terminal RESPONSE, never frame correlation.
                 (
-                    crate::protocol::tlv::MessageType::new(303),
+                    crate::protocol::message::MessageType::new(303),
                     Self::encode_rpc_terminal_error_payload(&request_id, domain_code, message),
                     None,
                 )
@@ -426,7 +426,7 @@ impl DomainFrameDispatcher {
 
     fn derive_auth_route_for_frame(
         domain: DispatchDomain,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         payload: &[u8],
     ) -> Result<Option<Cow<'_, str>>, String> {
         extract_auth_route_for_domain(domain, msg_type.as_u16(), payload).and_then(|route| {
@@ -452,7 +452,7 @@ impl DomainFrameDispatcher {
     fn authorize_domain_targets(
         &self,
         session_id: u64,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         domain: DispatchDomain,
         access: crate::auth::Access,
         targets: &AuthorizationTargets<'_>,
@@ -772,7 +772,7 @@ impl DomainFrameDispatcher {
 
     pub(super) fn resolve_authorization_targets(
         domain: DispatchDomain,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         payload: &[u8],
         policy: AuthorizationPolicy,
     ) -> Result<(AuthorizationTargets<'_>, crate::auth::Access), String> {

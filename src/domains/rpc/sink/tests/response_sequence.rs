@@ -139,7 +139,7 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -175,7 +175,7 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(invalid_response_payload),
             family,
         ),
@@ -241,7 +241,7 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -285,7 +285,7 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(first_response_payload),
             family,
         ),
@@ -297,7 +297,7 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(duplicate_response_payload),
             family,
         ),
@@ -390,7 +390,7 @@ fn deliver_test_rpc_chunk(
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(payload),
             family,
         ),
@@ -410,7 +410,7 @@ fn deliver_test_rpc_request(
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -483,7 +483,7 @@ fn should_terminate_stream_when_a_response_chunk_cannot_be_delivered() {
             FrameContext::new(
                 42,
                 crate::dispatch::protocol::frame::ChannelId::Rpc,
-                crate::dispatch::protocol::tlv::MessageType::new(303),
+                crate::dispatch::protocol::message::MessageType::new(303),
                 bytes::Bytes::from(payload),
                 family,
             ),

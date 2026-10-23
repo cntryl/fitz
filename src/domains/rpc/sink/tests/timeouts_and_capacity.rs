@@ -96,7 +96,7 @@ pub(super) fn should_forward_timeout_error_given_expired_pending_request() {
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload,
         family,
     );
@@ -209,7 +209,7 @@ pub(super) fn should_drop_timeout_error_given_requester_cleanup_before_expiratio
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload,
         family,
     );
@@ -282,7 +282,7 @@ pub(super) fn should_reject_rpc_request_when_pending_capacity_reached() {
     let frame_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(msg_type),
+        crate::dispatch::protocol::message::MessageType::new(msg_type),
         payload,
         family,
     );

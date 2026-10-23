@@ -652,7 +652,7 @@ pub(super) fn should_snapshot_live_worker_metrics_after_terminal_response_given_
         &FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(response_payload.clone()),
             family,
         ),
@@ -716,7 +716,7 @@ pub(super) fn should_snapshot_live_worker_metrics_after_terminal_response_given_
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),

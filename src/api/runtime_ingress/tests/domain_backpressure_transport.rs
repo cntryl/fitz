@@ -25,7 +25,7 @@ async fn should_give_non_rpc_retries_a_fresh_admission_budget_after_transport_qu
             .on_frame_received_at(
                 session_id,
                 case.channel_id,
-                crate::protocol::tlv::MessageType::new(case.msg_type),
+                crate::protocol::message::MessageType::new(case.msg_type),
                 case.payload,
                 crate::protocol::wire2::header::HeaderLabels::none(),
                 received_at,

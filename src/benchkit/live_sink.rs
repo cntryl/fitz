@@ -15,7 +15,7 @@ use crate::domains::stream::sink::StreamDomain;
 use crate::observability::metrics::MetricsCollector;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::frame_context::FrameContext;
-use crate::protocol::tlv::MessageType;
+use crate::protocol::message::MessageType;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{DeliveryError, MailboxSink, RouteError, Router};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

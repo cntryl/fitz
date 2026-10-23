@@ -16,7 +16,7 @@ use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::{ClientChannel, ClientFrameMeta};
-use fitz::testkit::transport::TlvFrameParser;
+use fitz::testkit::transport::FrameParser;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use futures_util::future::join_all;
 use std::sync::Arc;
@@ -265,7 +265,7 @@ impl InProcessNoticeFixture {
 
     pub(crate) fn complete_encoded_publish(&self) -> Duration {
         let started = Instant::now();
-        let mut parser = TlvFrameParser::new(&self.publish_frame);
+        let mut parser = FrameParser::new(&self.publish_frame);
         let (message_type, payload) = parser.next_field_ref().expect("Notice publish TLV field");
         assert!(
             parser.next_field_ref().is_none(),
@@ -424,7 +424,7 @@ fn route_encoded_frame(
     session_id: u64,
     frame: &[u8],
 ) {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser.next_field_ref().expect("Notice TLV field");
     assert!(
         parser.next_field_ref().is_none(),
@@ -484,7 +484,7 @@ fn assert_wire_ok_response(frame: &[u8], expected_message_type: u16) {
 }
 
 fn single_wire_field(frame: &[u8]) -> (u16, &[u8]) {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser.next_field_ref().expect("Notice TLV field");
     assert!(
         parser.next_field_ref().is_none(),

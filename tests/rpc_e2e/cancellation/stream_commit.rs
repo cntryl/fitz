@@ -10,7 +10,7 @@ const SURVIVING_RESPONSE: &[u8] = b"second call survived the held COMMIT";
 const HOLD_PAST_GRACE: Duration = Duration::from_secs(6);
 
 fn successful_stream_payload(frame: &[u8], expected_type: u16) -> Vec<u8> {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser.next_field().expect("Stream response");
     assert_eq!(message_type, expected_type);
     assert!(parser.next_field().is_none());

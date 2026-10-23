@@ -386,8 +386,8 @@ impl Session {
             "Session decoded message"
         );
         let payload = frame.slice(HEADER_LEN..);
-        let record = crate::protocol::tlv::TlvRecord::new(
-            crate::protocol::tlv::MessageType::new(header.message_type),
+        let record = crate::protocol::message::WireMessage::new(
+            crate::protocol::message::MessageType::new(header.message_type),
             payload,
         );
         let mux_start = Instant::now();

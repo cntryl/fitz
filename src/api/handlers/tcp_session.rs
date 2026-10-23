@@ -451,7 +451,7 @@ mod tests {
             &self,
             _session_id: u64,
             _channel_id: ChannelId,
-            _msg_type: crate::protocol::tlv::MessageType,
+            _msg_type: crate::protocol::message::MessageType,
             _message_payload: Bytes,
             _correlation: Option<std::num::NonZeroU64>,
         ) -> IngressDecision {

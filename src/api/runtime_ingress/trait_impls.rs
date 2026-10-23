@@ -46,7 +46,7 @@ impl Ingress for RuntimeIngress {
         &self,
         session_id: u64,
         channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         message_payload: Bytes,
         correlation: Option<std::num::NonZeroU64>,
     ) -> IngressDecision {
@@ -65,7 +65,7 @@ impl Ingress for RuntimeIngress {
         &self,
         session_id: u64,
         channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         message_payload: Bytes,
         labels: crate::protocol::wire2::header::HeaderLabels,
         received_at: std::time::Instant,
@@ -129,7 +129,7 @@ impl Ingress for RuntimeIngress {
         }
 
         // CONNECT is fully answered by HELLO; it carries nothing for a domain.
-        if msg_type == crate::protocol::tlv::MessageType::CONNECT {
+        if msg_type == crate::protocol::message::MessageType::CONNECT {
             return IngressDecision::Accept;
         }
 
@@ -245,7 +245,7 @@ impl RuntimeIngress {
     pub(super) fn derive_route_for_frame(
         &self,
         _session_info: &SessionInfo,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         payload: &Bytes,
     ) -> Result<Option<crate::runtime::routing::Route>, String> {
         let Some(spec) =

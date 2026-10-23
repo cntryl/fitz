@@ -180,7 +180,7 @@ impl SessionAuthenticator {
         &self,
         session_id: u64,
         channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         payload: &Bytes,
         should_notify_handler: bool,
     ) -> Result<AuthenticatedFrame, IngressDecision> {
@@ -188,7 +188,7 @@ impl SessionAuthenticator {
         // whether JWT verification must run. The mutable lookup below still
         // validates that the session exists and initializes it atomically.
         let needs_authentication = self.auth_required && self.needs_authentication(session_id)?;
-        let connect = if msg_type == crate::protocol::tlv::MessageType::CONNECT {
+        let connect = if msg_type == crate::protocol::message::MessageType::CONNECT {
             Some(self.decode_connect(session_id, channel_id, payload)?)
         } else {
             None

@@ -96,12 +96,12 @@ async fn exercise_failure<C: RpcConnector + FrameReceivingConnector>(failure: Ad
         "rpc://test/tasks/worker"
     };
     let uncorrelated_request = build_rpc_request(route, "run", b"body");
-    let (_, payload) = TlvFrameParser::new(&uncorrelated_request)
+    let (_, payload) = FrameParser::new(&uncorrelated_request)
         .next_field()
         .expect("RPC request field");
     let correlation_id =
         fitz::protocol::rpc_codec::extract_request_correlation_id(&payload).expect("request UUID");
-    let mut request_builder = TlvFrameBuilder::new().with_correlation(42);
+    let mut request_builder = FrameBuilder::new().with_correlation(42);
     request_builder.encode_field(302, &payload);
     let request = request_builder.build();
 
@@ -111,7 +111,7 @@ async fn exercise_failure<C: RpcConnector + FrameReceivingConnector>(failure: Ad
         .await
         .expect("terminal RPC response");
 
-    let response_parser = TlvFrameParser::new(&terminal);
+    let response_parser = FrameParser::new(&terminal);
     let header = response_parser.header().expect("response header");
     assert_eq!(header.message_type, 303);
     assert!(
@@ -198,7 +198,7 @@ async fn exercise_concurrent_failures<C: RpcConnector + FrameReceivingConnector>
     let mut pending = std::collections::HashSet::new();
     for _ in 0..3 {
         let request = build_rpc_request("rpc://test/tasks/worker", "run", b"body");
-        let (_, payload) = TlvFrameParser::new(&request)
+        let (_, payload) = FrameParser::new(&request)
             .next_field()
             .expect("RPC request field");
         let request_id = fitz::protocol::rpc_codec::extract_request_correlation_id(&payload)

@@ -42,7 +42,7 @@ fn open_connected_session(
             .on_frame(
                 session_id,
                 ChannelId::Control,
-                crate::protocol::tlv::MessageType::CONNECT,
+                crate::protocol::message::MessageType::CONNECT,
                 connect_payload(""),
                 None,
             )

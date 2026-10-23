@@ -95,7 +95,7 @@ where
     let mut payload = fitz::protocol::payload_codec::PayloadEncoder::new();
     payload.put_string("notice://test/acked");
     payload.put_bytes(b"hello");
-    let mut builder = fitz::testkit::transport::TlvFrameBuilder::new()
+    let mut builder = fitz::testkit::transport::FrameBuilder::new()
         .with_correlation(77)
         .with_flags(fitz::protocol::wire2::header::HeaderFlags::ack_requested());
     builder.encode_field(500, &payload.finish());

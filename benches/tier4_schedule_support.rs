@@ -13,13 +13,13 @@ use fitz::domains::schedule::{ScheduleMessage, ScheduleResponse};
 use fitz::protocol::error_codes::decode_error_body;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::frame_context::FrameContext;
+use fitz::protocol::message::MessageType;
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use fitz::protocol::schedule_codec::{encode_response, parse_request as parse_schedule_request};
-use fitz::protocol::tlv::MessageType;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::session::SessionId;
 use fitz::testkit::domain_internals::schedule::{ScheduleActor, ScheduleStore};
-use fitz::testkit::{TestClient, TestServer, TestWebSocketClient, TlvFrameBuilder, TlvFrameParser};
+use fitz::testkit::{FrameBuilder, FrameParser, TestClient, TestServer, TestWebSocketClient};
 use futures_util::future::join_all;
 use std::time::Instant;
 
@@ -249,7 +249,7 @@ pub(crate) fn measure_encoded_lifecycle(
 }
 
 fn decode_schedule_request(frame: &[u8]) -> ScheduleMessage {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser.next_field_ref().expect("one Schedule field");
     assert!(
         parser.next_field_ref().is_none(),
@@ -561,7 +561,7 @@ fn with_transport_clients<R>(
 fn build_schedule_subscribe(route: &str) -> Vec<u8> {
     let mut encoder = PayloadEncoder::new();
     encoder.put_string(route);
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(703, &encoder.finish());
     builder.build()
 }
@@ -597,7 +597,7 @@ fn assert_schedule_subscribe(frame: &[u8]) {
 }
 
 fn schedule_response_payload(frame: &[u8], expected_message_type: u16) -> &[u8] {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser.next_field_ref().expect("Schedule response field");
     assert!(
         parser.next_field_ref().is_none(),
@@ -611,7 +611,7 @@ fn schedule_response_payload(frame: &[u8], expected_message_type: u16) -> &[u8] 
 }
 
 fn assert_schedule_delivery(frame: &[u8], expected_payload: &[u8]) {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser.next_field_ref().expect("Schedule delivery field");
     assert!(
         parser.next_field_ref().is_none(),

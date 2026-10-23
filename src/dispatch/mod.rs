@@ -6,7 +6,7 @@
 
 use crate::protocol::frame::ChannelId;
 use crate::protocol::manifest::{client_entry, ManifestAuthorization, ManifestDecoder};
-use crate::protocol::tlv::MessageType;
+use crate::protocol::message::MessageType;
 use crate::runtime::routing::{RouteAddress, RouteFamily};
 use crate::runtime::{ClientChannel, ClientFrameMeta, DomainKind, Envelope};
 use bytes::Bytes;

@@ -7,7 +7,7 @@ use super::{
 impl RuntimeIngress {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn domain_dispatch_for_msg_type(
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
     ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
         DomainFrameDispatcher::domain_dispatch_for_msg_type(msg_type)
     }
@@ -15,7 +15,7 @@ impl RuntimeIngress {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn resolve_authorization_targets(
         domain: DispatchDomain,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         payload: &[u8],
         policy: AuthorizationPolicy,
     ) -> Result<(AuthorizationTargets<'_>, crate::auth::Access), String> {

@@ -271,7 +271,7 @@ impl ScheduleDomainRuntime<'_> {
         let notify_ctx = FrameContext::new(
             session_id,
             crate::dispatch::protocol::frame::ChannelId::Sub,
-            crate::dispatch::protocol::tlv::MessageType::new(705),
+            crate::dispatch::protocol::message::MessageType::new(705),
             bytes::Bytes::from(notify_payload),
             *subscriber.family(),
         );

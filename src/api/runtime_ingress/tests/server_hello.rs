@@ -48,7 +48,7 @@ fn should_answer_connect_with_hello_as_the_first_frame() {
             .on_frame(
                 session_id,
                 ChannelId::Control,
-                crate::protocol::tlv::MessageType::CONNECT,
+                crate::protocol::message::MessageType::CONNECT,
                 connect_payload(""),
                 None,
             )

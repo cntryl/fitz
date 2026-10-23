@@ -94,7 +94,7 @@ pub async fn process_session_frame_at(
 mod tests {
     use super::*;
     use crate::api::runtime_ingress::IngressDecision;
-    use crate::protocol::tlv::MessageType;
+    use crate::protocol::message::MessageType;
     use crate::protocol::wire2::header::{encode_message, HeaderFlags};
     use crate::session::{
         CloseReason, NewSessionConfig, SessionInfo, SessionMetadata, SessionPermissions,
