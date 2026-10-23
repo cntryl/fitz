@@ -97,6 +97,17 @@ architecture and scope in the release record; this exception does not establish
 AMD64 runtime results or relax resource, readiness, correctness or performance
 budgets. Workflow files remain unchanged.
 
+## Wire format 2 release gate (0.3.0)
+
+Record the released .NET, TypeScript, Go, Python, and Rust SDK 2.0 versions
+that pass the cross-language conformance runner against the release candidate
+broker. Confirm the golden contract test is green on the exact broker commit,
+that every ledger row is landed or deferred with a reason, and that the
+migration guide's 0.3.0 section states the mixed-version prohibition. Rehearse
+the drain-based broker upgrade with a 2.0 SDK consumer reconnecting through
+`GOAWAY`. Follow the SDK-first upgrade and together-rollback order in
+[migration guidance](../operations/migration-guide.md).
+
 ## Stream error envelope generation 2 release gate
 
 For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK

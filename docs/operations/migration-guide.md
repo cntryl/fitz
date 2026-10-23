@@ -2,6 +2,47 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## 0.3.0: wire format 2 (breaking, flag day)
+
+Fitz 0.3.0 speaks only wire format 2, the format Fitz intends to freeze as
+1.0.0. There is no negotiation with wire format 1 clients: a 0.3.0 broker
+cannot serve a 0.2.x SDK, and a 0.2.x broker cannot serve a 2.0 SDK. The
+complete list of changes is the
+[0.3.0 breaking-change ledger](../development/release-0.3.0-breaking-changes.md);
+the client-facing contract is `docs/clients/` and the code table is
+[error-codes.md](../clients/spec/error-codes.md).
+
+What every client sees change:
+
+- One fixed 15-byte message header with a mandatory `u64` correlation and a
+  `u32` length. TLV records, `CORRELATE`, `CORRELATED`, `SERVER_HELLO`, and
+  `SESSION_METADATA` are gone; the 64 KiB value cap is gone.
+- `CONNECT` is structured and is always answered by `HELLO` or
+  `CONNECT_REJECTED`. `GOAWAY` announces a planned drain with its grace.
+- Every error is `[1][u16 code][u8 class][u8 effect][string message]`, and
+  every code is renumbered: shared slots `x001`..`x010` per domain, domain
+  codes from `x050`. The old-to-new mapping is in `error-codes.md`.
+- Per-verb layout changes: Schedule `LIST` takes the cursor form (`LIST_V2`
+  retired), KV SCAN ends with an options byte, RPC registrations end with a
+  flags byte and requests with a budget presence byte, Notice `PUBLISH`
+  honors `ACK_REQUESTED`.
+
+**Upgrade order.** Ship the 2.0 line of every supported SDK (.NET,
+TypeScript, Go, Python, Rust) and upgrade every consumer to it, then upgrade
+the broker. Mixed versions are prohibited: a client on the wrong version fails
+its first message, it does not degrade. Schedule the broker upgrade as a
+drain: the 0.2.x broker closes sessions after its grace, consumers reconnect
+to the 0.3.0 broker with their 2.0 SDK.
+
+**Rollback.** Roll back the broker and the SDKs together; the same
+prohibition applies in reverse. The wire change touches no persisted data.
+Storage changes that ship in the same release are listed in the ledger's
+storage rows and carry their own migration notes.
+
+**Configuration.** `FITZ_MAX_MESSAGE_BYTES` (default 1 MiB) is now the one
+message limit: the transport frame bound, the outbound framing bound, and the
+`max_message_bytes` every client reads from `HELLO`.
+
 ## Midge 0.4.1
 
 Fitz uses the published crates.io `cntryl-midge` 0.4.1 package. This patch
@@ -116,7 +157,9 @@ only in the new prefix and need application-level reconciliation.
 See [../development/format-compatibility.md](../development/format-compatibility.md)
 for the format detail.
 
-## Stream error envelope generation 2
+## Historical (wire format 1): Stream error envelope generation 2
+
+Superseded by wire format 2 in 0.3.0, where every Stream error uses the common envelope.
 
 Stream BEGIN, APPEND, COMMIT, ROLLBACK, LAST, GET_METADATA, SUBSCRIBE, and
 UNSUBSCRIBE errors now use `[u8 2][u32 BE domain_code][u32 BE message_length][UTF-8 message]`.
@@ -130,7 +173,9 @@ must wait until all consumers have migrated. Roll back the broker first while
 keeping the dual-generation clients. No capability negotiation was performed for
 this change.
 
-## Frame-level request correlation
+## Historical (wire format 1): Frame-level request correlation
+
+Superseded by wire format 2 in 0.3.0, where every request carries a header correlation.
 
 Adds control message types `CORRELATE` (2), `CORRELATED` (3), and
 `SERVER_HELLO` (4). No existing domain payload changes.
@@ -149,7 +194,9 @@ request per message type.
 Broker rollback is safe at any point; correlated clients fall back to the
 one-at-a-time path on reconnect. No persisted data is affected.
 
-## Client-reported session service names
+## Historical (wire format 1): Client-reported session service names
+
+Superseded by wire format 2 in 0.3.0, where `CONNECT` carries the service name.
 
 The broker advertises `CAP_SESSION_METADATA` in `SERVER_HELLO`. A client that
 has a configured service name may send `SESSION_METADATA` (5) after seeing that

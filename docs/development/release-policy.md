@@ -22,6 +22,24 @@ deployments.
 
 Use [../operations/release-checklist.md](../operations/release-checklist.md) before final publish.
 
+## Wire format 2 release gate (0.3.0)
+
+The 0.3.0 release is a flag day with no negotiation against wire format 1, so
+policy item 4 applies in full. Before tagging:
+
+1. Every row in the
+   [0.3.0 breaking-change ledger](release-0.3.0-breaking-changes.md) is
+   `landed` or explicitly deferred with a reason.
+2. The wire golden vectors (`tests/fixtures/golden/wire2_vectors.txt`) are
+   committed and the golden contract test is green.
+3. The .NET, TypeScript, Go, Python, and Rust SDK 2.0 lines pass the
+   cross-language conformance runner against the release candidate broker, and
+   the released SDK versions are recorded in the release checklist.
+4. The [migration guide](../operations/migration-guide.md) 0.3.0 section
+   states the mixed-version prohibition and the upgrade and rollback order.
+5. Storage rows in the ledger carry their own migration notes and rehearsed
+   export or reset steps.
+
 ## Stream error envelope generation 2 release gate
 
 For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK
