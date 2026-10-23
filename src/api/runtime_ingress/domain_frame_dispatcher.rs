@@ -84,6 +84,8 @@ pub(super) struct DomainFrameDispatcher {
     pub(super) auth_required: bool,
     pub(super) stream_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
     pub(super) queue_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(super) rpc_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(super) notice_dispatch_permits: std::sync::Arc<tokio::sync::Semaphore>,
     pub(super) queue_family_dispatch:
         std::sync::Arc<dashmap::DashMap<u32, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 }

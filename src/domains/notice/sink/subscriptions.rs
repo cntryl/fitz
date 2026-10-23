@@ -111,7 +111,10 @@ impl NoticeFamilyState {
                     session = sub_msg.session_id.0,
                     "Rejected invalid subscription pattern"
                 );
-                crate::domains::notice::NoticeResponse::Error(error)
+                // Classified from the message on purpose: the spec keeps 3005
+                // for malformed wildcard shapes and 3002 for the prefixed
+                // "subscription pattern ..." grammar errors.
+                crate::domains::notice::NoticeResponse::Error(error.into())
             })
     }
 
@@ -167,7 +170,9 @@ impl NoticeFamilyState {
                     families.remove(&sub_msg.family_id);
                 }
                 return (
-                    NoticeResponse::Error("subscription ID space exhausted".to_string()),
+                    NoticeResponse::Error(crate::domains::notice::NoticeClientError::backend(
+                        "subscription ID space exhausted",
+                    )),
                     false,
                 );
             };

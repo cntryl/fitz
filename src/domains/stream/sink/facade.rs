@@ -238,6 +238,11 @@ impl StreamDomain {
                             Err(DeliveryError::ActorStopped)
                         };
                         let _ = reply.send(result);
+                        // A continuously busy family never reaches the idle
+                        // handler, so service watermark coordination here as
+                        // well; otherwise commits queue up, overflow, and the
+                        // dropped ranges leave the area watermark stuck.
+                        state.service_watermark_timers();
                     }
                     StreamDomainCommand::ReadLiveCounts(reply) => {
                         let _ = reply.send(state.core.live_counts());

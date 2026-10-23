@@ -21,7 +21,6 @@ impl StreamFamilyState {
             );
         }
         families.retain(|_, state| !state.is_empty());
-        let _ = families;
         self.remove_pending_notifications_for_session(session_id);
     }
 }

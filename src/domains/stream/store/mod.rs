@@ -209,10 +209,25 @@ impl StreamStoreError {
         }
     }
 
+    const fn client_kind(self) -> crate::domains::stream::StreamClientErrorKind {
+        match self {
+            Self::SessionNotFound => crate::domains::stream::StreamClientErrorKind::SessionNotFound,
+            Self::ConcurrencyConflict => {
+                crate::domains::stream::StreamClientErrorKind::ConcurrencyConflict
+            }
+        }
+    }
+
     pub(super) fn from_store_message(message: &str) -> Option<Self> {
         [Self::SessionNotFound, Self::ConcurrencyConflict]
             .into_iter()
             .find(|error| message == error.store_code())
+    }
+}
+
+impl From<StreamStoreError> for crate::domains::stream::StreamClientError {
+    fn from(error: StreamStoreError) -> Self {
+        Self::new(error.client_kind(), error.client_message())
     }
 }
 

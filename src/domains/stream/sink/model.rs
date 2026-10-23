@@ -244,6 +244,28 @@ pub(super) struct WatermarkCommit {
     pub(super) realm: String,
     pub(super) area: String,
     pub(super) batch: crate::domains::stream::protocol::BatchCommitted,
+    /// Which coordinators still need this commit. A commit that could not
+    /// reach a coordinator at the cap is re-queued with only that target.
+    pub(super) targets: WatermarkTargets,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct WatermarkTargets {
+    pub(super) area: bool,
+    pub(super) realm: bool,
+}
+
+impl WatermarkTargets {
+    pub(super) const fn both() -> Self {
+        Self {
+            area: true,
+            realm: true,
+        }
+    }
+
+    pub(super) const fn is_empty(self) -> bool {
+        !self.area && !self.realm
+    }
 }
 
 pub(super) struct StreamCommitOutcome {

@@ -242,6 +242,17 @@ impl RealmActor {
         self.realm_watermark.unwrap_or(0)
     }
 
+    /// True when every committed range has been folded into the persisted
+    /// watermark and no notification or retry is outstanding. An idle
+    /// coordinator holds no state that the store does not already have, so the
+    /// family may drop it and rebuild it from storage on the next commit.
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
+        self.committed_ranges.is_empty()
+            && self.notification.is_idle()
+            && self.watermark_retry_timer.is_none()
+    }
+
     /// Get committed ranges (for testing)
     #[cfg(test)]
     pub fn committed_ranges(&self) -> Vec<std::ops::RangeInclusive<u64>> {

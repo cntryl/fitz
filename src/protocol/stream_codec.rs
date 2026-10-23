@@ -7,18 +7,15 @@
 //! — it never appears on the wire.
 
 use crate::dispatch::wire::stream::{
-    IngestMetadata, StreamClientFrame, StreamClientResponseBody, StreamDiscriminator,
-    StreamFilterSet, StreamMessage, StreamSubscriptionFailure, StreamSubscriptionMessage,
-    StreamWriteMode,
+    IngestMetadata, StreamClientErrorKind, StreamClientFrame, StreamClientResponseBody,
+    StreamDiscriminator, StreamFilterSet, StreamMessage, StreamSubscriptionFailure,
+    StreamSubscriptionMessage, StreamWriteMode, ERR_STREAM_FILTER_INVALID_PAYLOAD,
+    ERR_STREAM_FILTER_UNSUPPORTED_VERSION,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
-
-const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: &str = "ERR_STREAM_FILTER_UNSUPPORTED_VERSION";
-const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLOAD";
-const ERR_READ_RESPONSE_TOO_LARGE: &str = "ERR_READ_RESPONSE_TOO_LARGE";
 
 fn u64_to_usize_saturating(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
@@ -178,8 +175,8 @@ pub fn encode_response_into(
             return encode_error_response_into(
                 enc,
                 message_type,
-                stream_error_code_for_message(e),
-                e,
+                stream_error_code(e.kind),
+                &e.message,
             );
         }
         StreamClientResponseBody::SubscriptionError(error) => {
@@ -213,32 +210,25 @@ pub fn encode_error_response_into(
     enc.finish()
 }
 
-fn stream_error_code_for_message(message: &str) -> u16 {
+/// The wire code for each client-visible Stream error kind.
+const fn stream_error_code(kind: StreamClientErrorKind) -> u16 {
     use crate::protocol::error_codes::stream;
 
-    if message.starts_with(ERR_STREAM_FILTER_UNSUPPORTED_VERSION) {
-        return stream::ERR_STREAM_FILTER_UNSUPPORTED_VERSION;
-    }
-    if message.starts_with(ERR_STREAM_FILTER_INVALID_PAYLOAD) {
-        return stream::ERR_STREAM_FILTER_INVALID_PAYLOAD;
-    }
-    if message.starts_with(ERR_READ_RESPONSE_TOO_LARGE) {
-        return stream::ERR_READ_RESPONSE_TOO_LARGE;
-    }
-
-    match message {
-        "session already active" => stream::ERR_SESSION_ALREADY_ACTIVE,
-        "session not found" => stream::ERR_SESSION_NOT_FOUND,
-        "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => stream::ERR_CONCURRENCY_CONFLICT,
-        "resource not found" => stream::ERR_RESOURCE_NOT_FOUND,
-        "empty pattern" => stream::ERR_INVALID_SUBSCRIPTION_PATTERN,
-        message if message.starts_with("invalid read ") || message.starts_with("read bound ") => {
-            stream::ERR_INVALID_READ_BOUND
+    match kind {
+        StreamClientErrorKind::ConcurrencyConflict => stream::ERR_CONCURRENCY_CONFLICT,
+        StreamClientErrorKind::SessionAlreadyActive => stream::ERR_SESSION_ALREADY_ACTIVE,
+        StreamClientErrorKind::SessionNotFound => stream::ERR_SESSION_NOT_FOUND,
+        StreamClientErrorKind::InvalidReadBound => stream::ERR_INVALID_READ_BOUND,
+        StreamClientErrorKind::ResourceNotFound => stream::ERR_RESOURCE_NOT_FOUND,
+        StreamClientErrorKind::FilterUnsupportedVersion => {
+            stream::ERR_STREAM_FILTER_UNSUPPORTED_VERSION
         }
-        message if message.starts_with("subscription pattern ") => {
+        StreamClientErrorKind::FilterInvalidPayload => stream::ERR_STREAM_FILTER_INVALID_PAYLOAD,
+        StreamClientErrorKind::InvalidSubscriptionPattern => {
             stream::ERR_INVALID_SUBSCRIPTION_PATTERN
         }
-        _ => stream::ERR_BACKEND_ERROR,
+        StreamClientErrorKind::ReadResponseTooLarge => stream::ERR_READ_RESPONSE_TOO_LARGE,
+        StreamClientErrorKind::Backend => stream::ERR_BACKEND_ERROR,
     }
 }
 
@@ -594,7 +584,7 @@ mod tests {
     #[test]
     fn should_preserve_versioned_stream_error_envelopes() {
         // Arrange
-        let response = StreamClientResponseBody::Error("session not found".to_string());
+        let response = StreamClientResponseBody::Error("session not found".into());
 
         // Act
         let begin = encode_response(600, &response);
@@ -615,7 +605,7 @@ mod tests {
         let response = StreamClientResponseBody::Error(
             "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0 is 70000 bytes, exceeding the \
              65535-byte read response limit"
-                .to_string(),
+                .into(),
         );
 
         // Act
@@ -632,8 +622,7 @@ mod tests {
     #[test]
     fn should_not_classify_stream_backend_message_from_incidental_read_word() {
         // Arrange
-        let response =
-            StreamClientResponseBody::Error("backend read replica unavailable".to_string());
+        let response = StreamClientResponseBody::Error("backend read replica unavailable".into());
 
         // Act
         let encoded = encode_response(604, &response);
@@ -710,7 +699,7 @@ mod tests {
         );
         let error = encode_response(
             604,
-            &StreamClientResponseBody::Error("session not found".to_string()),
+            &StreamClientResponseBody::Error("session not found".into()),
         );
         let notification = encode_notify(7, &Route::new("stream://r/a/x"), b"ab");
 

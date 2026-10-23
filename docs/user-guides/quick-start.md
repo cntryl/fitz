@@ -47,6 +47,9 @@ It selects the fixture secret, issuer and key ID described above.
 
 Configure `FITZ_ROUTE_FAMILY_MAP`, such as `FITZ_ROUTE_FAMILY_MAP=xyz=2`,
 to translate the verified identity claim value to a provisioned route family.
+The target family must be provisioned: `FITZ_ROUTE_FAMILIES` defaults to `1`,
+so a mapping to family `2` also needs `FITZ_ROUTE_FAMILIES=1,2`, otherwise the
+broker refuses to start.
 Realm access is authorized by route-shaped permission patterns, not by a JWT
 realm claim.
 
@@ -72,7 +75,10 @@ For a concrete Auth0 Dashboard setup and Fitz environment, see
 
 ## 4. Execute a Simple Operation
 
-1. Choose an opaque route string.
+1. Choose a route. Routes are structured, not opaque: `scheme://realm/area/resource`,
+   for example `kv://prod/app/users` or `stream://prod/logs/application`. The
+   realm is your own namespace label; KV, Queue, and Lease routes need exactly
+   three segments. See [routing-design.md](../development/routing-design.md).
 2. Send a single operation, such as KV get or put.
 3. Confirm both the response and latency metrics.
 

@@ -1,11 +1,11 @@
 //! Authoritative Error Code Allocation for All Fitz Domains
 //!
-//! See `CLIENT_SPEC.md` sections for each domain for the official error code allocations.
+//! See the per-domain pages under `docs/clients/spec/` for the official error code allocations.
 //! All domains use numeric error codes allocated in 100-block ranges.
 //! Error codes are returned in domain-specific response envelopes as
 //! `[u8 1][u32 code][u32 msg_len][msg]`.
 //!
-//! ## Backpressure Signaling (Per `CLIENT_SPEC` §Flow Control & Backpressure)
+//! ## Backpressure Signaling (per `docs/clients/spec/overview.md`, Backpressure section)
 //! When a domain's internal queue is full, the broker returns a backpressure error:
 //! - RPC: 6003 = `ERR_RPC_BACKPRESSURE` (client should retry with exponential backoff)
 //! - Queue: 4005 = `ERR_QUEUE_FULL` (client should retry with exponential backoff)
@@ -174,9 +174,12 @@ pub mod schedule {
     pub const ERR_SUBSCRIPTION_LIMIT: u16 = 7007;
     pub const ERR_INVALID_DELIVERY_MODE: u16 = 7008;
     pub const ERR_UNAUTHORIZED: u16 = 7009; // AC-SCHEDULE-008: Permission denied for schedule operation
-                                            // Schedule had no generic backend/saturation code; every other domain has
-                                            // one. Without it a busy schedule actor had to borrow a code that means
-                                            // something else (e.g. "invalid cron"), which misdirects the client.
+    /// Schedule's saturation code: the broker declined to service the request,
+    /// nothing applied, and re-sending after a backoff is safe. It plays the
+    /// role `ERR_BUSY` (1014, 2014, 3006), `ERR_QUEUE_FULL` (4005), and
+    /// `ERR_RPC_BACKPRESSURE` (6003) play elsewhere. The name is frozen on the
+    /// wire, so note that unlike every other domain's `ERR_BACKEND_ERROR`, this
+    /// one is retryable.
     pub const ERR_BACKEND_ERROR: u16 = 7010;
     // Distinct from 7010 on purpose. 7010 is classified retryable: it reports a
     // request the broker declined to service, so re-sending it is safe. A

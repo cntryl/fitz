@@ -90,7 +90,7 @@ fn should_encode_real_store_commit_conflict_with_domain_code() {
     let error = second
         .commit_session_for_owner(1, 1, StreamWriteMode::Buffered)
         .unwrap_err();
-    let payload = encode_response(602, &StreamClientResponseBody::Error(error));
+    let payload = encode_response(602, &StreamClientResponseBody::Error(error.into()));
 
     // Assert
     let mut decoder = PayloadDecoder::new(&payload);
