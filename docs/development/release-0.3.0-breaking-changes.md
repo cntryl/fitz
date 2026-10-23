@@ -29,7 +29,10 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-13 | Stream "route family mismatch" becomes `INVALID_ROUTE` instead of `BACKEND` | Client error, not backend failure | proposed | |
 | W-14 | `SESSION_METADATA` record folded into `CONNECT` | One handshake step | proposed | |
 | W-15 | Lease `RENEW` canonical; `QUEUE_FULL` (5007) renamed `WAITERS_LIMIT` | Naming drift | proposed | |
-| W-16 | Queue `ENQUEUE_BATCH` (201) implemented or released | Decision 5.4 | proposed | |
+| W-16 | Queue `ENQUEUE_BATCH` (201) reservation retired; id never reused | Design 5.10 | decided | |
+| W-17 | Error envelope carries an explicit `u8 class` alongside the decimal code | Design 5.3 | decided | |
+| W-18 | Server control message `GOAWAY {code, grace_ms, reason}` | Design 5.12 | decided | |
+| W-19 | No `retry_after` hint; no route family in `HELLO`; `REAUTH` deferred as an additive verb | Design 5.4, 5.9, 5.12 | decided | |
 
 ## Storage (Midge)
 
@@ -47,7 +50,7 @@ Storage rows follow the Midge work tracked in that repository and the
 
 | ID | Change | Why | Status | Issue |
 | --- | --- | --- | --- | --- |
-| C-01 | `max_message_bytes` becomes a configured, advertised limit | Decision 5.3 | proposed | |
+| C-01 | `max_message_bytes` becomes a configured, advertised limit; default stays 1 MiB | Design 5.7 | decided | |
 
 ## Rust embedding API
 

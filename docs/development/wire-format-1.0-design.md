@@ -1,6 +1,6 @@
 # Fitz Wire Format 1.0 Design
 
-Status: **draft for the 0.3.0 milestone**. This document defines the wire
+Status: **decided for the 0.3.0 milestone** (decisions in section 6). This document defines the wire
 format Fitz intends to ship in 0.3.0 and then freeze as the 1.0.0 wire format.
 Everything after 0.3.0 must be an additive, capability-gated extension of what
 is written here. The companion ledger of every breaking change gathered for
@@ -55,7 +55,7 @@ TCP frame) carries exactly one message:
 
 ```
 [u16 BE] type            verb or control identifier
-[u8]     flags           bit 0 ACK_REQUESTED, bits 1..7 reserved (must be 0)
+[u8]     flags           bit 0 ACK_REQUESTED; bits 1..7 reserved, must be 0
 [u64 BE] correlation     non-zero on requests and their responses; 0 on notifications and control
 [u32 BE] length          byte count of value
 [bytes]  value           exactly `length` bytes
@@ -73,7 +73,9 @@ Decisions behind the header:
 - `length` is `u32`. The negotiated `max_message_bytes` bounds it, not the
   field width.
 - Reserved flag bits must be zero. A set reserved bit is a protocol error
-  answered with code 10 (section 3.4), not a connection close.
+  answered with `UNSUPPORTED`, not a connection close. A later version may
+  assign a reserved bit (for example compression or body continuation) only
+  behind a capability bit, so a 1.0 client never sees one it did not negotiate.
 
 ### 3.2 Handshake
 
@@ -106,7 +108,22 @@ The version in force is the highest value in both ranges; no overlap is a
 `CONNECT_REJECTED` with `UNSUPPORTED_VERSION`. Capabilities are the bitwise
 AND of the two masks. A client must not use a capability the broker did not
 advertise. `HELLO` is the only message whose readers tolerate trailing bytes,
-so later versions can append limits without a new type.
+so later versions can append limits without a new type. `HELLO` does not carry
+the route family: `route_family` is broker-internal and stays orthogonal to
+the application-visible `realm`.
+
+The broker may send one server control message at any time after `HELLO`:
+
+```
+GOAWAY (type 5) value, correlation 0:
+[u16 BE] code             section 3.4, protocol block (DRAINING, FORCED_CLOSE, LIMIT_CHANGED)
+[u32 BE] grace_ms         time the broker will keep serving before it closes; 0 = closing now
+[string] reason
+```
+
+`GOAWAY` makes planned drain observable. Today a client learns of a drain only
+when its socket closes. A client that receives `DRAINING` should finish
+in-flight work and reconnect elsewhere within `grace_ms`.
 
 ### 3.3 Response envelope
 
@@ -116,11 +133,14 @@ Every response to every verb in every domain:
 [u8] status     0 = success, 1 = error
 success:  domain payload as specified per verb
 error:
-  [u16 BE] code       section 3.4
+  [u16 BE] code       section 3.4; the specific condition
+  [u8]     class      section 3.4; 0 = domain-specific, 1..10 = the shared condition
   [u8]     effect     0 NOT_APPLIED, 1 INDETERMINATE, 2 APPLIED
   [string] message    diagnostic only; clients must not branch on it
 ```
 
+`class` is explicit so an SDK never derives it by arithmetic from `code`, and
+so a domain-specific code can still declare that it is, say, a `NOT_FOUND`.
 `effect` is the field the current format lacks. It answers the only question a
 retry policy needs: `NOT_APPLIED` means re-sending is safe; `INDETERMINATE`
 means the broker accepted the request and cannot say whether it took effect;
@@ -131,10 +151,12 @@ class, never from the code number alone.
 
 ### 3.4 Error codes
 
-Codes stay decimal and domain-blocked for familiarity, but the low two digits
-of every block carry identical meaning in every domain:
+Codes stay decimal and domain-blocked for familiarity, because every SDK,
+spec page, dashboard, and support ticket already uses them. The envelope's
+`class` byte carries the shared meaning explicitly; the low two digits of each
+block mirror it for readability:
 
-| Slot | Name | Meaning | Typical `effect` |
+| Class | Name | Meaning | Typical `effect` |
 | --- | --- | --- | --- |
 | x01 | UNAUTHORIZED | Permission denied for this route and verb | NOT_APPLIED |
 | x02 | INVALID_ROUTE | Route shape, scheme, or family mismatch | NOT_APPLIED |
@@ -155,7 +177,9 @@ allocation, with the old-to-new mapping for every existing code, is the first
 deliverable of the ledger and lives in `docs/clients/spec/error-codes.md`.
 
 Codes are append-only. A code is never renamed, reused, or given a new
-meaning after 0.3.0.
+meaning after 0.3.0. There is no `retry_after` hint: `HELLO` already states
+`max_in_flight`, and a `BUSY` with `effect = NOT_APPLIED` plus client backoff
+is the whole contract.
 
 ### 3.5 Notifications and multi-frame answers
 
@@ -194,9 +218,10 @@ limit instead of leaving it to discover 2 ms retry budgets empirically.
 | Stream | READ uses the common envelope; generation-2 `status=2` retired; `READ_RESPONSE_TOO_LARGE` means larger than `max_message_bytes` only | One envelope; the 64 KiB reason is gone |
 | KV | SCAN carries an explicit options byte with `start_exclusive` as a bit; `CAP_KV_SCAN_EXCLUSIVE` retired | No capability-gated trailing byte |
 | RPC | Remaining-budget and cancellation fields are part of the base layout; `CAP_RPC_CANCELLATION` retired | Base protocol, not an option |
-| Queue | Decide `ENQUEUE_BATCH` (201): implement or release the id | A reserved verb for two releases is a smell |
+| Queue | `ENQUEUE_BATCH` (201) reservation retired; the id is never reused | Nothing asked for it in two releases; batching arrives as a new id if demand appears |
 | Lease | `RENEW` is the canonical name in every document; `QUEUE_FULL` (5007) becomes `WAITERS_LIMIT` in the domain block | Naming drift |
 | Notice | Malformed-wildcard patterns are `INVALID_PATTERN`; the frozen-3005 exception ends | The wart only existed to avoid a wire change |
+| Notice | `ACK_REQUESTED` on PUBLISH is base protocol: the broker answers with the common envelope, success meaning accepted for fan-out and never meaning delivered | The only way a publisher can observe a drop; the spec must say "accepted, not delivered" wherever the flag appears |
 | KV, Stream | COMMIT keeps the explicit `[u8 persistence]` selector, 0 Buffered, 1 Sync; it is required | Unchanged; restated because it is the durability contract |
 
 ## 4. Compatibility and rollout
@@ -218,36 +243,55 @@ The decision is recorded in section 5. Either way, the sequence is: spec and
 golden vectors, broker codecs behind this feature branch, SDK ports validated
 by the cross-language conformance runner, migration guide, release gates.
 
-## 5. Decisions needed
+## 5. Resolved decisions
 
-Each item needs an owner's answer before the matching code lands. The
-recommendation is the default if nobody objects.
+Each item was judged with TypeSafe Jev against explicit alternatives, then
+settled by the maintainer. Probabilities are Jev's; the call is ours.
 
-1. **Fixed header or keep TLV?** Recommend the fixed header in 3.1. Keeping
-   TLV would preserve today's parsers but would keep variable type widths and
-   the label-record rule.
-2. **Flag day or dual-stack?** Recommend flag day (section 4).
-3. **`max_message_bytes` default.** Recommend 4 MiB, advertised in `HELLO`,
-   configurable. Today's 1 MiB was never negotiable.
-4. **`ENQUEUE_BATCH`.** Recommend implement, since Schedule already has
-   `CREATE_BATCH` and the reservation is old.
-5. **Notice `ACK_REQUESTED`.** Recommend include; it is one flag bit and the
-   only way a client can ever observe a dropped publish.
-6. **Code width.** `u16` leaves room through 65535; the blocks above use
-   under 8000. Recommend `u16`.
-7. **Should `HELLO` carry the provisioned route family?** Recommend yes as an
-   additive trailing field, since clients today learn it only from admin
-   surfaces.
+1. **Fixed 15-byte header.** Jev 1.00 for fixed over TLV or varint. Decided.
+2. **Hand-written exact-length bodies; no IDL; no body-version prefix.** Jev
+   1.00. Jev rated the three-year regret risk "possible" (0.53), so section 8
+   states the evolution conventions that keep successors clean.
+3. **Error codes: decimal blocks plus an explicit `class` byte.** Jev 0.92
+   for the hybrid over derived-by-arithmetic (0.06) or renumbering (0.02).
+4. **`effect` with three values, no `retry_after`.** Jev 0.42 for the draft
+   versus 0.34 for adding the hint; the narrowed question put the hint at
+   0.44. `HELLO` already carries `max_in_flight`. Decided: no hint.
+5. **Client version range, broker picks.** Jev 1.00.
+6. **Flag day.** Jev 0.97. The Midge break already forces a coordinated
+   upgrade; dual-stack would add a second codec and a removal release.
+7. **`max_message_bytes` default 1 MiB, configurable, advertised.** Jev 0.88
+   once the per-connection bound (`max_in_flight` times the limit) was stated.
+8. **Notice `ACK_REQUESTED`, base protocol.** Include at 0.65; base over
+   capability at 0.58 with low confidence. Jev rated the Law 1 risk
+   "moderate: the docs must fight it" (0.69), so every mention of the flag
+   says accepted for fan-out, never delivered.
+9. **`HELLO` does not carry the route family.** Jev 0.19 for carrying it.
+   Orthogonality wins.
+10. **`ENQUEUE_BATCH` reservation retired.** Jev 0.77 once "no demand in two
+    releases" was on the table.
+11. **Correlation is `u64`.** Jev 0.89.
+12. **`GOAWAY` ships in 0.3.0.** Jev 0.66; drain exists today and is
+    invisible to clients. `REAUTH` was a coin flip (0.54) and is additive
+    later, so it is not in 0.3.0. Compression (0.42) and continuation (0.39)
+    bits stay reserved and undefined; both can be assigned later behind a
+    capability.
+
+Jev's overall longevity judgment for the amended design: "plausible with the
+amendments a careful review would add" (0.83), and the amendments it pointed
+at (an explicit class, a server-initiated control message, evolution rules)
+are now in sections 3 and 8.
 
 ## 6. Decision log
 
 | Date | Decision | By | Note |
 | --- | --- | --- | --- |
 | 2026-10-23 | Open the 0.3.0 milestone as the wire-format break that becomes 1.0.0 | maintainer | Breaking changes gathered over the following days, including Midge |
+| 2026-10-23 | Section 5 items 1 through 12 | maintainer with Jev | Two Jev rounds; second round narrowed the five close calls |
 
 ## 7. Work breakdown
 
-1. Ratify sections 3 and 5; record answers in section 6.
+1. Section 5 is resolved; any later reversal is a new row in section 6.
 2. Write `docs/clients/spec/error-codes.md` with the full allocation and the
    old-to-new mapping; regenerate the per-domain spec pages.
 3. Produce golden vectors for every verb under the new framing and envelope;
@@ -259,3 +303,21 @@ recommendation is the default if nobody objects.
 6. Migration guide, release checklist, support matrix, and the mixed-version
    prohibition.
 7. Release gates per `release-policy.md`, then tag 0.3.0.
+
+## 8. Evolution conventions after 0.3.0
+
+These rules are what make "no further breaking change" credible without an
+IDL.
+
+1. A verb's payload layout is frozen the day its id ships. A changed layout is
+   a new verb id whose name says what changed (`READ_FILTERED`, not
+   `READ_V2`). The old id keeps working until a major release retires it.
+2. Optional behavior is a capability bit advertised in `HELLO` and echoed in
+   `CONNECT`; it changes what a value may contain, never the byte layout.
+3. Reserved header flag bits are assigned only behind a capability bit.
+4. Error codes and classes are appended, never renamed or reused.
+5. No verb id, code, or flag bit is reserved for future use. An unused
+   reservation is a promise nobody tests; `ENQUEUE_BATCH` sat unimplemented
+   for two releases.
+6. Every landed change ships golden vectors to the conformance runner before
+   any SDK ports it.
