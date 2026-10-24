@@ -3,7 +3,7 @@ use super::model::{
     SchedulePendingFireClaimAck, SchedulePersistenceError, ScheduleStore, BODY_PREFIX,
     DEFINITION_PREFIX, DUE_PREFIX, PENDING_FIRE_PREFIX,
 };
-use crate::domains::schedule::protocol::parse_concrete_schedule_route;
+use crate::domains::schedule::route_grammar::parse_concrete_schedule_route;
 use crate::domains::WritePolicy;
 
 impl ScheduleStore {

@@ -2,7 +2,8 @@ use bytes::Bytes;
 
 use crate::domains::WritePolicy;
 
-use crate::domains::schedule::protocol::{ConcreteScheduleRoute, ScheduleDeliveryMode};
+use crate::domains::schedule::protocol::ScheduleDeliveryMode;
+use crate::domains::schedule::route_grammar::ConcreteScheduleRoute;
 
 pub(super) const DEFINITION_VALUE_VERSION_V3: u8 = 3;
 pub(super) const BODY_VALUE_VERSION_V2: u8 = 2;
@@ -151,6 +152,10 @@ impl From<SchedulePersistenceError> for String {
 }
 
 /// Narrow persistence boundary used by schedule claim and acknowledgement policy.
+///
+/// Success follows the supplied write policy. An error does not generally prove
+/// that no durable effect occurred; callers retain recovery state and retry only
+/// the explicitly classified admission failure.
 pub trait SchedulePersistence {
     /// # Errors
     ///

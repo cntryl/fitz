@@ -62,6 +62,8 @@ Storage rows follow the Midge work tracked in that repository and the
 | R-01 | `StreamClientError` and `NoticeClientError` kinds map to the new code table | Follows W-04 | landed | Landed with W-04/W-12/W-13 |
 | R-02 | `protocol::tlv` codec retired: `MessageType` and `WireMessage` live in `protocol::message`; testkit `FrameBuilder`/`FrameParser` | Follows W-01 | landed | Bench targets renamed to `tier1_hotpath_message` and `tier2_subsystem_message_pipeline` (workflow matrices updated on the maintainer's instruction); their rows in `config/bench_baseline.json` go stale until the next authorized baseline refresh |
 | R-03 | Unused `QueueError` and `LeaseError` numeric enums removed | Their stale wire-1 codes collided with the wire-2 catalog | landed | Use the domain response types and `protocol::error_codes`; every remaining public code constant has a catalog row |
+| R-04 | Parsed `CronSchedule` fields become private with read-only accessors | Public mutation could leave compiled matchers stale and produce the wrong next occurrence | implemented on feature branch | [#499](https://github.com/cntryl/fitz/issues/499); parse a replacement expression to change a schedule; root/protocol type paths remain available |
+| R-05 | `ScheduleDef` is an actor-owned internal cache model | Its parsing caches, monotonic deadline and LIST index are actor implementation state | implemented on feature branch | [#499](https://github.com/cntryl/fitz/issues/499); root/protocol re-exports are removed intentionally; public create/list data types remain available |
 
 ## Release gates for 0.3.0
 

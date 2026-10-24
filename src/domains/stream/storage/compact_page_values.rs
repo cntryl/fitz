@@ -43,6 +43,11 @@ fn decode_string(bytes: &[u8], offset: &mut usize, context: &str) -> Result<Stri
     Ok(value)
 }
 
+/// Scope-specific fields inside the common compact-record envelope.
+///
+/// The reported specific length must equal the bytes written by
+/// `encode_specific`; decoding advances by that same length. Scope codecs do
+/// not reinterpret the common body, metadata or expiry fields.
 trait PageRecordCodec: Sized {
     type Specific;
 

@@ -3,8 +3,9 @@ use super::model::{
     ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V2, DEFINITION_PREFIX,
     DEFINITION_VALUE_VERSION_V3, PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V3,
 };
-use crate::domains::schedule::protocol::{
-    parse_concrete_schedule_route, ConcreteScheduleRoute, ScheduleDeliveryMode,
+use crate::domains::schedule::protocol::ScheduleDeliveryMode;
+use crate::domains::schedule::route_grammar::{
+    parse_concrete_schedule_route, ConcreteScheduleRoute,
 };
 use crate::utils::storage_key::{self, DomainKeyspace};
 use bytes::Bytes;

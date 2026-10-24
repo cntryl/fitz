@@ -3,8 +3,9 @@ use crate::domains::schedule::metrics::{
     METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
     METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
 };
-use crate::domains::schedule::protocol::{Clock, ScheduleCreateEntry};
+use crate::domains::schedule::protocol::ScheduleCreateEntry;
 use crate::domains::schedule::store::{ScheduleInsert, SchedulePersistenceError, ScheduleStore};
+use crate::runtime::clock::Clock;
 use crate::runtime::routing::RouteFamily;
 use crate::testkit::create_test_engine_with_cfs;
 use bytes::Bytes;

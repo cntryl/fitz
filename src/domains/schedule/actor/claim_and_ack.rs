@@ -581,6 +581,27 @@ mod tests {
     }
 
     #[test]
+    fn should_surface_ack_error_from_fake_persistence() {
+        // Arrange
+        let persistence = FailingPersistence;
+        let claims = [];
+
+        // Act
+        let result = acknowledge_claim_batch(
+            &persistence,
+            1,
+            &claims,
+            crate::domains::WritePolicy::Buffered,
+        );
+
+        // Assert
+        assert_eq!(
+            result.map_err(|error| error.to_string()),
+            Err("ack failed".to_string())
+        );
+    }
+
+    #[test]
     fn should_skip_claim_persistence_item_when_schedule_disappears() {
         // Arrange
         let actor = ScheduleActor::new(

@@ -4,8 +4,17 @@ fn u128_to_u64_saturating(value: u128) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
+/// Time references used by synchronous domain mechanics.
+///
+/// Monotonic time measures elapsed work; epoch time identifies wall-clock
+/// occurrences. Wall-clock jumps need not match monotonic elapsed time.
+/// Callers converting between them capture a reference pair and use the
+/// conversion helpers below. Test clocks may hold or advance those references
+/// explicitly without sleeping.
 pub trait Clock: Send + Sync {
+    /// Return the current monotonic reference.
     fn now_instant(&self) -> Instant;
+    /// Return wall-clock milliseconds since the Unix epoch, saturating at zero.
     fn now_epoch_ms(&self) -> u64;
 }
 

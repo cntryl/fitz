@@ -4,6 +4,7 @@ use crate::runtime::routing::{Route, RouteAddress};
 use crate::runtime::Envelope;
 use bytes::{BufMut, Bytes};
 
+mod contracts;
 mod health;
 
 fn usize_to_u32_saturating(value: usize) -> u32 {

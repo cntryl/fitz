@@ -870,7 +870,13 @@ fn sqrzl_gcs_provider(bucket: &str) -> cntryl_midge::CloudProviderConfig {
 }
 
 fn sqrzl_endpoint() -> &'static str {
-    "http://127.0.0.1:9000"
+    static ENDPOINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ENDPOINT
+        .get_or_init(|| {
+            std::env::var("FITZ_TEST_SQRZL_ENDPOINT")
+                .unwrap_or_else(|_| "http://127.0.0.1:9000".to_string())
+        })
+        .as_str()
 }
 fn sqrzl_access_key() -> &'static str {
     "admin"

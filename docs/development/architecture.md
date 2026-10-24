@@ -301,6 +301,10 @@ API-edge session management:
 
 Use [domain-boundaries-spec.md](domain-boundaries-spec.md) as the authoritative boundary contract when deciding whether behavior belongs in a domain at all. This architecture guide explains where domains live in the system; the boundary specification explains what each domain is allowed to own.
 
+The [domain SOLID evidence review](domain-solid-review.md) records responsibility,
+extension, substitution, interface and dependency decisions for the seven domains
+and their shared runtime boundaries, including applicable behavioral evidence.
+
 **Pattern (Synchronous Family State):**
 ```rust
 pub(crate) struct XFamilyState { /* ordinary mutable state */ }

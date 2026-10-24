@@ -61,6 +61,22 @@ the application knows the work is idempotent or verifies its outcome.
 removed. Use domain response types and the catalog-backed constants in
 `protocol::error_codes`; the removed numeric enums contained wire-1 codes.
 
+Parsed `CronSchedule` values are immutable. Replace direct reads of `minute`,
+`hour`, `day_of_month`, `month`, and `day_of_week` with their read-only methods
+(for example, `schedule.day_of_week()`). Parse a new expression to change a
+schedule. Direct field mutation previously changed only part of the compiled
+state and could calculate the wrong next occurrence. Both
+`domains::schedule::CronSchedule` and the existing
+`domains::schedule::protocol::CronSchedule` path remain available; route parsing
+and clock compatibility re-exports also remain available.
+
+`ScheduleDef` is no longer exported from the Schedule root or protocol module.
+It represents actor-local caches, monotonic timing and LIST bookkeeping, and
+is now internal to the actor. Use `ScheduleCreateEntry` for creation input and
+`ScheduleListEntry` for list data; embedded applications needing their own
+runtime cache should own that model. These are intentional Rust source changes
+and do not change the wire or persisted Schedule formats.
+
 ## Midge 0.4.1
 
 Fitz uses the published crates.io `cntryl-midge` 0.4.1 package. This patch

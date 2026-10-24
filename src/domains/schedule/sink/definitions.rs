@@ -123,7 +123,7 @@ impl ScheduleDomainRuntime<'_> {
         };
 
         if let Err(error) =
-            crate::domains::schedule::protocol::validate_concrete_schedule_route(route)
+            crate::domains::schedule::route_grammar::validate_concrete_schedule_route(route)
         {
             return (
                 ScheduleResponse::Error(ScheduleFailure::new(

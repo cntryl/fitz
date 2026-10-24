@@ -1,8 +1,8 @@
-use crate::domains::schedule::protocol::{
-    Clock, ConcreteScheduleRoute, CronSchedule, ScheduleDef, ScheduleDeliveryMode,
-    ScheduleListEntry,
-};
+use crate::domains::schedule::cron::CronSchedule;
+use crate::domains::schedule::protocol::{ScheduleDeliveryMode, ScheduleListEntry};
+use crate::domains::schedule::route_grammar::ConcreteScheduleRoute;
 use crate::domains::schedule::store::ScheduleStore;
+use crate::runtime::clock::Clock;
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use rustc_hash::FxBuildHasher;
@@ -13,6 +13,32 @@ use std::time::Instant;
 
 pub(super) type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 pub(super) type FastSet<K> = HashSet<K, FxBuildHasher>;
+
+/// Schedule definition plus actor-local timing accelerators.
+#[derive(Debug, Clone)]
+pub(super) struct ScheduleDef {
+    /// Route string (unique identity for this schedule)
+    pub(super) route: String,
+    /// Parsed concrete route parts reused by hot storage-key paths.
+    pub(super) route_parts: ConcreteScheduleRoute,
+    /// Cron expression (when to fire)
+    pub(super) cron: String,
+    pub(super) delivery_mode: ScheduleDeliveryMode,
+    /// Parsed cron schedule (cached to avoid reparsing)
+    pub(super) parsed_cron: CronSchedule,
+    /// Payload bytes handed to the live publish path when an occurrence is claimed.
+    pub(super) payload: Bytes,
+    /// Next fire time calculated from cron + current time
+    pub(super) next_fire_time: Instant,
+    /// Exact next-fire timestamp stored in the durable definition row
+    pub(super) next_fire_ms: u64,
+    /// Last acknowledged live handoff timestamp in UNIX epoch milliseconds.
+    pub(super) last_fire_ms: Option<u64>,
+    /// Total acknowledged live handoffs recorded for this definition.
+    pub(super) executions_total: u64,
+    /// Internal index into the actor's mutable LIST backing store.
+    pub(super) list_index: usize,
+}
 
 pub(super) struct PendingScheduleCreate {
     pub(super) route: String,

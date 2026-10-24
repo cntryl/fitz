@@ -29,6 +29,7 @@ enum DispatchAction {
     Dispatch(RpcWorkerDispatch),
 }
 
+/// Worker selection and credit reservation, independent of response forwarding.
 pub(in crate::domains::rpc::sink) trait RpcDispatchState {
     fn claim_registration_for_route(
         &mut self,
@@ -37,10 +38,16 @@ pub(in crate::domains::rpc::sink) trait RpcDispatchState {
     ) -> Option<RpcWorkerDispatch>;
 }
 
+/// Registration mutation required by the worker-registration path.
 pub(in crate::domains::rpc::sink) trait RpcRequestState {
     fn register(&mut self, registration: RpcWorker) -> RpcWorkerRegistration;
 }
 
+/// Pending-response ownership, sequencing and delivery accounting.
+///
+/// Inspecting a response cannot advance its sequence. Only successful caller
+/// delivery commits that advance; failed delivery records or abandons the
+/// pending request through this same role.
 pub(in crate::domains::rpc::sink) trait RpcResponseState {
     fn pending_for_response(
         &mut self,

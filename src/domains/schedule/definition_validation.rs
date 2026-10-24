@@ -1,9 +1,10 @@
 //! Shared validation for schedule definitions at actor and transport boundaries.
 
-use super::{CronSchedule, ScheduleFailure, ScheduleFailureCategory};
+use super::{cron::CronSchedule, route_grammar::validate_concrete_schedule_route};
+use super::{ScheduleFailure, ScheduleFailureCategory};
 
 pub(crate) fn schedule_definition_failure(route: &str, cron: &str) -> Option<ScheduleFailure> {
-    if let Err(error) = super::protocol::validate_concrete_schedule_route(route) {
+    if let Err(error) = validate_concrete_schedule_route(route) {
         return Some(ScheduleFailure::new(
             ScheduleFailureCategory::InvalidTarget,
             error,

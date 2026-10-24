@@ -102,6 +102,13 @@ Required coverage patterns:
 
 ## Determinism
 
+The storage-runtime Sqrzl recovery fixtures accept
+`FITZ_TEST_SQRZL_ENDPOINT` (default `http://127.0.0.1:9000`). Use an isolated
+compatible emulator when another local service occupies that default address.
+The fixture uses its existing test-only credentials and exercises the provider
+versions used by Midge; an unsupported service version is a fixture failure,
+not a reason to weaken the recovery assertions.
+
 - Prefer deterministic clocks and explicit test runtimes.
 - Keep setup outside benchmark measurement blocks.
 - Do not rely on sleeps unless the behavior is explicitly time based and no deterministic clock hook exists.
