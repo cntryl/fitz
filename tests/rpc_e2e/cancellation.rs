@@ -6,7 +6,7 @@ use uuid::Uuid;
 mod stream_commit;
 
 fn frame(message_type: u16, payload: &[u8]) -> Vec<u8> {
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(message_type, payload);
     builder.build()
 }
@@ -15,8 +15,7 @@ fn subscribe_cancellation_worker(route: &str, max_concurrent: u32) -> Vec<u8> {
     let mut payload = PayloadEncoder::new();
     payload.put_string(route);
     payload.put_u32(max_concurrent);
-    payload.put_u8(1);
-    payload.put_u8(1);
+    payload.put_u8(1); // accepts cancellation controls
     frame(300, &payload.finish())
 }
 
@@ -25,8 +24,7 @@ fn rpc_request(correlation_id: Uuid, route: &str, budget_ms: u32) -> Vec<u8> {
     payload.put_raw(correlation_id.as_bytes());
     payload.put_string(route);
     payload.put_bytes(b"request");
-    payload.put_u8(1);
-    payload.put_u8(1);
+    payload.put_u8(1); // budget present
     payload.put_u32(budget_ms);
     frame(302, &payload.finish())
 }
@@ -47,7 +45,7 @@ fn worker_cleanup_ack(correlation_id: Uuid) -> Vec<u8> {
 }
 
 fn assert_lifecycle(frame_bytes: &[u8], kind: u8, correlation_id: Uuid, value: u8) {
-    let mut parser = TlvFrameParser::new(frame_bytes);
+    let mut parser = FrameParser::new(frame_bytes);
     let (message_type, payload) = parser.next_field().expect("lifecycle frame");
     assert_eq!(message_type, 305);
     assert!(parser.next_field().is_none());

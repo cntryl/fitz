@@ -33,43 +33,35 @@ async fn websocket_upgrade_status_for_addr(
 }
 
 #[test]
-fn should_encode_tlv_frame() {
+fn should_encode_a_wire2_message_frame() {
     // Arrange
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new().with_correlation(7);
     builder.encode_field(100, b"test_value");
 
     // Act
     let frame = builder.build();
 
     // Assert
-    assert!(frame.len() >= 3 + b"test_value".len());
-    assert_eq!(frame[0], 100); // msg_type
-    assert_eq!(frame[1], 0);
-    assert_eq!(
-        frame[2],
-        u8::try_from(b"test_value".len()).expect("test value length fits in u8")
-    );
-    assert_eq!(&frame[3..], b"test_value");
+    let (header, value) =
+        crate::protocol::wire2::header::decode_message(&frame, u32::MAX).expect("one message");
+    assert_eq!(header.message_type, 100);
+    assert_eq!(header.correlation, std::num::NonZeroU64::new(7));
+    assert_eq!(value, b"test_value");
 }
 
 #[test]
-fn should_decode_tlv_frame() {
+fn should_parse_the_single_message_in_a_frame() {
     // Arrange
-    let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(100, b"test_value");
+    let mut builder = FrameBuilder::new();
     builder.encode_field(200, b"another_value");
     let frame = builder.build();
 
     // Act
-    let mut parser = TlvFrameParser::new(&frame);
+    let mut parser = FrameParser::new(&frame);
     let fields = parser.parse_all();
 
     // Assert
-    assert_eq!(fields.len(), 2);
-    assert_eq!(fields[0].0, 100);
-    assert_eq!(fields[0].1, b"test_value");
-    assert_eq!(fields[1].0, 200);
-    assert_eq!(fields[1].1, b"another_value");
+    assert_eq!(fields, vec![(200, b"another_value".to_vec())]);
 }
 
 #[test]
@@ -82,8 +74,15 @@ fn should_build_connect_frame() {
     let frame = build_connect_frame(realm, jwt);
 
     // Assert
-    assert_ne!(frame, Vec::<u8>::new());
-    assert_eq!(frame[0], 1); // msg_type 1 (CONNECT)
+    let (header, value) =
+        crate::protocol::wire2::header::decode_message(&frame, u32::MAX).expect("one message");
+    let connect = crate::protocol::wire2::handshake::Connect::decode(value).expect("CONNECT body");
+    assert_eq!(
+        header.message_type,
+        crate::protocol::wire2::control::CONNECT
+    );
+    assert_eq!(connect.jwt, jwt);
+    assert_eq!(connect.max_version, crate::protocol::wire2::WIRE_VERSION);
 }
 
 #[test]
@@ -151,7 +150,7 @@ async fn should_keep_authenticated_websocket_open_beyond_connect_deadline() {
     );
     payload.extend_from_slice(route.as_bytes());
     payload.push(1);
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(100, &payload);
 
     // Act

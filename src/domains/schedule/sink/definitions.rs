@@ -23,23 +23,8 @@ impl ScheduleDomainRuntime<'_> {
                 Self::apply_create_batch_message(actor, entries)
             }
             ScheduleMessage::Cancel { route } => Self::apply_cancel_message(actor, &route),
-            ScheduleMessage::List { offset, limit } => {
-                let response = match actor.list_entries(offset, limit) {
-                    Ok((entries, total_count)) => ScheduleResponse::ListDefs {
-                        entries,
-                        total_count,
-                    },
-                    Err(error) => {
-                        ScheduleResponse::Error(crate::domains::schedule::ScheduleFailure::new(
-                            crate::domains::schedule::ScheduleFailureCategory::InvalidTarget,
-                            error,
-                        ))
-                    }
-                };
-                (response, false)
-            }
-            ScheduleMessage::ListV2 { cursor, limit } => {
-                let response = match actor.list_entries_v2(cursor.as_deref(), limit) {
+            ScheduleMessage::List { cursor, limit } => {
+                let response = match actor.list_entries(cursor.as_deref(), limit) {
                     Ok((entries, has_more, continuation)) => ScheduleResponse::ListPage {
                         entries,
                         has_more,

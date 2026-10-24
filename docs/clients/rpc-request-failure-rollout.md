@@ -36,12 +36,12 @@ failures must be upgraded before using the new broker.
    PR.
 4. For broker rollback, retain the client old-broker fallback above. A 302
    backpressure frame lacks enough identity for a multiplexed caller to prove
-   which call was rejected; only a UUID-bearing 303 with code 6003 establishes
+   which call was rejected; only a UUID-bearing 303 with code 6005 establishes
    that a particular request was never enqueued and is safe to retry with
    backoff.
 
-The response body remains the standard RPC terminal error envelope. Code 6003
-means pre-enqueue rejection and permits a deliberate retry. Code 6010 means
-dispatch timeout or unavailable domain: the outcome may be unknown, and the
-client must not blindly retry. Authorization uses 6009; domain validation and
+The response body remains the standard RPC terminal error envelope. Code 6005
+means pre-enqueue rejection and permits a deliberate retry. Code 6007 means
+dispatch timeout and 6006 an unavailable domain: the outcome may be unknown,
+and the client must not blindly retry. Authorization uses 6001; domain validation and
 routing rejections retain their existing RPC codes.

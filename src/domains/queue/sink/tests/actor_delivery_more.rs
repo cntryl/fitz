@@ -190,7 +190,8 @@ fn should_bound_concrete_reserve_response_before_messages_become_inflight() {
     let sink = new_queue_domain_sink(
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
-        crate::control::admin::read_model::AdminReadModel::new(),);
+        crate::control::admin::read_model::AdminReadModel::new(),)
+        .with_max_message_bytes(65_550);
     let body = vec![0x5a; 1024];
     for _ in 0..100 {
         sink.deliver(Envelope::from_route(
@@ -224,7 +225,7 @@ fn should_bound_concrete_reserve_response_before_messages_become_inflight() {
     let response = receive_queue_frame(&worker_mailbox, "reserve response");
 
     // Assert
-    assert!(u16::try_from(response.payload.len()).is_ok());
+    assert!(response.payload.len() + crate::protocol::wire2::header::HEADER_LEN <= 65_550);
     assert_eq!(decode_concrete_reserve_response(&response).len(), 62);
     let snapshot = queue_snapshot(&sink, family, queue_route);
     assert_eq!(snapshot.messages_ready, 38);
@@ -714,7 +715,7 @@ fn should_report_a_stopped_actor_rather_than_admission_backpressure() {
         crate::dispatch::protocol::frame_context::FrameContext::new(
             1,
             crate::dispatch::protocol::frame::ChannelId::Pub,
-            crate::dispatch::protocol::tlv::MessageType::new(401),
+            crate::dispatch::protocol::message::MessageType::new(401),
             bytes::Bytes::new(),
             RouteFamily::new(1),
         ),

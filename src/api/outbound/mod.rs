@@ -1,5 +1,8 @@
+mod connection;
 mod domain_deliveries;
 mod frame_loop;
+mod rejection;
+pub(crate) use connection::MAX_IN_FLIGHT;
 
 use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
@@ -8,26 +11,46 @@ use crate::runtime::router::DeliveryError;
 use crate::runtime::router::MailboxSink;
 use crate::runtime::EncodedClientFrame;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
 /// `MailboxSink` that forwards domain responses to a session's outbound channel
 pub struct SessionOutboundSink {
+    pub(crate) connection: connection::ConnectionState,
     tx: mpsc::Sender<Bytes>,
     close_signal: Option<tokio::sync::watch::Sender<Option<&'static str>>>,
     frame_loop: frame_loop::FrameLoopClock,
+    /// The largest message, header included, this sink will frame: the same
+    /// limit HELLO advertised to the client.
+    max_message_bytes: usize,
+    buffer_budget: super::buffer_budget::BufferBudget,
 }
 
 impl SessionOutboundSink {
     #[must_use]
     pub fn new(tx: mpsc::Sender<Bytes>) -> Self {
         Self {
+            connection: connection::ConnectionState::default(),
             tx,
             close_signal: None,
             frame_loop: frame_loop::FrameLoopClock::default(),
+            max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
+            buffer_budget: super::buffer_budget::BufferBudget::default(),
         }
+    }
+
+    /// Bound framed messages by the configured, advertised limit.
+    #[must_use]
+    pub fn with_max_message_bytes(mut self, max_message_bytes: usize) -> Self {
+        self.max_message_bytes = max_message_bytes;
+        self
+    }
+
+    pub(crate) fn with_buffer_budget(mut self, budget: super::buffer_budget::BufferBudget) -> Self {
+        self.buffer_budget = budget;
+        self
     }
 
     /// Marks this session's frame loop busy until the returned guard drops.
@@ -45,9 +68,12 @@ impl SessionOutboundSink {
         let (close_signal, receiver) = tokio::sync::watch::channel(None);
         (
             Self {
+                connection: connection::ConnectionState::default(),
                 tx,
                 close_signal: Some(close_signal),
                 frame_loop: frame_loop::FrameLoopClock::default(),
+                max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
+                buffer_budget: super::buffer_budget::BufferBudget::default(),
             },
             receiver,
         )
@@ -91,13 +117,7 @@ impl MailboxSink for SessionOutboundSink {
         if let Some(delivery) =
             envelope.payload::<crate::domains::rpc::protocol::RpcLifecycleControlDelivery>()
         {
-            return self.send_encoded_frame(delivery.session_id, &delivery.frame, None);
-        }
-
-        if let Some(delivery) =
-            envelope.payload::<crate::domains::rpc::protocol::RpcWorkerRequestWithBudgetDelivery>()
-        {
-            return self.deliver_rpc_worker_request_with_budget(delivery);
+            return self.send_encoded_frame(delivery.session_id, &delivery.frame);
         }
 
         if let Some(delivery) = envelope.payload::<crate::domains::rpc::RpcWorkerRequestDelivery>()
@@ -211,12 +231,12 @@ impl SessionOutboundSink {
             session_id = ctx.session_id,
             msg_type = ctx.msg_type.as_u16(),
             payload_len = ctx.payload.len(),
-            "Outbound sink: encoding TLV response for session"
+            "Outbound sink: encoding message response for session"
         );
         let encode_start = Self::encode_latency_start();
-        let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload)?;
+        let bytes = self.encode_frame(ctx.msg_type.as_u16(), ctx.correlation, &ctx.payload)?;
         Self::observe_encode_latency(encode_start);
-        self.send_encoded_frame(ctx.session_id, &bytes, ctx.correlation)
+        self.send_encoded_frame(ctx.session_id, &bytes)
     }
 
     fn deliver_encoded_client_frame(
@@ -231,12 +251,13 @@ impl SessionOutboundSink {
             "Outbound sink: encoding runtime client frame"
         );
         let encode_start = Self::encode_latency_start();
-        let bytes = encode_single_tlv_frame(
-            crate::protocol::tlv::MessageType::new(frame.meta.message_type),
+        let bytes = self.encode_frame(
+            frame.meta.message_type,
+            frame.meta.correlation,
             &frame.payload,
         )?;
         Self::observe_encode_latency(encode_start);
-        self.send_encoded_frame(frame.meta.session_id, &bytes, frame.meta.correlation)
+        self.send_encoded_frame(frame.meta.session_id, &bytes)
     }
 
     // Every `deliver_*` caller of this reaches `SessionOutboundSink::deliver`
@@ -247,23 +268,51 @@ impl SessionOutboundSink {
     // session queued behind it on that actor. Use the same yield-only budget
     // already required for the Queue ready-notification path below, for the
     // same reason: give up in microseconds rather than block the actor.
-    //
-    // This is also the one choke point every outbound frame passes through, so
-    // it is where the correlation record is prepended. The three RPC deliveries
-    // build their own bytes via `rpc_codec::*_tlv_frame` and never touch
-    // `encode_single_tlv_frame`, so prepending there would miss them.
     pub(super) fn send_encoded_frame(
         &self,
         session_id: u64,
         bytes: &Bytes,
-        correlation: Option<std::num::NonZeroU64>,
     ) -> Result<(), DeliveryError> {
-        self.send_encoded_frame_with_budget(
-            session_id,
-            bytes,
-            OUTBOUND_BEST_EFFORT_RETRIES,
-            correlation,
+        self.send_encoded_frame_with_budget(session_id, bytes, OUTBOUND_BEST_EFFORT_RETRIES)
+    }
+
+    /// Frame one message with its header and send it.
+    pub(super) fn send_message(
+        &self,
+        session_id: u64,
+        msg_type: u16,
+        correlation: Option<std::num::NonZeroU64>,
+        payload: &[u8],
+    ) -> Result<(), DeliveryError> {
+        let bytes = self.encode_frame(msg_type, correlation, payload)?;
+        self.send_encoded_frame(session_id, &bytes)
+    }
+
+    fn encode_frame(
+        &self,
+        msg_type: u16,
+        correlation: Option<std::num::NonZeroU64>,
+        payload: &[u8],
+    ) -> Result<Bytes, DeliveryError> {
+        encode_message_frame(msg_type, correlation, payload, self.max_message_bytes).inspect_err(
+            |_| {
+                if required_message(msg_type) {
+                    self.signal_delivery_failure();
+                }
+            },
         )
+    }
+
+    /// Answer a rejected frame that never acquired an admission slot.
+    pub(super) fn send_unadmitted_response(
+        &self,
+        session_id: u64,
+        msg_type: u16,
+        correlation: Option<std::num::NonZeroU64>,
+        payload: &[u8],
+    ) -> Result<(), DeliveryError> {
+        let bytes = encode_message_frame(msg_type, correlation, payload, self.max_message_bytes)?;
+        self.queue_frame(session_id, &bytes, OUTBOUND_BEST_EFFORT_RETRIES, false)
     }
 
     pub(super) fn send_encoded_frame_with_budget(
@@ -271,25 +320,47 @@ impl SessionOutboundSink {
         session_id: u64,
         bytes: &Bytes,
         max_retries: usize,
-        correlation: Option<std::num::NonZeroU64>,
     ) -> Result<(), DeliveryError> {
-        // Prepend only when the request carried a correlation. A broker that
-        // volunteered one would break every client shipping today, which is the
-        // property that lets this broker deploy ahead of the clients.
-        let owned;
-        let bytes = match correlation {
-            None => bytes,
-            Some(correlation) => {
-                owned = prepend_correlation_record(correlation, bytes);
-                &owned
-            }
-        };
+        let result = self.queue_frame(session_id, bytes, max_retries, true);
+        if result.is_err() && required_delivery(bytes) {
+            self.signal_delivery_failure();
+        }
+        result
+    }
+
+    fn signal_delivery_failure(&self) {
+        if let Some(signal) = &self.close_signal {
+            signal.send_if_modified(|reason| {
+                if reason.is_some() {
+                    return false;
+                }
+                *reason =
+                    Some("required response could not be delivered; in-flight outcomes unknown");
+                true
+            });
+        }
+    }
+
+    fn queue_frame(
+        &self,
+        session_id: u64,
+        bytes: &Bytes,
+        max_retries: usize,
+        completes_request: bool,
+    ) -> Result<(), DeliveryError> {
         let metrics_enabled = obs::hot_path_metrics_enabled();
+        let bytes = self.buffer_budget.wrap(bytes.clone()).map_err(|reason| {
+            warn!(session_id, reason, "Outbound byte admission refused frame");
+            DeliveryError::MailboxFull {
+                capacity: self.tx.max_capacity(),
+                current_len: self.tx.max_capacity() - self.tx.capacity(),
+            }
+        })?;
 
         trace!(
             session_id = session_id,
             encoded_len = bytes.len(),
-            "Outbound sink: sending TLV frame to transport channel"
+            "Outbound sink: sending message frame to transport channel"
         );
 
         let mut attempt = 0;
@@ -305,6 +376,9 @@ impl SessionOutboundSink {
 
             match send_result {
                 Ok(()) => {
+                    if completes_request {
+                        self.connection.sent(&bytes);
+                    }
                     if metrics_enabled {
                         crate::observability::hot_path_counter_inc(obs::METRIC_FRAMES_SENT);
                     }
@@ -353,6 +427,27 @@ impl SessionOutboundSink {
     }
 }
 
+/// Live domain notifications may be lost. Replies, RPC lifecycle traffic and
+/// handshake/control messages must either reach the queue or end the session.
+fn required_delivery(frame: &[u8]) -> bool {
+    let Ok(header) = crate::protocol::wire2::header::MessageHeader::decode(frame) else {
+        return true;
+    };
+    required_message(header.message_type)
+}
+
+fn required_message(message_type: u16) -> bool {
+    use crate::protocol::manifest::{ManifestDecoder, ManifestDirection};
+    !crate::protocol::manifest::entry(crate::protocol::message::MessageType::new(message_type))
+        .is_some_and(|entry| {
+            entry.direction == ManifestDirection::ServerToClient
+                && !matches!(
+                    entry.decoder,
+                    ManifestDecoder::Control | ManifestDecoder::Rpc
+                )
+        })
+}
+
 /// Sample size used only to exercise `outbound_retry_backoff`'s general
 /// escalation shape in tests; no live caller requests this many attempts
 /// since every `deliver_*` path now uses the yield-only best-effort budget.
@@ -385,57 +480,31 @@ fn outbound_retry_backoff(attempt: usize) -> Option<Duration> {
     Some(Duration::from_micros(micros).min(OUTBOUND_MAX_RETRY_BACKOFF))
 }
 
-/// Frame one TLV value for the wire.
-///
-/// # Errors
-///
-/// Returns `DeliveryError::InvalidPayload` when the payload exceeds the `u16`
-/// length a TLV value can carry. This used to be an assertion, which turned
-/// any aggregate-overflow bug in any domain - a schedule listing, a large read
-/// page - into a broker panic. Framing must fail the one delivery, never the
-/// process; the real fix always lives at the source, which must paginate.
-/// Build `[CORRELATED][8-byte id]` followed by the response record, as one
-/// buffer. Both records travel in a single transport frame so the client can
-/// pair them without holding state across frames.
-fn prepend_correlation_record(correlation: std::num::NonZeroU64, response: &Bytes) -> Bytes {
-    use crate::protocol::correlation;
-    use crate::protocol::tlv::MessageType;
+/// The limit a sink frames against until configuration sets one.
+pub(super) const DEFAULT_MAX_MESSAGE_BYTES: usize =
+    crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize;
 
-    let value = correlation::encode(correlation);
-    let header_len = MessageType::CORRELATED.encoded_type_len() + 2;
-    let mut out = BytesMut::with_capacity(header_len + value.len() + response.len());
-    out.put_u8(u8::try_from(MessageType::CORRELATED.as_u16()).unwrap_or(u8::MAX));
-    out.extend_from_slice(&u16::try_from(value.len()).unwrap_or(u16::MAX).to_be_bytes());
-    out.extend_from_slice(&value);
-    out.extend_from_slice(response);
-    out.freeze()
-}
-
-pub(super) fn encode_single_tlv_frame(
-    msg_type: crate::protocol::tlv::MessageType,
+/// Frame one message: the 15-byte header, then exactly `payload`, bounded by
+/// `max_message_bytes` with the header counted.
+pub(super) fn encode_message_frame(
+    msg_type: u16,
+    correlation: Option<std::num::NonZeroU64>,
     payload: &[u8],
+    max_message_bytes: usize,
 ) -> Result<Bytes, DeliveryError> {
-    if u16::try_from(payload.len()).is_err() {
+    let max_payload = max_message_bytes.saturating_sub(crate::protocol::wire2::header::HEADER_LEN);
+    if payload.len() > max_payload {
         return Err(DeliveryError::InvalidPayload {
             len: payload.len(),
-            max: usize::from(u16::MAX),
+            max: max_payload,
         });
     }
-
-    let header_len = msg_type.encoded_type_len() + 2;
-    let mut out = BytesMut::with_capacity(header_len + payload.len());
-
-    if msg_type.is_single_byte() {
-        out.put_u8(u8::try_from(msg_type.as_u16()).unwrap_or(u8::MAX));
-    } else {
-        out.put_u8(crate::protocol::tlv::MessageType::ESCAPE_MARKER);
-        out.extend_from_slice(&msg_type.as_u16().to_be_bytes());
-    }
-
-    let payload_len = u16::try_from(payload.len()).unwrap_or(u16::MAX);
-    out.extend_from_slice(&payload_len.to_be_bytes());
-    out.extend_from_slice(payload);
-    Ok(out.freeze())
+    Ok(Bytes::from(crate::protocol::wire2::header::encode_message(
+        msg_type,
+        crate::protocol::wire2::header::HeaderFlags::none(),
+        correlation,
+        payload,
+    )))
 }
 
 #[cfg(test)]
@@ -446,7 +515,7 @@ mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::frame_context::FrameContext;
-    use crate::protocol::tlv::MessageType;
+    use crate::protocol::message::MessageType;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
     fn test_envelope(payload: Bytes) -> Envelope {
@@ -474,7 +543,10 @@ mod tests {
 
         // Assert
         assert_eq!(result, Ok(()));
-        assert_eq!(frame.as_ref(), &[101, 0, 2, b'o', b'k']);
+        assert_eq!(
+            frame.as_ref(),
+            &[0, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, b'o', b'k']
+        );
     }
 
     #[test]
@@ -633,16 +705,12 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_oversized_tlv_frame_instead_of_panicking() {
+    fn should_reject_an_oversized_message_instead_of_panicking() {
         // Arrange
-        // A TLV value carries a u16 length. Asserting on that turns any
-        // aggregate-overflow bug in any domain into a broker panic; the
-        // schedule LIST response reached 270KB this way. Framing must fail the
-        // one delivery, not the process.
-        let payload = vec![0x5a; usize::from(u16::MAX) + 1];
+        let payload = vec![0x5a; DEFAULT_MAX_MESSAGE_BYTES + 1];
 
         // Act
-        let result = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(701), &payload);
+        let result = encode_message_frame(701, None, &payload, DEFAULT_MAX_MESSAGE_BYTES);
 
         // Assert
         let Err(error) = result else {
@@ -655,41 +723,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_prefix_a_correlated_response_with_its_correlation_record() {
+    async fn should_put_the_correlation_in_the_message_header() {
         // Arrange
         let (tx, mut rx) = mpsc::channel(4);
         let sink = SessionOutboundSink::new(tx);
-        let response = encode_single_tlv_frame(MessageType::new(101), b"body").expect("frame");
 
         // Act
-        sink.send_encoded_frame(1, &response, std::num::NonZeroU64::new(7))
+        sink.send_message(1, 101, std::num::NonZeroU64::new(7), b"body")
             .expect("send");
 
         // Assert
-        // `[CORRELATED][len=8][0..7][101][len=4][body]`, both records in one
-        // transport frame so the client pairs them without cross-frame state.
         let sent = rx.try_recv().expect("frame sent");
         assert_eq!(
             sent.as_ref(),
-            &[3, 0, 8, 0, 0, 0, 0, 0, 0, 0, 7, 101, 0, 4, b'b', b'o', b'd', b'y']
+            &[0, 101, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 4, b'b', b'o', b'd', b'y']
         );
     }
 
     #[tokio::test]
-    async fn should_leave_an_uncorrelated_response_byte_identical() {
+    async fn should_send_a_zero_correlation_for_an_unsolicited_message() {
         // Arrange
-        // This is the guarantee the whole rollout rests on: a client that never
-        // sends CORRELATE must see exactly the bytes the previous broker sent.
         let (tx, mut rx) = mpsc::channel(4);
         let sink = SessionOutboundSink::new(tx);
-        let response = encode_single_tlv_frame(MessageType::new(101), b"body").expect("frame");
 
         // Act
-        sink.send_encoded_frame(1, &response, None).expect("send");
+        sink.send_message(1, 101, None, b"body").expect("send");
 
         // Assert
         let sent = rx.try_recv().expect("frame sent");
-        assert_eq!(sent.as_ref(), &[101, 0, 4, b'b', b'o', b'd', b'y']);
-        assert_eq!(sent, response);
+        assert_eq!(&sent[3..11], &[0; 8]);
+        assert_eq!(&sent[15..], b"body");
     }
 }

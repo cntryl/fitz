@@ -27,6 +27,12 @@ pub struct ListenerHandle {
 
 pub(super) type SessionTasks = Arc<Mutex<JoinSet<()>>>;
 
+fn is_connect_rejected_frame(frame: &[u8]) -> bool {
+    crate::protocol::wire2::header::MessageHeader::decode(frame).is_ok_and(|header| {
+        header.message_type == crate::protocol::wire2::control::CONNECT_REJECTED
+    })
+}
+
 /// Shared ownership for one accepted transport connection.
 ///
 /// HTTP owns the connection until a WebSocket upgrade is handed off. After
@@ -182,6 +188,29 @@ pub(super) async fn reap_session_tasks(label: &'static str, tasks: &SessionTasks
             tracing::debug!(listener = label, error = %error, "Session task ended with join error");
         }
     }
+}
+
+/// Answer a frame the broker will not serve with `UNSUPPORTED` on its own
+/// message type and correlation, keeping the session open.
+pub(super) fn answer_unsupported_frame(
+    sink: &crate::api::outbound::SessionOutboundSink,
+    session_id: u64,
+    message_type: u16,
+    correlation: Option<std::num::NonZeroU64>,
+    reason: &'static str,
+) -> Result<(), String> {
+    tracing::warn!(
+        session_id,
+        message_type,
+        reason,
+        "answering an unsupported frame"
+    );
+    let payload = crate::protocol::error_codes::encode_error_body(
+        crate::protocol::error_codes::protocol::ERR_UNSUPPORTED,
+        reason,
+    );
+    sink.send_unadmitted_response(session_id, message_type, correlation, &payload)
+        .map_err(|error| format!("could not answer unsupported frame: {error}"))
 }
 
 pub(super) async fn drain_session_tasks(label: &'static str, task_sets: Vec<SessionTasks>) {

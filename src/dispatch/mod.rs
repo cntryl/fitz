@@ -6,7 +6,7 @@
 
 use crate::protocol::frame::ChannelId;
 use crate::protocol::manifest::{client_entry, ManifestAuthorization, ManifestDecoder};
-use crate::protocol::tlv::MessageType;
+use crate::protocol::message::MessageType;
 use crate::runtime::routing::{RouteAddress, RouteFamily};
 use crate::runtime::{ClientChannel, ClientFrameMeta, DomainKind, Envelope};
 use bytes::Bytes;
@@ -77,6 +77,8 @@ pub(crate) struct DomainEnvelopeBuildRequest {
     pub(crate) destination: RouteAddress,
     /// Correlation the client attached to this frame, if any.
     pub(crate) correlation: Option<std::num::NonZeroU64>,
+    /// The client set `ACK_REQUESTED` in the message header.
+    pub(crate) ack_requested: bool,
     /// Monotonic time the transport received the complete frame. Retries reuse it so
     /// redelivery never renews a request deadline.
     pub(crate) received_at: std::time::Instant,
@@ -112,6 +114,7 @@ fn client_frame_meta(request: &DomainEnvelopeBuildRequest) -> ClientFrameMeta {
         request.route_family,
     )
     .with_correlation(request.correlation)
+    .with_ack_requested(request.ack_requested)
 }
 
 /// Parse one manifest-selected client frame and adapt it to a domain command.
@@ -438,6 +441,7 @@ mod tests {
                 crate::runtime::routing::Route::new("kv://acme/app/users"),
             ),
             correlation,
+            ack_requested: false,
             received_at: std::time::Instant::now(),
         }
     }

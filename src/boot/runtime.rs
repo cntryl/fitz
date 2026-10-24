@@ -50,7 +50,8 @@ pub fn init(config: &BootConfig) -> BootResult<RuntimeComponents> {
             .with_auth_config(config.auth_config.clone())
             .with_auth_claims_config(config.auth_claims_config.clone())
             .with_route_family_resolver(config.route_family_resolver.clone())
-            .with_route_families(&config.route_families),
+            .with_route_families(&config.route_families)
+            .with_max_message_bytes(u32::try_from(config.max_frame_size).unwrap_or(u32::MAX)),
     );
 
     let ingress_config = IngressConfig::default()

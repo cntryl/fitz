@@ -178,7 +178,7 @@ async fn lifecycle(server: &TestServer, mode: u8) -> Result<(), String> {
             wire::terminal_error(
                 &caller.recv_frame(2000).await.map_err(error)?,
                 id,
-                fitz::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+                fitz::protocol::error_codes::rpc::ERR_TIMEOUT,
             )?;
         }
         _ => return Err("unknown lifecycle scenario".into()),

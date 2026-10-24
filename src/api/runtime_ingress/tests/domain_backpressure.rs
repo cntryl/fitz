@@ -145,7 +145,10 @@ fn domain_ingress_cases() -> Vec<DomainIngressCase> {
 
 fn synthesized_error_code(case: &DomainIngressCase, frame: &FrameContext) -> u32 {
     if case.domain == "rpc" && case.msg_type == 302 {
-        assert_eq!(frame.msg_type, crate::protocol::tlv::MessageType::new(303));
+        assert_eq!(
+            frame.msg_type,
+            crate::protocol::message::MessageType::new(303)
+        );
         assert!(frame.correlation.is_none());
         let expected_id = crate::protocol::rpc_codec::extract_request_correlation_id(&case.payload)
             .expect("RPC request UUID");
@@ -163,14 +166,26 @@ fn synthesized_error_code(case: &DomainIngressCase, frame: &FrameContext) -> u32
         return u32::from(code);
     }
 
-    let body = &frame.payload;
-    assert_eq!(
-        body[0],
-        if case.domain == "stream" { 2 } else { 1 },
-        "{} should send an error body",
-        case.domain
-    );
-    u32::from_be_bytes([body[1], body[2], body[3], body[4]])
+    let (code, _) = crate::protocol::error_codes::decode_error_body(&frame.payload)
+        .unwrap_or_else(|error| panic!("{} should send an error body: {error}", case.domain));
+    u32::from(code)
+}
+
+/// A code a compliant client may re-send after: the catalog says nothing was
+/// applied. Timeouts and backend failures are indeterminate and never qualify.
+fn documented_retryable(code: u32) -> bool {
+    u16::try_from(code)
+        .ok()
+        .and_then(crate::protocol::wire2::catalog::lookup)
+        .is_some_and(|entry| entry.effect == crate::protocol::wire2::envelope::Effect::NotApplied)
+}
+
+fn catalog_class(code: u32) -> crate::protocol::wire2::envelope::ErrorClass {
+    u16::try_from(code)
+        .ok()
+        .and_then(crate::protocol::wire2::catalog::lookup)
+        .unwrap_or_else(|| panic!("code {code} is not in the catalog"))
+        .class
 }
 
 #[test]
@@ -193,7 +208,7 @@ fn should_absorb_transient_domain_mailbox_backpressure_for_each_domain() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload,
                     None,
                 )
@@ -232,13 +247,6 @@ impl MailboxSink for CapturingInboxSink {
         self.deliver(envelope)
     }
 }
-
-/// `REQ-PROTO-012`'s retryable set. A timeout must never answer with one of
-/// these: they tell a compliant client the request was never accepted. A
-/// backpressure rejection must always answer with one, for the same reason.
-const DOCUMENTED_RETRYABLE_CODES: [u32; 12] = [
-    1004, 1014, 2014, 3006, 4005, 5001, 5007, 6001, 6002, 6003, 6004, 7010,
-];
 
 struct AlwaysTimingOutSink;
 
@@ -285,7 +293,7 @@ impl MailboxSink for RpcReplyThenUnavailableSink {
             .try_reply_to(FrameContext::new(
                 self.session_id,
                 ChannelId::Rpc,
-                crate::protocol::tlv::MessageType::new(303),
+                crate::protocol::message::MessageType::new(303),
                 Bytes::from(payload),
                 RouteFamily::new(1),
             ))
@@ -341,7 +349,7 @@ fn should_suppress_unavailable_rpc_failure_after_domain_terminal_claim() {
             .on_frame(
                 session_id,
                 case.channel_id,
-                crate::protocol::tlv::MessageType::new(case.msg_type),
+                crate::protocol::message::MessageType::new(case.msg_type),
                 case.payload.clone(),
                 None,
             )
@@ -358,7 +366,7 @@ fn should_suppress_unavailable_rpc_failure_after_domain_terminal_claim() {
     );
     assert_eq!(
         frames[0].msg_type,
-        crate::protocol::tlv::MessageType::new(303)
+        crate::protocol::message::MessageType::new(303)
     );
     assert_eq!(
         synthesized_error_code(&case, &frames[0]),
@@ -373,7 +381,7 @@ impl MailboxSink for ReplyThenTimeoutSink {
             .try_reply_to(FrameContext::new(
                 self.session_id,
                 self.channel_id,
-                crate::protocol::tlv::MessageType::new(self.msg_type),
+                crate::protocol::message::MessageType::new(self.msg_type),
                 Bytes::from_static(&[0]),
                 RouteFamily::new(1),
             ))
@@ -432,7 +440,7 @@ fn should_not_emit_a_second_terminal_response_after_the_domain_replied_for_each_
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     None,
                 )
@@ -480,7 +488,7 @@ fn should_surface_sustained_high_lane_domain_mailbox_backpressure_for_each_domai
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload,
                     None,
                 )
@@ -537,7 +545,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     None,
                 )
@@ -565,9 +573,15 @@ fn should_not_close_session_when_a_domain_command_times_out() {
         // client re-sends and duplicates the side effect. Only queue ACK is
         // deduplicated.
         assert!(
-            !DOCUMENTED_RETRYABLE_CODES.contains(&code),
+            !documented_retryable(code),
             "{} answered a timeout with retryable code {code}; a compliant client \
              would re-send a command that may already have applied",
+            case.domain
+        );
+        assert_eq!(
+            catalog_class(code),
+            crate::protocol::wire2::envelope::ErrorClass::Timeout,
+            "{} must answer a dispatch timeout with its TIMEOUT slot, got {code}",
             case.domain
         );
     }
@@ -619,7 +633,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     None,
                 )
@@ -648,7 +662,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
         // a compliant client give up on a request it could safely re-send.
         let code = synthesized_error_code(&case, &frames[0]);
         assert!(
-            DOCUMENTED_RETRYABLE_CODES.contains(&code),
+            documented_retryable(code),
             "{} rejected a never-enqueued request with fatal code {code}; a compliant \
              client will not retry",
             case.domain
@@ -713,8 +727,8 @@ fn should_answer_terminal_delivery_failures_without_killing_the_session() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
-                    case.payload,
+                    crate::protocol::message::MessageType::new(case.msg_type),
+                    case.payload.clone(),
                     None,
                 )
                 .await
@@ -726,10 +740,17 @@ fn should_answer_terminal_delivery_failures_without_killing_the_session() {
             IngressDecision::Accept,
             "{failure:?} should be answered on the channel, not close the session"
         );
+        let frames = client_frames.lock().unwrap();
         assert_eq!(
-            client_frames.lock().unwrap().len(),
+            frames.len(),
             1,
             "{failure:?} should produce one error frame"
+        );
+        let code = synthesized_error_code(&case, &frames[0]);
+        assert_eq!(
+            catalog_class(code),
+            crate::protocol::wire2::envelope::ErrorClass::Backend,
+            "{failure:?} must be answered with the domain's BACKEND slot, got {code}"
         );
     }
 }
@@ -767,7 +788,7 @@ fn should_answer_unroutable_domain_frame_without_killing_the_session() {
             .on_frame(
                 session_id,
                 case.channel_id,
-                crate::protocol::tlv::MessageType::new(case.msg_type),
+                crate::protocol::message::MessageType::new(case.msg_type),
                 case.payload,
                 None,
             )
@@ -821,7 +842,7 @@ fn should_echo_correlation_on_ingress_synthesized_errors_for_each_domain() {
                 .on_frame(
                     session_id,
                     case.channel_id,
-                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    crate::protocol::message::MessageType::new(case.msg_type),
                     case.payload.clone(),
                     correlation,
                 )

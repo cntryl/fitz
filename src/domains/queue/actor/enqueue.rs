@@ -33,7 +33,10 @@ impl QueueActor {
             + self.queue_key.area.len()
             + 1
             + self.queue_key.resource.len();
-        let limit = crate::domains::queue::protocol::max_deliverable_body_bytes(route_len);
+        let limit = crate::domains::queue::protocol::max_deliverable_body_bytes(
+            route_len,
+            self.response_payload_limit,
+        );
         if body_len > limit {
             return Err(format!(
                 "ERR_MESSAGE_TOO_LARGE: body is {body_len} bytes, exceeding the {limit}-byte \
@@ -57,8 +60,8 @@ impl QueueActor {
 
     /// Handle send operation
     pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
-        if let Err(message) = self.validate_deliverable_body(body.len()) {
-            return QueueResponse::Error { message };
+        if let Err(reason) = self.validate_deliverable_body(body.len()) {
+            return QueueResponse::BadRequest { reason };
         }
         self.send_inner(body, delay_seconds)
     }
@@ -180,8 +183,8 @@ impl QueueActor {
         // Validate the whole batch first: a partially-applied batch would
         // leave the producer unable to tell which items were stored.
         for (body, _) in items {
-            if let Err(message) = self.validate_deliverable_body(body.len()) {
-                return QueueResponse::Error { message };
+            if let Err(reason) = self.validate_deliverable_body(body.len()) {
+                return QueueResponse::BadRequest { reason };
             }
         }
         if !self.has_message_id_capacity(Self::usize_to_u64(items.len())) {

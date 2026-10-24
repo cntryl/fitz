@@ -191,7 +191,7 @@ fn build_notify_envelope(
     let notification = {
         use crate::dispatch::protocol::frame::ChannelId;
         use crate::dispatch::protocol::frame_context::FrameContext;
-        use crate::dispatch::protocol::tlv::MessageType;
+        use crate::dispatch::protocol::message::MessageType;
 
         let payload = crate::dispatch::protocol::notice_codec::encode_notify(
             target.subscription_id,

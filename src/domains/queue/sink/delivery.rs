@@ -133,7 +133,7 @@ impl QueueFamilyState {
             let notify_ctx = FrameContext::new(
                 session_id,
                 crate::dispatch::protocol::frame::ChannelId::Sub,
-                crate::dispatch::protocol::tlv::MessageType::new(
+                crate::dispatch::protocol::message::MessageType::new(
                     crate::dispatch::protocol::queue_codec::msg_type::NOTIFY,
                 ),
                 bytes::Bytes::from(payload),
@@ -370,11 +370,11 @@ impl QueueFamilyState {
         request_context: OperationRequestContext<'_>,
     ) -> Option<OperationOutcome> {
         if let Ok(key) = Self::queue_key_for_route(family_id, route) {
+            let response_payload_limit = self.response_payload_limit;
             return self
                 .with_actor_for_operation(&key, request_context, |actor| {
-                    let mut response_bytes_remaining =
-                        crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
-                            - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+                    let mut response_bytes_remaining = response_payload_limit
+                        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
                     actor
                         .handle_receive_for_session_with_wire_budget(
                             session_id,

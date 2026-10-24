@@ -88,7 +88,6 @@ impl ScheduleActor {
             cron_cache_order: std::collections::VecDeque::new(),
             list_entries: Vec::new(),
             list_entries_by_route: BTreeMap::new(),
-            list_cache: None,
             write_policy,
             last_scan_time: now,
             scan_dedup_window: super::SCAN_DEDUP_WINDOW,

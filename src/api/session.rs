@@ -17,12 +17,12 @@ pub(super) fn is_stale_session_frame_error(error: &SessionError) -> bool {
     )
 }
 
-/// Decode all complete TLV messages in a transport frame and hand them to ingress.
+/// Decode the one message in a transport frame and hand it to ingress.
 ///
 /// # Errors
 ///
-/// Returns `SessionError` when message decoding fails, ingress signals
-/// backpressure, or ingress requests the session to close.
+/// Returns `SessionError` when the frame is not exactly one message, ingress
+/// signals backpressure, or ingress requests the session to close.
 pub async fn process_session_frame(
     session: &mut Session,
     frame: Bytes,
@@ -32,9 +32,6 @@ pub async fn process_session_frame(
 }
 
 /// Decode a transport frame with the time its complete bytes were received.
-///
-/// Every complete TLV decoded from this frame keeps this stamp, including a TLV
-/// started in an earlier frame. Waiting for a previous TLV does not renew it.
 ///
 /// # Errors
 ///
@@ -46,83 +43,115 @@ pub async fn process_session_frame_at(
     ingress: &dyn Ingress,
     received_at: Instant,
 ) -> Result<(), SessionError> {
-    session.push_frame(&frame);
-    let mut connected_in_frame = false;
+    process_frame(session, frame, ingress, received_at, None).await
+}
 
-    while let Some(message) = session.next_message()? {
-        let channel = message.channel;
-        if connected_in_frame {
+pub(crate) async fn process_bounded_session_frame_at(
+    session: &mut Session,
+    frame: Bytes,
+    ingress: &dyn Ingress,
+    received_at: Instant,
+    outbound: &crate::api::outbound::SessionOutboundSink,
+) -> Result<(), SessionError> {
+    process_frame(session, frame, ingress, received_at, Some(outbound)).await
+}
+
+async fn process_frame(
+    session: &mut Session,
+    frame: Bytes,
+    ingress: &dyn Ingress,
+    received_at: Instant,
+    outbound: Option<&crate::api::outbound::SessionOutboundSink>,
+) -> Result<(), SessionError> {
+    let message = session.decode_frame(&frame)?;
+    let channel = message.channel;
+    if let Some(outbound) = outbound {
+        if let Err(reason) = outbound.connection.validate_request(&message) {
             session.release_channel(channel);
-            return Err(SessionError::IngressClose(
-                "CONNECT must be sent in a dedicated transport frame".to_string(),
-            ));
+            return Err(SessionError::IngressClose(reason.to_owned()));
         }
-        let is_connect = message.msg_type == crate::protocol::tlv::MessageType::CONNECT;
-        let ingress_start = Instant::now();
-        let decision = ingress
-            .on_frame_received_at(
-                session.info().session_id,
-                channel,
-                message.msg_type,
-                message.payload,
-                message.correlation,
-                received_at,
-            )
-            .await;
-        crate::observability::hot_path_histogram_observe_us(
-            crate::observability::METRIC_SESSION_INGRESS_HANDOFF_LATENCY,
-            u64::try_from(
-                ingress_start
-                    .elapsed()
-                    .as_micros()
-                    .min(u128::from(u64::MAX)),
-            )
-            .unwrap_or(u64::MAX),
-        );
-        session.release_channel(channel);
-
-        match decision {
-            IngressDecision::Accept => {
-                connected_in_frame = is_connect;
-                trace!(
-                    session_id = session.info().session_id,
-                    "Ingress accepted frame"
-                );
-            }
-            IngressDecision::Backpressure => {
-                warn!(session_id = session.info().session_id, channel = ?channel, "Ingress backpressure");
-                return Err(SessionError::Backpressure(channel));
-            }
-            IngressDecision::Close(reason) => {
-                warn!(session_id = session.info().session_id, reason = %reason, "Ingress requested close");
-                return Err(SessionError::IngressClose(reason));
-            }
+        if !outbound.connection.admit(&message) {
+            session.release_channel(channel);
+            let code = crate::protocol::error_codes::protocol::ERR_BUSY;
+            let reason = "connection max_in_flight reached; request was not accepted";
+            let (kind, correlation, body) = if message.msg_type.as_u16() == 302 {
+                let id =
+                    crate::protocol::rpc_codec::extract_request_correlation_id(&message.payload)
+                        .map_err(SessionError::IngressClose)?;
+                (
+                    303,
+                    None,
+                    crate::protocol::rpc_codec::encode_terminal_error_response_message_payload(
+                        &id, code, reason,
+                    ),
+                )
+            } else {
+                (
+                    message.msg_type.as_u16(),
+                    message.correlation,
+                    Bytes::from(crate::protocol::error_codes::encode_error_body(
+                        code, reason,
+                    )),
+                )
+            };
+            return outbound
+                .send_unadmitted_response(session.info().session_id, kind, correlation, &body)
+                .map_err(|error| {
+                    SessionError::IngressClose(format!("cannot deliver connection BUSY: {error:?}"))
+                });
         }
     }
+    let ingress_start = Instant::now();
+    let decision = ingress
+        .on_frame_received_at(
+            session.info().session_id,
+            channel,
+            message.msg_type,
+            message.payload,
+            crate::protocol::wire2::header::HeaderLabels {
+                correlation: message.correlation,
+                flags: message.flags,
+            },
+            received_at,
+        )
+        .await;
+    crate::observability::hot_path_histogram_observe_us(
+        crate::observability::METRIC_SESSION_INGRESS_HANDOFF_LATENCY,
+        u64::try_from(
+            ingress_start
+                .elapsed()
+                .as_micros()
+                .min(u128::from(u64::MAX)),
+        )
+        .unwrap_or(u64::MAX),
+    );
+    session.release_channel(channel);
 
-    // A CORRELATE record labels the record that follows it, so one left over at
-    // the end of a transport frame labels nothing. Only here is the frame
-    // boundary visible - the TLV decoder sees a continuous byte stream - which
-    // is why this check lives at the transport edge rather than in `Session`,
-    // the same split the CONNECT-isolation rule above already uses.
-    if session.has_dangling_correlation() {
-        warn!(
-            session_id = session.info().session_id,
-            "CORRELATE record did not label a request"
-        );
-        return Err(SessionError::IngressClose(
-            "CORRELATE must label a request in the same transport frame".to_string(),
-        ));
+    match decision {
+        IngressDecision::Accept => {
+            trace!(
+                session_id = session.info().session_id,
+                "Ingress accepted frame"
+            );
+            Ok(())
+        }
+        IngressDecision::Backpressure => {
+            warn!(session_id = session.info().session_id, channel = ?channel, "Ingress backpressure");
+            Err(SessionError::Backpressure(channel))
+        }
+        IngressDecision::Close(reason) => {
+            warn!(session_id = session.info().session_id, reason = %reason, "Ingress requested close");
+            Err(SessionError::IngressClose(reason))
+        }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::runtime_ingress::IngressDecision;
-    use crate::protocol::tlv::{MessageType, TlvEncoder};
+    use crate::protocol::message::MessageType;
+    use crate::protocol::wire2::header::{encode_message, HeaderFlags};
     use crate::session::{
         CloseReason, NewSessionConfig, SessionInfo, SessionMetadata, SessionPermissions,
         TransportKind,
@@ -207,44 +236,18 @@ mod tests {
             crate::runtime::routing::RouteFamily::new(1),
         );
         let mut session = Session::new(42, config);
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::new(1), b"backpressure");
+        let frame = Bytes::from(encode_message(
+            1,
+            HeaderFlags::none(),
+            None,
+            b"backpressure",
+        ));
 
         // Act
-        let result =
-            process_session_frame(&mut session, encoder.finish(), &BackpressureIngress).await;
+        let result = process_session_frame(&mut session, frame, &BackpressureIngress).await;
 
         // Assert
         assert!(matches!(result, Err(SessionError::Backpressure(_))));
-    }
-
-    #[tokio::test]
-    async fn should_reject_messages_pipelined_after_connect() {
-        // Arrange
-        let config = NewSessionConfig::unauthenticated(
-            TransportKind::Tcp,
-            None,
-            SessionPermissions::empty(),
-            SessionMetadata::new(),
-            10,
-            None,
-            crate::runtime::routing::RouteFamily::new(1),
-        );
-        let mut session = Session::new(42, config);
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::CONNECT, b"token");
-        encoder.encode(MessageType::new(200), b"mutation");
-        let ingress = RecordingIngress::default();
-
-        // Act
-        let result = process_session_frame(&mut session, encoder.finish(), &ingress).await;
-
-        // Assert
-        assert!(matches!(result, Err(SessionError::IngressClose(_))));
-        assert_eq!(
-            *ingress.message_types.lock().unwrap(),
-            vec![MessageType::CONNECT]
-        );
     }
 
     fn test_session() -> Session {
@@ -262,202 +265,83 @@ mod tests {
         )
     }
 
-    fn correlate_bytes(value: u64) -> Vec<u8> {
-        value.to_be_bytes().to_vec()
-    }
-
     #[tokio::test]
-    async fn should_attach_correlation_to_the_record_it_labels() {
+    async fn should_reject_a_frame_carrying_more_than_one_message() {
         // Arrange
         let mut session = test_session();
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::CORRELATE, &correlate_bytes(77));
-        encoder.encode(MessageType::new(200), b"mutation");
+        let mut frame = encode_message(1, HeaderFlags::none(), None, b"token");
+        frame.extend_from_slice(&encode_message(200, HeaderFlags::none(), None, b"mutation"));
         let ingress = RecordingIngress::default();
 
         // Act
-        let result = process_session_frame(&mut session, encoder.finish(), &ingress).await;
+        let result = process_session_frame(&mut session, Bytes::from(frame), &ingress).await;
 
         // Assert
-        // CORRELATE is absorbed, so ingress sees only the request it labelled -
-        // but it must see that request carrying the id, not merely see it.
+        assert!(matches!(result, Err(SessionError::Decode(_))));
+        assert!(ingress.message_types.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn should_pass_the_header_correlation_to_ingress() {
+        // Arrange
+        let mut session = test_session();
+        let correlation = std::num::NonZeroU64::new(77);
+        let frame = Bytes::from(encode_message(
+            200,
+            HeaderFlags::none(),
+            correlation,
+            b"mutation",
+        ));
+        let ingress = RecordingIngress::default();
+
+        // Act
+        let result = process_session_frame(&mut session, frame, &ingress).await;
+
+        // Assert
         assert!(result.is_ok());
         assert_eq!(
             *ingress.message_types.lock().unwrap(),
             vec![MessageType::new(200)]
         );
-        assert_eq!(
-            *ingress.correlations.lock().unwrap(),
-            vec![std::num::NonZeroU64::new(77)]
-        );
-        assert!(!session.has_dangling_correlation());
+        assert_eq!(*ingress.correlations.lock().unwrap(), vec![correlation]);
     }
 
     #[tokio::test]
-    async fn should_not_leak_a_correlation_onto_the_next_unlabelled_request() {
+    async fn should_report_a_reserved_flag_bit_as_unsupported_without_dispatch() {
         // Arrange
-        // The stash is per-record, not sticky. If it leaked, the request after
-        // a correlated one would answer the wrong caller - the precise failure
-        // this feature exists to prevent.
         let mut session = test_session();
-        let mut frame = Vec::new();
-        let mut record = TlvEncoder::new();
-        record.encode(MessageType::CORRELATE, &correlate_bytes(77));
-        frame.extend_from_slice(&record.finish());
-        let mut labelled = TlvEncoder::new();
-        labelled.encode(MessageType::new(200), b"labelled");
-        frame.extend_from_slice(&labelled.finish());
-        let mut bare = TlvEncoder::new();
-        bare.encode(MessageType::new(202), b"bare");
-        frame.extend_from_slice(&bare.finish());
+        let correlation = std::num::NonZeroU64::new(77);
+        let mut frame = encode_message(200, HeaderFlags::none(), correlation, b"mutation");
+        frame[2] |= 0b1000_0000;
         let ingress = RecordingIngress::default();
 
         // Act
         let result = process_session_frame(&mut session, Bytes::from(frame), &ingress).await;
 
         // Assert
-        assert!(result.is_ok(), "unexpected: {result:?}");
-        assert_eq!(
-            *ingress.correlations.lock().unwrap(),
-            vec![std::num::NonZeroU64::new(77), None]
-        );
-    }
-
-    #[tokio::test]
-    async fn should_reject_a_correlate_that_labels_no_request() {
-        // Arrange
-        // A trailing CORRELATE labels nothing. Accepting it would let the next
-        // transport frame's first request silently inherit a stale id, which is
-        // exactly the misdelivery this feature exists to prevent.
-        let mut session = test_session();
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::CORRELATE, &correlate_bytes(77));
-        let ingress = RecordingIngress::default();
-
-        // Act
-        let result = process_session_frame(&mut session, encoder.finish(), &ingress).await;
-
-        // Assert
         assert!(matches!(
             result,
-            Err(SessionError::IngressClose(reason))
-                if reason.contains("CORRELATE must label a request")
+            Err(SessionError::Unsupported {
+                message_type: 200,
+                correlation: Some(c),
+                ..
+            }) if Some(c) == correlation
         ));
         assert!(ingress.message_types.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn should_reject_correlation_when_request_is_incomplete_at_frame_end() {
+    async fn should_pass_no_correlation_for_a_zero_header() {
         // Arrange
         let mut session = test_session();
-        let mut correlation = TlvEncoder::new();
-        correlation.encode(MessageType::CORRELATE, &correlate_bytes(77));
-        let mut frame = correlation.finish().to_vec();
-        let mut request = TlvEncoder::new();
-        request.encode(MessageType::new(200), b"mutation");
-        let request_bytes = request.finish();
-        frame.extend_from_slice(&request_bytes[..request_bytes.len() - 1]);
+        let frame = Bytes::from(encode_message(202, HeaderFlags::none(), None, b"bare"));
         let ingress = RecordingIngress::default();
 
         // Act
-        let result = process_session_frame(&mut session, Bytes::from(frame), &ingress).await;
+        let result = process_session_frame(&mut session, frame, &ingress).await;
 
         // Assert
-        assert!(matches!(
-            result,
-            Err(SessionError::IngressClose(reason))
-                if reason.contains("CORRELATE must label a request")
-        ));
-        assert!(ingress.message_types.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn should_reject_a_correlate_that_labels_another_correlate() {
-        // Arrange
-        let mut session = test_session();
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::CORRELATE, &correlate_bytes(77));
-        let first = encoder.finish();
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::CORRELATE, &correlate_bytes(78));
-        let mut frame = first.to_vec();
-        frame.extend_from_slice(&encoder.finish());
-        let ingress = RecordingIngress::default();
-
-        // Act
-        let result = process_session_frame(&mut session, Bytes::from(frame), &ingress).await;
-
-        // Assert
-        assert!(matches!(
-            result,
-            Err(SessionError::IngressClose(reason))
-                if reason.contains("not another CORRELATE")
-        ));
-    }
-
-    #[tokio::test]
-    async fn should_reject_the_reserved_zero_correlation() {
-        // Arrange
-        let mut session = test_session();
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::CORRELATE, &correlate_bytes(0));
-        encoder.encode(MessageType::new(200), b"mutation");
-        let ingress = RecordingIngress::default();
-
-        // Act
-        let result = process_session_frame(&mut session, encoder.finish(), &ingress).await;
-
-        // Assert
-        assert!(matches!(
-            result,
-            Err(SessionError::IngressClose(reason)) if reason.contains("reserved")
-        ));
-    }
-
-    #[tokio::test]
-    async fn should_reject_a_malformed_correlate_width() {
-        // Arrange
-        let mut session = test_session();
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::CORRELATE, &[1, 2, 3]);
-        encoder.encode(MessageType::new(200), b"mutation");
-        let ingress = RecordingIngress::default();
-
-        // Act
-        let result = process_session_frame(&mut session, encoder.finish(), &ingress).await;
-
-        // Assert
-        assert!(matches!(
-            result,
-            Err(SessionError::IngressClose(reason)) if reason.contains("malformed CORRELATE")
-        ));
-    }
-
-    #[tokio::test]
-    async fn should_not_consume_a_channel_slot_for_correlate_records() {
-        // Arrange
-        // CORRELATE is absorbed before mux routing. If it were routed instead,
-        // every correlated request would also take a Control-channel slot, and
-        // a client pipelining more than the channel capacity would be closed
-        // for backpressure it never caused. Capacity here is 10, so 30 labelled
-        // requests prove the slot is never taken.
-        let mut session = test_session();
-        let ingress = RecordingIngress::default();
-
-        // Act
-        let mut frame = Vec::new();
-        for id in 1..=30u64 {
-            let mut record = TlvEncoder::new();
-            record.encode(MessageType::CORRELATE, &correlate_bytes(id));
-            frame.extend_from_slice(&record.finish());
-            let mut request = TlvEncoder::new();
-            request.encode(MessageType::new(200), b"mutation");
-            frame.extend_from_slice(&request.finish());
-        }
-        let result = process_session_frame(&mut session, Bytes::from(frame), &ingress).await;
-
-        // Assert
-        assert!(result.is_ok(), "unexpected: {result:?}");
-        assert_eq!(ingress.message_types.lock().unwrap().len(), 30);
+        assert!(result.is_ok());
+        assert_eq!(*ingress.correlations.lock().unwrap(), vec![None]);
     }
 }

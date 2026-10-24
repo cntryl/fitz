@@ -20,6 +20,7 @@ fn should_confirm_stream_family_cleanup_before_reporting_delivery() {
         StreamStorageLayout::PromotionFrontier,
         Some(&[family]),
         StreamStorageWriteOptions::local(),
+        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
     )
     .expect("create family Stream sink");
     let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);

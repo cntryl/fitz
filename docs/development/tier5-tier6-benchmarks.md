@@ -198,12 +198,12 @@ window as `delivery_window_misses`; this is not proof of a broker drop or a
 capacity rejection.
 A missing Notice baseline or recovery delivery fails verification.
 
-Valid durable-domain error responses preserve their operation, available error code and
-message and are classified as `DomainError`. Queue ACK and Schedule
-CREATE/CANCEL/LIST_V2 use plain actor error envelopes and can also receive coded
-ingress errors. Both forms must decode completely; an ambiguous or invalid error
-envelope remains `InvalidResponse` with a bounded payload prefix for diagnosis.
-Coded responses retain their code and message.
+Valid durable-domain error responses preserve their operation, code, and
+message and are classified as `DomainError`. Queue ACK, every Schedule verb
+(including LIST 702), and every Stream verb use the same wire-2 envelope:
+`[1][u16 code][u8 class][u8 effect][string message]`. Errors must decode
+completely; malformed envelopes remain `InvalidResponse` with a bounded
+payload prefix for diagnosis. No driver accepts status 2 or uncoded errors.
 Neither classification permits a correctness pass.
 
 The progress watchdog requires useful validated progress. Rejections, retries,

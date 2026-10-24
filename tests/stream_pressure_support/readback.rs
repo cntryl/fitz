@@ -17,12 +17,7 @@ pub fn verify_page(
     let mut outer = PayloadDecoder::new(body);
     let status = outer.get_u8()?;
     if status != 0 {
-        if status != 1 {
-            return Err("invalid Stream READ error status".into());
-        }
-        let code = outer.get_u32()?;
-        let detail = outer.get_string_ref()?;
-        complete(&outer)?;
+        let (code, detail) = fitz::protocol::error_codes::decode_error_body(body)?;
         return Err(format!("Stream READ error code {code}: {detail}"));
     }
     if outer.get_optional_u64()?.is_some() {

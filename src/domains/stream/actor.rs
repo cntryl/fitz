@@ -535,15 +535,9 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_an_append_larger_than_a_read_response_can_carry() {
+    fn should_reject_an_append_above_the_event_payload_limit() {
         // Arrange
-        // Every read plane frames one response as a single TLV value with a
-        // `u16` length, so a record whose wire cost exceeds that ceiling can
-        // never be replayed - and because the read accumulator refuses to
-        // build an unencodable response, it permanently blocks pagination at
-        // its own offset on the resource, area, realm, and global planes
-        // alike. Stream guarantees exact replay of committed history, so such
-        // an append must be refused rather than committed and then wedged.
+        // Oversized events must be rejected before staging or commit.
         let store = Arc::new(StreamStore::new(create_test_engine_with_cfs(vec![1])));
         let mut actor = StreamActor::new(
             RouteFamily::new(1),
@@ -562,7 +556,7 @@ mod tests {
             10,
             100,
             0,
-            Bytes::from(vec![b'a'; 200_000]),
+            Bytes::from(vec![b'a'; MAX_EVENT_SIZE + 1]),
             None,
             None,
         );

@@ -97,7 +97,7 @@ where
     assert_ne!(timeout_status, 0, "Expected timeout error response");
     assert_eq!(
         parse_lease_error_message(&timeout_data).expect("timeout message"),
-        "Timeout",
+        "acquire wait expired",
         "Expected queued acquire to time out"
     );
 }

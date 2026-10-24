@@ -540,6 +540,7 @@ impl DomainAdminPorts {
 }
 
 pub(crate) struct DomainSetupOptions {
+    pub(crate) max_message_bytes: usize,
     pub(crate) route_families: Vec<u32>,
     pub(crate) schedule_write_policy: crate::domains::WritePolicy,
 
@@ -580,6 +581,7 @@ fn create_stream_sink(
                 options.request_sync_write_policy,
                 options.request_buffered_write_policy,
             ),
+            options.max_message_bytes,
         )?
         .with_metrics(metrics.clone()),
     ))
@@ -642,6 +644,7 @@ pub(crate) fn setup(
             admin_read_model.clone(),
             crate::utils::idempotency::default_dedup_store(),
         )?
+        .with_max_message_bytes(options.max_message_bytes)
         .with_fast_flush_interval(options.queue_fast_flush_interval)
         .with_metrics(metrics.clone()),
     );

@@ -195,26 +195,24 @@ pub fn encode_response_into(
     enc.finish()
 }
 
-/// Encode the explicitly versioned Stream error envelope. READ retains its
-/// original status-1 coded envelope; other operations use status 2.
+/// Encode a Stream error in the common wire format 2 envelope. Every verb,
+/// READ included, uses the same layout; the message type is accepted so
+/// callers that key on it keep one signature.
 pub fn encode_error_response_into(
     enc: &mut PayloadEncoder,
-    message_type: u16,
+    _message_type: u16,
     code: u16,
     message: &str,
 ) -> Vec<u8> {
-    enc.clear();
-    enc.put_u8(if message_type == 604 { 1 } else { 2 });
-    enc.put_u32(u32::from(code));
-    enc.put_string(message);
-    enc.finish()
+    crate::protocol::error_codes::encode_error_body_into(code, message, enc)
 }
 
 /// The wire code for each client-visible Stream error kind.
-const fn stream_error_code(kind: StreamClientErrorKind) -> u16 {
+fn stream_error_code(kind: StreamClientErrorKind) -> u16 {
     use crate::protocol::error_codes::stream;
 
     match kind {
+        StreamClientErrorKind::InvalidRoute => stream::ERR_INVALID_ROUTE,
         StreamClientErrorKind::ConcurrencyConflict => stream::ERR_CONCURRENCY_CONFLICT,
         StreamClientErrorKind::SessionAlreadyActive => stream::ERR_SESSION_ALREADY_ACTIVE,
         StreamClientErrorKind::SessionNotFound => stream::ERR_SESSION_NOT_FOUND,
@@ -229,6 +227,7 @@ const fn stream_error_code(kind: StreamClientErrorKind) -> u16 {
         }
         StreamClientErrorKind::ReadResponseTooLarge => stream::ERR_READ_RESPONSE_TOO_LARGE,
         StreamClientErrorKind::Backend => stream::ERR_BACKEND_ERROR,
+        StreamClientErrorKind::BadRequest => stream::ERR_BAD_REQUEST,
     }
 }
 
@@ -459,7 +458,7 @@ mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::manifest::{self, ManifestDecoder, ManifestDirection};
-    use crate::protocol::tlv::MessageType;
+    use crate::protocol::message::MessageType;
     use bytes::Bytes;
 
     const ROUTE_BYTES: &[u8] = b"\0\0\0\x0estream://r/a/x";
@@ -582,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_versioned_stream_error_envelopes() {
+    fn should_use_the_common_envelope_for_begin_plus_read_errors() {
         // Arrange
         let response = StreamClientResponseBody::Error("session not found".into());
 
@@ -591,11 +590,15 @@ mod tests {
         let read = encode_response(604, &response);
 
         // Assert
-        assert_eq!(&begin[..5], &[2, 0, 0, 7, 211]);
-        assert_eq!(
-            &read[1..5],
-            &u32::from(crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND).to_be_bytes()
-        );
+        for payload in [begin, read] {
+            assert_eq!(payload[0], 1);
+            assert_eq!(
+                crate::protocol::error_codes::decode_error_body(&payload)
+                    .expect("error envelope")
+                    .0,
+                crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND
+            );
+        }
     }
 
     #[test]
@@ -603,8 +606,8 @@ mod tests {
         // Arrange: store-layer read paths raise this when a single record's
         // wire-encoded size alone exceeds the maximum response frame size.
         let response = StreamClientResponseBody::Error(
-            "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0 is 70000 bytes, exceeding the \
-             65535-byte read response limit"
+            "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0 is 1100000 bytes, exceeding the \
+             configured read response limit"
                 .into(),
         );
 
@@ -613,9 +616,10 @@ mod tests {
 
         // Assert
         assert_eq!(
-            &read[1..5],
-            &u32::from(crate::protocol::error_codes::stream::ERR_READ_RESPONSE_TOO_LARGE)
-                .to_be_bytes()
+            crate::protocol::error_codes::decode_error_body(&read)
+                .expect("error envelope")
+                .0,
+            crate::protocol::error_codes::stream::ERR_READ_RESPONSE_TOO_LARGE
         );
     }
 
@@ -708,12 +712,13 @@ mod tests {
             success,
             vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 2, b'o', b'k']
         );
+        let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
         assert_eq!(
-            error,
-            vec![
-                1, 0, 0, 7, 0xD3, 0, 0, 0, 17, b's', b'e', b's', b's', b'i', b'o', b'n', b' ',
-                b'n', b'o', b't', b' ', b'f', b'o', b'u', b'n', b'd',
-            ]
+            (decoded.code, decoded.message.as_str()),
+            (
+                crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND,
+                "session not found"
+            )
         );
         let mut expected_notification = vec![0, 0, 0, 0, 0, 0, 0, 7];
         expected_notification.extend_from_slice(ROUTE_BYTES);

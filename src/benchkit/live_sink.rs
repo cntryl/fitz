@@ -15,7 +15,7 @@ use crate::domains::stream::sink::StreamDomain;
 use crate::observability::metrics::MetricsCollector;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::frame_context::FrameContext;
-use crate::protocol::tlv::MessageType;
+use crate::protocol::message::MessageType;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{DeliveryError, MailboxSink, RouteError, Router};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -405,6 +405,7 @@ pub fn route_frame_to_address(
                 source: source.clone(),
                 destination: destination.clone(),
                 correlation: None,
+                ack_requested: false,
                 received_at: std::time::Instant::now(),
             },
         );
@@ -466,17 +467,14 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
     }
 
     if let Some(delivery) = envelope.payload::<crate::domains::rpc::RpcWorkerRequestDelivery>() {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
-            crate::protocol::rpc_codec::request_payload_capacity(&delivery.request),
-        );
         return Some(FrameContext::new(
             delivery.session_id,
             ChannelId::Rpc,
             MessageType::new(302),
-            Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+            crate::protocol::rpc_codec::encode_worker_request_payload(
                 &delivery.request,
-                &mut encoder,
-            )),
+                delivery.remaining_budget_ms,
+            ),
             delivery.route_family,
         ));
     }

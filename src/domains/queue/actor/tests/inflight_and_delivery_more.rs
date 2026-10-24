@@ -456,7 +456,7 @@ fn should_not_dead_letter_message_that_only_a_wildcard_reserve_cannot_carry() {
 fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
     // Arrange
     // The inbound SEND ceiling and the outbound RESERVE ceiling are the same
-    // 65_535-byte payload limit, but the response spends part of it on a
+    // configured payload limit, but the response spends part of it on a
     // header and a per-message envelope. A body accepted on write above that
     // budget can never be handed back, so it must be refused at SEND rather
     // than accepted and dead-lettered later, after the producer was told it
@@ -501,7 +501,7 @@ fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
         matches!(accepted, QueueResponse::Sent { .. }),
         "a body at the deliverable limit must still be accepted, got {accepted:?}"
     );
-    let QueueResponse::Error { message } = rejected else {
+    let QueueResponse::BadRequest { reason: message } = rejected else {
         panic!("expected an oversized SEND to be refused, got {rejected:?}");
     };
     assert!(
@@ -509,7 +509,7 @@ fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
         "unexpected error: {message}"
     );
     assert!(
-        matches!(rejected_batch, QueueResponse::Error { .. }),
+        matches!(rejected_batch, QueueResponse::BadRequest { .. }),
         "a batch carrying an oversized body must be refused too, got {rejected_batch:?}"
     );
     assert_eq!(

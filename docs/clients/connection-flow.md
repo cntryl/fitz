@@ -51,17 +51,19 @@ At this stage the transport is open, but the Fitz session is not authenticated y
 
 ### Step 2: Send `CONNECT`
 
-The first Fitz message on a new connection must be `CONNECT` with the compact JWT
-in the payload:
+The first Fitz message on a new connection must be `CONNECT`, carrying the
+client's wire version range, its capability bits, the compact JWT, and
+optional display metadata:
 
 ```python
 client.connect(jwt_token)
 ```
 
-Wire shape:
+Wire shape (header, then value):
 
 ```text
-[MessageType=1][Length=N][jwt bytes]
+[type=1][flags=0][correlation=0][length]
+[u16 min_version][u16 max_version][u32 client_caps][string jwt][string service_name][string client_build]
 ```
 
 Client requirements:
@@ -70,27 +72,23 @@ Client requirements:
 - The client MUST NOT send extra shard or routing metadata.
 - The client MUST treat the JWT as authentication input, not as a source of client-side dispatch logic.
 
-### Step 3: Observe Success or Failure
+### Step 3: Read HELLO or CONNECT_REJECTED
 
-- Success: a broker that supports it sends `SERVER_HELLO` (message type 4)
-  announcing its protocol version and capabilities. The connection stays open
-  and subsequent domain operations succeed.
-- Failure: the broker closes the connection and may include a reason such as `connect failed: <reason>`.
+The broker answers every `CONNECT` with exactly one message:
 
-`SERVER_HELLO` is the closest thing to a `CONNECT_OK`, but clients **MUST NOT
-wait for it**. `CONNECT` stays zero round-trip: send domain requests
-immediately. A broker that predates the advertisement never sends one, and a
-client that never receives it simply operates uncorrelated — no timeout, no
-retry, no reconnect. Treating its absence as failure would break every legacy
-broker.
+- `HELLO` (type 2): the wire version in force, the broker's capability bits,
+  `max_message_bytes`, `max_in_flight`, and a diagnostic session id. The
+  session is live.
+- `CONNECT_REJECTED` (type 3): a protocol-block code and a message, then the
+  broker closes. `0001` is an invalid or missing JWT; `0050` means no wire
+  version in common; `0051` means the identity maps to a route family this
+  broker does not serve.
 
-See "Capability Negotiation" in `spec/registry-acceptance.md` for the payload
-and the capability bits.
+A client MAY pipeline domain requests behind `CONNECT`; they are served only
+after a successful `CONNECT` and are lost with the connection on rejection.
+A close with neither answer is a transport failure, not a rejection.
 
-When configured with a service name, a client MAY send `SESSION_METADATA` (5)
-on the control channel after observing `CAP_SESSION_METADATA`. It MUST omit the
-message when the capability is absent; CONNECT and normal domain traffic remain
-usable without it.
+See `spec/wire-routing.md`, Connection Lifecycle, for both layouts.
 
 ### Step 4: Internal Broker Setup
 
@@ -196,9 +194,10 @@ State handling rules:
 
 Clients should handle these cases explicitly:
 
-- `CONNECT` rejected: close the connection and surface the broker reason.
+- `CONNECT` rejected: read `CONNECT_REJECTED`, surface its code and message, and expect the close.
+- `GOAWAY` received: the broker is draining; finish in-flight work and reconnect within `grace_ms`.
 - Domain frame sent before `CONNECT`: expect connection close.
-- Malformed or unsupported stream `Read` filter: expect a typed stream error response (2006 or 2007) and keep the connection open.
+- Malformed or unsupported stream `Read` filter: expect a typed stream error response (2055 or 2056) and keep the connection open.
 - Partial TCP frame: keep buffering until complete or the socket closes.
 - Oversized frame length: fail fast before allocating.
 - Reconnect while work is in flight: treat in-flight work as interrupted unless the domain contract says otherwise.

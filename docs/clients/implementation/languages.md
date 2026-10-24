@@ -10,7 +10,7 @@ github.com/yourorg/fitz-go/
 ├── notice.go              # Notice facade
 ├── connection.go          # WebSocket manager
 ├── protocol/
-│   ├── tlv.go            # TLV encoding
+│   ├── codec.go            # message codec
 │   └── messages.go        # Wire types
 ├── errors.go             # Error types
 └── examples/
@@ -62,7 +62,7 @@ func (e *KvError) Error() string {
 // Usage
 if err := tx.Insert("key", value); err != nil {
     var kvErr *KvError
-    if errors.As(err, &kvErr) && kvErr.Code == 1006 {
+    if errors.As(err, &kvErr) && kvErr.Code == 1055 {
         // Handle "key exists" (ERR_KEY_EXISTS) specifically
     }
 }
@@ -209,7 +209,7 @@ fitz-python/
 │   ├── notice.py          # Notice facade
 │   ├── connection.py      # WebSocket manager
 │   ├── protocol/
-│   │   ├── tlv.py         # TLV encoding
+│   │   ├── codec.py         # message codec
 │   │   └── messages.py    # Wire types
 │   └── errors.py          # Domain errors
 ├── tests/
@@ -394,7 +394,7 @@ fitz-rust/
 │   ├── connection.rs      # WebSocket manager
 │   ├── protocol/
 │   │   ├── mod.rs
-│   │   ├── tlv.rs         # TLV encoding
+│   │   ├── codec.rs         # message codec
 │   │   └── messages.rs    # Wire types
 │   └── error.rs           # Error types
 ├── examples/
@@ -582,7 +582,7 @@ fitz-ts/
 │   ├── notice.ts          # Notice facade
 │   ├── connection.ts      # WebSocket manager
 │   ├── protocol/
-│   │   ├── tlv.ts         # TLV encoding
+│   │   ├── codec.ts         # message codec
 │   │   └── messages.ts    # Wire types
 │   └── errors.ts          # Error types
 ├── examples/
@@ -736,11 +736,11 @@ export class KvError extends Error {
     }
     
     static keyExists(key: string): KvError {
-        return new KvError(1006, `Key already exists: ${key}`, 'insert'); // ERR_KEY_EXISTS
+        return new KvError(1055, `Key already exists: ${key}`, 'insert'); // ERR_KEY_EXISTS
     }
     
     static unauthorized(): KvError {
-        return new KvError(1011, 'Unauthorized', 'operation'); // ERR_UNAUTHORIZED
+        return new KvError(1001, 'Unauthorized', 'operation'); // ERR_UNAUTHORIZED
     }
 }
 
@@ -748,7 +748,7 @@ export class KvError extends Error {
 try {
     await tx.insert('key', value);
 } catch (err) {
-    if (err instanceof KvError && err.code === 1006) {
+    if (err instanceof KvError && err.code === 1055) {
         // Handle key exists (ERR_KEY_EXISTS)
     }
 }
@@ -780,7 +780,7 @@ Fitz.Client/
 │   ├── NoticeClient.cs    # Notice facade
 │   └── Subscription.cs    # Subscription wrapper
 ├── Protocol/
-│   ├── Tlv.cs             # TLV encoding
+│   ├── Codec.cs           # message codec
 │   └── Messages.cs        # Wire types
 ├── Connection.cs          # WebSocket manager
 └── Errors.cs              # Exception types

@@ -4,7 +4,7 @@
 //! bucketing, but they must never decide whether a message is supported or
 //! which domain is authorized to receive it.
 
-use super::tlv::MessageType;
+use super::message::MessageType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestDirection {
@@ -88,32 +88,11 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestAuthorization::None,
         ManifestDecoder::Control,
     ),
-    // Frame-level request correlation. CORRELATE labels the record that
-    // follows it and is absorbed by the session decoder before mux routing,
-    // so it never reaches a domain and never consumes a channel slot. It is
-    // listed here because the manifest - not a numeric range - is what makes
-    // a message id legal.
-    client(
-        2,
-        "control",
-        None,
-        ManifestAuthorization::None,
-        ManifestDecoder::Control,
-    ),
+    // Broker control answers. HELLO and CONNECT_REJECTED answer CONNECT;
+    // GOAWAY announces drain, a forced close, or a limit change.
+    server(2, "control", None, ManifestDecoder::Control),
     server(3, "control", None, ManifestDecoder::Control),
-    // Unsolicited capability advertisement, emitted once on CONNECT success.
-    // Clients that predate it drop unknown inbound message types, so sending
-    // it unconditionally is safe; a client that never sees it stays
-    // uncorrelated.
     server(4, "control", None, ManifestDecoder::Control),
-    // Sent only when the broker advertises `CAP_SESSION_METADATA`.
-    client(
-        5,
-        "control",
-        None,
-        ManifestAuthorization::None,
-        ManifestDecoder::Control,
-    ),
     client(
         100,
         "kv",
@@ -457,13 +436,6 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestAuthorization::MultiRouteWrite,
         ManifestDecoder::Schedule,
     ),
-    client(
-        707,
-        "schedule",
-        Some("schedule"),
-        ManifestAuthorization::WildcardRead,
-        ManifestDecoder::Schedule,
-    ),
 ];
 
 #[must_use]
@@ -556,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_reserved_message_id_given_valid_numeric_range() {
+    fn should_treat_an_unassigned_id_inside_a_domain_range_as_unknown() {
         assert!(is_reserved_or_unassigned(MessageType::new(201)));
         assert!(client_entry(MessageType::new(201)).is_err());
     }
@@ -638,11 +610,8 @@ mod tests {
         // Assert
         assert_eq!(connects.len(), 1);
         assert!(
-            other_client_control.iter().all(|entry| {
-                entry.message_id == MessageType::CORRELATE.as_u16()
-                    || entry.message_id == MessageType::SESSION_METADATA.as_u16()
-            }),
-            "client-to-server control messages must be CONNECT or negotiated controls"
+            other_client_control.is_empty(),
+            "CONNECT is the only client-to-server control message"
         );
     }
 

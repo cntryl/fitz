@@ -14,7 +14,7 @@ pub(crate) use fitz::benchkit::{
     create_bench_rpc_sink_with_timeout, extract_single_tlv_field, BenchDomainHandle,
 };
 pub(crate) use fitz::protocol::frame::ChannelId;
-pub(crate) use fitz::protocol::tlv::MessageType;
+pub(crate) use fitz::protocol::message::MessageType;
 pub(crate) use fitz::protocol::FrameContext;
 pub(crate) use fitz::runtime::routing::{session_inbox_address, Route, RouteAddress, RouteFamily};
 pub(crate) use fitz::runtime::{DeliveryError, Envelope, MailboxSink, Router, SessionCleanup};
@@ -178,7 +178,7 @@ pub(crate) fn deliver_rpc_frame(
 }
 
 pub(crate) fn encode_captured_frame(frame: &FrameContext) -> Vec<u8> {
-    let mut builder = fitz::testkit::TlvFrameBuilder::new();
+    let mut builder = fitz::testkit::FrameBuilder::new();
     builder.encode_field(frame.msg_type.as_u16(), &frame.payload);
     builder.build()
 }

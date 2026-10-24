@@ -1,5 +1,6 @@
 use super::*;
-use crate::protocol::tlv::{MessageType, TlvEncoder};
+use crate::protocol::message::MessageType;
+use crate::protocol::wire2::header::{encode_message, HeaderFlags};
 use crate::session::{
     CloseReason, NewSessionConfig, SessionInfo, SessionMetadata, SessionPermissions, TransportKind,
 };
@@ -36,7 +37,7 @@ impl Ingress for StampingIngress {
         _channel_id: crate::protocol::frame::ChannelId,
         _msg_type: MessageType,
         _message_payload: Bytes,
-        _correlation: Option<std::num::NonZeroU64>,
+        _labels: crate::protocol::wire2::header::HeaderLabels,
         received_at: Instant,
     ) -> IngressDecision {
         let first = {
@@ -75,7 +76,25 @@ fn test_session(transport: TransportKind) -> Session {
 }
 
 #[tokio::test]
-async fn should_keep_transport_stamp_for_all_tlvs_while_first_handoff_waits() {
+async fn should_stamp_the_message_with_its_transport_receive_time() {
+    for transport in [TransportKind::Tcp, TransportKind::WebSocket] {
+        // Arrange
+        let mut session = test_session(transport);
+        let ingress = StampingIngress::default();
+        let received_at = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
+        let frame = Bytes::from(encode_message(200, HeaderFlags::none(), None, b"first"));
+
+        // Act
+        let result = process_session_frame_at(&mut session, frame, &ingress, received_at).await;
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(*ingress.received_at.lock().unwrap(), vec![received_at]);
+    }
+}
+
+#[tokio::test]
+async fn should_keep_the_stamp_while_the_handoff_waits() {
     for transport in [TransportKind::Tcp, TransportKind::WebSocket] {
         // Arrange
         let mut session = test_session(transport);
@@ -84,52 +103,22 @@ async fn should_keep_transport_stamp_for_all_tlvs_while_first_handoff_waits() {
             ..StampingIngress::default()
         };
         let received_at = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::new(200), b"first");
-        encoder.encode(MessageType::new(200), b"second");
+        let frame = Bytes::from(encode_message(200, HeaderFlags::none(), None, b"first"));
 
         // Act
         let mut processing = std::pin::pin!(process_session_frame_at(
             &mut session,
-            encoder.finish(),
+            frame,
             &ingress,
             received_at,
         ));
-        assert!(futures_util::poll!(processing.as_mut()).is_pending());
-        assert_eq!(*ingress.received_at.lock().unwrap(), vec![received_at]);
+        let pending = futures_util::poll!(processing.as_mut()).is_pending();
         ingress.release_first.notify_one();
         let result = processing.await;
 
         // Assert
+        assert!(pending);
         assert!(result.is_ok());
-        assert_eq!(*ingress.received_at.lock().unwrap(), vec![received_at; 2]);
-    }
-}
-
-#[tokio::test]
-async fn should_stamp_fragmented_tlv_with_the_completing_transport_frame() {
-    for transport in [TransportKind::Tcp, TransportKind::WebSocket] {
-        // Arrange
-        let mut session = test_session(transport);
-        let ingress = StampingIngress::default();
-        let completed_at = Instant::now();
-        let started_at = completed_at.checked_sub(Duration::from_secs(2)).unwrap();
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::new(200), b"fragmented");
-        let frame = encoder.finish();
-        let split = frame.len() - 2;
-
-        // Act
-        process_session_frame_at(&mut session, frame.slice(..split), &ingress, started_at)
-            .await
-            .unwrap();
-        assert!(ingress.received_at.lock().unwrap().is_empty());
-        let result =
-            process_session_frame_at(&mut session, frame.slice(split..), &ingress, completed_at)
-                .await;
-
-        // Assert
-        assert!(result.is_ok());
-        assert_eq!(*ingress.received_at.lock().unwrap(), vec![completed_at]);
+        assert_eq!(*ingress.received_at.lock().unwrap(), vec![received_at]);
     }
 }

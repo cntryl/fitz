@@ -88,10 +88,14 @@ impl QueueRequestContext<'_> {
 }
 
 fn assert_not_found(frame: &FrameContext) {
-    let mut decoder =
-        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(frame.payload.as_ref());
-    assert_eq!(decoder.get_u8().expect("error status"), 1);
-    assert_eq!(decoder.get_string().expect("plain queue error"), "NotFound");
+    let (code, message) =
+        crate::dispatch::protocol::error_codes::decode_error_body(frame.payload.as_ref())
+            .expect("queue error envelope");
+    assert_eq!(
+        code,
+        crate::dispatch::protocol::error_codes::queue::ERR_MESSAGE_NOT_FOUND
+    );
+    assert_eq!(message, "NotFound");
 }
 
 fn assert_success(frame: &FrameContext) {

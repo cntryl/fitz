@@ -482,40 +482,6 @@ fn should_clear_ready_heap_given_last_schedule_delete() {
 }
 
 #[test]
-fn should_invalidate_shared_full_list_cache_given_schedule_delete() {
-    // Arrange
-    let mut actor = make_actor();
-    let first_route = "schedule://acme/jobs/cache-first/run";
-    let second_route = "schedule://acme/jobs/cache-second/run";
-    actor
-        .create_schedule(
-            first_route.to_string(),
-            "* * * * *".to_string(),
-            Bytes::from_static(b"first"),
-        )
-        .expect("create first schedule");
-    actor
-        .create_schedule(
-            second_route.to_string(),
-            "0 * * * *".to_string(),
-            Bytes::from_static(b"second"),
-        )
-        .expect("create second schedule");
-    let (cached, _) = actor.list_entries(0, 0).expect("list entries");
-
-    // Act
-    actor.delete_schedule(first_route).expect("delete schedule");
-    let (refreshed, total_count) = actor.list_entries(0, 0).expect("list entries");
-
-    // Assert
-    assert_eq!(cached.len(), 2);
-    assert_eq!(refreshed.len(), 1);
-    assert_eq!(total_count, 1);
-    assert!(refreshed.iter().all(|entry| entry.route != first_route));
-    assert!(refreshed.iter().any(|entry| entry.route == second_route));
-}
-
-#[test]
 fn should_ignore_stale_heap_entries_left_by_upsert() {
     // Arrange
     let mut actor = make_actor();

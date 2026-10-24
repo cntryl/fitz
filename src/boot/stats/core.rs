@@ -148,6 +148,7 @@ impl Runtime {
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
+                max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
                 route_families: vec![1, 2, 3, 4, 5, 6, 7],
                 schedule_write_policy: crate::domains::WritePolicy::BestEffort,
 
@@ -375,6 +376,15 @@ impl Runtime {
             self.drain_started_epoch_ms.store(started, Ordering::SeqCst);
             self.drain_deadline_epoch_ms
                 .store(started.saturating_add(grace_ms), Ordering::SeqCst);
+            // Every live client learns of the drain now, with the grace it has
+            // to finish and reconnect, instead of discovering it at the close.
+            if let Some(ingress) = self.ingress.read().as_ref() {
+                ingress.announce_goaway(
+                    crate::protocol::wire2::catalog::DRAINING,
+                    u32::try_from(grace_ms).unwrap_or(u32::MAX),
+                    &self.drain_close_reason(),
+                );
+            }
         }
     }
 

@@ -39,7 +39,7 @@ pub(super) async fn replay(broker: &Broker, events: &[Event]) {
     }
     let mut payload = session.to_be_bytes().to_vec();
     payload.push(1); // Explicit Sync in both released wire generations.
-    let mut commit = TlvFrameBuilder::new();
+    let mut commit = FrameBuilder::new();
     commit.encode_field(602, &payload);
     request(&mut client, &commit.build(), 602).await;
     client.close().await.unwrap();

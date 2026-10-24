@@ -2,8 +2,8 @@ use super::{OperationOutcome, QueueFamilyState};
 use crate::runtime::routing::RouteFamily;
 
 use crate::domains::queue::protocol::{
-    MAX_QUEUE_RESPONSE_PAYLOAD_BYTES, RECEIVED_RESPONSE_HEADER_BYTES,
-    RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES, ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES,
+    RECEIVED_RESPONSE_HEADER_BYTES, RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES,
+    ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES,
 };
 
 struct WildcardActorOutcome {
@@ -113,7 +113,7 @@ impl QueueFamilyState {
         let mut notifications = Vec::new();
         let mut state_changed = false;
         let mut response_bytes_remaining =
-            MAX_QUEUE_RESPONSE_PAYLOAD_BYTES - RECEIVED_RESPONSE_HEADER_BYTES;
+            self.response_payload_limit - RECEIVED_RESPONSE_HEADER_BYTES;
 
         for offset in 0..keys.len() {
             if routed.len() == limit {

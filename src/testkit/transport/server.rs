@@ -116,6 +116,27 @@ impl TestServer {
         .await
     }
 
+    /// Start a memory server with an explicit complete-message budget.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime or listeners cannot be initialized.
+    pub async fn start_with_max_message_bytes(
+        max_message_bytes: usize,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options_and_message_limit(
+            false,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+            false,
+            crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
+            max_message_bytes,
+        )
+        .await
+    }
+
     /// Start a transport test server using an explicit storage backend.
     ///
     /// # Errors
@@ -325,6 +346,32 @@ impl TestServer {
         route_families: Vec<u32>,
         route_family_mappings: Vec<(String, u32)>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options_and_message_limit(
+            auth_required,
+            rpc_request_timeout,
+            storage_mode,
+            write_heavy_memory,
+            stream_storage_layout,
+            ws_allowed_origins,
+            route_families,
+            route_family_mappings,
+            16_777_216,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn start_with_options_and_message_limit(
+        auth_required: bool,
+        rpc_request_timeout: Option<Duration>,
+        storage_mode: crate::boot::runtime::StorageMode,
+        write_heavy_memory: bool,
+        stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+        ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
+        route_families: Vec<u32>,
+        route_family_mappings: Vec<(String, u32)>,
+        max_message_bytes: usize,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let permit = test_server_semaphore()
             .clone()
             .acquire_owned()
@@ -389,7 +436,7 @@ impl TestServer {
             },
             route_families,
             max_connections: 1000,
-            max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
+            max_frame_size: max_message_bytes,
             channel_capacity: 10_000,
             cloud_durability: crate::boot::runtime::CloudDurabilityMode::Background,
             storage_memtable: if memory_storage && write_heavy_memory {
@@ -436,6 +483,7 @@ impl TestServer {
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
+                max_message_bytes: boot_config.max_frame_size,
                 route_families: boot_config.route_families.clone(),
                 schedule_write_policy,
 
@@ -524,7 +572,10 @@ impl TestServer {
     pub async fn connect(&self) -> Result<TestClient, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(self.tcp_addr).await?;
         stream.set_nodelay(true)?;
-        Ok(TestClient { stream })
+        Ok(TestClient {
+            stream,
+            started: false,
+        })
     }
 
     /// Connect to the test server via WebSocket

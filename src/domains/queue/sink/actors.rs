@@ -282,8 +282,12 @@ impl QueueFamilyState {
     where
         F: FnOnce(&mut crate::domains::queue::QueueActor) -> R,
     {
+        let response_payload_limit = self.response_payload_limit;
         self.actor_registry
-            .with_actor(key, &self.store, &self.dedup_store, operation)
+            .with_actor(key, &self.store, &self.dedup_store, |actor| {
+                actor.response_payload_limit = response_payload_limit;
+                operation(actor)
+            })
     }
 
     pub(super) fn maybe_sweep_idle_actors(&mut self) {

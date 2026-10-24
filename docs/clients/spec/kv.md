@@ -40,6 +40,9 @@ Response (success):
   [u64 BE] tx_id
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -64,6 +67,9 @@ Response (success):
   [u8]     0 (status: success)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -83,6 +89,9 @@ Response (success):
   [bytes]  value (present only if found=1)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -101,6 +110,9 @@ Response (success):
   [u8]     0 (status: success)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -117,6 +129,9 @@ Response (success):
   [u8]     0 (status: success)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -135,6 +150,9 @@ Response (success):
   [u8]     0 (status: success)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -153,8 +171,7 @@ Response (error):
 [bytes]   end_key
 [u8]      has_limit (0 or 1)
 [u32 BE]  limit (if present)
-[u8]      reverse (0 or 1)
-[u8]      start_exclusive (0 or 1, optional; absent means 0)
+[u8]      options (bit 0 reverse, bit 1 start_exclusive; other bits MUST be 0)
 Response (success):
   [u8]     0 (status: success)
   [u32 BE] item_count
@@ -166,6 +183,9 @@ Response (success):
   [u8]     has_more (0 or 1)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -181,6 +201,9 @@ Response (success):
   [u8]     0 (status: success)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -195,6 +218,9 @@ Response (success):
   [u64 BE] subscription_id
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -204,13 +230,13 @@ Response (error):
 `kv://realm/**`, or `kv://*/area/resource`. The scheme must be `kv://`,
 segments must be non-empty, wildcards must be whole `*` or `**` segments, and
 the pattern must be capable of matching a concrete three-segment KV route.
-Invalid SUBSCRIBE or UNSUBSCRIBE input returns 1012.
+Invalid SUBSCRIBE or UNSUBSCRIBE input returns 1003.
 
 Registrations are session-scoped and isolated by `RouteFamily`. Overlapping
 registrations remain independent and exact registrations have no precedence. A
 session may retain at most 1,024 registrations total and 128 wildcard
 registrations. Duplicate `(session, original registration string)` requests are
-idempotent and checked before either limit. Overflow returns 1013.
+idempotent and checked before either limit. Overflow returns 1004.
 
 #### UNSUBSCRIBE Request
 
@@ -221,6 +247,9 @@ Response (success):
   [u8]     0 (status: success)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -250,6 +279,9 @@ Response (success):
   [u8]     0 (status: success)
 Response (error):
   [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -302,14 +334,16 @@ BEGIN has no persistence selector.
 
 ##### SCAN Semantics
 
-**`start_exclusive` flag:**
+**`options` byte.** Bit 0 is `reverse`, bit 1 is `start_exclusive`; a set
+reserved bit answers 1008 `BAD_REQUEST`.
 
-- `start_exclusive=0` (default, and the value assumed when the byte is absent):
-  `start_key` is inclusive, as described below
-- `start_exclusive=1`: the scan begins strictly after `start_key` in the
-  selected direction. Required for continuation; see the pagination rules below
+**`start_exclusive` (bit 1):**
 
-**`reverse` flag:**
+- clear: `start_key` is inclusive, as described below
+- set: the scan begins strictly after `start_key` in the selected direction.
+  Required for continuation; see the pagination rules below
+
+**`reverse` (bit 0):**
 
 - `reverse=0` (forward): Scan keys in ascending lexicographic order
   - Includes keys where `start_key <= key < end_key`
@@ -322,10 +356,9 @@ BEGIN has no persistence selector.
   successful result
 - `limit` applies regardless of direction and bounds a page from above. The
   broker bounds every page by two further limits: at most 1024 items, and at
-  most what fits in one response frame (a scan response is carried as a single
-  TLV value with a `u16` length, so a page of large values reaches the byte
-  bound well before the item cap). A page ends at whichever limit is reached
-  first.
+  most what fits in one response message under `max_message_bytes` (a page of
+  large values reaches the byte bound well before the item cap). A page ends
+  at whichever limit is reached first.
 - **An omitted `limit` therefore does not mean unlimited.** It means "as much as
   fits in one page". A scan of 300 keys with 1 KiB values returns a partial page
   with `has_more=1` even though no limit was supplied.
@@ -335,23 +368,10 @@ BEGIN has no persistence selector.
 - To continue, re-issue the scan with `start_key` set to the last key returned
   by the previous page, `start_exclusive=1`, and the same `reverse` value and
   opposite bound. Repeat until `has_more=0`.
-- `start_exclusive` is a trailing optional byte on the SCAN request, defaulting
-  to `0` when absent. Resuming with an inclusive `start_key` does not
-  terminate: a page bounded by the byte budget can hold a single pair, and the
-  next request then returns that same pair forever, so later keys are never
-  reached.
-
-**Mixed-version behaviour.** The byte is additive and older brokers reject
-trailing data, so clients MUST NOT send it unless the broker advertises support.
-Clients that cannot yet encode it can still paginate **forward** with no wire
-change: re-issue with `start_key` set to the last returned key followed by a
-single `0x00` byte, which is that key's immediate successor and therefore an
-exclusive resume. **Reverse** continuation has no such equivalent - the
-symmetric operation is a byte-string predecessor, which is not expressible - so
-a client that cannot send `start_exclusive` must not paginate reverse scans
-across a byte-bounded page. Until a client ships the byte, keep reverse scans
-within a single page by supplying a `limit` small enough that the page is not
-byte-bounded.
+- Resuming with an inclusive `start_key` does not terminate: a page bounded
+  by the byte budget can hold a single pair, and the next request then returns
+  that same pair forever, so later keys are never reached. Always resume with
+  `start_exclusive` set.
 
 #### Usage Example
 
@@ -390,20 +410,20 @@ still maintains live session-scoped transaction state keyed by `tx_id`.
 
 #### Error Codes (1xxx)
 
-- 1001 = ERR_TRANSACTION_NOT_FOUND
-- 1002 = ERR_INVALID_MODE
-- 1003 = ERR_KEY_NOT_FOUND
-- 1004 = ERR_ISOLATION_CONFLICT
-- 1005 = ERR_WRITE_IN_READONLY
-- 1006 = ERR_KEY_EXISTS (INSERT on existing key)
-- 1007 = ERR_INVALID_ROUTE
-- 1008 = ERR_REALM_MISMATCH
-- 1009 = ERR_BACKEND_ERROR
-- 1010 = ERR_TRANSACTION_ABORTED
-- 1011 = ERR_UNAUTHORIZED
-- 1012 = ERR_INVALID_SUBSCRIPTION_PATTERN
-- 1013 = ERR_SUBSCRIPTION_LIMIT
-- 1014 = ERR_BUSY (retryable)
+- 1050 = ERR_TRANSACTION_NOT_FOUND
+- 1051 = ERR_INVALID_MODE
+- 1052 = ERR_KEY_NOT_FOUND
+- 1053 = ERR_ISOLATION_CONFLICT
+- 1054 = ERR_WRITE_IN_READONLY
+- 1055 = ERR_KEY_EXISTS (INSERT on existing key)
+- 1002 = ERR_INVALID_ROUTE
+- 1056 = ERR_REALM_MISMATCH
+- 1006 = ERR_BACKEND_ERROR
+- 1057 = ERR_TRANSACTION_ABORTED
+- 1001 = ERR_UNAUTHORIZED
+- 1003 = ERR_INVALID_SUBSCRIPTION_PATTERN
+- 1004 = ERR_SUBSCRIPTION_LIMIT
+- 1005 = ERR_BUSY (retryable)
 
 `ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
 

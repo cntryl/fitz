@@ -66,7 +66,7 @@ Layer 5: STORAGE (Persistent Backend)
 ```
 Async WebSocket Reader
     ↓ (frame bytes)
-Sync TLV Parser
+Sync Message Header Parser
     ↓ (route, message type)
 RuntimeIngress (async edge coordination)
     ↓ (bounded dispatch into sync core)
@@ -74,7 +74,7 @@ Sync Router (DashMap lookup)
     ↓ (domain sink)
 Sync Domain Handler (business logic)
     ↓ (domain response)
-Sync TLV Encoder
+Sync Message Encoder
     ↓ (response bytes)
 Async WebSocket Writer
 ```
@@ -179,9 +179,9 @@ This is a hard Fitz rule:
 - Extract route-shaped permissions from the configured custom claim, top-level `permissions`, configured role claim array, `scp`, or `scope`
 - Treat `realm` as an opaque route component authorized by permission patterns. Treat RouteFamily as a separate broker-internal routing key, never as a realm fallback or synonym.
 - Establish session with extracted claims
-- Assign unique session ID (internal; NOT sent to client)
+- Assign a diagnostic session ID exposed in HELLO
 - For each subsequent frame:
-  - Parse TLV header (MessageType, length)
+  - Parse the fixed message header (type, flags, correlation, length)
   - Extract route scheme (kv, notice, rpc, etc.)
   - Check route-shaped permissions against the frame's authorization route and access level
   - If permission check fails: return domain error with code ERR_UNAUTHORIZED
@@ -323,7 +323,7 @@ impl XFamilyState {
 ```
 **Per-domain files:**
 - `src/domains/{domain}/sink/` - crate-private endpoint, commands, family state, outcomes, and admin port
-- `src/protocol/{domain}_codec.rs` - TLV encode/decode
+- `src/protocol/{domain}_codec.rs` - message encode/decode
 - `src/domains/{domain}/store/` - the sole durable-storage adapter when the domain is durable
 **Constraints:**
 - NEVER call `.await`
@@ -359,7 +359,7 @@ Lease has no Layer 5 persistent storage schema. Lease ownership, waiters, TTL st
 ## Wire Protocol Implementation
 ### Payload encoding (domain message bodies)
 **Location:** `src/protocol/payload_codec.rs`
-Sequential typed fields (not frame TLV): fixed-order scalars and length-prefixed strings/bytes. Used by domain codecs to encode request/response bodies. Frame-level TLV is in `src/protocol/tlv.rs`.
+Sequential typed fields: fixed-order scalars and length-prefixed strings/bytes. Used by domain codecs to encode request/response bodies. The fixed frame header is in `src/protocol/wire2/header.rs`.
 **Implementation pattern:**
 ```rust
 pub struct PayloadDecoder<'a> {
@@ -456,7 +456,7 @@ pub async fn handle_websocket(
 ### Codec Pattern (All Domains)
 Every domain has two core functions:
 ```rust
-/// Parse TLV bytes → typed message
+/// Parse message bytes → typed message
 pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
@@ -469,7 +469,7 @@ pub fn parse_request(
         _ => Err(format!("Unknown message type: {}", ctx.msg_type)),
     }
 }
-/// Encode response → TLV bytes
+/// Encode response → message bytes
 pub fn encode_response(response: &DomainResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     
@@ -857,7 +857,7 @@ Each domain should have comprehensive unit tests for:
 mod tests {
     use super::*;
     #[test]
-    fn should_parse_operation_from_tlv() {
+    fn should_parse_operation_from_message() {
         // Arrange
         let mut enc = PayloadEncoder::new();
         enc.put_u64(123);

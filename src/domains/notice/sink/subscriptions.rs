@@ -111,10 +111,9 @@ impl NoticeFamilyState {
                     session = sub_msg.session_id.0,
                     "Rejected invalid subscription pattern"
                 );
-                // Classified from the message on purpose: the spec keeps 3005
-                // for malformed wildcard shapes and 3002 for the prefixed
-                // "subscription pattern ..." grammar errors.
-                crate::domains::notice::NoticeResponse::Error(error.into())
+                crate::domains::notice::NoticeResponse::Error(
+                    crate::domains::notice::NoticeClientError::invalid_pattern(error),
+                )
             })
     }
 

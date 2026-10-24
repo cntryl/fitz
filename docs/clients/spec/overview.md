@@ -2,7 +2,7 @@
 
 ### What This Spec Covers
 
-- Wire protocol (framing, TLV encoding, message format)
+- Wire protocol (framing, message header, message format)
 - Transport requirements (WebSocket, TCP)
 - Authentication (JWT)
 - Message lifecycle (send, receive, acknowledge)
@@ -26,9 +26,9 @@ This spec **explicitly does not** address:
 A Fitz client is a **synchronous or asynchronous transport adapter** that:
 
 1. Manages a single connection to a Fitz broker
-2. Encodes client requests as TLV frames
+2. Encodes client requests as messages with the fixed header
 3. Sends frames over WebSocket or TCP
-4. Receives TLV response frames
+4. Receives response messages
 5. Decodes responses and returns them to caller
 6. Handles transport-level errors (disconnect, timeout)
 7. Exposes a simple, language-native API
@@ -363,31 +363,25 @@ const event_leases = client.queueReserve("queue://prod/app/events", lease_secs=3
 await Promise.all([task_leases, event_leases]);  // ✅ Different queues, parallel OK
 ```
 
-### The Two Concurrency Regimes
+### Correlation
 
-How many same-type requests a connection may have in flight depends on whether
-the broker advertised `CAP_CORRELATION` in its `SERVER_HELLO`.
+Every request carries a unique non-zero correlation in the message header and
+every answer echoes it, so any number of same-type requests may be in flight,
+bounded by the client's own in-flight limit and the broker's `max_in_flight`
+from `HELLO`. Arrival order is irrelevant: a parked Queue `RESERVE` is
+answered after a later one that completed immediately, and the correlation is
+what routes each answer to its caller.
 
-**Correlated** (advertised): any number, bounded only by the client's own
-in-flight limit. Each request carries a `CORRELATE` record and each response
-carries its identifier back, so arrival order is irrelevant.
-
-**Uncorrelated** (legacy broker, or before the advertisement arrives): **at most
-one in-flight request per message type per connection.** This is a MUST. A
-client that pipelines same-type requests and matches responses by arrival order
-will hand a response to the wrong caller — a parked Queue `RESERVE` alone is
-enough to reorder them.
-
-Both regimes permit unlimited concurrency across *different* message types and
-across domains.
+Concurrency across different message types and across domains is likewise
+unlimited.
 
 ### RPC: Per-Request Multiplexing via UUID
 
 RPC `REQUEST`/`RESPONSE` carry their own 16-byte UUID and have always supported
-multiple in-flight requests on one channel, independent of frame correlation.
+multiple in-flight requests on one channel, independent of header correlation.
 That UUID is an end-to-end application identifier that survives the trip through
-a worker; frame correlation is a connection-level transport identifier. RPC
-keeps the UUID and is not additionally frame-correlated.
+a worker; header correlation is a connection-level transport identifier. RPC
+`RESPONSE` frames carry correlation 0 and are matched by the UUID.
 
 RPC is also explicitly ephemeral. Worker registrations and pending requests are live in-memory state for the current broker process only. If a worker disconnects or the broker restarts, registrations disappear, in-flight requests are lost, and clients must re-register workers and retry any required work at the application layer.
 
@@ -425,8 +419,7 @@ async def safe_enqueue(client, route, payload):
 |----------|--------|------|---------|
 | **Different domains** | ✅ Parallel | Different message types are never confusable | KV + Queue + Notice simultaneously |
 | **Same domain, different message types** | ✅ Parallel | Responses distinguishable by type alone | `ENQUEUE` + `RESERVE` together |
-| **Same message type, correlated** | ✅ Parallel | Each response carries its caller's id | 2 KV `GET`s; 2 queue `RESERVE`s |
-| **Same message type, uncorrelated** | ❌ One at a time | Arrival order is not receive order | Legacy broker, or before `SERVER_HELLO` |
+| **Same message type** | ✅ Parallel | Each response carries its caller's correlation | 2 KV `GET`s; 2 queue `RESERVE`s |
 | **ONE transaction, multiple calls** | ❌ NOT parallel | Single tx_id MUST be sequential | `await tx.put(); await tx.commit(CommitPersistence.Sync);` |
 | **ONE queue, multiple operations** | ❌ NOT parallel | FIFO ordering must be preserved | Use `batch_size` parameter instead |
 | **RPC requests** | ✅ Parallel (UUID) | Per-request UUID correlation matching | Multiple RPC calls matched by UUID |
@@ -481,7 +474,7 @@ Fitz supports exactly two transports. Clients MUST implement both identically; b
 
 - **URI scheme:** `wss://` (recommended) or `ws://`
 - **Handshake:** Standard WebSocket upgrade
-- **Message format:** Each binary frame = one complete TLV frame payload
+- **Message format:** Each binary frame = one complete message (15-byte header plus value)
 - **Use case:** Browsers, long-lived connections
   **Constraints:**
 - Text frames MUST be rejected
@@ -493,24 +486,24 @@ Fitz supports exactly two transports. Clients MUST implement both identically; b
 - **Port:** Application-configurable (default: 4091)
 - **Frame format:** `[u32 BE length][payload bytes]`
   - `length` = byte count of payload (excludes the 4-byte prefix)
-  - `0 < length <= broker.max_frame_size`
+  - `15 <= length <= max_message_bytes` from `HELLO`
 - **Framing:** Must implement length-prefixed parsing with buffering
 - **Use case:** Low-latency, long-lived, high-throughput
   **Constraints:**
 - Clients MUST implement buffered reading to handle partial frames
 - Clients MUST validate `length` before allocating (prevent OOM)
-- Clients MUST close connection if length exceeds `max_frame_size`
+- Clients MUST close connection if length exceeds `max_message_bytes`
 
 ### Protocol Equivalence
 
-Both transports carry identical **TLV payloads**. A client receiving the same payload over both transports MUST produce identical behavior.
+Both transports carry identical **messages**. A client receiving the same message over both transports MUST produce identical behavior.
 
 ```
 WebSocket transport          TCP transport
     ↓                              ↓
 [binary frame payload]      [u32 len][payload]
     ↓                              ↓
-     └──→ TLV parser ←─────────────┘
+     └──→ header parser ←──────────┘
              ↓
         [identical decode]
 ```

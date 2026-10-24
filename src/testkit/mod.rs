@@ -51,7 +51,7 @@ pub use midge::create_test_engine_with_cfs;
 pub use notice::{addr, make_router, route, session_id, TestSink};
 pub use operator_seed::{seed_operator_console, OperatorSeedFamily, OperatorSeedReport};
 pub use stream::{addr_with_family, create_test_db, create_test_store, create_test_stream_actor};
-pub use transport::{TestClient, TestServer, TestWebSocketClient, TlvFrameBuilder, TlvFrameParser};
+pub use transport::{FrameBuilder, FrameParser, TestClient, TestServer, TestWebSocketClient};
 
 /// Open storage through the transport-owned boot path for integration tests.
 ///

@@ -8,6 +8,7 @@ mod histogram;
 // Shared helpers for offered-rate pressure and fixed Queue drain envelopes.
 #[allow(dead_code)]
 mod queue_pressure;
+mod response;
 mod runner;
 #[allow(dead_code)]
 mod schedule_pressure;

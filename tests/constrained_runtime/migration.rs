@@ -21,7 +21,7 @@ fn begin(legacy: bool, mode: u8) -> Vec<u8> {
     payload.extend_from_slice(&u32::try_from(ROUTE.len()).unwrap().to_be_bytes());
     payload.extend_from_slice(ROUTE.as_bytes());
     payload.extend_from_slice(&[mode, 1]);
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(100, &payload);
     builder.build()
 }
@@ -37,7 +37,7 @@ async fn import(broker: &Broker, records: &Records, legacy: bool) {
         let mut payload = tx.to_be_bytes().to_vec();
         payload.extend_from_slice(&u32::try_from(ROUTE.len()).unwrap().to_be_bytes());
         payload.extend_from_slice(ROUTE.as_bytes());
-        let mut builder = TlvFrameBuilder::new();
+        let mut builder = FrameBuilder::new();
         builder.encode_field(101, &payload);
         builder.build()
     } else {

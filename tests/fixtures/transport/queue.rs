@@ -69,7 +69,7 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
     payload.extend_from_slice(data);
     payload.push(0); // has_delay = false
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(200, &payload);
     builder.build()
 }
@@ -86,7 +86,7 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
     payload.push(0); // has_batch_size = false
     payload.push(0); // has_wait_seconds = false
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(202, &payload);
     builder.build()
 }
@@ -98,7 +98,7 @@ pub fn build_queue_watch(pattern: &str) -> Vec<u8> {
     payload.extend_from_slice(&(u32_len(pattern.len())).to_be_bytes());
     payload.extend_from_slice(pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(207, &payload);
     builder.build()
 }
@@ -110,7 +110,7 @@ pub fn build_queue_unwatch(pattern: &str) -> Vec<u8> {
     payload.extend_from_slice(&(u32_len(pattern.len())).to_be_bytes());
     payload.extend_from_slice(pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(208, &payload);
     builder.build()
 }
@@ -136,7 +136,7 @@ pub fn extract_queue_subscription_id(data: &[u8]) -> Result<u64, String> {
 }
 
 pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, String> {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field_ref()
         .ok_or_else(|| "Missing queue watch delivery frame".to_string())?;
@@ -174,7 +174,7 @@ pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, St
 
 /// Parse QUEUE response
 pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]

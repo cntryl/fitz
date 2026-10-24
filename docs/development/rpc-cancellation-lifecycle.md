@@ -5,17 +5,16 @@ This document specifies the negotiated RPC lifecycle required by
 process-local coordination: a broker restart drops worker registrations and
 pending calls.
 
-## Capability and wire format
+## Wire format
 
-The broker advertises `CAP_RPC_CANCELLATION` (`1 << 3`) in `SERVER_HELLO`.
-Clients that do not observe that capability keep sending the legacy payloads.
-The capability permits these optional request extensions and lifecycle
-controls:
+Cancellation controls and remaining budgets are base protocol in wire
+format 2; nothing is negotiated. The fields and lifecycle controls are:
 
-| Message | Payload after the legacy fields | Meaning |
+| Message | Payload after the route, credit, or body | Meaning |
 | --- | --- | --- |
-| `SUBSCRIBE` 300 | `[version:u8=1, flags:u8]`, bit 0 set | Worker accepts cancellation controls and remaining budgets |
-| `REQUEST` 302 | `[version:u8=1, flags:u8=1, remaining_budget_ms:u32]` | Caller budget at client send time, rounded down to milliseconds |
+| `SUBSCRIBE` 300 | `[flags:u8]`, bit 0 set | Worker accepts cancellation controls and remaining budgets |
+| `REQUEST` 302 (caller) | `[has_budget:u8][remaining_budget_ms:u32]?` | Caller budget at client send time, rounded down to milliseconds; absent means the broker default |
+| `REQUEST` 302 (delivery) | `[1:u8][remaining_budget_ms:u32]` | The broker's remaining budget for the call, on every delivery |
 | `RPC_CANCEL` 304, kind 1 | `[kind:u8=1, correlation_id:uuid16, reason:u8]` | Caller asks the broker to cancel; reason 1 is explicit, 2 is caller deadline |
 | `RPC_CANCEL` 304, kind 3 | `[kind:u8=3, correlation_id:uuid16]` | Worker confirms its handler and request cleanup have finished |
 | `RPC_LIFECYCLE` 305, kind 2 | `[kind:u8=2, correlation_id:uuid16, reason:u8]` | Broker signals a worker; reasons 1 explicit, 2 caller deadline, 3 caller disconnected, 4 broker deadline |
@@ -30,11 +29,11 @@ no completion tombstones, so a late control cannot reveal another caller's
 completed state. Malformed control frames are discarded and counted without
 mutating pending calls; a caller receives no successful cancellation result.
 
-Request and registration extensions are optional and follow the legacy fields
-without changing their encoding. The broker accepts budgets from 0 through
-86,400,000 ms; larger values, unknown extension versions, unsupported flags,
-truncated extensions, and trailing extension bytes are rejected. A legacy
-worker receives the original request bytes, without an extension. `RPC_CANCEL`
+The broker accepts budgets from 0 through 86,400,000 ms; larger values,
+reserved registration flag bits, an unknown presence byte, truncated fields,
+and trailing bytes are rejected. A worker that did not set bit 0 still
+receives the remaining budget on every delivery; it is not sent cancellation
+controls. `RPC_CANCEL`
 is session-owned and tied to the caller's route family and session. A cleanup
 acknowledgment is accepted only from the worker session that owns that live
 call and only when that worker negotiated support.
@@ -45,7 +44,8 @@ fresh opaque invocation UUID. The worker echoes that delivered UUID in every
 response and cleanup acknowledgment; worker cancellation signals carry it too.
 The broker validates the owning worker session and route family, then restores
 the caller's UUID in caller-facing responses. The caller keeps using its original
-UUID for cancellation. Legacy workers receive the original UUID unchanged.
+UUID for cancellation. A worker that did not declare cancellation support
+receives the original UUID unchanged.
 
 The invocation index contains only live dispatched calls, including canceled
 calls awaiting cleanup, and is removed with the pending call. Reusing a caller
@@ -63,9 +63,8 @@ binary message, before validation and session processing. This starts the
 broker's clock after transport receipt; it does not measure client-to-broker
 network transit or bytes still buffered before that receipt.
 
-All complete TLVs decoded from a frame keep its stamp, even when handling an
-earlier TLV waits. A TLV fragmented across frames uses the stamp of the frame
-that completes it. Session handoff queueing, authentication, authorization,
+Each frame contains exactly one complete message, which keeps that receive
+stamp throughout processing. Session handoff queueing, authentication, authorization,
 ingress backpressure retries, and the family actor mailbox all consume the
 same RPC deadline. The mailbox admission retry budget starts separately when
 dispatch begins, so old transport frames do not prematurely exhaust another
@@ -80,8 +79,8 @@ An already-expired request is rejected before worker credit or global pending
 capacity is claimed. A queued request that expires before dispatch gets one
 terminal timeout and releases its reservations.
 
-For a worker that negotiated support, the broker forwards the remaining
-budget on `REQUEST` 302. The worker's local monotonic timer is authoritative
+The broker forwards the remaining budget on every `REQUEST` 302 delivery.
+The worker's local monotonic timer is authoritative
 for its own handler; any downstream RPC must receive the remaining budget and
 an explicit parent cancellation link. Network delay makes propagated
 cancellation best effort. A deadline cannot undo application side effects.
@@ -100,9 +99,9 @@ equivalent APIs are:
 | TypeScript | `rpc.call(route, { body, timeoutMs: context.remainingTimeMs(), signal: context.signal })` |
 | .NET | `rpc.CallAsync(route, body, request.RemainingTime, ct)` |
 
-An absent inbound budget remains absent. When present, the SDK computes the
-current remaining time at dispatch and carries it forward; cancellation of the
-parent handler asks the downstream broker to cancel as well.
+Every inbound request carries a budget. The SDK computes the current
+remaining time at dispatch and carries it forward; cancellation of the parent
+handler asks the downstream broker to cancel as well.
 
 ## Cancellation and capacity
 

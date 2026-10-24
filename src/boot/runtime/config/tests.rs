@@ -7,6 +7,30 @@ mod storage_local_and_stream;
 
 #[test]
 #[serial]
+fn should_accept_the_512_kib_minimum_message_limit() {
+    // Arrange
+    let mut config = auth_ready_config().with_bind_addr("127.0.0.1".to_string());
+    config.max_frame_size = 512 * 1024;
+    // Act
+    let result = TransportConfig::from_boot_config(&config).validate(false);
+    // Assert
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[test]
+#[serial]
+fn should_reject_a_message_limit_below_512_kib() {
+    // Arrange
+    let mut config = auth_ready_config().with_bind_addr("127.0.0.1".to_string());
+    config.max_frame_size = 512 * 1024 - 1;
+    // Act
+    let result = TransportConfig::from_boot_config(&config).validate(false);
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+#[serial]
 fn should_validate_transport_independently_of_invalid_drain() {
     // Arrange
     let mut config = auth_ready_config();

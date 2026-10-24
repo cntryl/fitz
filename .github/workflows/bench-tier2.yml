@@ -29,7 +29,7 @@ jobs:
           - tier2_subsystem_mailbox
           - tier2_subsystem_family_actor_pool
           - tier2_subsystem_subscriptions
-          - tier2_subsystem_tlv_pipeline
+          - tier2_subsystem_message_pipeline
           - tier2_subsystem_router
           - tier2_subsystem_schedule_scan
           - tier2_subsystem_schedule_create

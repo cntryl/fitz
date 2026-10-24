@@ -19,7 +19,7 @@
 **Then:**
 
 - Server authenticates the JWT and establishes internal session state
-- Server responds with success (silent acceptance — no explicit ACK)
+- Server responds with HELLO (type 2), carrying the negotiated version, capabilities, message limit, in-flight limit, and diagnostic session id
 - Client sends no extra shard or routing metadata
 - Client can proceed with domain operations
 - Subsequent frames are authorized per normalized route-shaped permissions
@@ -31,8 +31,8 @@
 **When:** Client sends CONNECT frame  
 **Then:**
 
-- Server closes connection with error message
-- Client receives close reason: "connect failed: <reason>"
+- Server sends CONNECT_REJECTED (type 3) with a protocol-block code and diagnostic message, flushes it, and closes the connection
+- Client classifies rejection by code: 0001 unauthorized or 0051 unprovisioned identity family
 - Client does NOT retry with same JWT
 
 ### AC-CONN-004: Anonymous Mode (When Enabled)
@@ -137,7 +137,7 @@
 **When:** Client sends `Insert(tx_id, "counter", "1")`  
 **Then:**
 
-- Server returns error code `1006` (ERR_KEY_EXISTS)
+- Server returns error code `1055` (ERR_KEY_EXISTS)
 - Transaction remains active (can rollback)
 
 ### AC-KV-006: Delete Existing Key
@@ -192,7 +192,7 @@
 **When:** Client sends `Put(tx_id, key, value)`  
 **Then:**
 
-- Server returns error code `1011` (ERR_UNAUTHORIZED)
+- Server returns error code `1001` (ERR_UNAUTHORIZED)
 - Write does NOT occur
 
 ### AC-KV-011: Delete Range with Invalid Bounds
@@ -219,10 +219,10 @@ wildcard-realm KV patterns capable of matching three segments
 - Duplicate original registration strings return the existing identifier,
   including at either registration cap
 - Exact registrations count toward the 1,024-total cap; the 1,025th distinct
-  exact registration returns 1013
+  exact registration returns 1004
 - Below the total cap, exact registrations remain allowed at the 128-wildcard
-  cap; the 129th distinct wildcard returns 1013
-- Wrong schemes, empty segments, partial wildcards, and impossible depths return 1012 on both TCP and WebSocket
+  cap; the 129th distinct wildcard returns 1004
+- Wrong schemes, empty segments, partial wildcards, and impossible depths return 1003 on both TCP and WebSocket
 - Matching and cleanup remain isolated by `RouteFamily`, and disconnect removes the session's registrations
 - KV mutations continue to reject wildcard routes
 
@@ -293,7 +293,7 @@ reject or surface the broker rejection for partial and cross-realm selectors.
 **When:** Client sends `Append(session_id, payload)`  
 **Then:**
 
-- Server returns error code `2009` (Unauthorized)
+- Server returns error code `2001` (Unauthorized)
 - Message NOT appended to stream
 
 ### AC-STREAM-006: Append with discriminator sidecar
@@ -347,11 +347,11 @@ reject or surface the broker rejection for partial and cross-realm selectors.
 **When:** Filter marker/version is unsupported or filter bytes are malformed
 **Then:**
 
-- Server returns stream error `ERR_STREAM_FILTER_UNSUPPORTED_VERSION` (2006) for unsupported marker/version
-- Server returns stream error `ERR_STREAM_FILTER_INVALID_PAYLOAD` (2007) for malformed filter bytes
+- Server returns stream error `ERR_STREAM_FILTER_UNSUPPORTED_VERSION` (2055) for unsupported marker/version
+- Server returns stream error `ERR_STREAM_FILTER_INVALID_PAYLOAD` (2056) for malformed filter bytes
 - Server keeps the session/transport open so a subsequent valid request can succeed
 
-**Filter codec contract:** `StreamFilterSet` is an opaque client-visible value type, but the wire encoding is fixed and versioned. Clients MUST keep the marker, clause tags, and length prefixes aligned with `client-spec.md`; if the broker responds with 2006 or 2007, the client MUST surface the error and continue using the same connection only for subsequent valid requests.
+**Filter codec contract:** `StreamFilterSet` is an opaque client-visible value type, but the wire encoding is fixed and versioned. Clients MUST keep the marker, clause tags, and length prefixes aligned with `client-spec.md`; if the broker responds with 2055 or 2056, the client MUST surface the error and continue using the same connection only for subsequent valid requests.
 
 ### AC-STREAM-010: Subscribe to resource commit notifications
 
@@ -386,7 +386,7 @@ reject or surface the broker rejection for partial and cross-realm selectors.
 **When:** Client sends `Append(session_id, expected_offset=99999, payload="event2")`  
 **Then:**
 
-- Server returns error (status=2) with numeric domain code 2001, independently of message wording
+- Server returns error (status=1) with code 2050, independently of message wording
 - No new record is appended
 - Clients MUST send expected_offset on every Append; servers MUST enforce it
 
@@ -422,10 +422,10 @@ patterns capable of matching a three-segment Stream route
 
 - Notifications contain the matching identifier and exact concrete Stream route
 - Duplicate registration is idempotent and is checked before either limit
-- The 1,025th distinct exact registration returns 2011; below the total cap,
+- The 1,025th distinct exact registration returns 2004; below the total cap,
   exact registration succeeds at the wildcard cap
-- The 129th distinct wildcard registration returns 2011
-- Invalid subscribe and unsubscribe patterns return 2010 on TCP and WebSocket
+- The 129th distinct wildcard registration returns 2004
+- Invalid subscribe and unsubscribe patterns return 2003 on TCP and WebSocket
 - Matching and disconnect cleanup stay isolated by `RouteFamily`
 - Stream writes stay concrete; READ retains its separately documented pattern support
 

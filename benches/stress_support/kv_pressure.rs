@@ -9,7 +9,7 @@ use fitz::benchkit::{
     build_kv_begin, build_kv_commit, build_kv_put, build_kv_rollback, shared_bench_runtime,
 };
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::{TestClient, TlvFrameBuilder};
+use fitz::testkit::{FrameBuilder, TestClient};
 use serde::Serialize;
 use std::future::Future;
 use std::path::PathBuf;
@@ -196,7 +196,7 @@ async fn verify(
             encoder.put_u64(tx);
             encoder.put_string(ROUTE);
             encoder.put_bytes(format!("key-{key:020}").as_bytes());
-            let mut frame = TlvFrameBuilder::new();
+            let mut frame = FrameBuilder::new();
             frame.encode_field(103, &encoder.finish());
             let body = bounded(request(client, &frame.build(), 103)).await?;
             require_ok(&body, "KV GET")?;

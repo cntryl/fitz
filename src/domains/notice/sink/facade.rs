@@ -298,8 +298,9 @@ impl NoticeDomain {
     }
 
     /// True when the sink accepts this envelope without waiting for an actor
-    /// reply (PUBLISH and internal domain events); ingress uses it to decide
-    /// whether delivery must be moved off the async worker.
+    /// reply (PUBLISH without `ACK_REQUESTED`, and internal domain events);
+    /// ingress uses it to decide whether delivery must be moved off the async
+    /// worker.
     pub(crate) fn can_accept_without_reply(envelope: &Envelope) -> bool {
         if envelope
             .payload::<crate::runtime::DomainPublishEvent>()
@@ -316,7 +317,8 @@ impl NoticeDomain {
                 else {
                     return false;
                 };
-                request.meta.route_family == *envelope.destination().family()
+                !request.meta.ack_requested
+                    && request.meta.route_family == *envelope.destination().family()
                     && envelope
                         .source()
                         .is_none_or(|source| *source.family() == request.meta.route_family)

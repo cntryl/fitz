@@ -198,6 +198,7 @@ fn register_domains_stage(
     config: &BootConfig,
 ) -> BootStage<Arc<domains::BrokerDomains>> {
     let options = domains::DomainSetupOptions {
+        max_message_bytes: config.max_frame_size,
         route_families: config.route_families.clone(),
         schedule_write_policy: config.schedule_write_policy(),
 

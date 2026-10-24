@@ -25,7 +25,7 @@ This document defines the contract for Tier 2 through Tier 6 benchmarks using th
 
 - Four layers per domain: **direct**, **encoded**, **tcp**, **websocket**, **multiclient**.
 - **direct**: `actor.receive()` (or domain handle) only, no frames, no network — establishes the in-process baseline.
-- **encoded**: Build the TLV frame **and** send it through a **codec decode path** into the actor — measures serialization cost. Do **not** just build the frame and `let _ = &frame` it. If you cannot decode through the actor, this layer is invalid and should be omitted.
+- **encoded**: Build the wire message **and** send it through a **codec decode path** into the actor — measures serialization cost. Do **not** just build the frame and `let _ = &frame` it. If you cannot decode through the actor, this layer is invalid and should be omitted.
 - **tcp**: Full roundtrip through TestServer over TCP — encode frame, send, receive response.
 - **websocket**: Same as tcp but over WS.
 - **multiclient**: N clients (typically 10) making requests — must use `tokio::join!` or `FuturesUnordered` for **actual concurrency**, **not** a sequential for loop. Label it concurrent only if it is actually concurrent.

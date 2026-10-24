@@ -6,19 +6,7 @@
 ///
 /// Returns an error when the payload is not a valid error envelope.
 pub fn decode_stream_error_payload(payload: &[u8]) -> Result<(u16, String), String> {
-    use crate::protocol::payload_codec::PayloadDecoder;
-
-    let mut decoder = PayloadDecoder::new(payload);
-    if !matches!(decoder.get_u8()?, 1 | 2) {
-        return Err("Payload is not a Stream error envelope".to_string());
-    }
-    let code = u16::try_from(decoder.get_u32()?)
-        .map_err(|_| "Stream error code exceeds u16 range".to_string())?;
-    let message = decoder.get_string()?;
-    if !decoder.is_complete() {
-        return Err("Trailing data in Stream error envelope".to_string());
-    }
-    Ok((code, message))
+    crate::protocol::error_codes::decode_error_body(payload)
 }
 
 /// Retry only a known conflict or a request rejected before actor admission.
@@ -47,7 +35,7 @@ mod tests {
         let decoded = decode_stream_error_payload(&payload);
 
         // Assert
-        assert_eq!(decoded, Ok((2001, "concurrency conflict".into())));
+        assert_eq!(decoded, Ok((2050, "concurrency conflict".into())));
     }
 
     #[test]
@@ -65,7 +53,7 @@ mod tests {
         let retryable = is_retryable_stream_commit_error(code);
 
         // Assert
-        assert_eq!(code, 2012);
+        assert_eq!(code, 2006);
         assert!(!retryable);
     }
 

@@ -50,7 +50,8 @@ The separate `should_recover_gib_stream_history_after_complete_cache_loss`
 workload writes 1 GiB of deterministic, incompressible Stream event payloads
 through real TCP sessions and cloud-strict commits. Four concurrent writers
 populate 16 streams with 2,048 events of 32 KiB each. Individual read pages
-contain one event to fit the protocol's 16-bit TLV length. It checks readiness after
+contain one event for a bounded verification workload. Wire format 2 uses a
+32-bit value length and the message limit advertised in HELLO. It checks readiness after
 each commit and samples the provider catalog during growth.
 
 Before requesting an orderly checkpoint, ordinary maintenance must retire all

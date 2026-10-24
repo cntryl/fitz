@@ -227,9 +227,7 @@ impl QueueFamilyState {
             if let Some(wait_seconds) = wait_seconds.filter(|seconds| *seconds > 0) {
                 if envelope.source().is_some() {
                     if !self.reservation_book.can_enqueue(meta.session_id) {
-                        let response = crate::domains::queue::QueueResponse::Error {
-                            message: "queue pending reserve capacity reached".to_string(),
-                        };
+                        let response = crate::domains::queue::QueueResponse::Busy;
                         self.route_queue_response(envelope, meta, &response);
                         self.record_operation_metrics(request_started, &response, op_kind);
                         return;

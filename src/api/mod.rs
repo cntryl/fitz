@@ -23,6 +23,7 @@ pub(crate) mod authentication;
 pub mod background;
 mod broker;
 mod broker_shutdown;
+mod buffer_budget;
 pub mod handlers;
 pub mod http;
 pub mod ingress;

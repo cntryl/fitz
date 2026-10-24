@@ -11,7 +11,6 @@ use crate::dispatch::wire::rpc::{
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use crate::protocol::tlv::MessageType;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::{BufMut, Bytes, BytesMut};
 use uuid::Uuid;
@@ -23,7 +22,6 @@ const U64_LEN: usize = 8;
 const MAX_WORKER_CONCURRENCY: u32 = 1024;
 const RPC_RESPONSE_FLAG_STREAM_END: u8 = 0x01;
 const RPC_RESPONSE_FLAGS_SUPPORTED: u8 = RPC_RESPONSE_FLAG_STREAM_END;
-const RPC_LIFECYCLE_EXTENSION_VERSION: u8 = 1;
 const RPC_WORKER_CANCELLATION_SUPPORTED: u8 = 0x01;
 pub(crate) const MAX_RPC_BUDGET_MILLIS: u32 = 86_400_000;
 
@@ -108,32 +106,13 @@ fn skip_uuid(dec: &mut PayloadDecoder<'_>) -> Result<(), String> {
 }
 
 fn put_error_body(buf: &mut BytesMut, code: u16, message: &str) {
-    buf.put_u8(1);
-    buf.put_u32(u32::from(code));
-    put_payload_string(buf, message);
+    buf.put_slice(&crate::protocol::error_codes::encode_error_body(
+        code, message,
+    ));
 }
 
-fn put_tlv_header(buf: &mut BytesMut, msg_type: MessageType, payload_len: usize) {
-    assert!(
-        u16::try_from(payload_len).is_ok(),
-        "TLV value too large: {} bytes (max {})",
-        payload_len,
-        u16::MAX
-    );
-
-    if msg_type.is_single_byte() {
-        buf.put_u8(u8::try_from(msg_type.as_u16()).unwrap_or(u8::MAX));
-    } else {
-        buf.put_u8(MessageType::ESCAPE_MARKER);
-        buf.put_slice(&msg_type.as_u16().to_be_bytes());
-    }
-    buf.put_slice(&u16::try_from(payload_len).unwrap_or(u16::MAX).to_be_bytes());
-}
-
-fn tlv_frame_buffer(msg_type: MessageType, payload_len: usize) -> BytesMut {
-    let mut buf = BytesMut::with_capacity(msg_type.encoded_size(payload_len));
-    put_tlv_header(&mut buf, msg_type, payload_len);
-    buf
+fn payload_buffer(payload_len: usize) -> BytesMut {
+    BytesMut::with_capacity(payload_len)
 }
 
 /// Return the exact payload size for a standard RPC client response body.
@@ -149,15 +128,18 @@ pub fn response_body_capacity(response: &RpcClientResponseBody) -> usize {
 /// Return the exact payload size for a standard Fitz error body.
 #[must_use]
 pub fn error_body_capacity(message: &str) -> usize {
-    U8_LEN + U32_LEN + encoded_string_len(message)
+    // status, u16 code, class, effect, u32 length, message
+    1 + 2 + 1 + 1 + 4 + message.len()
 }
 
 /// Return the exact payload size for an RPC request delivery payload.
 #[must_use]
 pub fn request_payload_capacity(request: &RpcRequest) -> usize {
+    // uuid, route, body, and the budget presence byte
     UUID_BYTES_LEN
         + encoded_string_len(request.route.as_str())
         + encoded_bytes_len(request.body.len())
+        + U8_LEN
 }
 
 /// Return the exact payload size for an RPC response message payload.
@@ -170,33 +152,6 @@ pub fn response_message_capacity(response: &RpcResponse) -> usize {
 #[must_use]
 pub fn terminal_error_response_message_capacity(message: &str) -> usize {
     UUID_BYTES_LEN + U64_LEN + U8_LEN + encoded_bytes_len(error_body_capacity(message))
-}
-
-/// Return the exact frame size for a standard RPC client response body.
-#[must_use]
-pub fn client_response_frame_capacity(
-    msg_type: MessageType,
-    response: &RpcClientResponseBody,
-) -> usize {
-    msg_type.encoded_size(response_body_capacity(response))
-}
-
-/// Return the exact frame size for an RPC worker request delivery frame.
-#[must_use]
-pub fn worker_request_frame_capacity(request: &RpcRequest) -> usize {
-    MessageType::new(302).encoded_size(request_payload_capacity(request))
-}
-
-/// Return the exact frame size for an RPC response message frame.
-#[must_use]
-pub fn response_message_frame_capacity(response: &RpcResponse) -> usize {
-    MessageType::new(303).encoded_size(response_message_capacity(response))
-}
-
-/// Return the exact frame size for an RPC terminal error response frame.
-#[must_use]
-pub fn terminal_error_response_message_frame_capacity(message: &str) -> usize {
-    MessageType::new(303).encoded_size(terminal_error_response_message_capacity(message))
 }
 
 /// Parse incoming message from TLV-encoded bytes.
@@ -244,7 +199,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             let route = dec.get_string_ref()?;
             let max_concurrent = dec.get_u32()?;
             validate_max_concurrent(max_concurrent)?;
-            parse_registration_extension(&mut dec)?;
+            parse_registration_flags(&mut dec)?;
             Ok(Some(route))
         }
         301 => {
@@ -258,7 +213,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             skip_uuid(&mut dec)?;
             let route = dec.get_string_ref()?;
             dec.skip_bytes()?;
-            parse_request_extension(&mut dec)?;
+            parse_optional_budget(&mut dec)?;
             Ok(Some(route))
         }
         303 | 304 => Ok(None),
@@ -365,7 +320,7 @@ fn parse_subscribe(
     let worker_addr = RouteAddress::new(route_family, Route::new(pattern));
     let max_concurrent = validate_max_concurrent(dec.get_u32()?)?;
 
-    parse_registration_extension(dec)?;
+    parse_registration_flags(dec)?;
 
     Ok(RpcMessage::RegisterWorker {
         worker_addr,
@@ -411,7 +366,7 @@ fn parse_rpc_request(
     let route = Route::new(route_value);
     let body = dec.get_bytes()?;
 
-    parse_request_extension(dec)?;
+    parse_optional_budget(dec)?;
 
     Ok(RpcMessage::Request(RpcRequest::new(
         route_family,
@@ -421,52 +376,39 @@ fn parse_rpc_request(
     )))
 }
 
-fn parse_registration_extension(dec: &mut PayloadDecoder<'_>) -> Result<bool, String> {
-    if dec.is_complete() {
-        return Ok(false);
-    }
-    let version = dec.get_u8()?;
-    if version != RPC_LIFECYCLE_EXTENSION_VERSION {
-        return Err(format!(
-            "Unsupported RPC registration extension version: {version}"
-        ));
-    }
+fn parse_registration_flags(dec: &mut PayloadDecoder<'_>) -> Result<bool, String> {
+    // `[u8 flags]` closes every worker registration. Bit 0 says the worker
+    // accepts cancellation controls and remaining budgets; the other bits
+    // are reserved and rejected.
     let flags = dec.get_u8()?;
     if flags & !RPC_WORKER_CANCELLATION_SUPPORTED != 0 {
         return Err(format!("Unsupported RPC registration flags: {flags:#04x}"));
     }
     if !dec.is_complete() {
-        return Err("Trailing data in RPC registration extension".to_string());
+        return Err("Trailing data in RPC registration".to_string());
     }
     Ok(flags & RPC_WORKER_CANCELLATION_SUPPORTED != 0)
 }
 
-fn parse_request_extension(dec: &mut PayloadDecoder<'_>) -> Result<Option<u32>, String> {
-    if dec.is_complete() {
-        return Ok(None);
-    }
-    let version = dec.get_u8()?;
-    if version != RPC_LIFECYCLE_EXTENSION_VERSION {
-        return Err(format!(
-            "Unsupported RPC request extension version: {version}"
-        ));
-    }
-    let flags = dec.get_u8()?;
-    if flags != 0x01 {
-        return Err(format!(
-            "Unsupported RPC request extension flags: {flags:#04x}"
-        ));
-    }
-    let remaining_budget_ms = dec.get_u32()?;
-    if remaining_budget_ms > MAX_RPC_BUDGET_MILLIS {
-        return Err(format!(
-            "RPC remaining budget exceeds {MAX_RPC_BUDGET_MILLIS} milliseconds"
-        ));
-    }
+fn parse_optional_budget(dec: &mut PayloadDecoder<'_>) -> Result<Option<u32>, String> {
+    // `[u8 present][u32 remaining_budget_ms]?` closes every request.
+    let remaining_budget_ms = match dec.get_u8()? {
+        0 => None,
+        1 => {
+            let budget = dec.get_u32()?;
+            if budget > MAX_RPC_BUDGET_MILLIS {
+                return Err(format!(
+                    "RPC remaining budget exceeds {MAX_RPC_BUDGET_MILLIS} milliseconds"
+                ));
+            }
+            Some(budget)
+        }
+        other => return Err(format!("Invalid RPC budget presence byte: {other}")),
+    };
     if !dec.is_complete() {
-        return Err("Trailing data in RPC request extension".to_string());
+        return Err("Trailing data in RPC request".to_string());
     }
-    Ok(Some(remaining_budget_ms))
+    Ok(remaining_budget_ms)
 }
 
 pub(crate) fn extract_registration_cancellation_support(
@@ -475,7 +417,7 @@ pub(crate) fn extract_registration_cancellation_support(
     let mut dec = PayloadDecoder::new(payload);
     dec.get_string_ref()?;
     dec.get_u32()?;
-    parse_registration_extension(&mut dec).map_err(RpcDecodeError::from)
+    parse_registration_flags(&mut dec).map_err(RpcDecodeError::from)
 }
 
 pub(crate) fn extract_request_remaining_budget_ms(
@@ -485,7 +427,7 @@ pub(crate) fn extract_request_remaining_budget_ms(
     skip_uuid(&mut dec)?;
     dec.get_string_ref()?;
     dec.skip_bytes()?;
-    parse_request_extension(&mut dec).map_err(RpcDecodeError::from)
+    parse_optional_budget(&mut dec).map_err(RpcDecodeError::from)
 }
 
 pub(crate) fn parse_cancellation_message(
@@ -517,39 +459,44 @@ pub(crate) fn parse_cancellation_message(
     Ok(message)
 }
 
-fn cancellation_control_tlv_frame(
+fn cancellation_control_frame(
     message_type: u16,
     kind: u8,
     correlation_id: &Uuid,
     trailing: Option<u8>,
 ) -> Bytes {
     let payload_len = UUID_BYTES_LEN + 1 + usize::from(trailing.is_some());
-    let mut buf = tlv_frame_buffer(MessageType::new(message_type), payload_len);
+    let mut buf = payload_buffer(payload_len);
     buf.put_u8(kind);
     put_uuid(&mut buf, correlation_id);
     if let Some(value) = trailing {
         buf.put_u8(value);
     }
-    buf.freeze()
+    Bytes::from(crate::protocol::wire2::header::encode_message(
+        message_type,
+        crate::protocol::wire2::header::HeaderFlags::none(),
+        None,
+        &buf,
+    ))
 }
 
-pub(crate) fn encode_worker_cancel_tlv_frame(
+pub(crate) fn encode_worker_cancel_frame(
     correlation_id: &Uuid,
     reason: RpcCancellationReason,
 ) -> Bytes {
-    cancellation_control_tlv_frame(305, 2, correlation_id, Some(reason as u8))
+    cancellation_control_frame(305, 2, correlation_id, Some(reason as u8))
 }
 
 #[cfg(test)]
-pub(crate) fn encode_cancel_ack_tlv_frame(correlation_id: &Uuid) -> Bytes {
-    cancellation_control_tlv_frame(304, 3, correlation_id, None)
+pub(crate) fn encode_cancel_ack_frame(correlation_id: &Uuid) -> Bytes {
+    cancellation_control_frame(304, 3, correlation_id, None)
 }
 
-pub(crate) fn encode_cancel_result_tlv_frame(
+pub(crate) fn encode_cancel_result_frame(
     correlation_id: &Uuid,
     result: RpcCancellationResult,
 ) -> Bytes {
-    cancellation_control_tlv_frame(305, 4, correlation_id, Some(result as u8))
+    cancellation_control_frame(305, 4, correlation_id, Some(result as u8))
 }
 
 fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, RpcDecodeError> {
@@ -578,19 +525,48 @@ fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, RpcDecodeE
 
 /// Encode an RPC request payload directly from `RpcRequest` for dispatch to a worker.
 pub fn encode_request_into(request: &RpcRequest, enc: &mut PayloadEncoder) -> Vec<u8> {
-    encode_request_fields_into(&request.correlation_id, &request.route, &request.body, enc)
+    encode_request_fields_into(
+        &request.correlation_id,
+        &request.route,
+        &request.body,
+        None,
+        enc,
+    )
+}
+
+/// Encode a caller request that states its remaining budget.
+pub fn encode_request_with_budget_into(
+    request: &RpcRequest,
+    remaining_budget_ms: u32,
+    enc: &mut PayloadEncoder,
+) -> Vec<u8> {
+    encode_request_fields_into(
+        &request.correlation_id,
+        &request.route,
+        &request.body,
+        Some(remaining_budget_ms),
+        enc,
+    )
 }
 
 fn encode_request_fields_into(
     correlation_id: &Uuid,
     route: &Route,
     body: &[u8],
+    remaining_budget_ms: Option<u32>,
     enc: &mut PayloadEncoder,
 ) -> Vec<u8> {
     enc.clear();
     put_uuid_encoder(enc, correlation_id);
     enc.put_string(route.as_str());
     enc.put_bytes(body);
+    match remaining_budget_ms {
+        Some(budget) => {
+            enc.put_u8(1);
+            enc.put_u32(budget);
+        }
+        None => enc.put_u8(0),
+    }
     enc.finish()
 }
 
@@ -635,12 +611,9 @@ pub fn encode_terminal_error_response_message_into(
 ///
 /// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
 #[must_use]
-pub fn encode_client_response_tlv_frame(
-    msg_type: MessageType,
-    response: &RpcClientResponseBody,
-) -> Bytes {
+pub fn encode_client_response_payload(response: &RpcClientResponseBody) -> Bytes {
     let payload_len = response_body_capacity(response);
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let mut buf = payload_buffer(payload_len);
 
     match response {
         RpcClientResponseBody::Ok { data } => {
@@ -659,49 +632,29 @@ pub fn encode_client_response_tlv_frame(
         }
     }
 
-    debug_assert_eq!(
-        buf.len(),
-        client_response_frame_capacity(msg_type, response)
-    );
+    debug_assert_eq!(buf.len(), response_body_capacity(response));
     buf.freeze()
 }
 
-/// Encode a complete RPC worker request delivery (`302`) TLV frame directly into
-/// the final wire buffer.
+/// Encode a complete RPC worker request delivery (`302`) payload. Every
+/// delivery carries the broker's remaining budget for the call.
 ///
 /// # Panics
 ///
-/// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
+/// Panics if `remaining_budget_ms` exceeds the protocol maximum.
 #[must_use]
-pub fn encode_worker_request_tlv_frame(request: &RpcRequest) -> Bytes {
-    let msg_type = MessageType::new(302);
-    let payload_len = request_payload_capacity(request);
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
-
-    put_uuid(&mut buf, &request.correlation_id);
-    put_payload_string(&mut buf, request.route.as_str());
-    put_payload_bytes(&mut buf, &request.body);
-
-    debug_assert_eq!(buf.len(), worker_request_frame_capacity(request));
-    buf.freeze()
-}
-
-/// Encode a worker request with the negotiated remaining-budget extension.
-#[must_use]
-pub(crate) fn encode_worker_request_with_budget_tlv_frame(
-    request: &RpcRequest,
-    remaining_budget_ms: u32,
-) -> Bytes {
+pub fn encode_worker_request_payload(request: &RpcRequest, remaining_budget_ms: u32) -> Bytes {
     assert!(remaining_budget_ms <= MAX_RPC_BUDGET_MILLIS);
-    let msg_type = MessageType::new(302);
-    let payload_len = request_payload_capacity(request) + 6;
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let payload_len = request_payload_capacity(request) + U32_LEN;
+    let mut buf = payload_buffer(payload_len);
+
     put_uuid(&mut buf, &request.correlation_id);
     put_payload_string(&mut buf, request.route.as_str());
     put_payload_bytes(&mut buf, &request.body);
-    buf.put_u8(RPC_LIFECYCLE_EXTENSION_VERSION);
-    buf.put_u8(0x01);
+    buf.put_u8(1);
     buf.put_u32(remaining_budget_ms);
+
+    debug_assert_eq!(buf.len(), payload_len);
     buf.freeze()
 }
 
@@ -712,17 +665,16 @@ pub(crate) fn encode_worker_request_with_budget_tlv_frame(
 ///
 /// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
 #[must_use]
-pub fn encode_response_message_tlv_frame(response: &RpcResponse) -> Bytes {
-    let msg_type = MessageType::new(303);
+pub fn encode_response_message_payload(response: &RpcResponse) -> Bytes {
     let payload_len = response_message_capacity(response);
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let mut buf = payload_buffer(payload_len);
 
     put_uuid(&mut buf, &response.correlation_id);
     buf.put_u64(response.seq);
     buf.put_u8(u8::from(response.stream_end) & RPC_RESPONSE_FLAG_STREAM_END);
     put_payload_bytes(&mut buf, &response.body);
 
-    debug_assert_eq!(buf.len(), response_message_frame_capacity(response));
+    debug_assert_eq!(buf.len(), response_message_capacity(response));
     buf.freeze()
 }
 
@@ -733,15 +685,14 @@ pub fn encode_response_message_tlv_frame(response: &RpcResponse) -> Bytes {
 ///
 /// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
 #[must_use]
-pub fn encode_terminal_error_response_message_tlv_frame(
+pub fn encode_terminal_error_response_message_payload(
     correlation_id: &Uuid,
     code: u16,
     message: &str,
 ) -> Bytes {
-    let msg_type = MessageType::new(303);
     let payload_len = terminal_error_response_message_capacity(message);
     let error_body_len = error_body_capacity(message);
-    let mut buf = tlv_frame_buffer(msg_type, payload_len);
+    let mut buf = payload_buffer(payload_len);
 
     put_uuid(&mut buf, correlation_id);
     buf.put_u64(0);
@@ -749,10 +700,7 @@ pub fn encode_terminal_error_response_message_tlv_frame(
     put_u32_len(&mut buf, error_body_len);
     put_error_body(&mut buf, code, message);
 
-    debug_assert_eq!(
-        buf.len(),
-        terminal_error_response_message_frame_capacity(message)
-    );
+    debug_assert_eq!(buf.len(), terminal_error_response_message_capacity(message));
     buf.freeze()
 }
 

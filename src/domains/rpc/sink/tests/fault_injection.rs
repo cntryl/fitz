@@ -139,10 +139,7 @@ fn should_recover_worker_credit_after_immediate_dispatch_hits_mailbox_full() {
     submit_request(&sink, family, &route, 8);
 
     // Assert
-    assert_eq!(
-        code,
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE
-    );
+    assert_eq!(code, crate::dispatch::protocol::error_codes::rpc::ERR_BUSY);
     assert_eq!(pending_after_rejection, 0);
     assert_eq!(
         workers_after_rejection, 1,

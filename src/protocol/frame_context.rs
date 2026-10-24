@@ -14,7 +14,7 @@
 //! - Domain sinks receive `Envelope`, extract `FrameContext`, and can access all needed info
 
 use crate::protocol::frame::ChannelId;
-use crate::protocol::tlv::MessageType;
+use crate::protocol::message::MessageType;
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use std::num::NonZeroU64;

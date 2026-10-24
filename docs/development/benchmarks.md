@@ -141,10 +141,11 @@ use cntryl_stress::{black_box, stress_main, stress, StressContext};
 #[stress(tier = 1, name = "decode_one_64b", max_allocs_per_op = 0, max_bytes_per_op = 0)]
 fn should_decode_one_64b(ctx: &mut StressContext) {
     let frame = build_frame(64);
-    let decoder = TlvDecoder::new();
 
     ctx.parameter("payload_size", 64);
-    ctx.measure("decode_one_64b", || black_box(decoder.decode_one(black_box(&frame)).unwrap()));
+    ctx.measure("decode_one_64b", || {
+        black_box(decode_message(black_box(&frame), u32::MAX).unwrap())
+    });
 }
 
 #[stress(tier = 3)]
@@ -311,7 +312,7 @@ FITZ_QUEUE_DRAIN_PAIRS=1000 cargo bench --locked --bench queue_drain_latency \
 ```bash
 export FITZ_LOG_LEVEL=off
 export OTEL_ENABLED=false
-cargo bench --quiet --bench tier1_hotpath_tlv -- --workload decode_one
+cargo bench --quiet --bench tier1_hotpath_message -- --workload decode_one
 cargo bench --quiet --bench tier2_subsystem_queue -- --workload ack_256_messages_primary
 cargo bench --quiet --bench tier4_rpc_roundtrip -- --workload should_measure_tcp_request_response_roundtrip
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"

@@ -10,7 +10,7 @@ use fitz::benchkit::{
 };
 use fitz::protocol::error_codes::lease;
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::{TestClient, TlvFrameBuilder};
+use fitz::testkit::{FrameBuilder, TestClient};
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use serde::Serialize;
 use std::future::Future;
@@ -149,7 +149,7 @@ fn waiting(owner: &str) -> Vec<u8> {
     e.put_string(owner);
     e.put_u64(30);
     e.put_u32(30);
-    let mut f = TlvFrameBuilder::new();
+    let mut f = FrameBuilder::new();
     f.encode_field(400, &e.finish());
     f.build()
 }
@@ -271,7 +271,7 @@ async fn admission(
             let token = acquire_token(&body, 2)?;
             stage.queued += 1;
             queued.push((token, client, owner));
-        } else if error_code(&body, "waiter ACQUIRE")? == u32::from(lease::ERR_QUEUE_FULL) {
+        } else if error_code(&body, "waiter ACQUIRE")? == u32::from(lease::ERR_WAITERS_LIMIT) {
             stage.queue_full_rejections += 1;
             bounded(async { client.close().await.map_err(BenchFailure::transport) }).await?;
         } else {

@@ -17,7 +17,7 @@ patterns and implementation examples.
 
 ```
 client-spec.md
-└─ Defines: Wire format, TLV encoding, domain operations
+└─ Defines: Wire format, message header, domain operations
    │
     ├─> client-acceptance-criteria.md
    │   └─ Defines: Testable requirements (Given-When-Then)
@@ -40,8 +40,8 @@ client-spec.md
 
 **Bad API:**
 ```python
-# ❌ User shouldn't see TLV encoding
-client.send_frame([0x00, 0x68, 0x00, 0x2F, ...])
+# ❌ User shouldn't see the wire header
+client.send_frame([0x00, 0x68, 0x00, ...])
 ```
 
 **Good API:**
@@ -137,7 +137,7 @@ even when the request selector was exact.
 fitz-client/
 ├── connection.{ext}        # WebSocket management, reconnect logic
 ├── protocol/
-│   ├── tlv.{ext}          # TLV encoder/decoder
+│   ├── codec.{ext}        # Message header and primitive encoder/decoder
 │   └── messages.{ext}      # Message type constants, wire structs
 ├── domains/
 │   ├── kv.{ext}           # KV domain client
@@ -161,7 +161,7 @@ fitz-client/
 ├─────────────────────────────────────┤
 │   Connection Manager                 │  ← WebSocket, auth, reconnect
 ├─────────────────────────────────────┤
-│   Protocol Layer (TLV codec)        │  ← Wire format encoding/decoding
+│   Protocol Layer (message codec)    │  ← Wire format encoding/decoding
 ├─────────────────────────────────────┤
 │   Transport (WebSocket/TCP)         │  ← Low-level I/O
 └─────────────────────────────────────┘

@@ -43,19 +43,19 @@ const REJECTION_SPECS: [RejectionSpec; 5] = [
     },
     RejectionSpec {
         metric: "rpc_requests_rejected_backpressure_total",
-        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
         message: RPC_BACKPRESSURE_ERROR,
         reason: "global pending capacity",
     },
     RejectionSpec {
         metric: "rpc_requests_rejected_backpressure_total",
-        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
         message: RPC_BACKPRESSURE_ERROR,
         reason: "route pending capacity",
     },
     RejectionSpec {
         metric: "rpc_requests_rejected_expired_budget_total",
-        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
         message: super::state_model::RPC_BUDGET_EXPIRED_ERROR,
         reason: "request budget expired before dispatch",
     },
@@ -167,7 +167,7 @@ impl RpcFamilyRuntime<'_> {
         // The admin surface reads one aggregate name. Without this, admission
         // control rejections were invisible in `backpressure_rejects_total`
         // even though they are exactly what it is meant to report.
-        if spec.error_code == crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE {
+        if spec.error_code == crate::dispatch::protocol::error_codes::rpc::ERR_BUSY {
             self.counter_inc(RPC_BACKPRESSURE_REJECTS_METRIC);
         }
         tracing::warn!(
@@ -322,7 +322,7 @@ impl RpcFamilyRuntime<'_> {
             envelope,
             *meta,
             &req,
-            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+            crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
             RPC_BACKPRESSURE_ERROR,
         )
     }
@@ -392,50 +392,32 @@ impl RpcFamilyRuntime<'_> {
                 .worker_correlation_id;
         }
         let req = &worker_request;
+        let remaining_budget_ms = Self::remaining_budget_millis(expires_at);
         #[cfg(test)]
         let request_envelope = {
-            let mut payload_encoder =
-                crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let mut request_bytes = crate::dispatch::protocol::rpc_codec::encode_request_into(
-                req,
-                &mut payload_encoder,
-            );
-            if worker.supports_cancellation {
-                let remaining_budget_ms = Self::remaining_budget_millis(expires_at);
-                request_bytes.push(1);
-                request_bytes.push(1);
-                request_bytes.extend_from_slice(&remaining_budget_ms.to_be_bytes());
-            }
             let request_ctx = FrameContext::new(
                 worker.session_id,
                 crate::dispatch::protocol::frame::ChannelId::Rpc,
-                crate::dispatch::protocol::tlv::MessageType::new(RPC_MSG_TYPE_REQUEST),
-                bytes::Bytes::from(request_bytes),
+                crate::dispatch::protocol::message::MessageType::new(RPC_MSG_TYPE_REQUEST),
+                crate::dispatch::protocol::rpc_codec::encode_worker_request_payload(
+                    req,
+                    remaining_budget_ms,
+                ),
                 *worker.addr.family(),
             );
             Envelope::new(worker.inbox_addr.clone(), request_ctx)
         };
 
         #[cfg(not(test))]
-        let request_envelope = if worker.supports_cancellation {
-            Envelope::new(
-                worker.inbox_addr.clone(),
-                crate::domains::rpc::protocol::RpcWorkerRequestWithBudgetDelivery {
-                    session_id: worker.session_id,
-                    request: req.clone(),
-                    remaining_budget_ms: Self::remaining_budget_millis(expires_at),
-                },
-            )
-        } else {
-            Envelope::new(
-                worker.inbox_addr.clone(),
-                RpcWorkerRequestDelivery::new(
-                    worker.session_id,
-                    *worker.addr.family(),
-                    req.clone(),
-                ),
-            )
-        };
+        let request_envelope = Envelope::new(
+            worker.inbox_addr.clone(),
+            RpcWorkerRequestDelivery::new(
+                worker.session_id,
+                *worker.addr.family(),
+                req.clone(),
+                remaining_budget_ms,
+            ),
+        );
 
         self.core.router.route(request_envelope)
     }
@@ -538,7 +520,7 @@ impl RpcFamilyRuntime<'_> {
                                 caller_session_id: pending.dispatch_info.caller_session_id,
                                 caller_inbox_addr,
                             }],
-                            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                            crate::dispatch::protocol::error_codes::rpc::ERR_BUSY,
                             RPC_BACKPRESSURE_ERROR,
                             "rpc_backpressure_errors_forwarded_total",
                             "rpc_backpressure_errors_dropped_total",

@@ -65,7 +65,7 @@ fn should_route_domain_frame_before_late_event_handler_plus_preserve_original_pa
                 613,
                 ChannelId::Control,
                 MessageType::CONNECT,
-                Bytes::from(jwt),
+                connect_payload(&jwt),
                 None,
             )
             .await;

@@ -37,14 +37,14 @@ contract:
   correlation_contract:
     required: true
     expectations:
-      - "client parses multiple TLV records from one transport frame"
-      - "client handles SERVER_HELLO and never blocks connect on it"
-      - "client treats a missing SERVER_HELLO as legacy, not as an error"
-      - "client sends configured SESSION_METADATA only when CAP_SESSION_METADATA is advertised"
-      - "client labels requests with a unique non-zero u64 when correlation is available"
+      - "client parses exactly one message per transport frame"
+      - "client reads HELLO or CONNECT_REJECTED before treating the session as established"
+      - "client ignores trailing bytes after the documented HELLO fields"
+      - "client sends its configured service name in CONNECT"
+      - "client labels every request with a unique non-zero u64 correlation"
       - "client matches responses by correlation identifier, not arrival order"
-      - "client holds one in-flight request per message type when correlation is unavailable"
-      - "client never treats correlation presence as a response-vs-notification test"
+      - "client routes a frame whose correlation is no longer pending by message type"
+      - "client never treats a non-zero correlation as a response-vs-notification test"
 
   reconnect_contract:
     required: true
@@ -299,16 +299,16 @@ scenarios:
       - "observed resolution order"
 
   - id: "CS-020"
-    title: "capability advertisement and legacy fallback"
+    title: "handshake negotiation"
     priority: "P0"
     setup:
       transport: ["websocket", "tcp"]
       auth_mode: ["anonymous", "valid_jwt"]
     expected:
-      - "against a broker that advertises CAP_CORRELATION, the client reports correlation enabled"
-      - "against a broker that does not, connect still succeeds and correlation reports disabled"
-      - "connect latency is unchanged in both cases; the client does not wait for the advertisement"
-      - "with correlation disabled the client holds at most one in-flight request per message type"
+      - "the client sends CONNECT with min_version 2, max_version 2, and client_caps 0"
+      - "the client reads HELLO and reports the negotiated version, broker_caps, max_message_bytes, and max_in_flight"
+      - "the client ignores broker_caps bits it does not implement and trailing HELLO bytes"
+      - "a CONNECT_REJECTED with code 0050 is surfaced as a version mismatch without retry"
     required_evidence:
       - "reported capability state"
       - "connect duration"
@@ -347,6 +347,18 @@ scenarios:
     notes: >
       Requires broker-side fault injection; mirror in the broker integration
       tests where injection is available.
+
+  - id: "CS-024"
+    title: "400 KiB Stream event boundary and replay"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "APPEND accepts exactly 409600 combined body and metadata bytes"
+      - "APPEND rejects 409601 combined body and metadata bytes with BAD_REQUEST and NOT_APPLIED"
+      - "committed boundary-sized events replay without truncation on a 4096-byte route"
+      - "READ pagination fits the advertised message budget and preserves every event in order"
 
 scoring:
   fail_on:

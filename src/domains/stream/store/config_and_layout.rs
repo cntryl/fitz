@@ -157,6 +157,7 @@ impl StreamStore {
         layout: StreamStorageLayout,
     ) -> Self {
         Self {
+            response_payload_limit: super::MAX_STREAM_RESPONSE_PAYLOAD_BYTES,
             db,
             sync_write_options: cntryl_midge::WriteOptions::sync(),
             buffered_write_options: cntryl_midge::WriteOptions::buffered(),
@@ -195,6 +196,13 @@ impl StreamStore {
             #[cfg(test)]
             maintenance_full_scans: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_max_message_bytes(mut self, max_message_bytes: usize) -> Self {
+        self.response_payload_limit =
+            max_message_bytes.saturating_sub(crate::protocol::wire2::header::HEADER_LEN);
+        self
     }
 
     #[must_use]

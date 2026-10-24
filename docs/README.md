@@ -62,6 +62,8 @@ This index is the public reading path. It keeps product usage, operations, clien
 - [Storage invariants](development/storage-invariants.md)
 - [Recovery internals](development/recovery-internals.md)
 - [Format compatibility](development/format-compatibility.md)
+- [Wire format 1.0 design (0.3.0)](development/wire-format-1.0-design.md)
+- [0.3.0 breaking changes ledger](development/release-0.3.0-breaking-changes.md)
 - [Release policy](development/release-policy.md)
 - [Support and validation matrix](development/support-matrix.md)
 - [Testing](development/testing.md)

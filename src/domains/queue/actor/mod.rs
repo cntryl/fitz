@@ -555,6 +555,7 @@ struct IndexMetaSnapshot {
 /// - Persist deletes on successful completion
 /// - Never persist inflight state
 pub struct QueueActor {
+    pub(crate) response_payload_limit: usize,
     /// Queue identity
     queue_key: QueueKey,
 

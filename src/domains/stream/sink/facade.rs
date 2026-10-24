@@ -151,6 +151,7 @@ impl StreamDomain {
             stream_storage_layout,
             None,
             write_options,
+            crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
         )
     }
 
@@ -161,11 +162,13 @@ impl StreamDomain {
         stream_storage_layout: StreamStorageLayout,
         provisioned_families: Option<&[RouteFamily]>,
         write_options: super::StreamStorageWriteOptions,
+        max_message_bytes: usize,
     ) -> Result<Self, String> {
         let stream_store = store.into().into_store(
             stream_storage_layout,
             write_options.sync_intent(),
             write_options.buffered_intent(),
+            max_message_bytes,
         );
         stream_store.ensure_layout_activation_for_existing_families()?;
         stream_store.validate_persisted_state_for_existing_families()?;

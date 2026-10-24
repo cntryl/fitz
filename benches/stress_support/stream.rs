@@ -1,6 +1,6 @@
 //! A fixed committed history is replayed and verified; retained history never grows.
 
-use super::{complete, error_code, payload, request, require_ok, require_versioned_ok};
+use super::{complete, error_code, payload, request, require_ok};
 use crate::stress_support::types::{BenchFailure, StepOutcome};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_read_with_limit,
@@ -42,7 +42,7 @@ impl StreamDriver {
 
     async fn seed(&mut self) -> Result<(), BenchFailure> {
         let begun = request(&mut self.client, &build_stream_begin(&self.route), 600).await?;
-        require_versioned_ok(&begun, "Stream BEGIN")?;
+        require_ok(&begun, "Stream BEGIN")?;
         let mut decoder = PayloadDecoder::new(&begun);
         decoder.get_u8().map_err(BenchFailure::validation)?;
         let session = decoder.get_u64().map_err(BenchFailure::validation)?;
@@ -79,7 +79,7 @@ impl StreamDriver {
     }
 
     fn write_data(body: &[u8], operation: &str) -> Result<bytes::Bytes, BenchFailure> {
-        require_versioned_ok(body, operation)?;
+        require_ok(body, operation)?;
         let mut decoder = PayloadDecoder::new(body);
         decoder.get_u8().map_err(BenchFailure::validation)?;
         let data = decoder.get_bytes().map_err(BenchFailure::validation)?;

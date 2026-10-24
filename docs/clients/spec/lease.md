@@ -60,7 +60,9 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -91,7 +93,9 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -119,7 +123,9 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -151,7 +157,9 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -170,7 +178,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
   complete literal-or-`*` matrix over the three segments plus every valid
   non-adjacent `**` composition capable of matching three segments
 - Partial wildcard tokens (`lock*`), wrong scheme, empty segments, and the
-  wrong segment count are rejected with 5010 before any subscription state
+  wrong segment count are rejected with 5003 before any subscription state
   is retained; this applies identically to SUBSCRIBE and UNSUBSCRIBE
 - Duplicate subscribe calls for the same `(session, original selector string)` return the existing `subscription_id`
 - Subscriptions are session-scoped and are removed automatically on disconnect
@@ -197,7 +205,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 - Unsubscribe is idempotent; removing a missing watch still returns success
 - `route` must be the original selector string used to subscribe (exact route
   or wildcard pattern); the same grammar validation applies and invalid
-  selectors return 5010
+  selectors return 5003
 
 **Response (status=0, success):**
 ```
@@ -253,7 +261,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
   cursor; replay it verbatim (same `pattern`, its `snapshot_id`/`offset`) to
   fetch the next page. `offset` is the exact position the server issued —
   presenting a valid `snapshot_id` with any other offset (lower to replay
-  items, higher to skip ahead) fails with error 5011, the same as an unknown
+  items, higher to skip ahead) fails with error 5057, the same as an unknown
   cursor
 - A wildcard scan is a true point-in-time snapshot, taken in full on the
   first call before any page is ever returned: concurrent acquire/release/
@@ -268,7 +276,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
   rather than retaining an unbounded inventory copy
 - A cursor reused with a different `pattern`, a different `RouteFamily`, an
   unknown or already-exhausted `snapshot_id`, or after a broker restart
-  (snapshot IDs do not survive restart) fails explicitly with error 5011
+  (snapshot IDs do not survive restart) fails explicitly with error 5057
   rather than silently restarting or narrowing the read
 - Pending waiters are never included; only currently held, non-expired
   leases are returned
@@ -300,15 +308,17 @@ repeated item_count times:
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
 
-Error code 5011 (Invalid List Cursor) covers a cursor that does not match the
-selector, family, or broker lifetime it was issued from; 5012 (Invalid List
+Error code 5057 (Invalid List Cursor) covers a cursor that does not match the
+selector, family, or broker lifetime it was issued from; 5003 (Invalid List
 Pattern) covers a pattern that fails the shared grammar on `LIST`. The related
-SUBSCRIBE/UNSUBSCRIBE operations use 5010 for that validation failure.
+SUBSCRIBE/UNSUBSCRIBE operations use 5003 for that validation failure.
 
 #### High-level Inventory Observer
 
@@ -385,9 +395,8 @@ event log.
 | `Fenced` | Token mismatch | `fencing_token` doesn't match server | Acquire fresh lease; old lease was released |
 | `Expired` | Lease expired | Query on released lease (no holder) | Lease available; acquire fresh |
 | `NotFound` | Lease doesn't exist | Route never acquired before | New lease; acquire automatically creates |
-| `InvalidSubscriptionRoute` (5010) | Malformed SUBSCRIBE/UNSUBSCRIBE selector | Partial wildcard, wrong scheme, wrong depth, empty segment | Fix the selector; no state was retained |
-| `InvalidListCursor` (5011) | LIST cursor rejected | Cursor's selector/family/snapshot doesn't match this call, or broker restarted | Start a fresh LIST (omit the cursor) |
-| `InvalidListPattern` (5012) | Malformed LIST selector | Partial wildcard, wrong scheme, wrong depth, empty segment | Fix the selector; no inventory was scanned |
+| `InvalidPattern` (5003) | Malformed SUBSCRIBE, UNSUBSCRIBE, or LIST selector | Partial wildcard, wrong scheme, wrong depth, empty segment | Fix the selector; no state was retained and no inventory was scanned |
+| `InvalidListCursor` (5057) | LIST cursor rejected | Cursor's selector/family/snapshot doesn't match this call, or broker restarted | Start a fresh LIST (omit the cursor) |
 
 #### Queueing Semantics
 
@@ -646,16 +655,16 @@ elif response.type == "Fenced":
 
 #### Error Codes (5xxx)
 
-- 5001 = ERR_LEASE_HELD (immediate rejection with `wait_seconds=0`)
-- 5002 = ERR_INVALID_FENCE (fencing token invalid or out of order)
-- 5003 = ERR_LEASE_EXPIRED (lease no longer valid)
-- 5004 = ERR_LEASE_NOT_FOUND (route never acquired)
-- 5005 = ERR_INVALID_TOKEN (lease token invalid or wrong)
-- 5006 = ERR_TIMEOUT (pending acquire timed out)
-- 5007 = ERR_QUEUE_FULL (retryable; too many pending waiters, or the lease mailbox was full and the request was never accepted)
+- 5050 = ERR_LEASE_HELD (immediate rejection with `wait_seconds=0`)
+- 5051 = ERR_INVALID_FENCE (fencing token invalid or out of order)
+- 5052 = ERR_LEASE_EXPIRED (lease no longer valid)
+- 5053 = ERR_LEASE_NOT_FOUND (route never acquired)
+- 5054 = ERR_INVALID_TOKEN (lease token invalid or wrong)
+- 5055 = ERR_ACQUIRE_WAIT_EXPIRED (pending acquire timed out)
+- 5056 = ERR_WAITERS_LIMIT (retryable; too many pending waiters, or the lease mailbox was full and the request was never accepted)
 - 5008 = ERR_BAD_REQUEST (malformed Lease operation request)
-- 5009 = ERR_UNAUTHORIZED
-- 5010 = ERR_INVALID_SUBSCRIPTION_ROUTE
+- 5001 = ERR_UNAUTHORIZED
+- 5003 = ERR_INVALID_PATTERN
 
 #### Acceptance Tests
 

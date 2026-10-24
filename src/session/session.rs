@@ -8,7 +8,7 @@
 use crate::observability as obs;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::mux::{Mux, MuxError, TypeMapping};
-use crate::protocol::tlv::{TlvDecoder, TlvError};
+use crate::protocol::wire2::header::{decode_message, MessageError, HEADER_LEN};
 use crate::runtime::routing::RouteFamily;
 use crate::session::permissions::SessionPermissions;
 use bytes::Bytes;
@@ -19,7 +19,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, warn};
 
 #[inline]
 fn u128_to_u64_saturating(value: u128) -> u64 {
@@ -211,7 +211,14 @@ impl SessionInfo {
 /// Errors that can occur while handling a frame
 #[derive(Debug, Clone)]
 pub enum SessionError {
-    Decode(TlvError),
+    Decode(MessageError),
+    /// The header named a request the broker will not serve (a reserved flag
+    /// bit); the transport answers `UNSUPPORTED` and keeps the session.
+    Unsupported {
+        message_type: u16,
+        correlation: Option<std::num::NonZeroU64>,
+        reason: &'static str,
+    },
     Mux(MuxError),
     /// Ingress requested close with reason
     IngressClose(String),
@@ -222,7 +229,12 @@ pub enum SessionError {
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Decode(err) => write!(f, "TLV decode error: {err}"),
+            Self::Decode(err) => write!(f, "message decode error: {err}"),
+            Self::Unsupported {
+                message_type,
+                reason,
+                ..
+            } => write!(f, "unsupported message {message_type}: {reason}"),
             Self::Mux(err) => write!(f, "Mux error: {err}"),
             Self::IngressClose(reason) => write!(f, "ingress requested close: {reason}"),
             Self::Backpressure(channel) => write!(f, "backpressure on channel {channel}"),
@@ -232,29 +244,10 @@ impl fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
-/// Outcome of decoding one TLV record from the session buffer.
-enum DecodedRecord {
-    /// The buffer does not yet hold a complete record.
-    Incomplete,
-    /// The record was a `CORRELATE`; its value is stashed and the caller should
-    /// decode again to get the record it labels.
-    CorrelationAbsorbed,
-    /// A routable message.
-    Message(crate::protocol::mux::ChannelMessage),
-}
-
-/// Session object owning decoder + mux
+/// Session object owning the channel multiplexer.
 pub struct Session {
     info: SessionInfo,
-    decoder: TlvDecoder,
     mux: Mux,
-    /// Buffer for streaming frames across transport messages
-    buffer: bytes::BytesMut,
-    /// Correlation decoded from a `CORRELATE` record, held until the record it
-    /// labels is decoded. A `CORRELATE` left dangling at the end of a transport
-    /// frame is a protocol violation; `api::session` enforces that, because the
-    /// decoder cannot see where a transport frame ends.
-    pending_correlation: Option<std::num::NonZeroU64>,
 }
 
 /// Configuration used to create sessions. Grouped to avoid long parameter lists.
@@ -340,13 +333,7 @@ impl Session {
             route_family: cfg.route_family,
         };
 
-        Self {
-            info,
-            decoder: TlvDecoder::new(),
-            mux,
-            buffer: bytes::BytesMut::with_capacity(4096),
-            pending_correlation: None,
-        }
+        Self { info, mux }
     }
 
     /// Create a new unauthenticated session (pre-auth)
@@ -369,13 +356,7 @@ impl Session {
             route_family: config.route_family,
         };
 
-        Self {
-            info,
-            decoder: TlvDecoder::new(),
-            mux,
-            buffer: bytes::BytesMut::with_capacity(4096),
-            pending_correlation: None,
-        }
+        Self { info, mux }
     }
 
     /// Get session metadata for runtime ingress
@@ -384,135 +365,70 @@ impl Session {
         self.info.clone()
     }
 
-    /// Append bytes received from a transport to the session decoder buffer.
-    pub fn push_frame(&mut self, frame: &Bytes) {
-        let _frame_latency =
-            crate::observability::ScopedHistogramUs::new(obs::METRIC_SESSION_FRAME_PROCESS_LATENCY);
-        debug!(
-            session_id = self.info.session_id,
-            frame_len = frame.len(),
-            buffer_before = self.buffer.len(),
-            "Session on_frame: received raw frame"
-        );
-        self.buffer.extend_from_slice(frame);
-    }
-
-    /// Decode the next complete message, if one is buffered.
-    ///
-    /// A `CORRELATE` record is absorbed here rather than returned: it labels the
-    /// record that follows it and is not itself a message. Absorbing it before
-    /// mux routing is deliberate - it means a correlated request never consumes
-    /// a Control-channel capacity slot, so a client pipelining many correlated
-    /// requests cannot exhaust that channel and be closed for backpressure it
-    /// did not cause.
+    /// Decode the one message a transport frame carries and admit it to its
+    /// channel. Wire format 2 puts exactly one message in every frame, so a
+    /// frame that is short, long, or carries reserved flags is malformed.
     ///
     /// # Errors
     ///
-    /// Returns `SessionError` if TLV decoding fails, mux routing rejects the
-    /// decoded record, or a `CORRELATE` record is malformed or labels another
-    /// `CORRELATE` instead of a request.
-    pub fn next_message(
+    /// Returns `SessionError::Decode` when the frame is not exactly one
+    /// well-formed message, or `SessionError::Mux` when its channel rejects it.
+    pub fn decode_frame(
         &mut self,
-    ) -> Result<Option<crate::protocol::mux::ChannelMessage>, SessionError> {
-        loop {
-            match self.decode_next_record()? {
-                DecodedRecord::Incomplete => return Ok(None),
-                DecodedRecord::CorrelationAbsorbed => {}
-                DecodedRecord::Message(message) => {
-                    return Ok(Some(
-                        message.with_correlation(self.pending_correlation.take()),
-                    ));
-                }
-            }
-        }
-    }
-
-    /// Decode one record.
-    fn decode_next_record(&mut self) -> Result<DecodedRecord, SessionError> {
+        frame: &Bytes,
+    ) -> Result<crate::protocol::mux::ChannelMessage, SessionError> {
+        let _frame_latency =
+            crate::observability::ScopedHistogramUs::new(obs::METRIC_SESSION_FRAME_PROCESS_LATENCY);
         let decode_start = Instant::now();
-        let decode_result = self.decoder.decode_one_ref(&self.buffer);
+        let decoded = decode_message(frame, u32::MAX);
         crate::observability::hot_path_histogram_observe_us(
             obs::METRIC_SESSION_TLV_DECODE_LATENCY,
             u128_to_u64_saturating(decode_start.elapsed().as_micros()),
         );
-
-        match decode_result {
-            Ok((msg_type, slice, consumed)) => {
-                let payload_offset = consumed.saturating_sub(slice.len());
-                debug!(
-                    session_id = self.info.session_id,
-                    msg_type = msg_type.as_u16(),
-                    payload_len = slice.len(),
-                    consumed = consumed,
-                    "Session decoded TLV record"
-                );
-                let record_bytes = self.buffer.split_to(consumed).freeze();
-                let payload = record_bytes.slice(payload_offset..consumed);
-
-                if msg_type == crate::protocol::tlv::MessageType::CORRELATE {
-                    self.absorb_correlate(&payload)?;
-                    return Ok(DecodedRecord::CorrelationAbsorbed);
-                }
-
-                let record = crate::protocol::tlv::TlvRecord::new(msg_type, payload);
-                let mux_start = Instant::now();
-                let message = self.mux.route(record);
-                crate::observability::hot_path_histogram_observe_us(
-                    obs::METRIC_SESSION_MUX_ROUTE_LATENCY,
-                    u128_to_u64_saturating(mux_start.elapsed().as_micros()),
-                );
-                message.map(DecodedRecord::Message).map_err(|error| {
-                    warn!(session_id = self.info.session_id, error = ?error, "Mux routing error");
-                    SessionError::Mux(error)
-                })
+        let (header, _) = decoded.map_err(|error| {
+            crate::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
+            crate::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
+            error!(session_id = self.info.session_id, error = %error, "Session message decode error");
+            match error {
+                MessageError::ReservedFlags {
+                    message_type,
+                    correlation,
+                    ..
+                } => SessionError::Unsupported {
+                    message_type,
+                    correlation,
+                    reason: "reserved header flag bit set",
+                },
+                other => SessionError::Decode(other),
             }
-            Err(
-                crate::protocol::tlv::TlvError::IncompleteType
-                | crate::protocol::tlv::TlvError::IncompleteLength
-                | crate::protocol::tlv::TlvError::IncompleteValue { .. }
-                | crate::protocol::tlv::TlvError::EmptyFrame,
-            ) => {
-                trace!(
-                    session_id = self.info.session_id,
-                    buffer_remaining = self.buffer.len(),
-                    "Session: incomplete TLV frame, waiting for more bytes"
-                );
-                Ok(DecodedRecord::Incomplete)
-            }
-            Err(error) => {
-                crate::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
-                crate::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
-                error!(session_id = self.info.session_id, error = ?error, "Session TLV decode error");
-                Err(SessionError::Decode(error))
-            }
-        }
-    }
-
-    /// Stash the correlation a `CORRELATE` record carries.
-    ///
-    /// Every rejection here closes the session. That is right for this record
-    /// and would be wrong for most: a misplaced correlation means the client's
-    /// own request-to-response mapping is already ambiguous, so there is no
-    /// caller left to answer with an error.
-    fn absorb_correlate(&mut self, payload: &[u8]) -> Result<(), SessionError> {
-        if self.pending_correlation.is_some() {
-            return Err(SessionError::IngressClose(
-                "CORRELATE must label a request, not another CORRELATE".to_string(),
-            ));
-        }
-        let correlation = crate::protocol::correlation::decode(payload)
-            .map_err(|error| SessionError::IngressClose(error.to_string()))?;
-        self.pending_correlation = Some(correlation);
-        Ok(())
-    }
-
-    /// Whether a `CORRELATE` record is still waiting for the record it labels.
-    ///
-    /// The transport edge checks this at the end of each transport frame; the
-    /// decoder itself cannot see frame boundaries.
-    #[must_use]
-    pub fn has_dangling_correlation(&self) -> bool {
-        self.pending_correlation.is_some()
+        })?;
+        debug!(
+            session_id = self.info.session_id,
+            msg_type = header.message_type,
+            payload_len = header.length,
+            "Session decoded message"
+        );
+        let payload = frame.slice(HEADER_LEN..);
+        let record = crate::protocol::message::WireMessage::new(
+            crate::protocol::message::MessageType::new(header.message_type),
+            payload,
+        );
+        let mux_start = Instant::now();
+        let message = self.mux.route(record);
+        crate::observability::hot_path_histogram_observe_us(
+            obs::METRIC_SESSION_MUX_ROUTE_LATENCY,
+            u128_to_u64_saturating(mux_start.elapsed().as_micros()),
+        );
+        message
+            .map(|message| {
+                message
+                    .with_correlation(header.correlation)
+                    .with_flags(header.flags)
+            })
+            .map_err(|error| {
+                warn!(session_id = self.info.session_id, error = ?error, "Mux routing error");
+                SessionError::Mux(error)
+            })
     }
 
     /// Release mux capacity after the transport edge has handed off a message.
@@ -583,68 +499,66 @@ pub fn next_session_id() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::tlv::{MessageType, TlvEncoder};
+    use crate::protocol::wire2::header::{encode_message, HeaderFlags};
+
+    fn session_with_capacity(channel_capacity: usize) -> Session {
+        let config = NewSessionConfig::unauthenticated(
+            TransportKind::Tcp,
+            None,
+            SessionPermissions::empty(),
+            SessionMetadata::new(),
+            channel_capacity,
+            None,
+            crate::runtime::routing::RouteFamily::new(0),
+        );
+        Session::new(42, config)
+    }
 
     #[test]
     fn should_release_channel_capacity_after_handoff() {
         // Arrange
-        let config = NewSessionConfig::unauthenticated(
-            TransportKind::Tcp,
-            None,
-            SessionPermissions::empty(),
-            SessionMetadata::new(),
-            1,
-            None,
-            crate::runtime::routing::RouteFamily::new(0),
-        );
-        let mut session = Session::new(42, config);
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::new(1), b"first");
-        encoder.encode(MessageType::new(1), b"second");
-        let data = encoder.finish();
+        let mut session = session_with_capacity(1);
+        let first = Bytes::from(encode_message(1, HeaderFlags::none(), None, b"first"));
+        let second = Bytes::from(encode_message(1, HeaderFlags::none(), None, b"second"));
 
         // Act
-        session.push_frame(&data);
-        let first = session.next_message().unwrap().unwrap();
-        session.release_channel(first.channel);
-        let second = session.next_message().unwrap().unwrap();
+        let first_message = session.decode_frame(&first).unwrap();
+        session.release_channel(first_message.channel);
+        let second_message = session.decode_frame(&second).unwrap();
 
         // Assert
-        assert_eq!(first.payload, b"first".as_ref());
-        assert_eq!(second.payload, b"second".as_ref());
+        assert_eq!(first_message.payload, b"first".as_ref());
+        assert_eq!(second_message.payload, b"second".as_ref());
     }
 
     #[test]
-    fn should_buffer_partial_frames() {
+    fn should_carry_the_header_correlation_onto_the_message() {
         // Arrange
-        let config = NewSessionConfig::unauthenticated(
-            TransportKind::Tcp,
-            None,
-            SessionPermissions::empty(),
-            SessionMetadata::new(),
-            10,
-            None,
-            crate::runtime::routing::RouteFamily::new(0),
-        );
-
-        let mut session = Session::new(42, config);
-
-        // Build a TLV message and split it into two parts
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::new(1), b"abcdefgh");
-        let data = encoder.finish();
-        let split = data.len() / 2;
-        let part1 = data.slice(0..split);
-        let part2 = data.slice(split..);
+        let mut session = session_with_capacity(10);
+        let correlation = std::num::NonZeroU64::new(77);
+        let frame = Bytes::from(encode_message(1, HeaderFlags::none(), correlation, b"x"));
 
         // Act
-        session.push_frame(&part1);
-        let incomplete = session.next_message().unwrap();
-        session.push_frame(&part2);
-        let complete = session.next_message().unwrap().unwrap();
+        let message = session.decode_frame(&frame).unwrap();
 
         // Assert
-        assert!(incomplete.is_none());
-        assert_eq!(complete.payload, b"abcdefgh".as_ref());
+        assert_eq!(message.correlation, correlation);
+    }
+
+    #[test]
+    fn should_reject_a_frame_that_is_not_exactly_one_message() {
+        // Arrange
+        let mut session = session_with_capacity(10);
+        let mut frame = encode_message(1, HeaderFlags::none(), None, b"abcdefgh");
+        frame.extend_from_slice(&encode_message(1, HeaderFlags::none(), None, b"second"));
+
+        // Act
+        let error = session.decode_frame(&Bytes::from(frame)).unwrap_err();
+
+        // Assert
+        assert!(matches!(
+            error,
+            SessionError::Decode(MessageError::LengthMismatch { .. })
+        ));
     }
 }
