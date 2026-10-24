@@ -53,6 +53,8 @@ async fn write_tcp_frames<W: AsyncWrite + Unpin>(
     write_buf.clear();
     let mut rejected = super::is_connect_rejected_frame(&first_frame);
     append_tcp_frame(write_buf, &first_frame)?;
+    // Retain reservations for every frame until the batch reaches the socket.
+    let mut retained_frames = vec![first_frame];
     let mut frame_count = 1usize;
     while frame_count < MAX_WRITE_BATCH_FRAMES && write_buf.len() < MAX_WRITE_BATCH_BYTES {
         let Ok(frame) = outbound_rx.try_recv() else {
@@ -60,6 +62,7 @@ async fn write_tcp_frames<W: AsyncWrite + Unpin>(
         };
         rejected |= super::is_connect_rejected_frame(&frame);
         append_tcp_frame(write_buf, &frame)?;
+        retained_frames.push(frame);
         frame_count += 1;
     }
     write_half.write_all(write_buf).await?;
@@ -367,13 +370,18 @@ pub(super) async fn handle_tcp_connection(
     let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
     let (handler, write_half) =
         create_session(ingress.clone(), config.clone(), stream, frame_tx.clone()).await?;
+    let buffer_budget = config.session_buffer_budget();
+    let handler = handler.with_buffer_budget(buffer_budget.clone());
     let session_id = handler.session_id;
 
     let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
     let (sink, close_signal) =
         crate::api::outbound::SessionOutboundSink::with_close_signal(outbound_tx.clone());
-    let sink = Arc::new(sink.with_max_message_bytes(config.max_frame_size));
+    let sink = Arc::new(
+        sink.with_max_message_bytes(config.max_frame_size)
+            .with_buffer_budget(buffer_budget),
+    );
     let initial_family = ingress
         .get_route_family(session_id)
         .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
@@ -422,6 +430,7 @@ pub(super) async fn handle_tcp_connection(
         close_signal,
     );
 
+    let handler = handler.with_outbound(sink.clone());
     let handler_task = tokio::spawn(async move { handler.run().await });
     let run_result = resolve_tcp_run_result(
         frame_tx,

@@ -77,7 +77,7 @@ where
     assert_eq!(parse_kv_response(&commit).1, 0);
 }
 
-pub(crate) async fn should_require_connect_message_when_auth_enabled<C>(server: &TestServer)
+pub(crate) async fn should_reject_anonymous_connect_when_auth_enabled<C>(server: &TestServer)
 where
     C: KvConnector,
 {
@@ -89,9 +89,14 @@ where
     let result = client.request(&begin_frame, 1000).await;
 
     // Assert
-    assert!(
-        result.is_err(),
-        "Expected connection close or timeout when unauthenticated"
+    let response = result.expect("structured CONNECT_REJECTED");
+    let (header, value) =
+        fitz::protocol::wire2::header::decode_message(&response, u32::MAX).unwrap();
+    assert_eq!(header.message_type, 3);
+    let refusal = fitz::protocol::wire2::handshake::ConnectRejected::decode(value).unwrap();
+    assert_eq!(
+        refusal.code,
+        fitz::protocol::error_codes::protocol::ERR_UNAUTHORIZED
     );
 }
 

@@ -195,6 +195,21 @@ impl SessionAuthenticator {
         } else {
             None
         };
+        if connect.is_some()
+            && self
+                .registry
+                .sessions
+                .get(&session_id)
+                .is_some_and(|entry| entry.authenticated)
+        {
+            return Err(self.reject_connect(
+                session_id,
+                &ConnectRefusal {
+                    code: crate::protocol::error_codes::protocol::ERR_BAD_REQUEST,
+                    message: "CONNECT already completed for this session".to_owned(),
+                },
+            ));
+        }
         let verified_auth = if needs_authentication && self.auth_required {
             let Some(connect) = connect.as_ref() else {
                 warn!(session_id = session_id, channel = ?channel_id, msg_type = msg_type.as_u16(), "Ingress: unauthenticated, CONNECT required");

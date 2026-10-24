@@ -1,6 +1,7 @@
 mod connection;
 mod domain_deliveries;
 mod frame_loop;
+mod rejection;
 pub(crate) use connection::MAX_IN_FLIGHT;
 
 use crate::observability as obs;
@@ -24,6 +25,7 @@ pub struct SessionOutboundSink {
     /// The largest message, header included, this sink will frame: the same
     /// limit HELLO advertised to the client.
     max_message_bytes: usize,
+    buffer_budget: super::buffer_budget::BufferBudget,
 }
 
 impl SessionOutboundSink {
@@ -35,6 +37,7 @@ impl SessionOutboundSink {
             close_signal: None,
             frame_loop: frame_loop::FrameLoopClock::default(),
             max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
+            buffer_budget: super::buffer_budget::BufferBudget::default(),
         }
     }
 
@@ -42,6 +45,11 @@ impl SessionOutboundSink {
     #[must_use]
     pub fn with_max_message_bytes(mut self, max_message_bytes: usize) -> Self {
         self.max_message_bytes = max_message_bytes;
+        self
+    }
+
+    pub(crate) fn with_buffer_budget(mut self, budget: super::buffer_budget::BufferBudget) -> Self {
+        self.buffer_budget = budget;
         self
     }
 
@@ -65,6 +73,7 @@ impl SessionOutboundSink {
                 close_signal: Some(close_signal),
                 frame_loop: frame_loop::FrameLoopClock::default(),
                 max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
+                buffer_budget: super::buffer_budget::BufferBudget::default(),
             },
             receiver,
         )
@@ -225,12 +234,7 @@ impl SessionOutboundSink {
             "Outbound sink: encoding message response for session"
         );
         let encode_start = Self::encode_latency_start();
-        let bytes = encode_message_frame(
-            ctx.msg_type.as_u16(),
-            ctx.correlation,
-            &ctx.payload,
-            self.max_message_bytes,
-        )?;
+        let bytes = self.encode_frame(ctx.msg_type.as_u16(), ctx.correlation, &ctx.payload)?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(ctx.session_id, &bytes)
     }
@@ -247,11 +251,10 @@ impl SessionOutboundSink {
             "Outbound sink: encoding runtime client frame"
         );
         let encode_start = Self::encode_latency_start();
-        let bytes = encode_message_frame(
+        let bytes = self.encode_frame(
             frame.meta.message_type,
             frame.meta.correlation,
             &frame.payload,
-            self.max_message_bytes,
         )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(frame.meta.session_id, &bytes)
@@ -281,8 +284,23 @@ impl SessionOutboundSink {
         correlation: Option<std::num::NonZeroU64>,
         payload: &[u8],
     ) -> Result<(), DeliveryError> {
-        let bytes = encode_message_frame(msg_type, correlation, payload, self.max_message_bytes)?;
+        let bytes = self.encode_frame(msg_type, correlation, payload)?;
         self.send_encoded_frame(session_id, &bytes)
+    }
+
+    fn encode_frame(
+        &self,
+        msg_type: u16,
+        correlation: Option<std::num::NonZeroU64>,
+        payload: &[u8],
+    ) -> Result<Bytes, DeliveryError> {
+        encode_message_frame(msg_type, correlation, payload, self.max_message_bytes).inspect_err(
+            |_| {
+                if required_message(msg_type) {
+                    self.signal_delivery_failure();
+                }
+            },
+        )
     }
 
     /// Answer a rejected frame that never acquired an admission slot.
@@ -303,7 +321,24 @@ impl SessionOutboundSink {
         bytes: &Bytes,
         max_retries: usize,
     ) -> Result<(), DeliveryError> {
-        self.queue_frame(session_id, bytes, max_retries, true)
+        let result = self.queue_frame(session_id, bytes, max_retries, true);
+        if result.is_err() && required_delivery(bytes) {
+            self.signal_delivery_failure();
+        }
+        result
+    }
+
+    fn signal_delivery_failure(&self) {
+        if let Some(signal) = &self.close_signal {
+            signal.send_if_modified(|reason| {
+                if reason.is_some() {
+                    return false;
+                }
+                *reason =
+                    Some("required response could not be delivered; in-flight outcomes unknown");
+                true
+            });
+        }
     }
 
     fn queue_frame(
@@ -314,6 +349,13 @@ impl SessionOutboundSink {
         completes_request: bool,
     ) -> Result<(), DeliveryError> {
         let metrics_enabled = obs::hot_path_metrics_enabled();
+        let bytes = self.buffer_budget.wrap(bytes.clone()).map_err(|reason| {
+            warn!(session_id, reason, "Outbound byte admission refused frame");
+            DeliveryError::MailboxFull {
+                capacity: self.tx.max_capacity(),
+                current_len: self.tx.max_capacity() - self.tx.capacity(),
+            }
+        })?;
 
         trace!(
             session_id = session_id,
@@ -335,7 +377,7 @@ impl SessionOutboundSink {
             match send_result {
                 Ok(()) => {
                     if completes_request {
-                        self.connection.sent(bytes);
+                        self.connection.sent(&bytes);
                     }
                     if metrics_enabled {
                         crate::observability::hot_path_counter_inc(obs::METRIC_FRAMES_SENT);
@@ -383,6 +425,27 @@ impl SessionOutboundSink {
             }
         }
     }
+}
+
+/// Live domain notifications may be lost. Replies, RPC lifecycle traffic and
+/// handshake/control messages must either reach the queue or end the session.
+fn required_delivery(frame: &[u8]) -> bool {
+    let Ok(header) = crate::protocol::wire2::header::MessageHeader::decode(frame) else {
+        return true;
+    };
+    required_message(header.message_type)
+}
+
+fn required_message(message_type: u16) -> bool {
+    use crate::protocol::manifest::{ManifestDecoder, ManifestDirection};
+    !crate::protocol::manifest::entry(crate::protocol::message::MessageType::new(message_type))
+        .is_some_and(|entry| {
+            entry.direction == ManifestDirection::ServerToClient
+                && !matches!(
+                    entry.decoder,
+                    ManifestDecoder::Control | ManifestDecoder::Rpc
+                )
+        })
 }
 
 /// Sample size used only to exercise `outbound_retry_backoff`'s general

@@ -32,6 +32,17 @@ fn is_unsolicited_control_frame(frame: &[u8]) -> bool {
         .is_ok_and(|header| header.message_type == crate::protocol::wire2::control::HELLO)
 }
 
+fn is_connect_frame(frame: &[u8]) -> bool {
+    crate::protocol::wire2::header::MessageHeader::decode(frame)
+        .is_ok_and(|header| header.message_type == 1)
+}
+
+fn next_correlation() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .max(1)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct JwtClaims {
     iss: String,
@@ -55,6 +66,7 @@ fn unix_time_now_i64() -> i64 {
 /// Test client for sending raw protocol frames
 pub struct TestClient {
     pub(super) stream: TcpStream,
+    pub(super) started: bool,
 }
 
 impl TestClient {
@@ -67,7 +79,10 @@ impl TestClient {
     pub async fn new(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
-        Ok(Self { stream })
+        Ok(Self {
+            stream,
+            started: false,
+        })
     }
 
     /// Send a length-prefixed frame (TCP protocol)
@@ -90,6 +105,14 @@ impl TestClient {
         &mut self,
         frame: Bytes,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.started {
+            self.started = true;
+            if !is_connect_frame(&frame) {
+                let connect = build_connect_frame("", "");
+                self.stream.write_u32(u32::try_from(connect.len())?).await?;
+                self.stream.write_all(&connect).await?;
+            }
+        }
         // Write length prefix (u32 BE)
         let len = u32::try_from(frame.len())?;
         self.stream.write_all(&len.to_be_bytes()).await?;
@@ -202,6 +225,7 @@ impl TestClient {
 pub struct TestWebSocketClient {
     ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
     pending_frames: VecDeque<Message>,
+    started: bool,
 }
 
 impl TestWebSocketClient {
@@ -248,6 +272,7 @@ impl TestWebSocketClient {
         Ok(Self {
             ws: ws_stream,
             pending_frames: VecDeque::new(),
+            started: false,
         })
     }
 
@@ -270,6 +295,14 @@ impl TestWebSocketClient {
         &mut self,
         frame: Bytes,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.started {
+            self.started = true;
+            if !is_connect_frame(&frame) {
+                self.ws
+                    .send(Message::Binary(build_connect_frame("", "").into()))
+                    .await?;
+            }
+        }
         self.ws.send(Message::Binary(frame)).await?;
         Ok(())
     }
@@ -402,7 +435,7 @@ impl FrameBuilder {
     pub fn new() -> Self {
         Self {
             message: None,
-            correlation: None,
+            correlation: std::num::NonZeroU64::new(next_correlation()),
             flags: crate::protocol::wire2::header::HeaderFlags::none(),
         }
     }
@@ -432,7 +465,17 @@ impl FrameBuilder {
         self.message = Some(crate::protocol::wire2::header::encode_message(
             msg_type,
             self.flags,
-            self.correlation,
+            if crate::protocol::manifest::client_entry(crate::protocol::message::MessageType::new(
+                msg_type,
+            ))
+            .is_ok()
+                && msg_type != 1
+                && msg_type != 303
+            {
+                self.correlation
+            } else {
+                None
+            },
             value,
         ));
     }

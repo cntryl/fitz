@@ -66,6 +66,10 @@ async fn process_frame(
     let message = session.decode_frame(&frame)?;
     let channel = message.channel;
     if let Some(outbound) = outbound {
+        if let Err(reason) = outbound.connection.validate_request(&message) {
+            session.release_channel(channel);
+            return Err(SessionError::IngressClose(reason.to_owned()));
+        }
         if !outbound.connection.admit(&message) {
             session.release_channel(channel);
             let code = crate::protocol::error_codes::protocol::ERR_BUSY;

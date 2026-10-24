@@ -36,10 +36,10 @@ correlation, never by arrival order or by message type.
 1. Correlation MUST be unique among the requests a connection currently has in
    flight. Reusing a live identifier yields undefined response routing; the
    broker does not police it.
-2. Zero is reserved for frames that answer nothing. The broker still answers a
-   request sent with correlation 0, echoing 0, but the client then cannot tell
-   that answer from any other zero-correlated frame, so conformant clients
-   never send it.
+2. A response-bearing request with correlation 0 is a protocol violation and
+   closes the connection before dispatch. Unacknowledged Notice PUBLISH and
+   UUID-addressed RPC worker RESPONSE/lifecycle acknowledgements may use 0
+   because they do not open a connection-level response sequence.
 3. **A correlation may receive more than one frame.** Most requests are
    answered once, but a domain may define a multi-phase answer, and every
    phase carries the same identifier. A contended Lease `ACQUIRE` is answered
@@ -891,3 +891,18 @@ Clients MUST:
 
 Each domain occupies an exclusive 100-code block. The broker's mux layer routes by numeric range — **no overlap, no disambiguation needed**.
 **Clients MUST use the wire codes from the Constants & Message Registry section.**
+
+### Transport failure boundaries
+
+CONNECT must be the first message, including in anonymous mode. A repeated
+CONNECT is answered with CONNECT_REJECTED before close.
+
+A declined domain request receives BUSY/NOT_APPLIED while the session stays
+open. If a required reply cannot be encoded or admitted to the bounded outbound
+queue, the transport closes explicitly: outstanding operation outcomes are
+unknown. Clients must verify effects or use application idempotency before
+retrying. Live domain notifications remain best effort and may be dropped
+without closing the session.
+
+WebSocket PING/PONG reads run independently of ordered domain dispatch. A slow
+backend does not prevent a responsive client from satisfying the heartbeat.

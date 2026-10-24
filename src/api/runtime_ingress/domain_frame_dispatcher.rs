@@ -324,7 +324,8 @@ impl DomainFrameDispatcher {
     }
 
     /// Tell every live session the broker is going away and how long it will
-    /// keep serving. Best-effort, like every other control frame.
+    /// keep serving. A transport that cannot carry this required control frame
+    /// signals its own close rather than silently losing the announcement.
     pub(super) fn announce_goaway(&self, code: u16, grace_ms: u32, reason: &str) {
         let Some(router) = &self.router else {
             return;

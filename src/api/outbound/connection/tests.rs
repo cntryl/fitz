@@ -5,6 +5,61 @@ use crate::protocol::message::MessageType;
 use crate::protocol::wire2::header::{encode_message, HeaderFlags};
 use bytes::Bytes;
 
+#[test]
+fn should_require_connect_before_a_domain_request() {
+    // Arrange
+    let state = ConnectionState::default();
+    // Act
+    let result = state.validate_request(&request(400, 1, &[]));
+    // Assert
+    assert_eq!(result, Err("CONNECT must be the first message"));
+}
+
+#[test]
+fn should_require_nonzero_correlation_for_a_response_bearing_request() {
+    // Arrange
+    let state = ConnectionState::default();
+    state.validate_request(&request(1, 0, &[])).unwrap();
+    // Act
+    let result = state.validate_request(&request(400, 0, &[]));
+    // Assert
+    assert_eq!(result, Err("request correlation must be non-zero"));
+}
+
+#[test]
+fn should_allow_zero_correlation_for_unacknowledged_notice_publish() {
+    // Arrange
+    let state = ConnectionState::default();
+    state.validate_request(&request(1, 0, &[])).unwrap();
+    // Act
+    let result = state.validate_request(&request(500, 0, &[]));
+    // Assert
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn should_require_correlation_when_notice_publish_requests_an_acknowledgement() {
+    // Arrange
+    let state = ConnectionState::default();
+    state.validate_request(&request(1, 0, &[])).unwrap();
+    let message = request(500, 0, &[]).with_flags(HeaderFlags::ack_requested());
+    // Act
+    let result = state.validate_request(&message);
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+fn should_allow_zero_correlation_for_uuid_addressed_rpc_worker_acknowledgements() {
+    // Arrange
+    let state = ConnectionState::default();
+    state.validate_request(&request(1, 0, &[])).unwrap();
+    // Act
+    let result = state.validate_request(&request(304, 0, &[3]));
+    // Assert
+    assert_eq!(result, Ok(()));
+}
+
 fn request(kind: u16, id: u64, payload: &[u8]) -> ChannelMessage {
     ChannelMessage::new(
         ChannelId::Lease,

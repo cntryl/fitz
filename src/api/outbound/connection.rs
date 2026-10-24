@@ -19,6 +19,8 @@ enum Request {
 #[derive(Default)]
 pub(crate) struct ConnectionState {
     requests: Mutex<Vec<Request>>,
+    connect_seen: AtomicBool,
+    hello_sent: AtomicBool,
     rejection_queued: AtomicBool,
     rejection_flushed: AtomicBool,
     rejection_written: tokio::sync::Notify,
@@ -29,6 +31,28 @@ fn uuid(bytes: &[u8]) -> Option<[u8; 16]> {
 }
 
 impl ConnectionState {
+    pub(super) fn hello_sent(&self) -> bool {
+        self.hello_sent.load(Ordering::Acquire)
+    }
+    pub(crate) fn validate_request(&self, message: &ChannelMessage) -> Result<(), &'static str> {
+        let kind = message.msg_type.as_u16();
+        if kind == 1 {
+            self.connect_seen.store(true, Ordering::Release);
+            return Ok(());
+        }
+        if !self.connect_seen.load(Ordering::Acquire) {
+            return Err("CONNECT must be the first message");
+        }
+        // Worker RESPONSE and lifecycle acknowledgements are addressed by RPC
+        // UUID, rather than being new connection-level requests.
+        let rpc_worker_reply = kind == 303 || (kind == 304 && message.payload.first() != Some(&1));
+        let unacknowledged_publish = kind == 500 && !message.flags.is_ack_requested();
+        if !rpc_worker_reply && !unacknowledged_publish && message.correlation.is_none() {
+            return Err("request correlation must be non-zero");
+        }
+        Ok(())
+    }
+
     pub(crate) fn admit(&self, message: &ChannelMessage) -> bool {
         let request = match message.msg_type.as_u16() {
             500 if !message.flags.is_ack_requested() => return true,
@@ -54,6 +78,10 @@ impl ConnectionState {
             return;
         };
         let request = match header.message_type {
+            2 => {
+                self.hello_sent.store(true, Ordering::Release);
+                return;
+            }
             3 => {
                 self.rejection_queued.store(true, Ordering::Release);
                 return;

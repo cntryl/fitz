@@ -52,6 +52,8 @@ pub struct TcpHandler {
     tx: mpsc::Sender<StampedTcpFrame>,
     /// Read half of the TCP stream (writer half is owned by the outbound task)
     read_half: OwnedReadHalf,
+    buffer_budget: super::buffer_budget::BufferBudget,
+    outbound: Option<Arc<super::outbound::SessionOutboundSink>>,
 }
 
 impl TcpHandler {
@@ -70,12 +72,35 @@ impl TcpHandler {
         tx: mpsc::Sender<StampedTcpFrame>,
         read_half: OwnedReadHalf,
     ) -> Self {
+        let buffer_budget = config.session_buffer_budget();
         Self {
             config,
             session_id,
             tx,
             read_half,
+            buffer_budget,
+            outbound: None,
         }
+    }
+
+    pub(crate) fn with_buffer_budget(mut self, budget: super::buffer_budget::BufferBudget) -> Self {
+        self.buffer_budget = budget;
+        self
+    }
+
+    pub(crate) fn with_outbound(
+        mut self,
+        outbound: Arc<super::outbound::SessionOutboundSink>,
+    ) -> Self {
+        self.outbound = Some(outbound);
+        self
+    }
+
+    fn reject_unqueued_frame(&self, frame: &[u8]) -> Result<(), String> {
+        self.outbound
+            .as_ref()
+            .ok_or_else(|| "TCP transport capacity exhausted".to_owned())?
+            .reject_unqueued_frame(self.session_id, frame)
     }
 
     /// Process incoming TCP frames
@@ -145,6 +170,10 @@ impl TcpHandler {
             // payload directly so the hot path does not clone frame bytes.
             let record = buffer.split_to(4 + len).freeze();
             let frame = record.slice(4..);
+            let Ok(frame) = self.buffer_budget.wrap(frame.clone()) else {
+                self.reject_unqueued_frame(&frame)?;
+                continue;
+            };
 
             debug!(
                 session_id = self.session_id,
@@ -209,8 +238,9 @@ impl TcpHandler {
             session_id = self.session_id,
             "TCP channel full, waiting for handoff capacity"
         );
-        match tokio::time::timeout(self.config.backpressure_timeout, self.tx.send(frame)).await {
-            Ok(Ok(())) => {
+        match tokio::time::timeout(self.config.backpressure_timeout, self.tx.reserve()).await {
+            Ok(Ok(permit)) => {
+                permit.send(frame);
                 debug!(
                     session_id = self.session_id,
                     "TCP frame forwarded after backpressure"
@@ -226,7 +256,7 @@ impl TcpHandler {
                     session_id = self.session_id,
                     "TCP backpressure exceeded, closing session"
                 );
-                Self::close_with_error("channel full: backpressure exceeded".to_string())
+                self.reject_unqueued_frame(&frame.frame)
             }
         }
     }

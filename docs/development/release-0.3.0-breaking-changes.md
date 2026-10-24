@@ -14,8 +14,8 @@ Storage rows follow the Midge work tracked in that repository and the
 
 | ID | Change | Why | Status | Issue |
 | --- | --- | --- | --- | --- |
-| W-01 | Fixed 15-byte message header replaces TLV records and `CORRELATE`/`CORRELATED` | One parser, mandatory correlation, `u32` length | landing: broker decodes and encodes the header on both transports; a zero correlation on a request is still tolerated until every SDK sends one; the configured `max_message_bytes` includes the header (C-01) | |
-| W-02 | Structured `CONNECT` with version range, capabilities, JWT, service name, client build; `HELLO` or `CONNECT_REJECTED` always answers it | Negotiation and an explicit failure signal | landing: broker parses CONNECT, negotiates the version, answers HELLO with version, capabilities, limits, and session id, and answers CONNECT_REJECTED with a protocol-block code before closing; in anonymous mode a non-CONNECT first frame still opens the session implicitly | |
+| W-01 | Fixed 15-byte message header replaces TLV records and `CORRELATE`/`CORRELATED` | One parser, mandatory correlation, `u32` length | landed: both transports require non-zero correlation on response-bearing requests; unacknowledged Notice publishes and UUID-addressed RPC worker responses/acknowledgements may use zero; the configured message budget includes the header (C-01) | |
+| W-02 | Structured `CONNECT` with version range, capabilities, JWT, service name, client build; `HELLO` or `CONNECT_REJECTED` always answers it | Negotiation and an explicit failure signal | landed: CONNECT is mandatory first in both authentication modes; HELLO advertises the negotiated version and limits; malformed, unsupported and repeated CONNECTs receive CONNECT_REJECTED before close | |
 | W-03 | One response envelope: `[status][u16 code][u8 class][u8 effect][string message]` | Removes three layouts and length sniffing | landed: every domain encodes `[1][u16 code][u8 class][u8 effect][string]`; Stream status 2 and the Schedule and Queue uncoded layouts are gone | |
 | W-04 | Shared error slots x001..x010 across every domain block; domain codes from x050; full old-to-new mapping | One retry table for every SDK | landed in code: `src/protocol/error_codes.rs` carries the catalog numbering; `WIRE1_TO_WIRE2` in the catalog maps every old code | |
 | W-05 | Schedule CREATE, CANCEL, SUBSCRIBE, UNSUBSCRIBE, CREATE_BATCH, and LIST errors become coded | Clients stop parsing messages | landed: every Schedule verb returns the coded envelope | |
@@ -53,6 +53,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | ID | Change | Why | Status | Issue |
 | --- | --- | --- | --- | --- |
 | C-01 | `max_message_bytes` becomes a configured, advertised limit; default stays 1 MiB | Design 5.7 | landed | `FITZ_MAX_MESSAGE_BYTES` (524,288 to 4,294,967,295 bytes, default 1 MiB) bounds the transport, the outbound sink, and the HELLO advertisement |
+| C-02 | Bound transport frame bytes across sessions and both listeners | Count limits alone permit excessive buffering | landed | 8 MiB per session and 64 MiB shared by default, each raised to at least two maximum messages; reservations follow retained frame clones/slices. Parser, encoding and storage allocations remain separate |
 
 ## Rust embedding API
 

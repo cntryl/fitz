@@ -572,7 +572,10 @@ impl TestServer {
     pub async fn connect(&self) -> Result<TestClient, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(self.tcp_addr).await?;
         stream.set_nodelay(true)?;
-        Ok(TestClient { stream })
+        Ok(TestClient {
+            stream,
+            started: false,
+        })
     }
 
     /// Connect to the test server via WebSocket
