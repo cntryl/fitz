@@ -106,6 +106,33 @@ fn should_hold_global_watermark_at_gap_then_advance_across_resolved_suffix() {
 }
 
 #[test]
+fn should_prune_resolved_range_behind_persisted_watermark_after_unknown_applied_commit() {
+    // Arrange
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    assert_eq!(store.get_global_watermark(1).expect("initialize family"), 0);
+    let _outcome = super::super::write_admission::inject_commit_outcomes_after_apply([
+        cntryl_midge::MidgeError::OutcomeUnknown("watermark applied; response lost".to_string()),
+    ]);
+
+    // Act
+    let failed_resolution = store.resolve_global_range(1, 0, 1);
+    let persisted_watermark = store
+        .get_global_watermark(1)
+        .expect("read applied watermark");
+    let resolved = store.global_completion_state(1).lock().resolved.clone();
+
+    // Assert
+    assert!(failed_resolution
+        .expect_err("the applied commit response is unknown")
+        .contains("OutcomeUnknown"));
+    assert_eq!(persisted_watermark, 1);
+    assert!(
+        resolved.is_empty(),
+        "ranges behind the persisted frontier must be pruned: {resolved:?}"
+    );
+}
+
+#[test]
 fn should_reuse_unresolved_global_range_plus_clear_completion_suffix_after_retry() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));

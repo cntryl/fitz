@@ -184,6 +184,18 @@ regression then failed before the fix because direct mutation still compiled;
 it passes after field encapsulation. The existing cron evaluation algorithms
 and persisted/wire codecs are unchanged.
 
+A separate Stream fault-path review found a retained-frontier entry after an
+applied-but-unknown watermark commit. Jev 1.14.0 compared the source and the
+pinned Midge outcome contract, then selected a focused after-apply test seam.
+The regression failed with persisted watermark `1` and `resolved = {0: 1}`.
+The fix now prunes only ranges whose exclusive end is at or behind the
+observed watermark, preserving later work. The test hook commits the real
+transaction before reporting `OutcomeUnknown`; existing pre-commit injection
+continues to exercise definitely-unapplied failures. Jev also identified the
+matching contiguous-range transitions in AreaActor and RealmActor as a
+candidate for a small shared policy. That is a maintainability suggestion and
+was not part of this correctness repair.
+
 The source compatibility changes are explicit in ledger rows R-04/R-05 and the
 migration guide: use read-only cron accessors, parse a replacement expression,
 and use public create/list DTOs instead of an actor cache model. Existing route,

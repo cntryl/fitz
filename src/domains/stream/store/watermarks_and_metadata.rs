@@ -43,6 +43,7 @@ impl StreamStore {
             .unwrap_or(persisted_watermark)
             .max(persisted_watermark);
         state.watermark = Some(previous_watermark);
+        state.resolved.retain(|_, end| *end > previous_watermark);
         let mut watermark = previous_watermark;
         let mut consumed = Vec::new();
         while let Some(end) = state.resolved.get(&watermark).copied() {

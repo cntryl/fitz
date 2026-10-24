@@ -54,6 +54,7 @@ impl StreamWriteAdmission {
 std::thread_local! {
     static ADMISSION_BUDGET: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
     static COMMIT_OUTCOMES: std::cell::RefCell<std::collections::VecDeque<Option<cntryl_midge::MidgeError>>> = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+    static COMMIT_OUTCOMES_AFTER_APPLY: std::cell::RefCell<std::collections::VecDeque<cntryl_midge::MidgeError>> = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
 }
 
 #[cfg(test)]
@@ -96,6 +97,27 @@ pub(super) fn inject_commit_outcomes(
     CommitOutcomesGuard
 }
 
+#[cfg(test)]
+pub(super) struct CommitOutcomesAfterApplyGuard;
+
+#[cfg(test)]
+impl Drop for CommitOutcomesAfterApplyGuard {
+    fn drop(&mut self) {
+        COMMIT_OUTCOMES_AFTER_APPLY.with(|outcomes| outcomes.borrow_mut().clear());
+    }
+}
+
+#[cfg(test)]
+pub(super) fn inject_commit_outcomes_after_apply(
+    outcomes: impl IntoIterator<Item = cntryl_midge::MidgeError>,
+) -> CommitOutcomesAfterApplyGuard {
+    COMMIT_OUTCOMES_AFTER_APPLY.with(|pending| {
+        assert!(pending.borrow().is_empty());
+        pending.borrow_mut().extend(outcomes);
+    });
+    CommitOutcomesAfterApplyGuard
+}
+
 impl StreamStore {
     pub(super) fn commit_storage_transaction(
         transaction: cntryl_midge::Transaction,
@@ -107,7 +129,23 @@ impl StreamStore {
         {
             return Err(error);
         }
-        transaction.commit(options)
+        let result = transaction.commit(options);
+
+        #[cfg(test)]
+        if result.is_ok() {
+            if let Some(error) = Self::report_commit_outcome_after_apply() {
+                return Err(error);
+            }
+        }
+
+        result
+    }
+}
+
+#[cfg(test)]
+impl StreamStore {
+    fn report_commit_outcome_after_apply() -> Option<cntryl_midge::MidgeError> {
+        COMMIT_OUTCOMES_AFTER_APPLY.with(|outcomes| outcomes.borrow_mut().pop_front())
     }
 }
 
