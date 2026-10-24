@@ -501,12 +501,15 @@ Response (status=1):
 
 **Optional discriminator:** Clients MAY include an immutable discriminator string on APPEND. The broker stores it as a replay sidecar and uses it only for filtered reads. Clients that do not need filtered replay SHOULD omit it.
 
-**Event size:** `body_len + metadata_len` MUST NOT exceed 61,247 bytes. This
-limit is enforced on APPEND so that every accepted event, with the largest
-valid 4,096-byte route and the encoded record/response overhead, can be
-replayed in one READ response. The discriminator does not count toward
-this event-payload limit, but it still counts toward the configured append
-batch and ingress-frame limits.
+**Event size:** `body_len + metadata_len` MUST NOT exceed **400 KiB
+(409,600 bytes)**. APPEND accepts exactly that size and rejects one byte
+more with `2008 BAD_REQUEST / NOT_APPLIED`. The discriminator does not count
+toward this event-payload limit, but it still counts toward configured
+append-batch and ingress-frame limits.
+The minimum configurable message size is 512 KiB, so every accepted event
+can be replayed with a valid route up to 4,096 bytes plus response metadata.
+READ pages respect the deployment's advertised `max_message_bytes`; a page
+that fills the budget returns a continuation cursor without skipping events.
 
 **Design Note:** The `data` field in Stream responses carries broker-defined metadata (e.g., current watermark, stream info). Clients MUST parse past it (read `data_len` bytes) but SHOULD NOT interpret its contents unless broker documentation specifies a schema.
 

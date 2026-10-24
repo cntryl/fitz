@@ -348,6 +348,18 @@ scenarios:
       Requires broker-side fault injection; mirror in the broker integration
       tests where injection is available.
 
+  - id: "CS-024"
+    title: "400 KiB Stream event boundary and replay"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "APPEND accepts exactly 409600 combined body and metadata bytes"
+      - "APPEND rejects 409601 combined body and metadata bytes with BAD_REQUEST and NOT_APPLIED"
+      - "committed boundary-sized events replay without truncation on a 4096-byte route"
+      - "READ pagination fits the advertised message budget and preserves every event in order"
+
 scoring:
   fail_on:
     - "any P0 scenario verdict != pass"

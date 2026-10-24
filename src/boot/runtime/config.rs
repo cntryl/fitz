@@ -297,10 +297,9 @@ use validation::{
 pub const ENV_MAX_MESSAGE_BYTES: &str = "FITZ_MAX_MESSAGE_BYTES";
 /// Default wire message limit, header included.
 pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
-/// The smallest limit a deployment may set; below this a single Stream event
-/// or Schedule definition could never be delivered.
-pub const MIN_MAX_MESSAGE_BYTES: usize =
-    u16::MAX as usize + crate::protocol::wire2::header::HEADER_LEN;
+/// The smallest deployment limit, leaving room for a 400 KiB Stream event
+/// plus its route, record fields, and replay cursor.
+pub const MIN_MAX_MESSAGE_BYTES: usize = 512 * 1024;
 
 struct TransportConfig<'a> {
     boot: &'a BootConfig,

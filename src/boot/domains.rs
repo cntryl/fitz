@@ -581,6 +581,7 @@ fn create_stream_sink(
                 options.request_sync_write_policy,
                 options.request_buffered_write_policy,
             ),
+            options.max_message_bytes,
         )?
         .with_metrics(metrics.clone()),
     ))

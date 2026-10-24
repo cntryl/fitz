@@ -104,6 +104,10 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-013 (T1)** Message size MUST be respected. The broker states `max_message_bytes` in `HELLO` (1 MiB by default). The client MUST NOT send a larger message and SHOULD expose a local ceiling.
 
+Stream APPEND has a separate event-payload ceiling: body plus metadata MUST
+NOT exceed 400 KiB (409,600 bytes), even when `max_message_bytes` is larger.
+Exactly 409,600 bytes is valid. SDK validation MUST apply the combined size.
+
 **REQ-PROTO-014 (T1)** The KV `Insert` operation MUST be distinct from `Put`: Insert MUST fail with error `1055` (ERR_KEY_EXISTS) when the key already exists; Put MUST overwrite unconditionally.
 
 **REQ-PROTO-015 (T1)** KV `Scan` end key MUST be exclusive. `DeleteRange` end key MUST be exclusive. The client MUST encode these correctly on the wire.

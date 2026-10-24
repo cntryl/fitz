@@ -335,14 +335,14 @@ fn should_page_filtered_realm_read_through_filtered_items() {
 
 #[test]
 fn should_bound_resource_read_response_to_wire_frame_limit_when_max_bytes_omitted() {
-    // Arrange: every response is framed as a single u16-length-prefixed TLV
-    // value on the wire (see `encode_single_tlv_frame`), so a read response
+    // Arrange: one response must fit the configured wire message budget.
+    // A read response
     // built past `MAX_STREAM_RESPONSE_PAYLOAD_BYTES` can never actually be
     // sent. A client omitting `max_bytes` (legal per the wire spec) must
     // still get a response the broker can encode, not an unbounded one.
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
-    let record_body_len = 2_000usize;
-    let record_count = 60usize; // 60 * 2_000 = 120_000 bytes, well over u16::MAX (65_535)
+    let record_body_len = 20_000usize;
+    let record_count = 60usize; // 1.2 MB exceeds the default message budget.
     let events: Vec<EventPayload> = (0..record_count)
         .map(|_| EventPayload {
             body: Bytes::from(vec![b'a'; record_body_len]),
@@ -377,7 +377,7 @@ fn should_bound_resource_read_response_to_wire_frame_limit_when_max_bytes_omitte
         .expect("read oversized resource batch");
 
     // Assert: the response must be bounded well under the batch's true size
-    // (120_000 bytes) and under the wire ceiling, and must report has_more
+    // (1,200,000 bytes) and under the wire ceiling, and must report has_more
     // instead of silently truncating.
     let returned_bytes: usize = event_records(items.clone())
         .iter()
@@ -438,7 +438,7 @@ fn should_reject_read_when_lone_record_alone_exceeds_wire_frame_limit() {
     });
 
     // Assert: an explicit, classifiable error - never a response that would
-    // panic the TLV encoder, and never a silent skip.
+    // exceed the message framing budget, and never a silent skip.
     let error = result.expect_err("read of an unencodable lone record must fail explicitly");
     assert!(
         error.contains("ERR_READ_RESPONSE_TOO_LARGE"),

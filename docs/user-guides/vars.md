@@ -22,7 +22,7 @@ inferring settings from Compose files, tests, or source code.
 | FITZ_HTTP_PORT | u16 port | 4090 | HTTP and WebSocket listener port. |
 | FITZ_TCP_ENABLED | true or false | true | Enables the raw TCP listener. HTTP, admin routes, and WebSocket remain enabled regardless. |
 | FITZ_TCP_PORT | u16 port | 4091 | Raw TCP listener port. |
-| FITZ_MAX_MESSAGE_BYTES | bytes, 65550 to 4294967295 | 1048576 | Largest wire message (15-byte header included) the broker accepts and frames. Advertised to every client in HELLO as `max_message_bytes`. |
+| FITZ_MAX_MESSAGE_BYTES | bytes, 524288 to 4294967295 | 1048576 | Largest wire message (15-byte header included) the broker accepts and frames. Advertised to every client in HELLO as `max_message_bytes`. The 512 KiB minimum leaves room to replay a 400 KiB Stream event with route and response metadata. |
 | FITZ_BIND_ADDR | IP or hostname | 0.0.0.0 | Bind address for listeners. |
 | FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Confirms that a trusted external edge terminates TLS and enables TLS-dependent browser behavior such as HSTS. Fitz refuses to start with runtime auth or protected admin on a non-loopback bind unless this is true. Loopback development can leave it unset. |
 | FITZ_ASSUME_LOCAL_LOOPBACK_EDGE | true or false | false | Confirms that a trusted local container edge publishes Fitz listeners only on host loopback. This allows authenticated local Compose without asserting TLS or enabling HSTS, and requires loopback WebSocket and admin origins. Never enable it outside local development. |

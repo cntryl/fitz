@@ -227,6 +227,7 @@ fn stream_error_code(kind: StreamClientErrorKind) -> u16 {
         }
         StreamClientErrorKind::ReadResponseTooLarge => stream::ERR_READ_RESPONSE_TOO_LARGE,
         StreamClientErrorKind::Backend => stream::ERR_BACKEND_ERROR,
+        StreamClientErrorKind::BadRequest => stream::ERR_BAD_REQUEST,
     }
 }
 
@@ -605,8 +606,8 @@ mod tests {
         // Arrange: store-layer read paths raise this when a single record's
         // wire-encoded size alone exceeds the maximum response frame size.
         let response = StreamClientResponseBody::Error(
-            "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0 is 70000 bytes, exceeding the \
-             65535-byte read response limit"
+            "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0 is 1100000 bytes, exceeding the \
+             configured read response limit"
                 .into(),
         );
 

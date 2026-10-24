@@ -19,13 +19,10 @@ pub(crate) const STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES: usize = 64;
 
 /// Maximum combined body and metadata size for one event.
 ///
-/// Stream READ responses use a `u16` TLV payload. This limit reserves the
-/// conservative response/item overhead plus the maximum valid route length,
-/// so every accepted event can be replayed on every valid Stream route.
-pub const MAX_EVENT_SIZE: usize = (u16::MAX as usize)
-    - STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES
-    - STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES
-    - crate::utils::route_shape::MAX_ROUTE_BYTES;
+/// The 400 KiB payload ceiling is independent of the configured message
+/// budget. The broker's minimum message size reserves enough additional room
+/// for the largest valid route, record fields, and replay cursor.
+pub const MAX_EVENT_SIZE: usize = 400 * 1024;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CORE DATA TYPES
@@ -593,6 +590,7 @@ pub enum StreamClientErrorKind {
     FilterInvalidPayload,
     InvalidSubscriptionPattern,
     ReadResponseTooLarge,
+    BadRequest,
     /// Any failure the domain cannot attribute to a client condition. It is
     /// fatal for the request and says nothing about whether it took effect.
     Backend,
@@ -649,6 +647,7 @@ fn classify_stream_error_message(message: &str) -> StreamClientErrorKind {
         "resource not found" => Kind::ResourceNotFound,
         "route family mismatch" => Kind::InvalidRoute,
         "empty pattern" => Kind::InvalidSubscriptionPattern,
+        "event too large" => Kind::BadRequest,
         message if message.starts_with("invalid read ") || message.starts_with("read bound ") => {
             Kind::InvalidReadBound
         }
@@ -782,6 +781,7 @@ mod tests {
             ("ERR_CONCURRENCY_CONFLICT", Kind::ConcurrencyConflict),
             ("resource not found", Kind::ResourceNotFound),
             ("empty pattern", Kind::InvalidSubscriptionPattern),
+            ("event too large", Kind::BadRequest),
             ("invalid read limit 0", Kind::InvalidReadBound),
             ("read bound exceeds watermark", Kind::InvalidReadBound),
             (

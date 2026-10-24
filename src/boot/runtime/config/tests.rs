@@ -7,10 +7,10 @@ mod storage_local_and_stream;
 
 #[test]
 #[serial]
-fn should_accept_a_message_limit_that_carries_the_largest_existing_domain_payload() {
+fn should_accept_the_512_kib_minimum_message_limit() {
     // Arrange
     let mut config = auth_ready_config().with_bind_addr("127.0.0.1".to_string());
-    config.max_frame_size = usize::from(u16::MAX) + crate::protocol::wire2::header::HEADER_LEN;
+    config.max_frame_size = 512 * 1024;
     // Act
     let result = TransportConfig::from_boot_config(&config).validate(false);
     // Assert
@@ -19,10 +19,10 @@ fn should_accept_a_message_limit_that_carries_the_largest_existing_domain_payloa
 
 #[test]
 #[serial]
-fn should_reject_a_message_limit_that_cannot_carry_the_largest_existing_domain_payload() {
+fn should_reject_a_message_limit_below_512_kib() {
     // Arrange
     let mut config = auth_ready_config().with_bind_addr("127.0.0.1".to_string());
-    config.max_frame_size = usize::from(u16::MAX) + crate::protocol::wire2::header::HEADER_LEN - 1;
+    config.max_frame_size = 512 * 1024 - 1;
     // Act
     let result = TransportConfig::from_boot_config(&config).validate(false);
     // Assert

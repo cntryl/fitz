@@ -33,7 +33,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | W-17 | Error envelope carries an explicit `u8 class` alongside the decimal code | Design 5.3 | landed: the envelope carries the explicit `class` byte | |
 | W-18 | Server control message `GOAWAY {code, grace_ms, reason}` | Design 5.12 | landed | `Runtime::begin_drain` sends GOAWAY DRAINING with the grace and close reason to every live session; FORCED_CLOSE and LIMIT_CHANGED are defined but not yet emitted |
 | W-19 | No `retry_after` hint; no route family in `HELLO`; `REAUTH` deferred as an additive verb | Design 5.4, 5.9, 5.12 | decided | |
-| W-20 | Stream `MAX_EVENT_SIZE` (61,247 bytes) still derives from the wire-1 64 KiB value cap; raise it to track `max_message_bytes` | Follows W-01, C-01 | deferred | Additive for clients, so it needs no wire break and can land in any later release. Safe as is: the 65,550-byte floor (65,535-byte payload plus header) on `FITZ_MAX_MESSAGE_BYTES` keeps every stored event deliverable. Raising it needs the configured limit plumbed into the Stream and Schedule domains |
+| W-20 | Stream event payload limit becomes 400 KiB (409,600 bytes), body plus metadata | A fixed event ceiling with replay bounded by the configured message budget | landed | Resource, area, realm, and global reads honor `max_message_bytes`; the 512 KiB minimum reserves room for the largest route and response metadata. Persisted encoding is unchanged |
 | W-21 | Queue enqueue, concrete reserve, and wildcard reserve use the configured response budget | Removes the old 16-bit ceiling without accepting undeliverable bodies | landed | Body admission reserves routed-response overhead; complete responses stay within the advertised message limit |
 
 ## Storage (Midge)
@@ -52,7 +52,7 @@ Storage rows follow the Midge work tracked in that repository and the
 
 | ID | Change | Why | Status | Issue |
 | --- | --- | --- | --- | --- |
-| C-01 | `max_message_bytes` becomes a configured, advertised limit; default stays 1 MiB | Design 5.7 | landed | `FITZ_MAX_MESSAGE_BYTES` (65,550 to 4,294,967,295 bytes, default 1 MiB) bounds the transport, the outbound sink, and the HELLO advertisement |
+| C-01 | `max_message_bytes` becomes a configured, advertised limit; default stays 1 MiB | Design 5.7 | landed | `FITZ_MAX_MESSAGE_BYTES` (524,288 to 4,294,967,295 bytes, default 1 MiB) bounds the transport, the outbound sink, and the HELLO advertisement |
 
 ## Rust embedding API
 

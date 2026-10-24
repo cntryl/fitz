@@ -74,9 +74,7 @@ pub(crate) fn classify_stream_route_shape(route: &str) -> Result<StreamRouteShap
     // here would make authorization and dispatch disagree about the route's
     // identity. Keep these limits in the shared parser so every caller gets
     // the same validation.
-    const MAX_ROUTE_BYTES: usize = 512;
-    if route.len() > MAX_ROUTE_BYTES
-        || crate::utils::route_shape::contains_control_character(route)
+    if crate::utils::route_shape::validate_route_shape(route).is_err()
         || !route.starts_with("stream://")
         || route[9..].is_empty()
         || route[9..].starts_with('/')
@@ -450,5 +448,29 @@ mod tests {
                 "expected {selector} to be rejected"
             );
         }
+    }
+    #[test]
+    fn should_accept_a_stream_selector_at_the_shared_route_byte_limit() {
+        // Arrange
+        let realm =
+            "r".repeat(crate::utils::route_shape::MAX_ROUTE_BYTES - "stream:///events/sized".len());
+        let route = format!("stream://{realm}/events/sized");
+        // Act
+        let selector = classify_stream_route_shape(&route);
+        // Assert
+        assert!(matches!(selector, Ok(StreamRouteShape::Resource { .. })));
+    }
+
+    #[test]
+    fn should_reject_a_stream_selector_over_the_shared_route_byte_limit() {
+        // Arrange
+        let realm = "r".repeat(
+            crate::utils::route_shape::MAX_ROUTE_BYTES - "stream:///events/sized".len() + 1,
+        );
+        let route = format!("stream://{realm}/events/sized");
+        // Act
+        let selector = classify_stream_route_shape(&route);
+        // Assert
+        assert!(selector.is_err());
     }
 }

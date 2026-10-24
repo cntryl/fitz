@@ -72,6 +72,10 @@ Decisions behind the header:
   sequence ends. Zero is reserved for frames that answer nothing.
 - `length` is `u32`. The negotiated `max_message_bytes` bounds the complete
   15-byte header plus value; a value may use at most `max_message_bytes - 15`.
+  Stream event body plus metadata has a separate 400 KiB (409,600-byte)
+  ceiling. The minimum configurable message budget is 512 KiB, leaving room
+  for the largest valid route and replay envelope. Stream READ pages obey
+  the configured message budget.
 - Reserved flag bits must be zero. A set reserved bit is a protocol error
   answered with `UNSUPPORTED` on the request's own type and correlation, not
   a connection close: the header is read in full before the flags are

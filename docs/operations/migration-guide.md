@@ -41,8 +41,13 @@ storage rows and carry their own migration notes.
 **Configuration.** `FITZ_MAX_MESSAGE_BYTES` (default 1 MiB) is now the one
 message limit: the transport frame bound, the outbound framing bound, and the
 `max_message_bytes` every client reads from `HELLO`. It includes the 15-byte
-header; the supported range is 65,550 to 4,294,967,295 bytes. Queue admission
-reserves enough space for routed reserve metadata and both reserve forms
+header; the supported range is 524,288 to 4,294,967,295 bytes. Stream APPEND
+accepts at most 400 KiB (409,600 bytes) of body plus metadata, increased from
+61,247 bytes. The 512 KiB message minimum reserves space to replay that event
+with the largest valid route and response metadata. Update SDK event-size
+validation accordingly. Stream READ pagination uses the configured message
+budget. These size changes do not change the persisted event encoding.
+Queue admission reserves enough space for routed reserve metadata and both reserve forms
 obey this configured budget. `HELLO.max_in_flight` is a per-connection bound
 through terminal completion; excess requests return protocol BUSY 0005,
 NOT_APPLIED, while the connection stays open. Smaller domain limits still

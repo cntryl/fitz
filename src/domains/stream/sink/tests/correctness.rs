@@ -592,6 +592,7 @@ fn should_project_persisted_unprovisioned_family_into_admin_snapshot() {
         StreamStorageLayout::default(),
         Some(&[RouteFamily::new(1)]),
         StreamStorageWriteOptions::local(),
+        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
     )
     .expect("create family-1-only Stream domain");
 
