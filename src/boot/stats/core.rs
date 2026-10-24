@@ -148,6 +148,7 @@ impl Runtime {
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
+                max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
                 route_families: vec![1, 2, 3, 4, 5, 6, 7],
                 schedule_write_policy: crate::domains::WritePolicy::BestEffort,
 

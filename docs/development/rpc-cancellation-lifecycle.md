@@ -63,9 +63,8 @@ binary message, before validation and session processing. This starts the
 broker's clock after transport receipt; it does not measure client-to-broker
 network transit or bytes still buffered before that receipt.
 
-All complete TLVs decoded from a frame keep its stamp, even when handling an
-earlier TLV waits. A TLV fragmented across frames uses the stamp of the frame
-that completes it. Session handoff queueing, authentication, authorization,
+Each frame contains exactly one complete message, which keeps that receive
+stamp throughout processing. Session handoff queueing, authentication, authorization,
 ingress backpressure retries, and the family actor mailbox all consume the
 same RPC deadline. The mailbox admission retry budget starts separately when
 dispatch begins, so old transport frames do not prematurely exhaust another

@@ -310,7 +310,7 @@ impl DomainFrameDispatcher {
             version: crate::protocol::wire2::WIRE_VERSION,
             broker_caps: crate::protocol::wire2::BROKER_CAPABILITIES,
             max_message_bytes: self.max_message_bytes,
-            max_in_flight: u32::try_from(BLOCKING_DOMAIN_DISPATCH_CONCURRENCY).unwrap_or(u32::MAX),
+            max_in_flight: u32::try_from(crate::api::outbound::MAX_IN_FLIGHT).unwrap_or(u32::MAX),
             session_id,
         };
         announce_control_frame(

@@ -2,7 +2,7 @@
 
 Status: **authoritative for 0.3.0 and the 1.0.0 wire format**. Codes are
 append-only: a code is never renamed, reused, or given a new meaning. The
-broker's catalog in `src/protocol/error_catalog.rs` is the implementation of
+broker's catalog in `src/protocol/wire2/catalog.rs` is the implementation of
 this page; the two must agree and the conformance vectors prove it.
 
 Every error travels in the common envelope from
@@ -213,7 +213,7 @@ before a request reaches a domain.
 | 6008 | BAD_REQUEST | 8 | NOT_APPLIED | new | |
 | 6009 | NOT_FOUND | 9 | NOT_APPLIED | new | |
 | 6010 | UNSUPPORTED | 10 | NOT_APPLIED | new | |
-| 6050 | WORKER_NOT_FOUND | 9 | NOT_APPLIED | 6002 | |
+| 6050 | WORKER_NOT_FOUND | 9 | INDETERMINATE | 6002 | A dispatched worker may have applied the operation before disconnecting; retry only idempotent work or verify first |
 | 6051 | ROUTE_NOT_REGISTERED | 9 | NOT_APPLIED | 6004 | No worker registered for the route |
 | 6052 | CORRELATION_NOT_FOUND | 9 | NOT_APPLIED | 6005 | Response, ACK, or cancel named an unknown or finished request |
 | 6053 | INVALID_SEQUENCE | 8 | NOT_APPLIED | 6006 | Chunks must start at 0 and advance contiguously |

@@ -1,4 +1,4 @@
-use super::super::durable::{complete, empty_legacy_success, payload, request, require_legacy_ok};
+use super::super::durable::{complete, empty_success, payload, request, require_ok};
 use super::super::types::BenchFailure;
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use fitz::testkit::{FrameBuilder, FrameParser, TestClient};
@@ -45,14 +45,14 @@ pub async fn create(
     encoder.put_bytes(&payload(index, generation));
     let mut builder = FrameBuilder::new();
     builder.encode_field(700, &encoder.finish());
-    empty_legacy_success(
+    empty_success(
         &bounded(request(client, &builder.build(), 700)).await?,
         "Schedule CREATE",
     )
 }
 
 pub async fn cancel(client: &mut TestClient, index: usize) -> Result<(), BenchFailure> {
-    empty_legacy_success(
+    empty_success(
         &bounded(request(client, &frame(701, &route(index)), 701)).await?,
         "Schedule CANCEL",
     )
@@ -60,7 +60,7 @@ pub async fn cancel(client: &mut TestClient, index: usize) -> Result<(), BenchFa
 
 pub async fn subscribe(client: &mut TestClient) -> Result<u64, BenchFailure> {
     let body = bounded(request(client, &frame(703, PATTERN), 703)).await?;
-    require_legacy_ok(&body, "Schedule SUBSCRIBE")?;
+    require_ok(&body, "Schedule SUBSCRIBE")?;
     let mut decoder = PayloadDecoder::new(&body);
     decoder.get_u8().map_err(BenchFailure::validation)?;
     let id = decoder
@@ -127,7 +127,7 @@ pub async fn verify_definitions(
         let mut builder = FrameBuilder::new();
         builder.encode_field(702, &encoder.finish());
         let body = bounded(request(client, &builder.build(), 702)).await?;
-        require_legacy_ok(&body, "Schedule LIST")?;
+        require_ok(&body, "Schedule LIST")?;
         let mut decoder = PayloadDecoder::new(&body);
         decoder.get_u8().map_err(BenchFailure::validation)?;
         if decoder.get_u8().map_err(BenchFailure::validation)? != 1 {

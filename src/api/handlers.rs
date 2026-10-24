@@ -27,6 +27,12 @@ pub struct ListenerHandle {
 
 pub(super) type SessionTasks = Arc<Mutex<JoinSet<()>>>;
 
+fn is_connect_rejected_frame(frame: &[u8]) -> bool {
+    crate::protocol::wire2::header::MessageHeader::decode(frame).is_ok_and(|header| {
+        header.message_type == crate::protocol::wire2::control::CONNECT_REJECTED
+    })
+}
+
 /// Shared ownership for one accepted transport connection.
 ///
 /// HTTP owns the connection until a WebSocket upgrade is handed off. After
@@ -203,7 +209,7 @@ pub(super) fn answer_unsupported_frame(
         crate::protocol::error_codes::protocol::ERR_UNSUPPORTED,
         reason,
     );
-    sink.send_message(session_id, message_type, correlation, &payload)
+    sink.send_unadmitted_response(session_id, message_type, correlation, &payload)
         .map_err(|error| format!("could not answer unsupported frame: {error}"))
 }
 

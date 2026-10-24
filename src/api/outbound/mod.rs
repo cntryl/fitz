@@ -1,5 +1,7 @@
+mod connection;
 mod domain_deliveries;
 mod frame_loop;
+pub(crate) use connection::MAX_IN_FLIGHT;
 
 use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
@@ -15,6 +17,7 @@ use tracing::{debug, trace, warn};
 
 /// `MailboxSink` that forwards domain responses to a session's outbound channel
 pub struct SessionOutboundSink {
+    pub(crate) connection: connection::ConnectionState,
     tx: mpsc::Sender<Bytes>,
     close_signal: Option<tokio::sync::watch::Sender<Option<&'static str>>>,
     frame_loop: frame_loop::FrameLoopClock,
@@ -27,6 +30,7 @@ impl SessionOutboundSink {
     #[must_use]
     pub fn new(tx: mpsc::Sender<Bytes>) -> Self {
         Self {
+            connection: connection::ConnectionState::default(),
             tx,
             close_signal: None,
             frame_loop: frame_loop::FrameLoopClock::default(),
@@ -56,6 +60,7 @@ impl SessionOutboundSink {
         let (close_signal, receiver) = tokio::sync::watch::channel(None);
         (
             Self {
+                connection: connection::ConnectionState::default(),
                 tx,
                 close_signal: Some(close_signal),
                 frame_loop: frame_loop::FrameLoopClock::default(),
@@ -217,7 +222,7 @@ impl SessionOutboundSink {
             session_id = ctx.session_id,
             msg_type = ctx.msg_type.as_u16(),
             payload_len = ctx.payload.len(),
-            "Outbound sink: encoding TLV response for session"
+            "Outbound sink: encoding message response for session"
         );
         let encode_start = Self::encode_latency_start();
         let bytes = encode_message_frame(
@@ -280,18 +285,40 @@ impl SessionOutboundSink {
         self.send_encoded_frame(session_id, &bytes)
     }
 
+    /// Answer a rejected frame that never acquired an admission slot.
+    pub(super) fn send_unadmitted_response(
+        &self,
+        session_id: u64,
+        msg_type: u16,
+        correlation: Option<std::num::NonZeroU64>,
+        payload: &[u8],
+    ) -> Result<(), DeliveryError> {
+        let bytes = encode_message_frame(msg_type, correlation, payload, self.max_message_bytes)?;
+        self.queue_frame(session_id, &bytes, OUTBOUND_BEST_EFFORT_RETRIES, false)
+    }
+
     pub(super) fn send_encoded_frame_with_budget(
         &self,
         session_id: u64,
         bytes: &Bytes,
         max_retries: usize,
     ) -> Result<(), DeliveryError> {
+        self.queue_frame(session_id, bytes, max_retries, true)
+    }
+
+    fn queue_frame(
+        &self,
+        session_id: u64,
+        bytes: &Bytes,
+        max_retries: usize,
+        completes_request: bool,
+    ) -> Result<(), DeliveryError> {
         let metrics_enabled = obs::hot_path_metrics_enabled();
 
         trace!(
             session_id = session_id,
             encoded_len = bytes.len(),
-            "Outbound sink: sending TLV frame to transport channel"
+            "Outbound sink: sending message frame to transport channel"
         );
 
         let mut attempt = 0;
@@ -307,6 +334,9 @@ impl SessionOutboundSink {
 
             match send_result {
                 Ok(()) => {
+                    if completes_request {
+                        self.connection.sent(bytes);
+                    }
                     if metrics_enabled {
                         crate::observability::hot_path_counter_inc(obs::METRIC_FRAMES_SENT);
                     }
@@ -387,15 +417,6 @@ fn outbound_retry_backoff(attempt: usize) -> Option<Duration> {
     Some(Duration::from_micros(micros).min(OUTBOUND_MAX_RETRY_BACKOFF))
 }
 
-/// Frame one TLV value for the wire.
-///
-/// # Errors
-///
-/// Returns `DeliveryError::InvalidPayload` when the payload exceeds the `u16`
-/// length a TLV value can carry. This used to be an assertion, which turned
-/// any aggregate-overflow bug in any domain - a schedule listing, a large read
-/// page - into a broker panic. Framing must fail the one delivery, never the
-/// process; the real fix always lives at the source, which must paginate.
 /// The limit a sink frames against until configuration sets one.
 pub(super) const DEFAULT_MAX_MESSAGE_BYTES: usize =
     crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize;

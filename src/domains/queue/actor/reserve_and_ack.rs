@@ -238,9 +238,8 @@ impl QueueActor {
         if message_wire_bytes <= response_bytes_remaining {
             return ReserveWireBudgetDecision::Reserve(message_wire_bytes);
         }
-        let empty_response_message_budget =
-            crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
-                - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+        let empty_response_message_budget = self.response_payload_limit
+            - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
         // Dead-lettering is permanent, so it must only fire when *no* reserve
         // shape could ever carry this body. A wildcard reserve pays extra
         // per-message overhead (routing envelope + route string) that a

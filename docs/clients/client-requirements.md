@@ -100,7 +100,7 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-011 (T1)** The client MUST correctly handle all error code ranges and map each code to the right domain (AC-ERROR-002). Error code `XXYY` where `XX` identifies the domain and `YY` the specific error MUST NOT be confused across domains.
 
-**REQ-PROTO-012 (T1)** The client MUST correctly categorize retryable vs. fatal error codes per the table in `client-acceptance-criteria.md` (AC-ERROR-003). Retry policy keys on the envelope's `effect` and `class`: retry with backoff when `effect` is NOT_APPLIED and the code is one of every `x005` BUSY, 1053, 5050, 5056, 6050, 6051; treat `x006` BACKEND and `x007` TIMEOUT (effect INDETERMINATE) as retryable only for operations the application knows are idempotent. All UNAUTHORIZED codes and the remaining NOT_APPLIED codes MUST be treated as fatal (no retry).
+**REQ-PROTO-012 (T1)** The client MUST correctly categorize retryable vs. fatal errors per `client-acceptance-criteria.md` (AC-ERROR-003). Retry policy keys on `effect` and `class`: retry with backoff for NOT_APPLIED BUSY (including protocol 0005), 1053, 5050, 5056, and 6051. BACKEND, TIMEOUT, and 6050 WORKER_NOT_FOUND carry INDETERMINATE and are retryable only when the application knows the operation is idempotent or verifies its outcome first. UNAUTHORIZED and remaining NOT_APPLIED codes are fatal until their condition changes.
 
 **REQ-PROTO-013 (T1)** Message size MUST be respected. The broker states `max_message_bytes` in `HELLO` (1 MiB by default). The client MUST NOT send a larger message and SHOULD expose a local ceiling.
 
@@ -312,7 +312,7 @@ Reconnect rebuild behavior is domain-specific:
 
 **REQ-ERR-005 (T1)** Domain error codes MUST be exported as named constants (e.g., `ErrKvKeyExists`, `ErrLeaseHeld`, `ErrRpcRouteNotRegistered`) so callers can write `errors.Is(err, fitz.ErrKvKeyExists)` without hard-coding integers.
 
-**REQ-ERR-006 (T1)** Retryable errors (every `x005` BUSY, plus 1053, 5050, 5056, 6050, 6051; `x006` and `x007` only when the operation is idempotent) MUST be distinguishable from fatal errors via a type assertion or helper (`fitz.IsRetryable(err) bool`). Callers MUST NOT be required to know the numeric ranges.
+**REQ-ERR-006 (T1)** Retryable errors (NOT_APPLIED BUSY, 1053, 5050, 5056, and 6051) MUST be distinguishable from fatal errors via a type assertion or helper (`fitz.IsRetryable(err) bool`). INDETERMINATE errors, including 6050, require application knowledge of idempotency or outcome verification before retry. Callers MUST NOT be required to know numeric ranges.
 
 **REQ-ERR-007 (T1)** Server error messages MUST be included in the `Error()` string. `fmt.Errorf("kv get: %w", err)` wrapping MUST preserve the code through the chain.
 
@@ -531,7 +531,7 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-CONC-007 | T1 | Concurrency | Async handler max concurrency + timeout |
 | REQ-CONC-008 | T2 | Concurrency | Same-tx operations serialized or documented |
 | REQ-CONC-009 | T2 | Concurrency | Requests truly concurrent when identified |
-| REQ-CONC-010 | T0 | Concurrency | One in-flight per message type when uncorrelated |
+| REQ-CONC-010 | T0 | Concurrency | Match responses by correlation, never arrival order |
 | REQ-ERR-001 | T0 | Errors | All server errors surfaced as non-nil error |
 | REQ-ERR-002 | T0 | Errors | Error carries numeric code + message |
 | REQ-ERR-003 | T0 | Errors | ctx cancellation propagated; pending op cleaned up |

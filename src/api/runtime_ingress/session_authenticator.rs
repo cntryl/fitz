@@ -7,6 +7,8 @@ use tracing::error;
 /// Outcome of running a frame through session authentication.
 pub(super) struct AuthenticatedFrame {
     pub(super) route_family: crate::runtime::routing::RouteFamily,
+    /// The transport's inbox stays here until this frame completes.
+    pub(super) control_reply_family: crate::runtime::routing::RouteFamily,
     pub(super) notify_frame: Option<SessionFrame>,
     /// True only on the frame that established the session. Distinct from
     /// `notify_frame`, which is populated only when an event handler is
@@ -219,6 +221,7 @@ impl SessionAuthenticator {
             )));
         };
 
+        let control_reply_family = entry.route_family;
         let mut notify_frame = None;
         let session_established = !entry.authenticated;
         if !entry.authenticated {
@@ -250,6 +253,7 @@ impl SessionAuthenticator {
 
         Ok(AuthenticatedFrame {
             route_family: entry.route_family,
+            control_reply_family,
             notify_frame,
             session_established,
             service_name,

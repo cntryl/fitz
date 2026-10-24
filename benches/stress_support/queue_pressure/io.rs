@@ -1,5 +1,5 @@
 use super::super::durable::{
-    complete, empty_legacy_success, error_code, payload, request, require_ok, response_payload,
+    complete, empty_success, error_code, payload, request, require_ok, response_payload,
 };
 use super::super::types::{BenchFailure, FailureKind};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
@@ -144,7 +144,7 @@ pub(super) async fn acknowledge(
     token: u64,
 ) -> Result<(), BenchFailure> {
     let result = request(client, &build_queue_complete(ROUTE, id, token), 204).await?;
-    empty_legacy_success(&result, "Queue ACK")
+    empty_success(&result, "Queue ACK")
 }
 
 #[derive(Clone, Copy, serde::Serialize)]
@@ -189,7 +189,7 @@ pub(super) fn validate_ack_payload(
     payload: &[u8],
     mut observe: impl FnMut(AckProgress) -> Result<(), BenchFailure>,
 ) -> Result<(), BenchFailure> {
-    if let Err(error) = empty_legacy_success(payload, "Queue ACK") {
+    if let Err(error) = empty_success(payload, "Queue ACK") {
         if matches!(
             error.kind,
             crate::stress_support::types::FailureKind::DomainError

@@ -105,10 +105,13 @@ broker. Confirm the golden contract test is green on the exact broker commit,
 that every ledger row is landed or deferred with a reason, and that the
 migration guide's 0.3.0 section states the mixed-version prohibition. Rehearse
 the drain-based broker upgrade with a 2.0 SDK consumer reconnecting through
-`GOAWAY`. Follow the SDK-first upgrade and together-rollback order in
+`GOAWAY`. Publish SDKs first, then activate compatible consumers and broker
+together; follow the together-rollback order in
 [migration guidance](../operations/migration-guide.md).
 
-## Stream error envelope generation 2 release gate
+## Historical wire 1: Stream error envelope generation 2 release gate
+
+This gate applies to pre-0.3.0 releases. The wire-2 gate above supersedes it.
 
 For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK
 versions that decode status 2 before releasing the broker change. Verify legacy

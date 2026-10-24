@@ -9,8 +9,8 @@ mod schedule;
 #[path = "stream.rs"]
 mod stream;
 
+pub(super) use super::response::{complete, empty_success, error_code, require_ok};
 use crate::stress_support::types::{BenchFailure, Domain, StepOutcome};
-use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::testkit::TestClient;
 use std::net::SocketAddr;
 
@@ -116,94 +116,4 @@ pub(super) fn response_payload(
         )));
     }
     Ok(value.to_vec())
-}
-
-pub(super) fn require_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
-    require_coded_ok(body, operation, 1)
-}
-
-pub(super) fn require_versioned_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
-    require_coded_ok(body, operation, 2)
-}
-
-fn require_coded_ok(body: &[u8], operation: &str, status: u8) -> Result<(), BenchFailure> {
-    if body.first().copied() == Some(0) {
-        return Ok(());
-    }
-    let (code, message) =
-        coded_error(body, status).map_err(|error| malformed_error(body, operation, &error))?;
-    Err(BenchFailure::domain_error(format!(
-        "{operation} failed: code {code}: {message}"
-    )))
-}
-
-pub(super) fn error_code(body: &[u8], operation: &str) -> Result<u32, BenchFailure> {
-    fitz::protocol::error_codes::decode_error_body(body)
-        .map(|(code, _)| u32::from(code))
-        .map_err(|error| BenchFailure::validation(format!("{operation}: {error}")))
-}
-
-fn malformed_error(body: &[u8], operation: &str, error: &BenchFailure) -> BenchFailure {
-    BenchFailure::validation(format!(
-        "malformed {operation} error response ({} bytes, prefix {:02X?}): {error}",
-        body.len(),
-        &body[..body.len().min(128)]
-    ))
-}
-
-fn coded_error(body: &[u8], status: u8) -> Result<(u32, &str), BenchFailure> {
-    let mut decoder = PayloadDecoder::new(body);
-    if decoder.get_u8().map_err(BenchFailure::validation)? != status {
-        return Err(BenchFailure::validation("expected a coded error status"));
-    }
-    let code = decoder.get_u32().map_err(BenchFailure::validation)?;
-    if code > u32::from(u16::MAX) {
-        return Err(BenchFailure::validation("error code exceeds u16 range"));
-    }
-    let message = decoder.get_string_ref().map_err(BenchFailure::validation)?;
-    complete(&decoder)?;
-    Ok((code, message))
-}
-
-/// Legacy domain errors are plain; ingress can synthesize coded errors instead.
-pub(super) fn require_legacy_ok(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
-    if body.first().copied() == Some(0) {
-        return Ok(());
-    }
-    match fitz::protocol::error_codes::decode_error_body(body) {
-        Ok((code, message)) => Err(BenchFailure::domain_error(format!(
-            "{operation} failed: code {code}: {message}"
-        ))),
-        Err(error) => Err(malformed_error(
-            body,
-            operation,
-            &BenchFailure::validation(error),
-        )),
-    }
-}
-
-pub(super) fn complete(decoder: &PayloadDecoder<'_>) -> Result<(), BenchFailure> {
-    if decoder.is_complete() {
-        Ok(())
-    } else {
-        Err(BenchFailure::validation("trailing response payload bytes"))
-    }
-}
-
-pub(super) fn empty_success(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
-    require_ok(body, operation)?;
-    require_empty(body)
-}
-
-pub(super) fn empty_legacy_success(body: &[u8], operation: &str) -> Result<(), BenchFailure> {
-    require_legacy_ok(body, operation)?;
-    require_empty(body)
-}
-
-fn require_empty(body: &[u8]) -> Result<(), BenchFailure> {
-    if body == [0] {
-        Ok(())
-    } else {
-        Err(BenchFailure::validation("expected only the success status"))
-    }
 }

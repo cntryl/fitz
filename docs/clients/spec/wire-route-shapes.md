@@ -151,11 +151,11 @@ it sent.
   | -------- | ----------------------------------------------- |
   | `CREATE` | `{realm}/{area}/{resource}/{operation}` |
   | `CANCEL` | `{realm}/{area}/{resource}/{operation}` |
-  | `LIST` | no route payload; optional `[offset][limit]` pagination fields only |
+  | `LIST` | no route payload; optional `[cursor][limit]` pagination fields only |
   | `SUBSCRIBE` | exact route or whole-segment pattern capable of matching four segments |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
-  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Portable clients should use CREATE, CANCEL, LIST, SUBSCRIBE, and UNSUBSCRIBE as documented in the wire format section. The broker additionally advertises CREATE_BATCH 706 and LIST_V2 707; LIST 702 remains the canonical cross-client operation and returns a single response payload containing `total_count` plus zero or more schedule entries.
+  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Portable clients use CREATE, CANCEL, LIST, SUBSCRIBE, and UNSUBSCRIBE. CREATE_BATCH is 706. LIST 702 returns one route-ordered page with `has_more`, an optional continuation cursor, and entry sentinels. Identifier 707 is retired and never reused.
 
 ### Lease Domain
 

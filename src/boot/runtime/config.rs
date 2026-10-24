@@ -299,7 +299,8 @@ pub const ENV_MAX_MESSAGE_BYTES: &str = "FITZ_MAX_MESSAGE_BYTES";
 pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// The smallest limit a deployment may set; below this a single Stream event
 /// or Schedule definition could never be delivered.
-pub const MIN_MAX_MESSAGE_BYTES: usize = 64 * 1024;
+pub const MIN_MAX_MESSAGE_BYTES: usize =
+    u16::MAX as usize + crate::protocol::wire2::header::HEADER_LEN;
 
 struct TransportConfig<'a> {
     boot: &'a BootConfig,

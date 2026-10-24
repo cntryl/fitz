@@ -37,13 +37,12 @@ fn should_answer_connect_with_hello_as_the_first_frame() {
         Arc::new(CapturingEncodedFrameSink(captured)) as Arc<dyn MailboxSink>,
     );
     let ingress = RuntimeIngress::new(false).with_router(router);
+    let mut session = make_session_info(session_id, TransportKind::Tcp);
+    session.route_family = crate::runtime::routing::RouteFamily::new(1);
 
     // Act
     let decision = rt.block_on(async {
-        ingress
-            .on_open(make_session_info(session_id, TransportKind::Tcp))
-            .await
-            .unwrap();
+        ingress.on_open(session).await.unwrap();
         ingress
             .on_frame(
                 session_id,

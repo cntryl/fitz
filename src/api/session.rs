@@ -43,8 +43,60 @@ pub async fn process_session_frame_at(
     ingress: &dyn Ingress,
     received_at: Instant,
 ) -> Result<(), SessionError> {
+    process_frame(session, frame, ingress, received_at, None).await
+}
+
+pub(crate) async fn process_bounded_session_frame_at(
+    session: &mut Session,
+    frame: Bytes,
+    ingress: &dyn Ingress,
+    received_at: Instant,
+    outbound: &crate::api::outbound::SessionOutboundSink,
+) -> Result<(), SessionError> {
+    process_frame(session, frame, ingress, received_at, Some(outbound)).await
+}
+
+async fn process_frame(
+    session: &mut Session,
+    frame: Bytes,
+    ingress: &dyn Ingress,
+    received_at: Instant,
+    outbound: Option<&crate::api::outbound::SessionOutboundSink>,
+) -> Result<(), SessionError> {
     let message = session.decode_frame(&frame)?;
     let channel = message.channel;
+    if let Some(outbound) = outbound {
+        if !outbound.connection.admit(&message) {
+            session.release_channel(channel);
+            let code = crate::protocol::error_codes::protocol::ERR_BUSY;
+            let reason = "connection max_in_flight reached; request was not accepted";
+            let (kind, correlation, body) = if message.msg_type.as_u16() == 302 {
+                let id =
+                    crate::protocol::rpc_codec::extract_request_correlation_id(&message.payload)
+                        .map_err(SessionError::IngressClose)?;
+                (
+                    303,
+                    None,
+                    crate::protocol::rpc_codec::encode_terminal_error_response_message_payload(
+                        &id, code, reason,
+                    ),
+                )
+            } else {
+                (
+                    message.msg_type.as_u16(),
+                    message.correlation,
+                    Bytes::from(crate::protocol::error_codes::encode_error_body(
+                        code, reason,
+                    )),
+                )
+            };
+            return outbound
+                .send_unadmitted_response(session.info().session_id, kind, correlation, &body)
+                .map_err(|error| {
+                    SessionError::IngressClose(format!("cannot deliver connection BUSY: {error:?}"))
+                });
+        }
+    }
     let ingress_start = Instant::now();
     let decision = ingress
         .on_frame_received_at(

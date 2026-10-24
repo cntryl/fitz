@@ -2,7 +2,26 @@
 
 This page defines compatibility expectations for serialized data, protocol payloads, and storage formats.
 
-## Stream error envelope generation 2
+## Wire format 2 (0.3.0)
+
+Fitz 0.3.0 uses the fixed 15-byte header, structured CONNECT answered by
+HELLO or CONNECT_REJECTED, request correlation, and the common
+`[1][u16 code][u8 class][u8 effect][string message]` error envelope. The
+configured `max_message_bytes` includes the header. HELLO advertises the
+connection-wide admission limit, which includes deferred replies and pending
+RPC calls until their terminal response. BUSY always means NOT_APPLIED.
+
+Wire 1 and wire 2 cannot share a connection or a rolling mixed-version fleet.
+Stage compatible SDK artifacts, drain and stop old consumers, then switch the
+broker and consumers together. Rollback restores both sides together. See the
+[migration guide](../operations/migration-guide.md) for the flag-day sequence.
+
+RPC cancellation and budget fields are base layouts; no capability bit gates
+their presence. Schedule LIST 702 is cursor-based; 707 is retired. KV SCAN
+ends in an options byte. The following wire-1 sections are historical and do
+not apply to 0.3.0 or its 1.0.0 format candidate.
+
+## Historical wire 1: Stream error envelope generation 2
 
 Stream BEGIN, APPEND, COMMIT, ROLLBACK, LAST, GET_METADATA, SUBSCRIBE, and
 UNSUBSCRIBE errors now use `[u8 2][u32 BE domain_code][u32 BE message_length][UTF-8 message]`.
@@ -23,7 +42,7 @@ or automatically retry a failed append/commit. Applications own command retries.
 The release checklist must record exact broker and SDK versions and requalify
 Portia's stale-append and pending-batch assertions before release.
 
-## Frame-level request correlation
+## Historical wire 1: Frame-level request correlation
 
 Adds control message types `CORRELATE` (2, client→server), `CORRELATED` (3,
 server→client), and `SERVER_HELLO` (4, server→client). No existing domain
@@ -57,7 +76,7 @@ not change CONNECT or any existing payload, and the optional active-session
 2. Storage format changes require documented upgrade or rewrite path.
 3. Message-type range assignments remain stable once released.
 
-## RPC cancellation and remaining budgets
+## Historical wire 1: RPC cancellation and remaining budgets
 
 Negotiated worker correlation UUIDs are opaque per-dispatch invocation IDs.
 The broker translates them back to the caller's correlation UUID for responses.

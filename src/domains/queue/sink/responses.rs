@@ -128,6 +128,7 @@ impl QueueFamilyState {
                 | crate::domains::queue::QueueResponse::InflightExpired
                 | crate::domains::queue::QueueResponse::NotFound
                 | crate::domains::queue::QueueResponse::QueueNotFound
+                | crate::domains::queue::QueueResponse::Busy
                 | crate::domains::queue::QueueResponse::BadRequest { .. }
                 | crate::domains::queue::QueueResponse::Error { .. }
         )

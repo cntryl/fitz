@@ -13,10 +13,10 @@
 **Key Features:**
 ```
 - Automatic reconnection with exponential backoff
-- Pending request tracking by frame correlation when available, with a legacy
-  one-in-flight lane per message type when it is unavailable
+- Pending request tracking by mandatory header correlation, bounded by HELLO's
+  `max_in_flight`; RPC calls additionally retain their end-to-end UUID
 - Subscription routing (Map<subscriptionId, handler>)
-- Frame batching (optional optimization)
+- Transport write batching that preserves exactly one message per frame
 ```
 
 #### Reconnect State Rebuild
@@ -274,7 +274,7 @@ Test invariants:
 
 ```rust
 #[quickcheck]
-fn prop_tlv_roundtrip(message_type: u16, payload: Vec<u8>) -> bool {
+fn prop_message_roundtrip(message_type: u16, payload: Vec<u8>) -> bool {
     let encoded = encode_frame(message_type, &payload);
     let (decoded_type, decoded_payload) = decode_frame(&encoded).unwrap();
     

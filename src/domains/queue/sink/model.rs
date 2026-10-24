@@ -70,6 +70,7 @@ pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// - Tracks queue-local watch subscriptions for the current broker process
 /// - Exposes only warm in-memory queue/admin state for the current broker process
 pub(super) struct QueueFamilyState {
+    pub(super) response_payload_limit: usize,
     pub(super) route_family: crate::runtime::routing::RouteFamily,
     /// Measured delivery service time in microseconds, written by the actor
     /// and read by admission to size its window.
@@ -172,6 +173,7 @@ pub(crate) struct QueueDomain {
 
 #[derive(Clone)]
 pub(super) struct QueueDomainConfig {
+    pub(super) response_payload_limit: usize,
     pub(super) store: crate::domains::queue::actor::recovery_store::QueueStore,
 
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,

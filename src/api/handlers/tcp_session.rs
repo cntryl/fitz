@@ -48,19 +48,25 @@ async fn write_tcp_frames<W: AsyncWrite + Unpin>(
     write_buf: &mut Vec<u8>,
     first_frame: Bytes,
     outbound_rx: &mut tokio::sync::mpsc::Receiver<Bytes>,
+    outbound_sink: Option<&crate::api::outbound::SessionOutboundSink>,
 ) -> Result<usize, std::io::Error> {
     write_buf.clear();
+    let mut rejected = super::is_connect_rejected_frame(&first_frame);
     append_tcp_frame(write_buf, &first_frame)?;
     let mut frame_count = 1usize;
     while frame_count < MAX_WRITE_BATCH_FRAMES && write_buf.len() < MAX_WRITE_BATCH_BYTES {
         let Ok(frame) = outbound_rx.try_recv() else {
             break;
         };
+        rejected |= super::is_connect_rejected_frame(&frame);
         append_tcp_frame(write_buf, &frame)?;
         frame_count += 1;
     }
     write_half.write_all(write_buf).await?;
     write_half.flush().await?;
+    if let Some(sink) = outbound_sink.filter(|_| rejected) {
+        sink.connection.mark_rejection_flushed();
+    }
     Ok(frame_count)
 }
 
@@ -70,6 +76,7 @@ fn spawn_tcp_writer_task(
     session_id: u64,
     runtime: Arc<crate::boot::Runtime>,
     ingress: Arc<dyn Ingress>,
+    outbound_sink: Arc<crate::api::outbound::SessionOutboundSink>,
 ) -> tokio::task::JoinHandle<Result<(), String>> {
     tokio::spawn(async move {
         tracing::debug!(session_id, "TCP outbound writer task started");
@@ -80,13 +87,18 @@ fn spawn_tcp_writer_task(
                 frame_len = frame.len(),
                 "TCP outbound: sending frame to wire"
             );
-            let frame_count =
-                write_tcp_frames(&mut write_half, &mut write_buf, frame, &mut outbound_rx)
-                    .await
-                    .map_err(|error| {
-                        tracing::error!(session_id, %error, "TCP outbound write error");
-                        format!("TCP outbound write error: {error}")
-                    })?;
+            let frame_count = write_tcp_frames(
+                &mut write_half,
+                &mut write_buf,
+                frame,
+                &mut outbound_rx,
+                Some(&outbound_sink),
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(session_id, %error, "TCP outbound write error");
+                format!("TCP outbound write error: {error}")
+            })?;
             for _ in 0..frame_count {
                 runtime.increment_messages_sent();
                 ingress.record_frame_sent(session_id);
@@ -165,11 +177,12 @@ fn spawn_tcp_frame_task(
             context.ingress.record_frame_received(context.session_id);
             let frame_result = {
                 let _busy = context.outbound_sink.begin_frame();
-                crate::api::session::process_session_frame_at(
+                crate::api::session::process_bounded_session_frame_at(
                     &mut session,
                     frame.frame,
                     context.ingress.as_ref(),
                     frame.received_at,
+                    &context.outbound_sink,
                 )
                 .await
             };
@@ -189,6 +202,7 @@ fn spawn_tcp_frame_task(
                 continue;
             }
             if let Err(error) = frame_result {
+                context.outbound_sink.connection.flush_rejection().await;
                 if crate::api::session::is_stale_session_frame_error(&error) {
                     tracing::debug!(
                         session_id = context.session_id,
@@ -389,6 +403,7 @@ pub(super) async fn handle_tcp_connection(
         session_id,
         runtime.clone(),
         ingress.clone(),
+        sink.clone(),
     );
 
     let frame_handle = spawn_tcp_frame_task(
@@ -541,6 +556,7 @@ mod tests {
             &mut write_buf,
             Bytes::from_static(b"a"),
             &mut rx,
+            None,
         )
         .await
         .expect("write TCP frame batch");

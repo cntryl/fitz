@@ -1,11 +1,15 @@
 ## Observability Implementation Guide for Fitz
 
+Metric names containing `tlv` and the `METRIC_TLV_*` constants retain their
+historical names for dashboard continuity. They now measure wire-2 message
+encoding and decoding.
+
 This guide explains how to instrument each layer of Fitz with comprehensive observability (logging, metrics, distributed tracing).
 
 ### Quick Reference
 
 **Sampling Strategy:**
-- **Hot paths** (routing, TLV codec, frame I/O): 0.1% sampling (1 in 1000)
+- **Hot paths** (routing, message codec, frame I/O): 0.1% sampling (1 in 1000)
 - **Critical paths** (auth, permission checks, request boundaries): 100% sampling
 - **Debug paths** (family actor workers, internal operations): Debug level (hidden by default)
 
@@ -134,13 +138,13 @@ async fn handle_connection(socket: TcpStream, peer_addr: SocketAddr) {
 /// Process an inbound frame (AlwaysSample = 100%)
 #[tracing::instrument(skip_all, fields(session_id = %session.id(), frame_size = frame.len()))]
 pub fn process_frame(session: &Session, frame: &[u8]) -> Result<Message> {
-    // TLV decode (hot path, sample at 0.1%)
+    // Message decode (hot path, sample at 0.1%)
     let instant = std::time::Instant::now();
     let message = if should_sample_hot_path() {
-        let decode_span = tracing::debug_span!("tlv::decode");
-        decode_span.in_scope(|| tlv::decode(frame))
+        let decode_span = tracing::debug_span!("message::decode");
+        decode_span.in_scope(|| wire2::header::decode_message(frame, max_message_bytes))
     } else {
-        tlv::decode(frame)
+        wire2::header::decode_message(frame, max_message_bytes)
     }?;
     
     METRICS.histogram_observe_us(
@@ -269,7 +273,7 @@ impl Router {
 
 ### Layer 4: Protocol/Codecs (Sync)
 
-**Files:** `src/protocol/tlv.rs`, `src/protocol/{domain}_codec.rs`
+**Files:** `src/protocol/wire2/header.rs`, `src/protocol/{domain}_codec.rs`
 
 **Goal:** Track codec performance and errors
 
@@ -281,7 +285,7 @@ impl MyDomainCodec {
         let start = std::time::Instant::now();
         
         let result = if should_sample_hot_path() {
-            let span = tracing::debug_span!("tlv::encode", domain = "my_domain");
+            let span = tracing::debug_span!("message::encode", domain = "my_domain");
             span.in_scope(|| Self::_encode_impl(msg))
         } else {
             Self::_encode_impl(msg)
@@ -501,7 +505,7 @@ FITZ_LOG_FORMAT=json FITZ_LOG_LEVEL=debug cargo test kv_basics -- --nocapture
 ## Next Steps
 
 1. **Implement Layer 1 (API)** - Track connections and frames
-2. **Implement Layer 2 (Session)** - Track auth and TLV codec
+2. **Implement Layer 2 (Session)** - Track auth and message codec
 3. **Implement Layer 3 (Router)** - Track routing and delivery (highest ROI)
 4. **Keep the dedicated `/metrics` listener private** - Export raw Prometheus only from `FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT`.
 5. **Add distributed tracing** - Link parent/child messages via OpenTelemetry

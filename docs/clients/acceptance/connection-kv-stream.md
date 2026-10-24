@@ -19,7 +19,7 @@
 **Then:**
 
 - Server authenticates the JWT and establishes internal session state
-- Server responds with success (silent acceptance — no explicit ACK)
+- Server responds with HELLO (type 2), carrying the negotiated version, capabilities, message limit, in-flight limit, and diagnostic session id
 - Client sends no extra shard or routing metadata
 - Client can proceed with domain operations
 - Subsequent frames are authorized per normalized route-shaped permissions
@@ -31,8 +31,8 @@
 **When:** Client sends CONNECT frame  
 **Then:**
 
-- Server closes connection with error message
-- Client receives close reason: "connect failed: <reason>"
+- Server sends CONNECT_REJECTED (type 3) with a protocol-block code and diagnostic message, flushes it, and closes the connection
+- Client classifies rejection by code: 0001 unauthorized or 0051 unprovisioned identity family
 - Client does NOT retry with same JWT
 
 ### AC-CONN-004: Anonymous Mode (When Enabled)

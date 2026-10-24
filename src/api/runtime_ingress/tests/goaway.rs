@@ -33,11 +33,10 @@ fn open_connected_session(
         ),
         Arc::new(CapturingSink(frames.clone())) as Arc<dyn MailboxSink>,
     );
+    let mut session = make_session_info(session_id, TransportKind::Tcp);
+    session.route_family = crate::runtime::routing::RouteFamily::new(1);
     rt.block_on(async {
-        ingress
-            .on_open(make_session_info(session_id, TransportKind::Tcp))
-            .await
-            .unwrap();
+        ingress.on_open(session).await.unwrap();
         ingress
             .on_frame(
                 session_id,

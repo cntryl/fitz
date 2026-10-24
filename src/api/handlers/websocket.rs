@@ -169,6 +169,7 @@ async fn send_websocket_batch<S>(
     ws_sender: &mut S,
     first_frame: Bytes,
     outbound_rx: &mut tokio::sync::mpsc::Receiver<Bytes>,
+    outbound_sink: Option<&crate::api::outbound::SessionOutboundSink>,
 ) -> Result<usize, String>
 where
     S: Sink<hyper_tungstenite::tungstenite::Message> + Unpin,
@@ -176,6 +177,7 @@ where
 {
     use hyper_tungstenite::tungstenite::Message;
 
+    let mut rejected = super::is_connect_rejected_frame(&first_frame);
     ws_sender
         .feed(Message::Binary(first_frame))
         .await
@@ -185,6 +187,7 @@ where
         let Ok(frame) = outbound_rx.try_recv() else {
             break;
         };
+        rejected |= super::is_connect_rejected_frame(&frame);
         ws_sender
             .feed(Message::Binary(frame))
             .await
@@ -195,9 +198,13 @@ where
         .flush()
         .await
         .map_err(|error| format!("WebSocket writer error: {error}"))?;
+    if let Some(sink) = outbound_sink.filter(|_| rejected) {
+        sink.connection.mark_rejection_flushed();
+    }
     Ok(frame_count)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_websocket_writer<S>(
     mut ws_sender: futures_util::stream::SplitSink<
         hyper_tungstenite::WebSocketStream<S>,
@@ -209,6 +216,7 @@ async fn run_websocket_writer<S>(
     ingress_for_writes: Arc<dyn Ingress>,
     mut control_rx: tokio::sync::mpsc::Receiver<hyper_tungstenite::tungstenite::Message>,
     last_pong: Arc<AtomicU64>,
+    outbound_sink: Arc<crate::api::outbound::SessionOutboundSink>,
 ) -> Result<(), String>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -235,6 +243,7 @@ where
                             &mut ws_sender,
                             frame,
                             &mut outbound_rx,
+                            Some(&outbound_sink),
                         ).await?;
                         for _ in 0..frame_count {
                             runtime_for_writes.increment_messages_sent();
@@ -368,6 +377,7 @@ where
     let ingress_for_writes = ingress.clone();
     // Capture the handle so we can await graceful drain when the session closes.
     let writer_last_pong = last_pong.clone();
+    let writer_sink = sink.clone();
     let writer_handle = tokio::spawn(async move {
         run_websocket_writer(
             ws_sender,
@@ -377,6 +387,7 @@ where
             ingress_for_writes,
             control_rx,
             writer_last_pong,
+            writer_sink,
         )
         .await
     });
@@ -524,11 +535,12 @@ where
 
                 let frame_result = {
                     let _busy = context.sink.begin_frame();
-                    crate::api::session::process_session_frame_at(
+                    crate::api::session::process_bounded_session_frame_at(
                         context.session,
                         frame,
                         context.ingress,
                         received_at,
+                        context.sink,
                     )
                     .await
                 };
@@ -550,6 +562,7 @@ where
                     continue;
                 }
                 if let Err(error) = frame_result {
+                    context.sink.connection.flush_rejection().await;
                     if crate::api::session::is_stale_session_frame_error(&error) {
                         tracing::debug!(
                             session_id = context.session_id,
@@ -772,7 +785,7 @@ mod tests {
                 messages.push(message);
                 std::future::ready(Ok::<_, std::convert::Infallible>(messages))
             });
-            send_websocket_batch(&mut sink, Bytes::from_static(b"first"), &mut rx)
+            send_websocket_batch(&mut sink, Bytes::from_static(b"first"), &mut rx, None)
                 .await
                 .expect("send WebSocket frame batch")
         };

@@ -27,12 +27,11 @@ What every client sees change:
   flags byte and requests with a budget presence byte, Notice `PUBLISH`
   honors `ACK_REQUESTED`.
 
-**Upgrade order.** Ship the 2.0 line of every supported SDK (.NET,
-TypeScript, Go, Python, Rust) and upgrade every consumer to it, then upgrade
-the broker. Mixed versions are prohibited: a client on the wrong version fails
-its first message, it does not degrade. Schedule the broker upgrade as a
-drain: the 0.2.x broker closes sessions after its grace, consumers reconnect
-to the 0.3.0 broker with their 2.0 SDK.
+**Upgrade order.** Publish and qualify the 2.0 line of every supported SDK
+(.NET, TypeScript, Go, Python, Rust) before cutover. Drain and stop the old
+broker and consumers, then activate the 0.3.0 broker and 2.0 consumers together.
+Mixed versions are prohibited: neither SDK line can connect to the other
+broker generation. Consumers reconnect to the new broker using their 2.0 SDK.
 
 **Rollback.** Roll back the broker and the SDKs together; the same
 prohibition applies in reverse. The wire change touches no persisted data.
@@ -41,7 +40,21 @@ storage rows and carry their own migration notes.
 
 **Configuration.** `FITZ_MAX_MESSAGE_BYTES` (default 1 MiB) is now the one
 message limit: the transport frame bound, the outbound framing bound, and the
-`max_message_bytes` every client reads from `HELLO`.
+`max_message_bytes` every client reads from `HELLO`. It includes the 15-byte
+header; the supported range is 65,550 to 4,294,967,295 bytes. Queue admission
+reserves enough space for routed reserve metadata and both reserve forms
+obey this configured budget. `HELLO.max_in_flight` is a per-connection bound
+through terminal completion; excess requests return protocol BUSY 0005,
+NOT_APPLIED, while the connection stays open. Smaller domain limits still
+apply (for example, 16 parked Queue reserves).
+
+**Retry policy.** RPC 6050 WORKER_NOT_FOUND is INDETERMINATE: a dispatched
+worker may have applied the operation before disconnecting. Retry only when
+the application knows the work is idempotent or verifies its outcome.
+
+**Rust embedding API.** The unused `QueueError` and `LeaseError` enums were
+removed. Use domain response types and the catalog-backed constants in
+`protocol::error_codes`; the removed numeric enums contained wire-1 codes.
 
 ## Midge 0.4.1
 

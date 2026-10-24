@@ -70,8 +70,8 @@ Decisions behind the header:
   and deferred answers (a parked Queue `RESERVE`, a contended Lease `ACQUIRE`).
   A correlation may receive more than one frame; a domain defines when the
   sequence ends. Zero is reserved for frames that answer nothing.
-- `length` is `u32`. The negotiated `max_message_bytes` bounds it, not the
-  field width.
+- `length` is `u32`. The negotiated `max_message_bytes` bounds the complete
+  15-byte header plus value; a value may use at most `max_message_bytes - 15`.
 - Reserved flag bits must be zero. A set reserved bit is a protocol error
   answered with `UNSUPPORTED` on the request's own type and correlation, not
   a connection close: the header is read in full before the flags are

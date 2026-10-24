@@ -110,7 +110,7 @@ impl Ingress for RuntimeIngress {
         // HELLO ahead of any answer.
         if authenticated.session_established {
             self.domain_frame_dispatcher()
-                .announce_hello(session_id, route_family);
+                .announce_hello(session_id, authenticated.control_reply_family);
         }
         if let Some(service_name) = &authenticated.service_name {
             self.domain_frame_dispatcher()

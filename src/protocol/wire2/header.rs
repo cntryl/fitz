@@ -100,7 +100,7 @@ pub enum MessageError {
         message_type: u16,
         correlation: Option<NonZeroU64>,
     },
-    /// The declared length exceeds the negotiated limit.
+    /// The declared value length exceeds the negotiated message budget minus its header.
     TooLarge { length: u32, max: u32 },
     /// The frame holds a different number of value bytes than the header declares.
     LengthMismatch { declared: u32, actual: usize },
@@ -118,7 +118,7 @@ impl std::fmt::Display for MessageError {
             Self::TooLarge { length, max } => {
                 write!(
                     f,
-                    "message length {length} exceeds the negotiated limit {max}"
+                    "message value length {length} exceeds the value budget {max}"
                 )
             }
             Self::LengthMismatch { declared, actual } => {
@@ -213,10 +213,14 @@ pub fn decode_message(
     max_message_bytes: u32,
 ) -> Result<(MessageHeader, &[u8]), MessageError> {
     let header = MessageHeader::decode(frame)?;
-    if header.length > max_message_bytes {
+    let max_value_bytes =
+        max_message_bytes.saturating_sub(u32::try_from(HEADER_LEN).unwrap_or(u32::MAX));
+    if max_message_bytes < u32::try_from(HEADER_LEN).unwrap_or(u32::MAX)
+        || header.length > max_value_bytes
+    {
         return Err(MessageError::TooLarge {
             length: header.length,
-            max: max_message_bytes,
+            max: max_value_bytes,
         });
     }
     let value = &frame[HEADER_LEN..];
@@ -339,7 +343,7 @@ mod tests {
             error,
             MessageError::TooLarge {
                 length: LIMIT + 1,
-                max: LIMIT
+                max: LIMIT - u32::try_from(HEADER_LEN).unwrap()
             }
         );
     }
@@ -373,5 +377,36 @@ mod tests {
 
         // Assert
         assert!(header.flags.is_ack_requested());
+    }
+
+    #[test]
+    fn should_accept_a_message_at_the_complete_message_limit() {
+        // Arrange
+        let frame = encode_message(
+            104,
+            HeaderFlags::none(),
+            correlation(1),
+            &vec![42; usize::try_from(LIMIT).unwrap() - HEADER_LEN],
+        );
+        // Act
+        let decoded = decode_message(&frame, LIMIT);
+        // Assert
+        assert!(decoded.is_ok());
+        assert_eq!(frame.len(), usize::try_from(LIMIT).unwrap());
+    }
+
+    #[test]
+    fn should_count_the_header_against_the_message_limit() {
+        // Arrange
+        let frame = encode_message(
+            104,
+            HeaderFlags::none(),
+            correlation(1),
+            &vec![42; usize::try_from(LIMIT).unwrap() - HEADER_LEN + 1],
+        );
+        // Act
+        let decoded = decode_message(&frame, LIMIT);
+        // Assert
+        assert!(matches!(decoded, Err(MessageError::TooLarge { .. })));
     }
 }

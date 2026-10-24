@@ -234,6 +234,16 @@ fn control_and_envelope_vectors(actual: &mut String) {
         "error_envelope_4005_busy",
         &fitz::protocol::error_codes::encode_error_body(4005, "busy"),
     );
+    vector(
+        actual,
+        "error_envelope_0005_connection_busy",
+        &fitz::protocol::error_codes::encode_error_body(5, "busy"),
+    );
+    vector(
+        actual,
+        "error_envelope_6050_worker_outcome_indeterminate",
+        &fitz::protocol::error_codes::encode_error_body(6050, "worker gone"),
+    );
 }
 
 fn domain_request_vectors(actual: &mut String) {

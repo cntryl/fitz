@@ -7,6 +7,30 @@ mod storage_local_and_stream;
 
 #[test]
 #[serial]
+fn should_accept_a_message_limit_that_carries_the_largest_existing_domain_payload() {
+    // Arrange
+    let mut config = auth_ready_config().with_bind_addr("127.0.0.1".to_string());
+    config.max_frame_size = usize::from(u16::MAX) + crate::protocol::wire2::header::HEADER_LEN;
+    // Act
+    let result = TransportConfig::from_boot_config(&config).validate(false);
+    // Assert
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[test]
+#[serial]
+fn should_reject_a_message_limit_that_cannot_carry_the_largest_existing_domain_payload() {
+    // Arrange
+    let mut config = auth_ready_config().with_bind_addr("127.0.0.1".to_string());
+    config.max_frame_size = usize::from(u16::MAX) + crate::protocol::wire2::header::HEADER_LEN - 1;
+    // Act
+    let result = TransportConfig::from_boot_config(&config).validate(false);
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+#[serial]
 fn should_validate_transport_independently_of_invalid_drain() {
     // Arrange
     let mut config = auth_ready_config();

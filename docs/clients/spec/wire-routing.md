@@ -103,16 +103,16 @@ Actual bytes on wire:
 [0x00 0x68]                              (type=104, KV PUT)
 [0x00]                                   (flags=0)
 [0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x01]  (correlation=1)
-[0x00 0x00 0x00 0x39]                    (length=57 bytes)
+[0x00 0x00 0x00 0x2F]                    (length=47 bytes)
   [0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x01]  (tx_id=1, u64 BE)
-  [0x00 0x00 0x00 0x15]                  (route_len=21)
-  [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]  (route="kv://prod/app/users", 21 bytes)
+  [0x00 0x00 0x00 0x13]                  (route_len=19)
+  [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]  (route="kv://prod/app/users", 19 bytes)
   [0x00 0x00 0x00 0x03]                  (key_len=3)
   [62 6f 62]                             (key="bob", 3 bytes)
   [0x00 0x00 0x00 0x05]                  (value_len=5)
   [61 6c 69 63 65]                       (value="alice", 5 bytes)
 
-Total frame size: 15 (header) + 57 (payload) = 72 bytes
+Total frame size: 15 (header) + 47 (payload) = 62 bytes
 ```
 
 **Example 2: Notice SUBSCRIBE (MessageType=501)**
@@ -128,11 +128,11 @@ Actual bytes on wire:
 [0x01 0xF5]                              (type=501, Notice SUBSCRIBE)
 [0x00]                                   (flags=0)
 [0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x02]  (correlation=2)
-[0x00 0x00 0x00 0x18]                    (length=24 bytes)
-  [0x00 0x00 0x00 0x14]                  (route_pattern_len=20)
-  [6e 6f 74 69 63 65 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 2a]  (pattern="notice://prod/app/*", 20 bytes)
+[0x00 0x00 0x00 0x17]                    (length=23 bytes)
+  [0x00 0x00 0x00 0x13]                  (route_pattern_len=19)
+  [6e 6f 74 69 63 65 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 2a]  (pattern="notice://prod/app/*", 19 bytes)
 
-Total frame size: 15 (header) + 24 (payload) = 39 bytes
+Total frame size: 15 (header) + 23 (payload) = 38 bytes
 ```
 
 **Example 3: KV BEGIN (MessageType=100)**
@@ -682,8 +682,16 @@ Clients MUST implement queueing, backoff, and bounded concurrency:
 Brokers signal backpressure through **domain error responses**. There is no separate backpressure frame. When a domain's internal queue is full, the broker returns a domain error in the standard response format:
 
 - RPC: `6005 = ERR_BUSY`
-- Queue: `4005 = ERR_QUEUE_FULL`
-- Other domains: connection close if internal buffers overflow
+- Queue: `4005 = ERR_BUSY`, including exhausted pending-reserve capacity
+- Every other domain: its `x005 BUSY` code
+
+Every such error carries class BUSY and effect NOT_APPLIED. The connection
+stays open. The broker also enforces HELLO's connection-wide `max_in_flight`
+(64): excess requests receive protocol code 0005. A queued Lease ACQUIRE
+holds its slot until its later grant or error; an RPC call holds its slot
+until its terminal RESPONSE. Intermediate frames do not release capacity.
+Other domains may enforce smaller local limits. Fire-and-forget Notice
+publishes and worker response/cleanup frames do not occupy request slots.
 
 **Client behavior on backpressure errors:**
 
@@ -692,7 +700,9 @@ Brokers signal backpressure through **domain error responses**. There is no sepa
 3. Retry the failed operation after backoff
 4. If backpressure persists, surface error to caller
 
-**Notice domain exception:** Since PUBLISH is fire-and-forget with no response, the broker silently drops notifications under backpressure. Clients have no visibility into dropped notices — this is by design (best-effort semantics).
+**Notice:** A PUBLISH without `ACK_REQUESTED` is fire-and-forget and may be
+dropped under backpressure. With `ACK_REQUESTED`, rejection is observable as
+BUSY/NOT_APPLIED; success means accepted for fan-out, never delivered.
 
 ## Routing
 

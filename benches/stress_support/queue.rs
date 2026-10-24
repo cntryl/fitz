@@ -1,4 +1,4 @@
-use super::{complete, empty_legacy_success, error_code, payload, request, require_ok};
+use super::{complete, empty_success, error_code, payload, request, require_ok};
 use crate::stress_support::types::{BenchFailure, StepOutcome};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
 use fitz::protocol::error_codes::queue::ERR_BUSY;
@@ -69,7 +69,7 @@ impl QueueDriver {
             204,
         )
         .await?;
-        empty_legacy_success(&acknowledged, "Queue ACK")?;
+        empty_success(&acknowledged, "Queue ACK")?;
         Ok(if reservation.capacity_rejections == 0 {
             StepOutcome::Completed
         } else {

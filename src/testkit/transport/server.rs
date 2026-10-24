@@ -436,6 +436,7 @@ impl TestServer {
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
+                max_message_bytes: boot_config.max_frame_size,
                 route_families: boot_config.route_families.clone(),
                 schedule_write_policy,
 

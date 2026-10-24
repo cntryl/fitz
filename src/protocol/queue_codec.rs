@@ -135,6 +135,7 @@ pub fn encode_response(_message_type: u16, response: &QueueResponse) -> Vec<u8> 
         | QueueResponse::InvalidSubscriptionPattern { .. }
         | QueueResponse::SubscriptionLimit
         | QueueResponse::QueueNotFound
+        | QueueResponse::Busy
         | QueueResponse::Error { .. } => {
             let (code, message) = queue_error_code_and_message(response);
             return crate::protocol::error_codes::encode_error_body(code, &message);
@@ -161,6 +162,10 @@ fn queue_error_code_and_message(response: &QueueResponse) -> (u16, String) {
             "subscription registration limit exceeded".to_string(),
         ),
         QueueResponse::QueueNotFound => (queue::ERR_QUEUE_NOT_FOUND, "QueueNotFound".to_string()),
+        QueueResponse::Busy => (
+            queue::ERR_BUSY,
+            "queue pending reserve capacity reached".to_string(),
+        ),
         QueueResponse::Error { message } => (queue::ERR_BACKEND_ERROR, message.clone()),
         _ => unreachable!("queue_error_code_and_message called for success response"),
     }

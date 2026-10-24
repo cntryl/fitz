@@ -12,6 +12,7 @@ fn usize_to_u32_saturating(value: usize) -> u32 {
 
 fn domain_setup_options() -> DomainSetupOptions {
     DomainSetupOptions {
+        max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
         route_families: vec![1, 2, 3, 4, 5, 6, 7],
         schedule_write_policy: crate::domains::WritePolicy::BestEffort,
 
@@ -30,6 +31,7 @@ fn cloud_domain_setup_options(
     durable_write_policy: crate::domains::WritePolicy,
 ) -> DomainSetupOptions {
     DomainSetupOptions {
+        max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
         route_families: vec![1],
         schedule_write_policy: durable_write_policy,
 

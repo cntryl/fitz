@@ -157,14 +157,15 @@ Response (status=1):
   must occupy whole segments. No subscription is created for an invalid
   pattern. Every grammar violation (empty pattern, wrong scheme, empty
   segment, partial-segment wildcard such as `ord*ers`, adjacent `**`
-  segments, or a pattern over 4096 bytes or 64 segments) answers 3004
+  segments, or a pattern over 4096 bytes or 64 segments) answers 3003
   `INVALID_PATTERN` with a message naming the violation. On a broker that
-  requires authentication, ingress validates the route first and answers 3002
-  `UNAUTHORIZED` before the Notice domain sees the request
+  requires authentication, ingress validates the route first and may reject
+  malformed authorization routes before the Notice domain sees the request;
+  a permission denial answers 3001 `UNAUTHORIZED`
 - A session may retain at most 1,024 registrations total and 128 wildcard
   registrations. Duplicate `(session, original registration string)` requests
-  are idempotent and checked before either limit; overflow returns 3050
-  `REGISTRATION_LIMIT`
+  are idempotent and checked before either limit; overflow returns 3004
+  `SUBSCRIPTION_LIMIT`
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 

@@ -82,13 +82,17 @@ contains a whole-segment wildcard, decode `concrete_route` before each item and
 use that route for EXTEND and COMPLETE. Wildcard reservation supports `*` and
 `**` as complete segments, including unknown realm, area, or resource segments.
 
-The broker bounds each RESERVE response to one message under `max_message_bytes`. If a queued message
-cannot fit in an otherwise empty response using the requested concrete or
-wildcard item encoding, the broker moves it to dead-letter state with reason
+The broker bounds each RESERVE response to one message under `max_message_bytes`,
+including the 15-byte header. ENQUEUE and batch admission reject bodies that
+could not fit a wildcard RESERVE at that configured limit, before storing them.
+Queue has no fixed 64 KiB body ceiling. If a previously stored message
+cannot fit even an otherwise empty concrete response, the broker moves it
+to dead-letter state with reason
 `reserve_response_too_large` with best-effort persistence and
 continues reserving later work. A message that fits an empty response but not
-the remaining bytes of a partial
-batch stays ready for the next RESERVE response.
+the remaining bytes of a partial batch stays ready for the next RESERVE
+response. A previously stored body that fits a concrete response but not the
+wildcard metadata overhead remains ready for a concrete reserve.
 
 #### EXTEND Request
 
@@ -605,7 +609,7 @@ routing, without confirming that a remote handler stopped.
 | Code | Name | Meaning | Client Guidance |
 | ---: | --- | --- | --- |
 | 6007 | ERR_TIMEOUT | The request budget or broker timeout expired before completion, including while queued | Retry with backoff only if the operation is safe to retry; timeout alone does not prove that work was never dispatched |
-| 6050 | ERR_WORKER_NOT_FOUND | The assigned worker disconnected or unregistered before completion | Retry with backoff only if the operation is safe to retry |
+| 6050 | ERR_WORKER_NOT_FOUND | The assigned worker disconnected or unregistered before completion; effect INDETERMINATE | The worker may have applied the operation. Retry only idempotent work or verify its outcome first |
 | 6005 | ERR_BUSY | The broker's RPC pending queue is full | Retry with exponential backoff and jitter |
 | 6051 | ERR_ROUTE_NOT_REGISTERED | No live worker is registered for the route | Retry with backoff after allowing workers to register |
 | 6052 | ERR_CORRELATION_NOT_FOUND | Response, ACK, or cancellation referenced an unknown or finished correlation | Treat the correlation as invalid or finished; do not blindly retry the same correlation |

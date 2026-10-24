@@ -40,7 +40,9 @@ policy item 4 applies in full. Before tagging:
 5. Storage rows in the ledger carry their own migration notes and rehearsed
    export or reset steps.
 
-## Stream error envelope generation 2 release gate
+## Historical wire 1: Stream error envelope generation 2 release gate
+
+This gate applies to pre-0.3.0 releases. The wire-2 gate above supersedes it.
 
 For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK
 versions that decode status 2 before releasing the broker change. Verify legacy

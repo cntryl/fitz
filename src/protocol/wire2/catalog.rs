@@ -96,7 +96,7 @@ pub const PROTOCOL_ROWS: [CodeEntry; 7] = {
 
 /// Domain-specific codes, by block.
 pub const DOMAIN_ROWS: [CodeEntry; 38] = {
-    use Effect::NotApplied as No;
+    use Effect::{Indeterminate as Ind, NotApplied as No};
     use ErrorClass as C;
     [
         row(1050, "TRANSACTION_NOT_FOUND", C::NotFound, No),
@@ -128,7 +128,7 @@ pub const DOMAIN_ROWS: [CodeEntry; 38] = {
         row(5055, "ACQUIRE_WAIT_EXPIRED", C::Domain, No),
         row(5056, "WAITERS_LIMIT", C::Busy, No),
         row(5057, "INVALID_LIST_CURSOR", C::BadRequest, No),
-        row(6050, "WORKER_NOT_FOUND", C::NotFound, No),
+        row(6050, "WORKER_NOT_FOUND", C::NotFound, Ind),
         row(6051, "ROUTE_NOT_REGISTERED", C::NotFound, No),
         row(6052, "CORRELATION_NOT_FOUND", C::NotFound, No),
         row(6053, "INVALID_SEQUENCE", C::BadRequest, No),
