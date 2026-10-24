@@ -173,6 +173,21 @@ fn spawn_tcp_frame_task(
                 )
                 .await
             };
+            if let Err(crate::session::SessionError::Unsupported {
+                message_type,
+                correlation,
+                reason,
+            }) = &frame_result
+            {
+                super::answer_unsupported_frame(
+                    &context.outbound_sink,
+                    context.session_id,
+                    *message_type,
+                    *correlation,
+                    reason,
+                )?;
+                continue;
+            }
             if let Err(error) = frame_result {
                 if crate::api::session::is_stale_session_frame_error(&error) {
                     tracing::debug!(

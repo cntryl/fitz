@@ -184,6 +184,29 @@ pub(super) async fn reap_session_tasks(label: &'static str, tasks: &SessionTasks
     }
 }
 
+/// Answer a frame the broker will not serve with `UNSUPPORTED` on its own
+/// message type and correlation, keeping the session open.
+pub(super) fn answer_unsupported_frame(
+    sink: &crate::api::outbound::SessionOutboundSink,
+    session_id: u64,
+    message_type: u16,
+    correlation: Option<std::num::NonZeroU64>,
+    reason: &'static str,
+) -> Result<(), String> {
+    tracing::warn!(
+        session_id,
+        message_type,
+        reason,
+        "answering an unsupported frame"
+    );
+    let payload = crate::protocol::error_codes::encode_error_body(
+        crate::protocol::error_codes::protocol::ERR_UNSUPPORTED,
+        reason,
+    );
+    sink.send_message(session_id, message_type, correlation, &payload)
+        .map_err(|error| format!("could not answer unsupported frame: {error}"))
+}
+
 pub(super) async fn drain_session_tasks(label: &'static str, task_sets: Vec<SessionTasks>) {
     let drain = async {
         for tasks in &task_sets {

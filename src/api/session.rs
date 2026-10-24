@@ -251,6 +251,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_report_a_reserved_flag_bit_as_unsupported_without_dispatch() {
+        // Arrange
+        let mut session = test_session();
+        let correlation = std::num::NonZeroU64::new(77);
+        let mut frame = encode_message(200, HeaderFlags::none(), correlation, b"mutation");
+        frame[2] |= 0b1000_0000;
+        let ingress = RecordingIngress::default();
+
+        // Act
+        let result = process_session_frame(&mut session, Bytes::from(frame), &ingress).await;
+
+        // Assert
+        assert!(matches!(
+            result,
+            Err(SessionError::Unsupported {
+                message_type: 200,
+                correlation: Some(c),
+                ..
+            }) if Some(c) == correlation
+        ));
+        assert!(ingress.message_types.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn should_pass_no_correlation_for_a_zero_header() {
         // Arrange
         let mut session = test_session();

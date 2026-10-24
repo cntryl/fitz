@@ -76,6 +76,14 @@ pub fn decode_wire_error(payload: &[u8]) -> Result<WireError, String> {
     }
 }
 
+/// Protocol and session block (0xxx): answered before a request reaches a domain.
+pub mod protocol {
+    pub const ERR_UNAUTHORIZED: u16 = 1;
+    pub const ERR_BUSY: u16 = 5;
+    pub const ERR_BAD_REQUEST: u16 = 8;
+    pub const ERR_UNSUPPORTED: u16 = 10;
+}
+
 /// KV domain (block 1xxx).
 pub mod kv {
     pub const ERR_UNAUTHORIZED: u16 = 1001;
@@ -247,6 +255,7 @@ mod tests {
     fn should_give_every_named_constant_a_catalog_row() {
         // Arrange
         let named = [
+            protocol::ERR_UNSUPPORTED,
             kv::ERR_TRANSACTION_ABORTED,
             stream::ERR_READ_RESPONSE_TOO_LARGE,
             notice::ERR_TRANSPORT_CLOSED,

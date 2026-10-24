@@ -72,12 +72,12 @@ Decisions behind the header:
   sequence ends. Zero is reserved for frames that answer nothing.
 - `length` is `u32`. The negotiated `max_message_bytes` bounds it, not the
   field width.
-- Reserved flag bits must be zero. A set reserved bit is a malformed header
-  and the broker closes the connection, as for a length mismatch. A later
-  version may assign a reserved bit (for example compression or body
-  continuation) only behind a capability bit, so a conformant client never
-  sets one the broker did not negotiate, and the close only ever reaches a
-  client that is already broken.
+- Reserved flag bits must be zero. A set reserved bit is a protocol error
+  answered with `UNSUPPORTED` on the request's own type and correlation, not
+  a connection close: the header is read in full before the flags are
+  validated, so the answer can be addressed. A later version may assign a
+  reserved bit (for example compression or body continuation) only behind a
+  capability bit, so a 1.0 client never sees one it did not negotiate.
 
 ### 3.2 Handshake
 
@@ -290,7 +290,7 @@ are now in sections 3 and 8.
 | --- | --- | --- | --- |
 | 2026-10-23 | Open the 0.3.0 milestone as the wire-format break that becomes 1.0.0 | maintainer | Breaking changes gathered over the following days, including Midge |
 | 2026-10-23 | Section 5 items 1 through 12 | maintainer with Jev | Two Jev rounds; second round narrowed the five close calls |
-| 2026-10-23 | A set reserved flag bit closes the connection instead of answering `UNSUPPORTED` | maintainer | Answering needs a parsed type and correlation from a header already known to be malformed; a conformant client never sets the bit |
+| 2026-10-23 | A set reserved flag bit is answered with `UNSUPPORTED` on the open connection, as section 3.1 says | maintainer | Briefly implemented as a close; reverted to the design on the maintainer's instruction by reading type and correlation before validating the flags |
 
 ## 7. Work breakdown
 

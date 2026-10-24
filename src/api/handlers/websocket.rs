@@ -532,6 +532,23 @@ where
                     )
                     .await
                 };
+                if let Err(crate::session::SessionError::Unsupported {
+                    message_type,
+                    correlation,
+                    reason,
+                }) = &frame_result
+                {
+                    if let Err(reason) = super::answer_unsupported_frame(
+                        context.sink,
+                        context.session_id,
+                        *message_type,
+                        *correlation,
+                        reason,
+                    ) {
+                        break Err(reason);
+                    }
+                    continue;
+                }
                 if let Err(error) = frame_result {
                     if crate::api::session::is_stale_session_frame_error(&error) {
                         tracing::debug!(

@@ -18,7 +18,9 @@ A frame carries exactly one message. There is no record list, no variable-width
 type, and no 64 KiB value cap: `length` is bounded only by the
 `max_message_bytes` the broker states in `HELLO`. A frame whose header does
 not match the bytes present, or a message longer than `max_message_bytes`, is
-a protocol error and the broker closes the connection.
+a protocol error and the broker closes the connection. A set reserved flag bit
+is answered with 0010 `UNSUPPORTED` on the same message type and correlation,
+and the connection stays open.
 
 ### Request Correlation
 

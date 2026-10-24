@@ -93,8 +93,13 @@ pub struct MessageHeader {
 pub enum MessageError {
     /// Fewer than [`HEADER_LEN`] bytes.
     HeaderTruncated { got: usize },
-    /// A reserved flag bit was set.
-    ReservedFlags(u8),
+    /// A reserved flag bit was set. The type and correlation are still read,
+    /// so the broker can answer `UNSUPPORTED` instead of closing.
+    ReservedFlags {
+        bits: u8,
+        message_type: u16,
+        correlation: Option<NonZeroU64>,
+    },
     /// The declared length exceeds the negotiated limit.
     TooLarge { length: u32, max: u32 },
     /// The frame holds a different number of value bytes than the header declares.
@@ -107,7 +112,9 @@ impl std::fmt::Display for MessageError {
             Self::HeaderTruncated { got } => {
                 write!(f, "message header needs {HEADER_LEN} bytes, got {got}")
             }
-            Self::ReservedFlags(bits) => write!(f, "reserved header flags set: {bits:#010b}"),
+            Self::ReservedFlags { bits, .. } => {
+                write!(f, "reserved header flags set: {bits:#010b}")
+            }
             Self::TooLarge { length, max } => {
                 write!(
                     f,
@@ -148,15 +155,21 @@ impl MessageHeader {
             return Err(MessageError::HeaderTruncated { got: frame.len() });
         }
         let message_type = u16::from_be_bytes([frame[0], frame[1]]);
-        let flags = HeaderFlags::from_bits(frame[2]).map_err(MessageError::ReservedFlags)?;
         let mut correlation = [0_u8; 8];
         correlation.copy_from_slice(&frame[3..11]);
+        let correlation = NonZeroU64::new(u64::from_be_bytes(correlation));
+        let flags =
+            HeaderFlags::from_bits(frame[2]).map_err(|bits| MessageError::ReservedFlags {
+                bits,
+                message_type,
+                correlation,
+            })?;
         let mut length = [0_u8; 4];
         length.copy_from_slice(&frame[11..15]);
         Ok(Self {
             message_type,
             flags,
-            correlation: NonZeroU64::new(u64::from_be_bytes(correlation)),
+            correlation,
             length: u32::from_be_bytes(length),
         })
     }
@@ -281,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_reserved_flag_bits_without_reading_the_value() {
+    fn should_report_reserved_flag_bits_with_their_request_identity() {
         // Arrange
         let mut frame = encode_message(100, HeaderFlags::none(), correlation(1), b"x");
         frame[2] = 0b1000_0010;
@@ -290,7 +303,14 @@ mod tests {
         let error = decode_message(&frame, LIMIT).expect_err("reserved bits");
 
         // Assert
-        assert_eq!(error, MessageError::ReservedFlags(0b1000_0010));
+        assert_eq!(
+            error,
+            MessageError::ReservedFlags {
+                bits: 0b1000_0010,
+                message_type: 100,
+                correlation: correlation(1),
+            }
+        );
     }
 
     #[test]

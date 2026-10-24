@@ -95,13 +95,14 @@
 ### AC-ERROR-001: Protocol Parse Errors
 
 **MUST** handle malformed frames gracefully
-**Given:** Client sends a frame whose header `length` disagrees with the bytes present, or sets a reserved flag bit  
+**Given:** Client sends a frame whose header `length` disagrees with the bytes present  
 **When:** Server receives malformed frame  
 **Then:**
 
 - Server closes connection with a protocol error
 - Client logs error and does NOT retry same malformed data
 - **One message per frame.** A frame carries exactly one 15-byte header and its value; the client **MUST NOT** pack a second message after the first.
+- **A set reserved flag bit does not close the connection.** The broker answers `0010 UNSUPPORTED` on the same message type and correlation; the client surfaces it as that request's error and keeps the session.
 
 ### AC-ERROR-002: Domain Error Codes
 

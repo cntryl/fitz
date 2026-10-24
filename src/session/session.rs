@@ -212,6 +212,13 @@ impl SessionInfo {
 #[derive(Debug, Clone)]
 pub enum SessionError {
     Decode(MessageError),
+    /// The header named a request the broker will not serve (a reserved flag
+    /// bit); the transport answers `UNSUPPORTED` and keeps the session.
+    Unsupported {
+        message_type: u16,
+        correlation: Option<std::num::NonZeroU64>,
+        reason: &'static str,
+    },
     Mux(MuxError),
     /// Ingress requested close with reason
     IngressClose(String),
@@ -223,6 +230,11 @@ impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Decode(err) => write!(f, "message decode error: {err}"),
+            Self::Unsupported {
+                message_type,
+                reason,
+                ..
+            } => write!(f, "unsupported message {message_type}: {reason}"),
             Self::Mux(err) => write!(f, "Mux error: {err}"),
             Self::IngressClose(reason) => write!(f, "ingress requested close: {reason}"),
             Self::Backpressure(channel) => write!(f, "backpressure on channel {channel}"),
@@ -377,7 +389,18 @@ impl Session {
             crate::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
             crate::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
             error!(session_id = self.info.session_id, error = %error, "Session message decode error");
-            SessionError::Decode(error)
+            match error {
+                MessageError::ReservedFlags {
+                    message_type,
+                    correlation,
+                    ..
+                } => SessionError::Unsupported {
+                    message_type,
+                    correlation,
+                    reason: "reserved header flag bit set",
+                },
+                other => SessionError::Decode(other),
+            }
         })?;
         debug!(
             session_id = self.info.session_id,
