@@ -58,7 +58,7 @@ Storage rows follow the Midge work tracked in that repository and the
 | ID | Change | Why | Status | Issue |
 | --- | --- | --- | --- | --- |
 | R-01 | `StreamClientError` and `NoticeClientError` kinds map to the new code table | Follows W-04 | landed | Landed with W-04/W-12/W-13 |
-| R-02 | `protocol::tlv` codec retired: `MessageType` and `WireMessage` live in `protocol::message`; testkit `FrameBuilder`/`FrameParser` | Follows W-01 | landed | The `tier1_hotpath_tlv` and `tier2_subsystem_tlv_pipeline` bench targets keep their names because the workflows name them; renaming needs an authorized workflow change |
+| R-02 | `protocol::tlv` codec retired: `MessageType` and `WireMessage` live in `protocol::message`; testkit `FrameBuilder`/`FrameParser` | Follows W-01 | landed | Bench targets renamed to `tier1_hotpath_message` and `tier2_subsystem_message_pipeline` (workflow matrices updated on the maintainer's instruction); their rows in `config/bench_baseline.json` go stale until the next authorized baseline refresh |
 
 ## Release gates for 0.3.0
 

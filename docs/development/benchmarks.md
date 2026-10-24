@@ -312,7 +312,7 @@ FITZ_QUEUE_DRAIN_PAIRS=1000 cargo bench --locked --bench queue_drain_latency \
 ```bash
 export FITZ_LOG_LEVEL=off
 export OTEL_ENABLED=false
-cargo bench --quiet --bench tier1_hotpath_tlv -- --workload decode_one
+cargo bench --quiet --bench tier1_hotpath_message -- --workload decode_one
 cargo bench --quiet --bench tier2_subsystem_queue -- --workload ack_256_messages_primary
 cargo bench --quiet --bench tier4_rpc_roundtrip -- --workload should_measure_tcp_request_response_roundtrip
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"

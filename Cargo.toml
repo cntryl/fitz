@@ -101,9 +101,9 @@ harness = false
 path = "benches/tier1_hotpath_matcher.rs"
 
 [[bench]]
-name = "tier1_hotpath_tlv"
+name = "tier1_hotpath_message"
 harness = false
-path = "benches/tier1_hotpath_tlv.rs"
+path = "benches/tier1_hotpath_message.rs"
 
 [[bench]]
 name = "tier1_hotpath_mux"
@@ -147,9 +147,9 @@ harness = false
 path = "benches/tier2_subsystem_subscriptions.rs"
 
 [[bench]]
-name = "tier2_subsystem_tlv_pipeline"
+name = "tier2_subsystem_message_pipeline"
 harness = false
-path = "benches/tier2_subsystem_tlv_pipeline.rs"
+path = "benches/tier2_subsystem_message_pipeline.rs"
 
 [[bench]]
 name = "tier2_subsystem_router"
