@@ -60,6 +60,9 @@ impl QueueActor {
 
     /// Handle send operation
     pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        if self.storage_outcome_is_unknown() {
+            return Self::unknown_outcome_response();
+        }
         if let Err(reason) = self.validate_deliverable_body(body.len()) {
             return QueueResponse::BadRequest { reason };
         }
@@ -177,6 +180,9 @@ impl QueueActor {
     /// Send multiple messages in one transaction (batch).
     /// Same semantics as `N×handle_send`; use for throughput when the caller has many messages.
     pub fn handle_send_batch(&mut self, items: &[(Bytes, Option<u64>)]) -> QueueResponse {
+        if self.storage_outcome_is_unknown() {
+            return Self::unknown_outcome_response();
+        }
         if items.is_empty() {
             return QueueResponse::SentBatch { ids: vec![] };
         }

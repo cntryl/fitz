@@ -196,7 +196,7 @@ impl QueueFamilyState {
         response_bytes_remaining: &mut usize,
         route: &crate::runtime::routing::Route,
     ) -> Result<(WildcardActorOutcome, bool), String> {
-        self.with_actor(key, |actor| {
+        let (mut outcome, created_actor, reconstructed) = self.with_actor(key, |actor| {
             let counts_before = actor.live_counts();
             let changed = actor.process_due_work();
             let (response, wire_budget_exhausted) = receive_with_route_wire_budget(
@@ -214,7 +214,14 @@ impl QueueFamilyState {
                 counts,
                 changed: changed || counts != counts_before,
             }
-        })
+        })?;
+        if reconstructed {
+            if let Some(warm_actor) = self.actor_registry.get_mut(key) {
+                outcome.counts = warm_actor.actor.live_counts();
+                outcome.changed = true;
+            }
+        }
+        Ok((outcome, created_actor))
     }
 
     #[cfg(test)]

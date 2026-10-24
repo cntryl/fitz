@@ -278,16 +278,28 @@ impl QueueFamilyState {
         &mut self,
         key: &crate::domains::queue::QueueKey,
         operation: F,
-    ) -> Result<(R, bool), String>
+    ) -> Result<(R, bool, bool), String>
     where
         F: FnOnce(&mut crate::domains::queue::QueueActor) -> R,
     {
         let response_payload_limit = self.response_payload_limit;
-        self.actor_registry
-            .with_actor(key, &self.store, &self.dedup_store, |actor| {
-                actor.response_payload_limit = response_payload_limit;
-                operation(actor)
-            })
+        let ((result, unknown_outcome), created_actor) =
+            self.actor_registry
+                .with_actor(key, &self.store, &self.dedup_store, |actor| {
+                    actor.response_payload_limit = response_payload_limit;
+                    let result = operation(actor);
+                    (result, actor.storage_outcome_is_unknown())
+                })?;
+
+        if unknown_outcome {
+            self.actor_registry.remove(key);
+            self.mark_fast_flush_dirty(key.family);
+            self.mark_admin_snapshot_dirty();
+            self.actor_registry
+                .with_actor(key, &self.store, &self.dedup_store, |_| ())?;
+        }
+
+        Ok((result, created_actor, unknown_outcome))
     }
 
     pub(super) fn maybe_sweep_idle_actors(&mut self) {
@@ -311,14 +323,15 @@ impl QueueFamilyState {
             .take_idle_sweep_batch(QUEUE_IDLE_SWEEP_BATCH_SIZE);
 
         for key in sweep_keys {
-            let (last_used, counts, due_work_changed) = {
+            let (last_used, counts, due_work_changed, unknown_outcome) = {
                 let Some(warm_actor) = self.actor_registry.get_mut(&key) else {
                     continue;
                 };
                 let last_used = warm_actor.last_used;
                 let due_work_changed = warm_actor.actor.process_due_work();
                 let counts = warm_actor.actor.live_counts();
-                (last_used, counts, due_work_changed)
+                let unknown_outcome = warm_actor.actor.storage_outcome_is_unknown();
+                (last_used, counts, due_work_changed, unknown_outcome)
             };
             if due_work_changed {
                 changed = true;
@@ -327,6 +340,38 @@ impl QueueFamilyState {
 
             if let Some(notification) = self.record_ready_state(&key, counts) {
                 notifications.push((key.clone(), notification));
+            }
+
+            if unknown_outcome {
+                self.actor_registry.remove(&key);
+                dirty_families.insert(key.family);
+                changed = true;
+                match self.actor_registry.with_actor(
+                    &key,
+                    &self.store,
+                    &self.dedup_store,
+                    |actor| actor.live_counts(),
+                ) {
+                    Ok((recovered_counts, _)) => {
+                        if recovered_counts.total() > 0 {
+                            self.reservation_book.insert_key(key.clone());
+                        }
+                        if let Some(notification) = self.record_ready_state(&key, recovered_counts)
+                        {
+                            notifications.push((key, notification));
+                        }
+                    }
+                    Err(error) => {
+                        self.ready_states.remove(&key);
+                        removed_keys.push(key.clone());
+                        tracing::error!(
+                            queue = ?key,
+                            error_reason = %error,
+                            "Failed to reconstruct queue actor after unknown commit outcome"
+                        );
+                    }
+                }
+                continue;
             }
 
             let idle_for = now.saturating_duration_since(last_used);
@@ -376,7 +421,7 @@ impl QueueFamilyState {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<Option<crate::domains::queue::projection::QueueDeadLetterSnapshot>, String> {
-        let (result, _) = self.with_actor(key, |actor| actor.admin_dead_letter(id))?;
+        let (result, _, _) = self.with_actor(key, |actor| actor.admin_dead_letter(id))?;
         result
     }
 
@@ -390,10 +435,17 @@ impl QueueFamilyState {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        let ((result, counts), created_actor) = self.with_actor(key, |actor| {
+        let ((result, counts), created_actor, reconstructed) = self.with_actor(key, |actor| {
             let result = actor.replay_dead_letter(id);
             (result, actor.live_counts())
         })?;
+        let counts = if reconstructed {
+            self.actor_registry
+                .get_mut(key)
+                .map_or(counts, |warm_actor| warm_actor.actor.live_counts())
+        } else {
+            counts
+        };
 
         if matches!(result, Ok(true)) {
             self.mark_fast_flush_dirty(key.family);
@@ -422,10 +474,17 @@ impl QueueFamilyState {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        let ((result, counts), created_actor) = self.with_actor(key, |actor| {
+        let ((result, counts), created_actor, reconstructed) = self.with_actor(key, |actor| {
             let result = actor.purge_dead_letter(id);
             (result, actor.live_counts())
         })?;
+        let counts = if reconstructed {
+            self.actor_registry
+                .get_mut(key)
+                .map_or(counts, |warm_actor| warm_actor.actor.live_counts())
+        } else {
+            counts
+        };
 
         if matches!(result, Ok(true)) {
             self.mark_fast_flush_dirty(key.family);

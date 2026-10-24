@@ -507,8 +507,8 @@ impl QueueFamilyState {
         F: FnOnce(&mut crate::domains::queue::QueueActor) -> crate::domains::queue::QueueResponse,
     {
         let actor_lock_start = Instant::now();
-        let ((response, counts, actor_lock_us, actor_exec_us), _) =
-            match self.with_actor(key, |actor| {
+        let ((response, counts, actor_lock_us, actor_exec_us), _, reconstructed) = match self
+            .with_actor(key, |actor| {
                 let actor_lock_us =
                     Self::u128_to_u64_saturating(actor_lock_start.elapsed().as_micros());
                 let actor_exec_start = Instant::now();
@@ -518,17 +518,24 @@ impl QueueFamilyState {
                     Self::u128_to_u64_saturating(actor_exec_start.elapsed().as_micros());
                 (response, actor.live_counts(), actor_lock_us, actor_exec_us)
             }) {
-                Ok(outcome) => outcome,
-                Err(message) => {
-                    self.route_queue_recovery_error(
-                        request_context.envelope,
-                        request_context.meta,
-                        request_context.request_started,
-                        message,
-                    );
-                    return None;
-                }
-            };
+            Ok(outcome) => outcome,
+            Err(message) => {
+                self.route_queue_recovery_error(
+                    request_context.envelope,
+                    request_context.meta,
+                    request_context.request_started,
+                    message,
+                );
+                return None;
+            }
+        };
+        let counts = if reconstructed {
+            self.actor_registry
+                .get_mut(key)
+                .map_or(counts, |warm_actor| warm_actor.actor.live_counts())
+        } else {
+            counts
+        };
         self.observe_histogram_us(obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY, actor_lock_us);
         if counts.total() > 0 {
             self.reservation_book.insert_key(key.clone());

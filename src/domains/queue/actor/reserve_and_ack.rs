@@ -69,6 +69,9 @@ impl QueueActor {
         response_bytes_remaining: &mut usize,
         message_wire_overhead_bytes: usize,
     ) -> (QueueResponse, bool) {
+        if self.storage_outcome_is_unknown() {
+            return (Self::unknown_outcome_response(), false);
+        }
         self.handle_receive_internal(
             Some(session_id),
             inflight_seconds,
@@ -362,6 +365,9 @@ impl QueueActor {
         token: u64,
         inflight_seconds: u64,
     ) -> QueueResponse {
+        if self.storage_outcome_is_unknown() {
+            return Self::unknown_outcome_response();
+        }
         match self.inflight.get(&id) {
             Some(inflight) if inflight.owner_session_id == Some(session_id) => {
                 self.handle_extend_authorized(id, token, inflight_seconds)
@@ -450,6 +456,9 @@ impl QueueActor {
         id: MessageId,
         token: u64,
     ) -> QueueResponse {
+        if self.storage_outcome_is_unknown() {
+            return Self::unknown_outcome_response();
+        }
         match self.inflight.get(&id) {
             Some(inflight) if inflight.owner_session_id == Some(session_id) => {
                 self.handle_ack_authorized(session_id, id, token)
@@ -466,6 +475,9 @@ impl QueueActor {
         session_id: u64,
         acknowledgements: &[(MessageId, u64)],
     ) -> Vec<QueueResponse> {
+        if self.storage_outcome_is_unknown() {
+            return vec![Self::unknown_outcome_response(); acknowledgements.len()];
+        }
         if acknowledgements.is_empty() {
             return Vec::new();
         }
