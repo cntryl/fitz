@@ -23,6 +23,51 @@ fn should_keep_sibling_lease_family_usable_when_one_family_fails_closed() {
     assert!(sink.is_family_running(healthy_family));
 }
 
+#[test]
+fn should_remove_failed_family_lease_from_admin_projection_when_actor_fails() {
+    // Arrange
+    let failed_family = RouteFamily::new(1);
+    let healthy_family = RouteFamily::new(2);
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = LeaseDomain::new(Arc::new(Router::new()), admin_read_model.clone());
+    assert!(matches!(
+        sink.acquire_for_tests(family_acquire_request(failed_family, 7, "failed")),
+        LeaseResponse::Acquired { .. }
+    ));
+    assert!(matches!(
+        sink.acquire_for_tests(family_acquire_request(healthy_family, 8, "healthy")),
+        LeaseResponse::Acquired { .. }
+    ));
+    assert_eq!(
+        admin_read_model
+            .leases_for_route_family(failed_family.as_u64())
+            .len(),
+        1
+    );
+
+    // Act
+    sink.panic_family_for_tests(failed_family);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while sink.is_family_running(failed_family) && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+
+    // Assert
+    assert!(!sink.is_family_running(failed_family));
+    assert!(
+        admin_read_model
+            .leases_for_route_family(failed_family.as_u64())
+            .is_empty(),
+        "failed family's ephemeral lease must not remain visible in admin"
+    );
+    assert_eq!(
+        admin_read_model
+            .leases_for_route_family(healthy_family.as_u64())
+            .len(),
+        1
+    );
+}
+
 fn family_acquire_request(
     family: RouteFamily,
     session_id: u64,
