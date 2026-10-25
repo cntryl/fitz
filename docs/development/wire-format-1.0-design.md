@@ -9,13 +9,17 @@ error meanings are in [error-codes.md](../clients/spec/error-codes.md).
 
 - Each message has a fixed 15-byte header: `u16` type, `u8` flags, `u64`
   correlation, and `u32` value length, all big-endian.
+- Flag bit 0 is `ACK_REQUESTED`; bit 1 is `RESPONSE_FINAL` on correlated
+  server responses. Intermediate phases clear bit 1; terminal replies,
+  including errors, set it. Bits 2–7 are reserved.
 - Each transport frame carries one message. TCP adds a four-byte big-endian
   frame length; WebSocket uses binary messages.
 - `CONNECT` and `HELLO` negotiate the wire version, capabilities, and message
   limits. The server may answer with `CONNECT_REJECTED`; `GOAWAY` announces a
   drain, forced close, or limit change.
 - Wire format 2 defines no capability bits. Message IDs and error codes are
-  exact assignments; gaps are reserved.
+  exact assignments; gaps are reserved. Error 0053 is permanently tombstoned;
+  oversized-frame failures use shared 0008 `BAD_REQUEST`.
 - Errors carry a code, class, effect, and message. The effect distinguishes
   `NOT_APPLIED`, `APPLIED`, and `INDETERMINATE` outcomes.
 - Domain payloads use explicit, length-checked fields. Their layouts and

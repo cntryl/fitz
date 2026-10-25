@@ -8,7 +8,7 @@ followed by exactly `length` bytes of value:
 
 ```
 [u16 BE] type          verb or control identifier (see registry-acceptance.md)
-[u8]     flags         bit 0 ACK_REQUESTED; bits 1..7 reserved, MUST be 0
+[u8]     flags         bit 0 ACK_REQUESTED; bit 1 RESPONSE_FINAL; bits 2..7 reserved, MUST be 0
 [u64 BE] correlation   non-zero on requests and their responses; 0 on notifications and control
 [u32 BE] length        byte count of value
 [bytes]  value         domain or control fields, concatenated, exactly `length` bytes
@@ -40,17 +40,24 @@ correlation, never by arrival order or by message type.
    closes the connection before dispatch. Unacknowledged Notice PUBLISH and
    UUID-addressed RPC worker RESPONSE/lifecycle acknowledgements may use 0
    because they do not open a connection-level response sequence.
-3. **A correlation may receive more than one frame.** Most requests are
-   answered once, but a domain may define a multi-phase answer, and every
-   phase carries the same identifier. A contended Lease `ACQUIRE` is answered
-   immediately with `Queued` and again later with the grant. A client MUST
-   route a correlated frame whose identifier is no longer pending by message
-   type instead of discarding it; dropping it loses the deferred grant.
-4. **Notifications are never correlated.** `NOTIFY` frames carry correlation 0
+3. **A correlation may receive more than one frame.** Every correlated server
+   response sets `RESPONSE_FINAL` only on its terminal frame. Intermediate
+   frames clear it. A contended Lease `ACQUIRE` returns `Queued` with the bit
+   clear, then a grant, timeout, or error on the same correlation with the bit
+   set. Retain the request until that final frame or session close.
+4. A client correlation starts at 1, increases monotonically, and MUST NOT be
+   reused or wrap in a session. After issuing `u64::MAX`, reconnect before
+   another request. A client may abandon a request locally, but retains a
+   cancellation tombstone to consume every later phase until the final frame.
+5. Route every non-zero server correlation only by correlation ID. An unmatched
+   non-zero frame is a protocol fault and MUST NOT fall back to message type,
+   arrival order, or notification dispatch. Unknown server message IDs with
+   correlation zero may be ignored after validating frame bounds and flags.
+6. **Notifications are never correlated.** `NOTIFY` frames carry correlation 0
    and answer no request. Clients MUST route them by message type and
    subscription id, and MUST NOT treat a non-zero correlation as a
    response-vs-notification discriminator.
-5. RPC `REQUEST` (302) and `RESPONSE` (303) keep their 16-byte UUID inside the
+7. RPC `REQUEST` (302) and `RESPONSE` (303) keep their 16-byte UUID inside the
    payload. That UUID is an end-to-end application identifier surviving
    broker, worker, and broker again; `RESPONSE` frames are delivered with
    correlation 0 and are matched by the UUID alone.
@@ -60,7 +67,8 @@ correlation, never by arrival order or by message type.
 | Bit | Name | Meaning |
 |---:|---|---|
 | 0 | `ACK_REQUESTED` | On Notice `PUBLISH`: the broker answers with the common response envelope. Success means accepted for fan-out and never means delivered. Ignored on every other message type. |
-| 1–7 | reserved | MUST be 0. A later version assigns one only behind a capability bit. |
+| 1 | `RESPONSE_FINAL` | Server response only. Set on the terminal frame for a correlated request, including terminal errors; clear on intermediate phases. |
+| 2–7 | reserved | MUST be 0. |
 
 ### Capabilities
 

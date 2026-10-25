@@ -530,7 +530,7 @@ Transport errors signal connection failure:
 | ------------------ | -------------------------------- | ----------------------------------- |
 | Connection refused | Broker unreachable | Retry with backoff; raise to caller |
 | Connection reset | Broker crashed or closed | Reconnect; re-establish session |
-| Message too large | Message exceeds `max_message_bytes` | Close connection; raise error |
+| Message too large | Message exceeds `max_message_bytes` | Return protocol 0008 `BAD_REQUEST` with `NOT_APPLIED` when a response can be framed |
 | Invalid UTF-8 | Malformed frame | Close connection; raise error |
 | Header decode error | Length mismatch or reserved flag set | Close connection; raise error |
 **Clients MUST:**
@@ -571,9 +571,17 @@ correlation, never by message type or arrival order:
 - The broker does not answer same-type requests in receive order: a parked
   Queue `RESERVE` is answered after a later one that completed immediately.
   Correlation is what makes that safe.
-- A correlation may receive more than one frame (a contended Lease `ACQUIRE`
-  answers `Queued` and later the grant); the client routes a frame whose
-  correlation is no longer pending by message type.
+- Correlations start at 1 and increase monotonically for a session. They are
+  never reused or wrapped; reconnect after issuing `u64::MAX`.
+- Multi-phase responses retain their pending entry through the final frame.
+  `RESPONSE_FINAL` (flag bit 1) is set only on the terminal response, including
+  errors. Lease `ACQUIRE` returns intermediate `Queued`, then a terminal grant,
+  timeout, or error on the same correlation.
+- Cancellation or timeout is local abandonment. Keep a tombstone until the
+  final frame or session close. Never reroute a non-zero unmatched correlation
+  by message type or to a notification handler; it is a protocol fault.
+- Unknown server message IDs with correlation zero may be ignored after frame
+  length and flags are validated.
 
 ```python
 # Same message type, many in flight; each response carries its own correlation

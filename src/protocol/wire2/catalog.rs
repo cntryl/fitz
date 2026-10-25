@@ -69,7 +69,8 @@ const fn shared_rows(block: u16) -> [CodeEntry; 10] {
 pub const VERSION_MISMATCH: u16 = 50;
 pub const FAMILY_NOT_PROVISIONED: u16 = 51;
 pub const CONNECT_TIMEOUT: u16 = 52;
-pub const MESSAGE_TOO_LARGE: u16 = 53;
+/// Permanently retired. Oversized frames use shared `BAD_REQUEST` (0008).
+pub const RESERVED_0053: u16 = 53;
 pub const DRAINING: u16 = 54;
 pub const FORCED_CLOSE: u16 = 55;
 pub const LIMIT_CHANGED: u16 = 56;
@@ -87,7 +88,7 @@ pub const PROTOCOL_ROWS: [CodeEntry; 7] = {
             No,
         ),
         row(CONNECT_TIMEOUT, "CONNECT_TIMEOUT", C::BadRequest, No),
-        row(MESSAGE_TOO_LARGE, "MESSAGE_TOO_LARGE", C::BadRequest, No),
+        row(RESERVED_0053, "RESERVED_0053", C::Unsupported, No),
         row(DRAINING, "DRAINING", C::Busy, No),
         row(FORCED_CLOSE, "FORCED_CLOSE", C::Backend, Ind),
         row(LIMIT_CHANGED, "LIMIT_CHANGED", C::Unsupported, No),

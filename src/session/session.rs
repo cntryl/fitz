@@ -408,6 +408,17 @@ impl Session {
             payload_len = header.length,
             "Session decoded message"
         );
+        if crate::protocol::manifest::client_entry(crate::protocol::message::MessageType::new(
+            header.message_type,
+        ))
+        .is_err()
+        {
+            return Err(SessionError::Unsupported {
+                message_type: header.message_type,
+                correlation: header.correlation,
+                reason: "unsupported or server-to-client message type",
+            });
+        }
         let payload = frame.slice(HEADER_LEN..);
         let record = crate::protocol::message::WireMessage::new(
             crate::protocol::message::MessageType::new(header.message_type),

@@ -171,6 +171,16 @@ fn control_and_envelope_vectors(actual: &mut String) {
     );
     vector(
         actual,
+        "header_type104_response_final_corr1_value_ok",
+        &encode_message(
+            104,
+            HeaderFlags::response_final(),
+            NonZeroU64::new(1),
+            b"ok",
+        ),
+    );
+    vector(
+        actual,
         "header_type500_ack_requested_corr2_empty",
         &encode_message(500, HeaderFlags::ack_requested(), NonZeroU64::new(2), b""),
     );

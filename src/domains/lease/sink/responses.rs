@@ -84,10 +84,20 @@ impl LeaseFamilyRuntime<'_> {
                 meta.route_family,
             )
             .with_correlation(meta.correlation)
+            .with_response_final(!matches!(
+                response,
+                crate::domains::lease::protocol::LeaseResponse::Queued { .. }
+            ))
         };
 
         #[cfg(not(test))]
-        let response_ctx = crate::domains::lease::LeaseClientResponse::new(meta, response.clone());
+        let response_ctx = crate::domains::lease::LeaseClientResponse::new(
+            meta.with_response_final(!matches!(
+                response,
+                crate::domains::lease::protocol::LeaseResponse::Queued { .. }
+            )),
+            response.clone(),
+        );
 
         let mut delivered = false;
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx.clone()) {

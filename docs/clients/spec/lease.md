@@ -45,7 +45,7 @@
 - `ttl_secs`: Server-enforced expiration duration (e.g., `60`)
 - `wait_seconds`: Max time to wait if lease held by other owner
   - `0` (or omitted): Immediate fail if unavailable → response `HeldByOther`
-  - `1-30`: Queue and wait up to N seconds → response `Queued` or `Timeout`
+  - `1-30`: Queue and wait up to N seconds → `Queued` intermediate response, then a grant, timeout, or error
   - Server enforces max 30 seconds per request
 
 **Response (status=0, success):**
@@ -376,7 +376,7 @@ event log.
 | `Acquired { token }` | Lease granted immediately | Proceed with work; renew before TTL expiry |
 | `AlreadyHeld { token }` | Already own this lease (idempotent) | No-op; renew/release as needed |
 | `Queued { token }` | Waiting for lease in FIFO queue | Watch for async `Acquired` message from server |
-| `AlreadyQueued { token }` | Already waiting for same lease | No-op; continue waiting |
+| `AlreadyQueued { token }` | This request duplicates an existing queued acquisition | Terminal result for this request; it does not join the existing waiter |
 | `Renewed { token }` | Lease TTL extended; token unchanged | Continue using the same token for future renew/release |
 | `Released` | Lease released successfully | Lease available; next waiter (if any) receives async `Acquired` |
 | `Status { owner, token, ttl_secs, pending }` | Lease holder & queue info | Read-only; useful for debugging |
@@ -415,9 +415,12 @@ event log.
 - Auto-expiry: Pending waiters discarded after their timeout expires
 
 **Deferred Response Behavior:**
-- ACQUIRE with `wait_seconds > 0` returns `Queued` immediately
-- Later, server sends async `Acquired` or `Timeout` when state changes
-- Client must listen for these out-of-band responses on connection
+- A contended ACQUIRE returns `Queued` on its original correlation with
+  `RESPONSE_FINAL` clear.
+- The later grant, timeout, or error uses that same correlation and sets
+  `RESPONSE_FINAL`. The client retains the pending request through that frame.
+- `AlreadyQueued` is a terminal response for the duplicate correlation. It does
+  not join or replace the original waiter.
 
 **Grant on Release/Expiry:**
 - When current holder releases or lease expires, next FIFO waiter automatically gets `Acquired` response

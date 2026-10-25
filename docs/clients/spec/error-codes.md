@@ -90,7 +90,7 @@ before a request reaches a domain.
 | 0050 | VERSION_MISMATCH | 10 | NOT_APPLIED | No wire version in common (`CONNECT_REJECTED`) |
 | 0051 | FAMILY_NOT_PROVISIONED | 2 | NOT_APPLIED | Identity maps to a route family the broker does not serve |
 | 0052 | CONNECT_TIMEOUT | 8 | NOT_APPLIED | No `CONNECT` within the broker's window |
-| 0053 | MESSAGE_TOO_LARGE | 8 | NOT_APPLIED | `length` exceeds the advertised `max_message_bytes` |
+| 0053 | RESERVED_0053 | 10 | NOT_APPLIED | Permanently tombstoned; oversized frames use shared 0008 `BAD_REQUEST` |
 | 0054 | DRAINING | 5 | NOT_APPLIED | `GOAWAY`: planned drain; reconnect within `grace_ms` |
 | 0055 | FORCED_CLOSE | 6 | INDETERMINATE | `GOAWAY`: the broker is closing now; in-flight outcomes unknown |
 | 0056 | LIMIT_CHANGED | 10 | NOT_APPLIED | `GOAWAY`: a negotiated limit changed; reconnect to renegotiate |

@@ -56,6 +56,60 @@ pub(crate) async fn process_bounded_session_frame_at(
     process_frame(session, frame, ingress, received_at, Some(outbound)).await
 }
 
+fn reject_unsupported_frame(
+    outbound: &crate::api::outbound::SessionOutboundSink,
+    session_id: u64,
+    message_type: u16,
+    correlation: Option<std::num::NonZeroU64>,
+) -> Result<(), SessionError> {
+    outbound
+        .connection
+        .validate_unsupported_request(message_type, correlation)
+        .map_err(|reason| SessionError::IngressClose(reason.to_owned()))?;
+    let body = crate::protocol::error_codes::encode_error_body(
+        crate::protocol::error_codes::protocol::ERR_UNSUPPORTED,
+        "unsupported or server-only message type",
+    );
+    outbound
+        .send_unadmitted_response(session_id, message_type, correlation, &body)
+        .map_err(|error| {
+            SessionError::IngressClose(format!(
+                "cannot deliver unsupported-message response: {error:?}"
+            ))
+        })
+}
+
+fn decode_frame_or_reject(
+    session: &mut Session,
+    frame: &Bytes,
+    outbound: Option<&crate::api::outbound::SessionOutboundSink>,
+) -> Result<Option<crate::protocol::mux::ChannelMessage>, SessionError> {
+    match session.decode_frame(frame) {
+        Ok(message) => Ok(Some(message)),
+        Err(SessionError::Unsupported {
+            message_type,
+            correlation,
+            reason,
+        }) => {
+            if let Some(outbound) = outbound {
+                reject_unsupported_frame(
+                    outbound,
+                    session.info().session_id,
+                    message_type,
+                    correlation,
+                )?;
+                return Ok(None);
+            }
+            Err(SessionError::Unsupported {
+                message_type,
+                correlation,
+                reason,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
 async fn process_frame(
     session: &mut Session,
     frame: Bytes,
@@ -63,7 +117,9 @@ async fn process_frame(
     received_at: Instant,
     outbound: Option<&crate::api::outbound::SessionOutboundSink>,
 ) -> Result<(), SessionError> {
-    let message = session.decode_frame(&frame)?;
+    let Some(message) = decode_frame_or_reject(session, &frame, outbound)? else {
+        return Ok(());
+    };
     let channel = message.channel;
     if let Some(outbound) = outbound {
         if let Err(reason) = outbound.connection.validate_request(&message) {

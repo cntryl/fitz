@@ -53,6 +53,24 @@ impl ConnectionState {
         Ok(())
     }
 
+    pub(crate) fn validate_unsupported_request(
+        &self,
+        message_type: u16,
+        correlation: Option<NonZeroU64>,
+    ) -> Result<(), &'static str> {
+        if message_type == 1 {
+            self.connect_seen.store(true, Ordering::Release);
+            return Ok(());
+        }
+        if !self.connect_seen.load(Ordering::Acquire) {
+            return Err("CONNECT must be the first message");
+        }
+        if correlation.is_none() {
+            return Err("request correlation must be non-zero");
+        }
+        Ok(())
+    }
+
     pub(crate) fn admit(&self, message: &ChannelMessage) -> bool {
         let request = match message.msg_type.as_u16() {
             500 if !message.flags.is_ack_requested() => return true,

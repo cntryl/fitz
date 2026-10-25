@@ -234,7 +234,17 @@ impl SessionOutboundSink {
             "Outbound sink: encoding message response for session"
         );
         let encode_start = Self::encode_latency_start();
-        let bytes = self.encode_frame(ctx.msg_type.as_u16(), ctx.correlation, &ctx.payload)?;
+        let flags = if ctx.correlation.is_some() && ctx.response_final {
+            crate::protocol::wire2::header::HeaderFlags::response_final()
+        } else {
+            crate::protocol::wire2::header::HeaderFlags::none()
+        };
+        let bytes = self.encode_frame_with_flags(
+            ctx.msg_type.as_u16(),
+            ctx.correlation,
+            flags,
+            &ctx.payload,
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(ctx.session_id, &bytes)
     }
@@ -251,9 +261,15 @@ impl SessionOutboundSink {
             "Outbound sink: encoding runtime client frame"
         );
         let encode_start = Self::encode_latency_start();
-        let bytes = self.encode_frame(
+        let flags = if frame.meta.correlation.is_some() && frame.meta.response_final {
+            crate::protocol::wire2::header::HeaderFlags::response_final()
+        } else {
+            crate::protocol::wire2::header::HeaderFlags::none()
+        };
+        let bytes = self.encode_frame_with_flags(
             frame.meta.message_type,
             frame.meta.correlation,
+            flags,
             &frame.payload,
         )?;
         Self::observe_encode_latency(encode_start);
@@ -294,13 +310,33 @@ impl SessionOutboundSink {
         correlation: Option<std::num::NonZeroU64>,
         payload: &[u8],
     ) -> Result<Bytes, DeliveryError> {
-        encode_message_frame(msg_type, correlation, payload, self.max_message_bytes).inspect_err(
-            |_| {
-                if required_message(msg_type) {
-                    self.signal_delivery_failure();
-                }
-            },
+        let flags = if correlation.is_some() {
+            crate::protocol::wire2::header::HeaderFlags::response_final()
+        } else {
+            crate::protocol::wire2::header::HeaderFlags::none()
+        };
+        self.encode_frame_with_flags(msg_type, correlation, flags, payload)
+    }
+
+    fn encode_frame_with_flags(
+        &self,
+        msg_type: u16,
+        correlation: Option<std::num::NonZeroU64>,
+        flags: crate::protocol::wire2::header::HeaderFlags,
+        payload: &[u8],
+    ) -> Result<Bytes, DeliveryError> {
+        encode_message_frame_with_flags(
+            msg_type,
+            correlation,
+            flags,
+            payload,
+            self.max_message_bytes,
         )
+        .inspect_err(|_| {
+            if required_message(msg_type) {
+                self.signal_delivery_failure();
+            }
+        })
     }
 
     /// Answer a rejected frame that never acquired an admission slot.
@@ -492,6 +528,21 @@ pub(super) fn encode_message_frame(
     payload: &[u8],
     max_message_bytes: usize,
 ) -> Result<Bytes, DeliveryError> {
+    let flags = if correlation.is_some() {
+        crate::protocol::wire2::header::HeaderFlags::response_final()
+    } else {
+        crate::protocol::wire2::header::HeaderFlags::none()
+    };
+    encode_message_frame_with_flags(msg_type, correlation, flags, payload, max_message_bytes)
+}
+
+pub(super) fn encode_message_frame_with_flags(
+    msg_type: u16,
+    correlation: Option<std::num::NonZeroU64>,
+    flags: crate::protocol::wire2::header::HeaderFlags,
+    payload: &[u8],
+    max_message_bytes: usize,
+) -> Result<Bytes, DeliveryError> {
     let max_payload = max_message_bytes.saturating_sub(crate::protocol::wire2::header::HEADER_LEN);
     if payload.len() > max_payload {
         return Err(DeliveryError::InvalidPayload {
@@ -501,7 +552,7 @@ pub(super) fn encode_message_frame(
     }
     Ok(Bytes::from(crate::protocol::wire2::header::encode_message(
         msg_type,
-        crate::protocol::wire2::header::HeaderFlags::none(),
+        flags,
         correlation,
         payload,
     )))
@@ -736,7 +787,7 @@ mod tests {
         let sent = rx.try_recv().expect("frame sent");
         assert_eq!(
             sent.as_ref(),
-            &[0, 101, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 4, b'b', b'o', b'd', b'y']
+            &[0, 101, 2, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 4, b'b', b'o', b'd', b'y']
         );
     }
 

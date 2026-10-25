@@ -131,6 +131,37 @@ async fn should_refuse_uncorrelated_requests_on_both_transports() {
 }
 
 #[tokio::test]
+async fn should_reject_unassigned_message_before_admission_on_both_transports() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    for websocket in [false, true] {
+        let mut client = WireClient::open(&server, websocket).await;
+        client.connect().await;
+        client
+            .send(&encode_message(
+                999,
+                HeaderFlags::none(),
+                NonZeroU64::new(7),
+                &[],
+            ))
+            .await;
+
+        // Act
+        let rejected = client.receive().await.unwrap();
+        let rejected = decode_message(&rejected, u32::MAX).unwrap().0;
+        client.send(&begin(8)).await;
+        let next = client.receive().await.unwrap();
+        let next = decode_message(&next, u32::MAX).unwrap().0;
+
+        // Assert
+        assert_eq!(rejected.message_type, 999);
+        assert_eq!(rejected.correlation, NonZeroU64::new(7));
+        assert!(rejected.flags.is_response_final());
+        assert_eq!(next.correlation, NonZeroU64::new(8));
+    }
+}
+
+#[tokio::test]
 async fn should_answer_repeated_connect_with_rejection_on_both_transports() {
     // Arrange
     let server = TestServer::start().await.unwrap();

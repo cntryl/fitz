@@ -35,6 +35,8 @@ pub struct ClientFrameMeta {
     /// answers with the common envelope when this is set; every other verb
     /// answers regardless and ignores it.
     pub ack_requested: bool,
+    /// Marks a terminal frame in a correlated response sequence.
+    pub response_final: bool,
 }
 
 impl ClientFrameMeta {
@@ -53,6 +55,7 @@ impl ClientFrameMeta {
             route_family,
             correlation: None,
             ack_requested: false,
+            response_final: true,
         }
     }
 
@@ -67,6 +70,12 @@ impl ClientFrameMeta {
     #[must_use]
     pub fn with_ack_requested(mut self, ack_requested: bool) -> Self {
         self.ack_requested = ack_requested;
+        self
+    }
+
+    #[must_use]
+    pub fn with_response_final(mut self, response_final: bool) -> Self {
+        self.response_final = response_final;
         self
     }
 }

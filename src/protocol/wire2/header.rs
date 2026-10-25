@@ -8,8 +8,10 @@ pub const HEADER_LEN: usize = 15;
 /// Bit 0 of `flags`: the sender wants a status frame for a message that is
 /// otherwise fire-and-forget (Notice `PUBLISH`).
 pub const FLAG_ACK_REQUESTED: u8 = 0b0000_0001;
+/// Bit 1 marks the terminal frame in a correlated response sequence.
+pub const FLAG_RESPONSE_FINAL: u8 = 0b0000_0010;
 
-const RESERVED_FLAGS: u8 = !FLAG_ACK_REQUESTED;
+const RESERVED_FLAGS: u8 = !(FLAG_ACK_REQUESTED | FLAG_RESPONSE_FINAL);
 
 /// Header flags. Reserved bits must be zero on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -24,6 +26,16 @@ impl HeaderFlags {
     #[must_use]
     pub const fn ack_requested() -> Self {
         Self(FLAG_ACK_REQUESTED)
+    }
+
+    #[must_use]
+    pub const fn response_final() -> Self {
+        Self(FLAG_RESPONSE_FINAL)
+    }
+
+    #[must_use]
+    pub const fn is_response_final(self) -> bool {
+        self.0 & FLAG_RESPONSE_FINAL != 0
     }
 
     #[must_use]
@@ -262,6 +274,20 @@ mod tests {
     }
 
     #[test]
+    fn should_round_trip_response_final_flag() {
+        // Arrange
+        let frame = encode_message(104, HeaderFlags::response_final(), correlation(9), b"ok");
+
+        // Act
+        let (header, value) = decode_message(&frame, LIMIT).expect("decode response");
+
+        // Assert
+        assert!(header.flags.is_response_final());
+        assert_eq!(header.correlation, correlation(9));
+        assert_eq!(value, b"ok");
+    }
+
+    #[test]
     fn should_encode_the_documented_byte_layout() {
         // Arrange
         let header = MessageHeader {
@@ -301,7 +327,7 @@ mod tests {
     fn should_report_reserved_flag_bits_with_their_request_identity() {
         // Arrange
         let mut frame = encode_message(100, HeaderFlags::none(), correlation(1), b"x");
-        frame[2] = 0b1000_0010;
+        frame[2] = 0b1000_0000;
 
         // Act
         let error = decode_message(&frame, LIMIT).expect_err("reserved bits");
@@ -310,7 +336,7 @@ mod tests {
         assert_eq!(
             error,
             MessageError::ReservedFlags {
-                bits: 0b1000_0010,
+                bits: 0b1000_0000,
                 message_type: 100,
                 correlation: correlation(1),
             }

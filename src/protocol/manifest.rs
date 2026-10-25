@@ -438,11 +438,25 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
     ),
 ];
 
+// The static lookup intentionally builds a 128 KiB table at compile time.
+#[allow(clippy::large_stack_arrays, clippy::cast_possible_truncation)]
+const fn build_message_index() -> [u16; 65_536] {
+    let mut index = [u16::MAX; 65_536];
+    let mut entry_index = 0;
+    while entry_index < MESSAGE_MANIFEST.len() {
+        let id = MESSAGE_MANIFEST[entry_index].message_id as usize;
+        index[id] = entry_index as u16;
+        entry_index += 1;
+    }
+    index
+}
+
+static MESSAGE_INDEX: [u16; 65_536] = build_message_index();
+
 #[must_use]
 pub fn entry(message_type: MessageType) -> Option<&'static MessageManifestEntry> {
-    MESSAGE_MANIFEST
-        .iter()
-        .find(|entry| entry.message_id == message_type.as_u16())
+    let entry_index = MESSAGE_INDEX[usize::from(message_type.as_u16())];
+    (entry_index != u16::MAX).then(|| &MESSAGE_MANIFEST[usize::from(entry_index)])
 }
 
 /// Returns the exact client-to-server entry or a rejection reason.
@@ -483,6 +497,21 @@ mod tests {
         for entry in MESSAGE_MANIFEST {
             assert!(ids.insert(entry.message_id));
         }
+    }
+
+    #[test]
+    fn should_lookup_assigned_ids_and_keep_manifest_holes_empty() {
+        // Arrange
+        let assigned = MessageType::new(100);
+        let unassigned = MessageType::new(150);
+
+        // Act
+        let assigned_entry = entry(assigned);
+        let hole_entry = entry(unassigned);
+
+        // Assert
+        assert_eq!(assigned_entry.map(|item| item.message_id), Some(100));
+        assert!(hole_entry.is_none());
     }
 
     #[test]

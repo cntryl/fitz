@@ -41,6 +41,9 @@ pub struct FrameContext {
     /// opted in. Zero is reserved as the absent value on the wire, so the
     /// non-zero type carries that invariant instead of a runtime check.
     pub correlation: Option<NonZeroU64>,
+    /// Whether this is the terminal response frame for the correlation.
+    /// Server notifications and uncorrelated traffic ignore this field.
+    pub response_final: bool,
 }
 
 impl FrameContext {
@@ -63,6 +66,7 @@ impl FrameContext {
             payload,
             route_family,
             correlation: None,
+            response_final: true,
         }
     }
 
@@ -70,6 +74,13 @@ impl FrameContext {
     #[must_use]
     pub fn with_correlation(mut self, correlation: Option<NonZeroU64>) -> Self {
         self.correlation = correlation;
+        self
+    }
+
+    /// Mark an intermediate phase in a multi-frame response sequence.
+    #[must_use]
+    pub fn with_response_final(mut self, response_final: bool) -> Self {
+        self.response_final = response_final;
         self
     }
 }
@@ -82,6 +93,7 @@ impl std::fmt::Debug for FrameContext {
             .field("msg_type", &self.msg_type)
             .field("route_family", &self.route_family)
             .field("correlation", &self.correlation)
+            .field("response_final", &self.response_final)
             .field("payload_len", &self.payload.len())
             .finish()
     }
