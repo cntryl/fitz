@@ -341,6 +341,9 @@ pub enum KvError {
     /// Backend storage unavailable
     BackendUnavailable(String),
 
+    /// An accepted storage operation exceeded its deadline.
+    Timeout(String),
+
     /// Backend storage error
     BackendError(String),
 }
@@ -373,6 +376,7 @@ impl std::fmt::Display for KvError {
             KvError::ReadOnlyWrite => write!(f, "Cannot write in read-only transaction"),
             KvError::Conflict(msg) => write!(f, "Transaction conflict: {msg}"),
             KvError::BackendUnavailable(msg) => write!(f, "Backend unavailable: {msg}"),
+            KvError::Timeout(msg) => write!(f, "Backend operation timed out: {msg}"),
             KvError::BackendError(msg) => write!(f, "Backend error: {msg}"),
         }
     }

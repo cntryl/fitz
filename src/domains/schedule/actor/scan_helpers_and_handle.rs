@@ -101,7 +101,7 @@ impl ScheduleActor {
 
     pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
         if let Err(error) = self.reconcile_unknown_commit() {
-            return ScheduleResponse::Error(ScheduleFailure::parse(error));
+            return ScheduleResponse::Error(ScheduleFailure::operation_error(error));
         }
         match msg {
             ScheduleMessage::Create {
@@ -119,7 +119,7 @@ impl ScheduleActor {
                 }
                 match self.create_schedule_with_mode(route, cron, delivery_mode, payload) {
                     Ok(_) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::operation_error(e)),
                 }
             }
             ScheduleMessage::CreateBatch { entries } => {
@@ -133,7 +133,7 @@ impl ScheduleActor {
                 }
                 match self.create_schedules(entries) {
                     Ok(_) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::operation_error(e)),
                 }
             }
             ScheduleMessage::Cancel { route } => {
@@ -145,7 +145,7 @@ impl ScheduleActor {
                 }
                 match self.delete_schedule(&route) {
                     Ok(_) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::operation_error(e)),
                 }
             }
             ScheduleMessage::List { cursor, limit } => {

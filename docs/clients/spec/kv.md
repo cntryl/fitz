@@ -424,8 +424,9 @@ still maintains live session-scoped transaction state keyed by `tx_id`.
 - 1003 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 1004 = ERR_SUBSCRIPTION_LIMIT
 - 1005 = ERR_BUSY (retryable)
+- 1007 = ERR_TIMEOUT (accepted, outcome indeterminate)
 
-`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe. `ERR_BACKEND_ERROR` (1006) and `ERR_TIMEOUT` (1007) both have an indeterminate effect: retry only when the operation is idempotent or after verifying its outcome. A timeout preserves the deadline failure class; it does not prove that a write was not applied.
 
 #### Acceptance Tests
 

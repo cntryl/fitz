@@ -173,6 +173,8 @@ pub enum ScheduleFailureCategory {
     SubscriptionLimit,
     InvalidDeliveryMode,
     Unauthorized,
+    Backend,
+    Timeout,
 }
 
 impl ScheduleFailureCategory {
@@ -188,6 +190,8 @@ impl ScheduleFailureCategory {
             Self::SubscriptionLimit => 7004,
             Self::InvalidDeliveryMode => 7054,
             Self::Unauthorized => 7001,
+            Self::Backend => 7006,
+            Self::Timeout => 7007,
         }
     }
 }
@@ -210,6 +214,20 @@ impl ScheduleFailure {
     #[must_use]
     pub fn parse(message: impl Into<String>) -> Self {
         Self::new(ScheduleFailureCategory::Parse, message)
+    }
+
+    #[must_use]
+    pub fn operation_error(message: impl Into<String>) -> Self {
+        const TIMEOUT: &str = "SCHEDULE_TIMEOUT:";
+        const BACKEND: &str = "SCHEDULE_BACKEND:";
+        let message = message.into();
+        if let Some(message) = message.strip_prefix(TIMEOUT) {
+            Self::new(ScheduleFailureCategory::Timeout, message.trim())
+        } else if let Some(message) = message.strip_prefix(BACKEND) {
+            Self::new(ScheduleFailureCategory::Backend, message.trim())
+        } else {
+            Self::parse(message)
+        }
     }
 }
 

@@ -140,9 +140,14 @@ Response (status=1):
 - 4005 = ERR_BUSY
 - 4008 = ERR_BAD_REQUEST
 - 4006 = ERR_BACKEND_ERROR
+- 4007 = ERR_TIMEOUT (accepted, outcome indeterminate)
 - 4001 = ERR_UNAUTHORIZED
 - 4003 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 4004 = ERR_SUBSCRIPTION_LIMIT
+
+`ERR_TIMEOUT` (4007) preserves the deadline failure class for accepted Queue
+mutations. Its effect is INDETERMINATE: the write may have applied, so retry
+only when the operation is idempotent or after verifying its outcome.
 
 #### Queue SUBSCRIBE (207)
 

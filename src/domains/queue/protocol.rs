@@ -288,6 +288,9 @@ pub enum QueueResponse {
     /// Capacity was exhausted before this request could be retained.
     Busy,
 
+    /// An accepted queue operation exceeded its deadline.
+    Timeout { message: String },
+
     /// Internal error
     Error { message: String },
 }

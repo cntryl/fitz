@@ -120,7 +120,7 @@ fn should_leave_unknown_enqueue_commit_outcome_terminal() {
     let response = actor.handle_send(Bytes::from_static(b"work"), None);
 
     // Assert
-    assert!(matches!(response, QueueResponse::Error { .. }));
+    assert!(matches!(response, QueueResponse::Timeout { .. }));
     assert_eq!(actor.next_id, next_id);
     assert_eq!(actor.ready_count, 0);
     assert!(actor
@@ -145,7 +145,7 @@ fn should_leave_unknown_batch_enqueue_commit_outcome_terminal() {
     let response = actor.handle_send_batch(&items);
 
     // Assert
-    assert!(matches!(response, QueueResponse::Error { .. }));
+    assert!(matches!(response, QueueResponse::Timeout { .. }));
     assert_eq!(actor.next_id, next_id);
     assert_eq!(actor.ready_count, 0);
     for id in [MessageId::new(next_id), MessageId::new(next_id + 1)] {
@@ -321,7 +321,7 @@ fn should_leave_unknown_ack_commit_outcome_terminal() {
     let response = actor.handle_ack_for_session(TEST_SESSION_ID, id, token);
 
     // Assert
-    assert!(matches!(response, QueueResponse::Error { .. }));
+    assert!(matches!(response, QueueResponse::Timeout { .. }));
     assert!(actor.inflight.contains_key(&id));
     assert!(actor.load_record_metadata_from_store(id).is_ok());
 }
@@ -417,7 +417,7 @@ fn should_leave_unknown_batch_ack_commit_outcome_terminal() {
     // Assert
     assert!(responses
         .iter()
-        .all(|response| matches!(response, QueueResponse::Error { .. })));
+        .all(|response| matches!(response, QueueResponse::Timeout { .. })));
     for (id, _) in [first, second] {
         assert!(actor.inflight.contains_key(&id));
         assert!(actor.load_record_metadata_from_store(id).is_ok());

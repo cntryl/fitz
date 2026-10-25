@@ -279,7 +279,9 @@ fn should_not_retry_promotion_with_unknown_commit_outcome() {
     });
 
     // Assert
-    assert!(committed.err().unwrap().contains("indeterminate"));
+    let error = committed.err().unwrap();
+    assert!(error.contains("indeterminate"));
+    assert!(error.starts_with(crate::domains::stream::protocol::ERR_STREAM_TIMEOUT));
 }
 
 #[test]
@@ -294,7 +296,9 @@ fn should_not_retry_global_watermark_with_unknown_commit_outcome() {
     let persisted = store.set_global_watermark(1, 12);
 
     // Assert
-    assert!(persisted.err().unwrap().contains("indeterminate"));
+    let error = persisted.err().unwrap();
+    assert!(error.contains("indeterminate"));
+    assert!(error.starts_with(crate::domains::stream::protocol::ERR_STREAM_TIMEOUT));
 }
 
 #[test]

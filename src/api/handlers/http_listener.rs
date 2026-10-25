@@ -17,6 +17,8 @@ fn http_connection_limit(max_connections: usize) -> usize {
     max_connections.div_ceil(4).clamp(1, 1_024)
 }
 
+const MAX_REJECTED_HTTP_CONNECTIONS: usize = 16;
+
 /// Spawn HTTP/WebSocket listener on configured port.
 ///
 /// # Errors
@@ -58,6 +60,7 @@ pub fn spawn_http_listener_with_bound_socket(
     let http_connection_limiter = Arc::new(tokio::sync::Semaphore::new(http_connection_limit(
         ingress_config.max_connections,
     )));
+    let rejection_limiter = Arc::new(tokio::sync::Semaphore::new(MAX_REJECTED_HTTP_CONNECTIONS));
     let runtime = Arc::new(runtime);
     let mcp_cancellation_token = tokio_util::sync::CancellationToken::new();
     let mcp_state = crate::api::mcp::transport::McpHttpState::from_env(
@@ -88,14 +91,18 @@ pub fn spawn_http_listener_with_bound_socket(
                     match accept_result {
                         Ok((stream, peer_addr)) => {
                             let Ok(permit) = connection_limiter.clone().try_acquire_owned() else {
-                                tokio::spawn(reject_http_connection(stream));
+                                if !spawn_overload_rejection(stream, &connections, &rejection_limiter).await {
+                                    tracing::debug!(%peer_addr, "HTTP overload response capacity reached; dropping connection");
+                                }
                                 continue;
                             };
                             let Ok(http_permit) =
                                 http_connection_limiter.clone().try_acquire_owned()
                             else {
                                 drop(permit);
-                                tokio::spawn(reject_http_connection(stream));
+                                if !spawn_overload_rejection(stream, &connections, &rejection_limiter).await {
+                                    tracing::debug!(%peer_addr, "HTTP overload response capacity reached; dropping connection");
+                                }
                                 continue;
                             };
                             record_connection_opened();
@@ -229,9 +236,32 @@ async fn reject_http_connection(stream: TcpStream) {
                 .unwrap(),
         )
     });
-    let _ = http1::Builder::new()
-        .serve_connection(TokioIo::new(stream), service)
-        .await;
+    let mut builder = http1::Builder::new();
+    builder
+        .keep_alive(false)
+        .timer(TokioTimer::new())
+        .header_read_timeout(crate::api::ingress::HTTP_HEADER_READ_TIMEOUT);
+    let connection = builder.serve_connection(TokioIo::new(stream), service);
+    let _ = tokio::time::timeout(
+        crate::api::ingress::HTTP_CONNECTION_MAX_LIFETIME,
+        connection,
+    )
+    .await;
+}
+
+async fn spawn_overload_rejection(
+    stream: TcpStream,
+    connections: &super::SessionTasks,
+    rejection_limiter: &Arc<tokio::sync::Semaphore>,
+) -> bool {
+    let Ok(permit) = rejection_limiter.clone().try_acquire_owned() else {
+        return false;
+    };
+    connections.lock().await.spawn(async move {
+        let _permit = permit;
+        reject_http_connection(stream).await;
+    });
+    true
 }
 
 fn is_websocket_upgrade(req: &Request) -> bool {
@@ -244,11 +274,63 @@ fn is_websocket_upgrade(req: &Request) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn should_reserve_global_connection_capacity_from_http() {
         assert_eq!(http_connection_limit(10_000), 1_024);
         assert_eq!(http_connection_limit(100), 25);
         assert_eq!(http_connection_limit(1), 1);
+    }
+
+    #[tokio::test]
+    async fn should_bound_http_overload_rejection_work() {
+        // Arrange
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("local address");
+        let connections = session_tasks();
+        let rejection_limiter =
+            Arc::new(tokio::sync::Semaphore::new(MAX_REJECTED_HTTP_CONNECTIONS));
+        let mut clients = Vec::with_capacity(MAX_REJECTED_HTTP_CONNECTIONS);
+        for _ in 0..MAX_REJECTED_HTTP_CONNECTIONS {
+            let client = TcpStream::connect(address).await.expect("client connect");
+            let (server, _) = listener.accept().await.expect("accepted connection");
+            assert!(spawn_overload_rejection(server, &connections, &rejection_limiter).await);
+            clients.push(client);
+        }
+        let extra_client = TcpStream::connect(address)
+            .await
+            .expect("extra client connect");
+        let (extra_server, _) = listener.accept().await.expect("extra accepted connection");
+
+        // Act
+        let rejected =
+            spawn_overload_rejection(extra_server, &connections, &rejection_limiter).await;
+        let mut extra_response = Vec::new();
+        let read_result = tokio::time::timeout(
+            Duration::from_millis(100),
+            extra_client.take(1).read_to_end(&mut extra_response),
+        )
+        .await
+        .expect("excess socket closes promptly");
+
+        // Assert
+        assert!(!rejected);
+        assert_eq!(read_result.expect("read excess socket"), 0);
+        for mut client in clients {
+            client
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .await
+                .expect("write request");
+            let mut response = Vec::new();
+            client
+                .read_to_end(&mut response)
+                .await
+                .expect("read response");
+            assert!(response.starts_with(b"HTTP/1.1 503"));
+        }
+        let mut tasks = connections.lock().await;
+        while tasks.join_next().await.is_some() {}
     }
 }

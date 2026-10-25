@@ -240,7 +240,7 @@ impl ScheduleDomainRuntime<'_> {
             Err(error) => {
                 self.core.actor = family_actor;
                 let response = ScheduleResponse::Error(
-                    crate::domains::schedule::ScheduleFailure::parse(error),
+                    crate::domains::schedule::ScheduleFailure::operation_error(error),
                 );
                 self.route_schedule_response(envelope, meta, &response, request_started);
                 return None;

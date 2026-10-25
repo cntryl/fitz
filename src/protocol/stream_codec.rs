@@ -227,6 +227,7 @@ fn stream_error_code(kind: StreamClientErrorKind) -> u16 {
         }
         StreamClientErrorKind::ReadResponseTooLarge => stream::ERR_READ_RESPONSE_TOO_LARGE,
         StreamClientErrorKind::Backend => stream::ERR_BACKEND_ERROR,
+        StreamClientErrorKind::Timeout => stream::ERR_TIMEOUT,
         StreamClientErrorKind::BadRequest => stream::ERR_BAD_REQUEST,
     }
 }
@@ -637,6 +638,28 @@ mod tests {
         assert_eq!(
             code,
             crate::protocol::error_codes::stream::ERR_BACKEND_ERROR
+        );
+    }
+
+    #[test]
+    fn should_encode_stream_storage_timeout_with_indeterminate_effect() {
+        // Arrange
+        let response =
+            StreamClientResponseBody::Error("ERR_STREAM_TIMEOUT: midge commit timed out".into());
+
+        // Act
+        let encoded = encode_response(604, &response);
+
+        // Assert
+        let error = crate::protocol::error_codes::decode_wire_error(&encoded)
+            .expect("Stream timeout error envelope");
+        assert_eq!(
+            error.code,
+            crate::protocol::error_codes::stream::ERR_TIMEOUT
+        );
+        assert_eq!(
+            error.effect,
+            crate::protocol::wire2::envelope::Effect::Indeterminate
         );
     }
 

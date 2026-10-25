@@ -184,6 +184,7 @@ fn kv_error_code(error: &KvError) -> u16 {
         KvError::ReadOnlyWrite => kv::ERR_WRITE_IN_READONLY,
         KvError::RealmMismatch => kv::ERR_REALM_MISMATCH,
         KvError::BackendUnavailable(_) | KvError::BackendError(_) => kv::ERR_BACKEND_ERROR,
+        KvError::Timeout(_) => kv::ERR_TIMEOUT,
         KvError::InvalidSubscriptionPattern(_) => kv::ERR_INVALID_SUBSCRIPTION_PATTERN,
         KvError::SubscriptionLimit => kv::ERR_SUBSCRIPTION_LIMIT,
         KvError::InvalidRoute(_)

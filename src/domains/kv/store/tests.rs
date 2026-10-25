@@ -13,6 +13,18 @@ fn should_preserve_unknown_commit_outcome_as_a_backend_error() {
     assert!(matches!(mapped, KvError::BackendError(message) if message == error.to_string()));
 }
 
+#[test]
+fn should_preserve_storage_timeout_as_a_distinct_error() {
+    // Arrange
+    let error = cntryl_midge::MidgeError::Timeout("write exceeded response deadline".into());
+
+    // Act
+    let mapped = KvStore::map_error(&error);
+
+    // Assert
+    assert!(matches!(mapped, KvError::Timeout(message) if message == error.to_string()));
+}
+
 fn local_store() -> (Arc<cntryl_midge::Engine>, KvStore, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let engine = Arc::new(
@@ -195,7 +207,7 @@ fn should_refuse_submission_when_admission_reports_an_unknown_error() {
     let result = transaction.commit(WritePolicy::Sync);
 
     // Assert
-    assert!(matches!(result, Err(KvError::BackendUnavailable(_))));
+    assert!(matches!(result, Err(KvError::Timeout(_))));
     assert_eq!(
         engine
             .metrics()

@@ -486,6 +486,26 @@ fn should_not_infer_read_only_write_from_backend_message() {
 }
 
 #[test]
+fn should_encode_timeout_with_indeterminate_effect() {
+    // Arrange
+    let response = KvResponse::Error {
+        error: KvError::Timeout("commit response deadline elapsed".to_string()),
+    };
+
+    // Act
+    let encoded = encode_response(&response);
+    let decoded =
+        crate::protocol::error_codes::decode_wire_error(&encoded).expect("error envelope");
+
+    // Assert
+    assert_eq!(decoded.code, crate::protocol::error_codes::kv::ERR_TIMEOUT);
+    assert_eq!(
+        decoded.effect,
+        crate::protocol::wire2::envelope::Effect::Indeterminate
+    );
+}
+
+#[test]
 fn should_preserve_kv_wire_golden_vectors() {
     // Arrange
     let request = [

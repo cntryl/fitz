@@ -302,6 +302,7 @@ or wildcard Schedule patterns via `SCHEDULE_SUBSCRIBE` and receiving
 - 7004 = ERR_SUBSCRIPTION_LIMIT
 - 7054 = ERR_INVALID_DELIVERY_MODE
 - 7005 = ERR_BUSY
+- 7006 = ERR_BACKEND_ERROR (accepted operation, outcome indeterminate)
 - 7007 = ERR_TIMEOUT
 
 `ERR_BUSY` (7005) means the broker declined the request before the Schedule

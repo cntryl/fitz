@@ -300,6 +300,14 @@ pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// The smallest deployment limit, leaving room for a 400 KiB Stream event
 /// plus its route, record fields, and replay cursor.
 pub const MIN_MAX_MESSAGE_BYTES: usize = 512 * 1024;
+/// Keep the shared and per-session transport byte budgets within Tokio's
+/// semaphore permit limit while allowing each configured frame twice over.
+pub const MAX_MAX_MESSAGE_BYTES: usize =
+    if tokio::sync::Semaphore::MAX_PERMITS / 2 < u32::MAX as usize {
+        tokio::sync::Semaphore::MAX_PERMITS / 2
+    } else {
+        u32::MAX as usize
+    };
 
 struct TransportConfig<'a> {
     boot: &'a BootConfig,
@@ -316,11 +324,11 @@ impl<'a> TransportConfig<'a> {
             return Err("FITZ_METRICS_BIND_ADDR must not be empty".into());
         }
         if config.max_frame_size < MIN_MAX_MESSAGE_BYTES
+            || config.max_frame_size > MAX_MAX_MESSAGE_BYTES
             || u32::try_from(config.max_frame_size).is_err()
         {
             return Err(format!(
-                "{ENV_MAX_MESSAGE_BYTES} must be between {MIN_MAX_MESSAGE_BYTES} and {} bytes",
-                u32::MAX
+                "{ENV_MAX_MESSAGE_BYTES} must be between {MIN_MAX_MESSAGE_BYTES} and {MAX_MAX_MESSAGE_BYTES} bytes"
             )
             .into());
         }

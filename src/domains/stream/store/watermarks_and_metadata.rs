@@ -187,7 +187,14 @@ impl StreamStore {
                     admission.rejected();
                     admission.wait(&self.db)?;
                 }
-                Err(error) => return Err(format!("commit global watermark failed: {error:?}")),
+                Err(error) => {
+                    let prefix = if matches!(&error, cntryl_midge::MidgeError::Timeout(_)) {
+                        crate::domains::stream::protocol::ERR_STREAM_TIMEOUT
+                    } else {
+                        ""
+                    };
+                    return Err(format!("{prefix}commit global watermark failed: {error:?}"));
+                }
             }
         }
     }

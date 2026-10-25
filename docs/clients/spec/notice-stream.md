@@ -395,7 +395,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - 3006 = ERR_BACKEND_ERROR
 - 3005 = ERR_BUSY (retryable)
 
-`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe. `ERR_BACKEND_ERROR` has an indeterminate effect; retry only when the operation is idempotent or after verifying its outcome.
 - 3001 = ERR_UNAUTHORIZED
 
 #### Acceptance Tests
@@ -839,10 +839,11 @@ code from message wording.
 - 2003 = ERR_INVALID_PATTERN
 - 2004 = ERR_SUBSCRIPTION_LIMIT
 - 2006 = ERR_BACKEND_ERROR
+- 2007 = ERR_TIMEOUT (accepted, outcome indeterminate)
 - 2057 = ERR_READ_RESPONSE_TOO_LARGE (a single record's wire-encoded size alone exceeds `max_message_bytes` from HELLO and can never be returned by any READ call at that offset; this is distinct from `max_bytes` pagination, which stops a page early instead of failing)
 - 2005 = ERR_BUSY (retryable)
 
-`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe. `ERR_BACKEND_ERROR` and `ERR_TIMEOUT` have indeterminate effects; retry only when the operation is idempotent or after verifying its outcome. `ERR_TIMEOUT` retains the accepted operation's deadline failure class.
 
 #### Acceptance Tests
 

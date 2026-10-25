@@ -31,6 +31,30 @@ fn should_reject_a_message_limit_below_512_kib() {
 
 #[test]
 #[serial]
+fn should_accept_the_largest_message_limit_supported_by_transport_budgets() {
+    // Arrange
+    let mut config = auth_ready_config().with_bind_addr("127.0.0.1".to_string());
+    config.max_frame_size = MAX_MAX_MESSAGE_BYTES;
+    // Act
+    let result = TransportConfig::from_boot_config(&config).validate(false);
+    // Assert
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[test]
+#[serial]
+fn should_reject_a_message_limit_that_exceeds_transport_budget_capacity() {
+    // Arrange
+    let mut config = auth_ready_config().with_bind_addr("127.0.0.1".to_string());
+    config.max_frame_size = MAX_MAX_MESSAGE_BYTES + 1;
+    // Act
+    let result = TransportConfig::from_boot_config(&config).validate(false);
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+#[serial]
 fn should_validate_transport_independently_of_invalid_drain() {
     // Arrange
     let mut config = auth_ready_config();

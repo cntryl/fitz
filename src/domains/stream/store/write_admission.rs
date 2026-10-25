@@ -196,7 +196,14 @@ impl StreamStore {
             }
             error @ (cntryl_midge::MidgeError::OutcomeUnknown(_)
             | cntryl_midge::MidgeError::Timeout(_)) => {
-                PromotionTransactionFailure::Ambiguous(format!("midge commit error: {error:?}"))
+                let prefix = if matches!(&error, cntryl_midge::MidgeError::Timeout(_)) {
+                    crate::domains::stream::protocol::ERR_STREAM_TIMEOUT
+                } else {
+                    ""
+                };
+                PromotionTransactionFailure::Ambiguous(format!(
+                    "{prefix}midge commit error: {error:?}"
+                ))
             }
             other
                 if crate::storage::write_admission::is_l0_admission_rejection(

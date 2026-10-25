@@ -84,7 +84,7 @@ impl ScheduleDomainRuntime<'_> {
         match actor.create_schedule_with_mode(route, cron, delivery_mode, payload) {
             Ok(changed) => (ScheduleResponse::Ok, changed),
             Err(error) => (
-                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                ScheduleResponse::Error(ScheduleFailure::operation_error(error)),
                 false,
             ),
         }
@@ -108,7 +108,7 @@ impl ScheduleDomainRuntime<'_> {
         match actor.create_schedules(entries) {
             Ok(changed) => (ScheduleResponse::Ok, changed > 0),
             Err(error) => (
-                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                ScheduleResponse::Error(ScheduleFailure::operation_error(error)),
                 false,
             ),
         }
@@ -137,7 +137,7 @@ impl ScheduleDomainRuntime<'_> {
         match actor.delete_schedule(route) {
             Ok(removed) => (ScheduleResponse::Ok, removed),
             Err(error) => (
-                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                ScheduleResponse::Error(ScheduleFailure::operation_error(error)),
                 false,
             ),
         }

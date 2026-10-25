@@ -13,6 +13,7 @@ impl RuntimeIngress {
             session_actors: Arc::new(DashMap::new()),
             session_inbox_routes: Arc::new(DashMap::new()),
             closing_sessions: Arc::new(DashMap::new()),
+            connecting_sessions: Arc::new(dashmap::DashSet::new()),
             event_handler: None,
             admin_read_model: None,
             auth_required,

@@ -14,13 +14,14 @@ use opentelemetry_sdk::{
     trace::{self as sdktrace, SdkTracerProvider},
     Resource,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing_subscriber::{fmt, prelude::*, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
 /// Global metrics collector (initialized once during boot)
 static METRICS_COLLECTOR: OnceCell<Arc<MetricsCollector>> = OnceCell::new();
+static TRACER_PROVIDERS: OnceCell<Mutex<Vec<SdkTracerProvider>>> = OnceCell::new();
 static HOT_PATH_METRICS_ENABLED: OnceCell<bool> = OnceCell::new();
 
 fn u128_to_u64_saturating(value: u128) -> u64 {
@@ -346,7 +347,12 @@ fn init_observability_with_options(
             .with_batch_exporter(span_exporter)
             .build();
 
-        global::set_tracer_provider(tracer_provider);
+        global::set_tracer_provider(tracer_provider.clone());
+        TRACER_PROVIDERS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("tracer provider lock poisoned")
+            .push(tracer_provider);
         let tracer = global::tracer(crate::observability::SERVICE_NAME);
 
         tracing_subscriber::registry()
@@ -372,4 +378,83 @@ fn init_observability_with_options(
         .clone();
 
     Ok(metrics_collector)
+}
+
+/// Flush buffered spans and stop the OTLP batch exporter during broker teardown.
+///
+/// # Errors
+///
+/// Returns an error when the provider cannot flush or shut down.
+pub(crate) fn shutdown_tracer_provider() -> Result<(), String> {
+    let providers = TRACER_PROVIDERS
+        .get()
+        .map(|provider| {
+            provider
+                .lock()
+                .map_err(|_| "tracer provider lock poisoned".to_string())
+                .map(|mut providers| std::mem::take(&mut *providers))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    shutdown_tracer_providers(providers)
+}
+
+fn shutdown_tracer_providers(providers: Vec<SdkTracerProvider>) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for provider in providers {
+        if let Err(error) = provider.shutdown() {
+            errors.push(error.to_string());
+        }
+    }
+    if !errors.is_empty() {
+        return Err(format!(
+            "OpenTelemetry tracer provider shutdown failed: {}",
+            errors.join("; ")
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shutdown_tracer_providers;
+    use opentelemetry::trace::{Span, Tracer, TracerProvider};
+    use opentelemetry_sdk::{error::OTelSdkResult, trace::SpanExporter};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[derive(Debug)]
+    struct CountingExporter(Arc<AtomicUsize>);
+
+    impl SpanExporter for CountingExporter {
+        fn export(
+            &self,
+            batch: Vec<opentelemetry_sdk::trace::SpanData>,
+        ) -> impl std::future::Future<Output = OTelSdkResult> + Send {
+            self.0.fetch_add(batch.len(), Ordering::SeqCst);
+            std::future::ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn should_export_buffered_spans_when_tracer_providers_shutdown() {
+        // Arrange
+        let exported_spans = Arc::new(AtomicUsize::new(0));
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_batch_exporter(CountingExporter(Arc::clone(&exported_spans)))
+            .build();
+        let tracer = provider.tracer("shutdown-test");
+        tracer.start("buffered span").end();
+
+        // Act
+        tokio::task::spawn_blocking(move || shutdown_tracer_providers(vec![provider]))
+            .await
+            .expect("shutdown worker")
+            .expect("provider shutdown");
+
+        // Assert
+        assert_eq!(exported_spans.load(Ordering::SeqCst), 1);
+    }
 }

@@ -396,6 +396,66 @@ mod tests {
     }
 
     #[test]
+    fn should_encode_schedule_timeout_as_indeterminate_timeout() {
+        // Arrange
+        let persistence_error = crate::domains::schedule::store::SchedulePersistenceError::midge(
+            "commit failed",
+            cntryl_midge::MidgeError::Timeout("deadline elapsed".to_string()),
+        );
+        let operation_error: String = persistence_error.into();
+        let failure = ScheduleFailure::operation_error(operation_error);
+
+        // Act
+        let payload = encode_response(700, &ScheduleResponse::Error(failure));
+
+        // Assert
+        let error = crate::protocol::error_codes::decode_wire_error(&payload)
+            .expect("schedule timeout error envelope");
+        assert_eq!(error.code, schedule_error_codes::ERR_TIMEOUT);
+        assert_eq!(
+            error.effect,
+            crate::protocol::wire2::envelope::Effect::Indeterminate
+        );
+    }
+
+    #[test]
+    fn should_encode_schedule_backend_failure_as_indeterminate_backend() {
+        // Arrange
+        let failure =
+            ScheduleFailure::operation_error("SCHEDULE_BACKEND: commit failed: outcome unknown");
+
+        // Act
+        let payload = encode_response(700, &ScheduleResponse::Error(failure));
+
+        // Assert
+        let error = crate::protocol::error_codes::decode_wire_error(&payload)
+            .expect("schedule backend error envelope");
+        assert_eq!(error.code, schedule_error_codes::ERR_BACKEND_ERROR);
+        assert_eq!(
+            error.effect,
+            crate::protocol::wire2::envelope::Effect::Indeterminate
+        );
+    }
+
+    #[test]
+    fn should_keep_unclassified_schedule_input_errors_as_bad_request() {
+        // Arrange
+        let failure = ScheduleFailure::operation_error("invalid cron expression");
+
+        // Act
+        let payload = encode_response(700, &ScheduleResponse::Error(failure));
+
+        // Assert
+        let error = crate::protocol::error_codes::decode_wire_error(&payload)
+            .expect("schedule bad request error envelope");
+        assert_eq!(error.code, schedule_error_codes::ERR_BAD_REQUEST);
+        assert_eq!(
+            error.effect,
+            crate::protocol::wire2::envelope::Effect::NotApplied
+        );
+    }
+
+    #[test]
     fn should_encode_coded_schedule_error_for_every_operation() {
         // Arrange
         let response = ScheduleResponse::Error(ScheduleFailure::new(

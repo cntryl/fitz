@@ -10,6 +10,7 @@ pub(super) struct SessionRegistry {
     pub(super) session_inbox_routes:
         std::sync::Arc<dashmap::DashMap<u64, crate::runtime::routing::Route>>,
     pub(super) closing_sessions: std::sync::Arc<dashmap::DashMap<u64, ()>>,
+    pub(super) connecting_sessions: std::sync::Arc<dashmap::DashSet<u64>>,
     pub(super) event_handler: Option<std::sync::Arc<dyn Fn(SessionEvent) + Send + Sync>>,
     pub(super) admin_read_model:
         Option<std::sync::Arc<crate::control::admin::read_model::AdminReadModel>>,

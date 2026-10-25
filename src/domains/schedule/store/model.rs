@@ -125,6 +125,15 @@ impl SchedulePersistenceError {
     pub fn is_write_stall(&self) -> bool {
         matches!(self.source, Some(cntryl_midge::MidgeError::WriteStall(_)))
     }
+
+    fn classified_message(&self) -> String {
+        let category = if matches!(&self.source, Some(cntryl_midge::MidgeError::Timeout(_))) {
+            "SCHEDULE_TIMEOUT:"
+        } else {
+            "SCHEDULE_BACKEND:"
+        };
+        format!("{category} {self}")
+    }
 }
 
 impl std::fmt::Display for SchedulePersistenceError {
@@ -150,7 +159,7 @@ impl From<String> for SchedulePersistenceError {
 
 impl From<SchedulePersistenceError> for String {
     fn from(error: SchedulePersistenceError) -> Self {
-        error.to_string()
+        error.classified_message()
     }
 }
 

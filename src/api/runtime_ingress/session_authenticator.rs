@@ -36,6 +36,32 @@ pub(super) struct SessionAuthenticator {
     pub(super) router: Option<Arc<crate::runtime::Router>>,
 }
 
+struct ConnectAttemptGuard {
+    session_id: u64,
+    connecting_sessions: Arc<dashmap::DashSet<u64>>,
+}
+
+impl ConnectAttemptGuard {
+    fn try_acquire(
+        registry: &super::session_registry::SessionRegistry,
+        session_id: u64,
+    ) -> Option<Self> {
+        registry
+            .connecting_sessions
+            .insert(session_id)
+            .then(|| Self {
+                session_id,
+                connecting_sessions: registry.connecting_sessions.clone(),
+            })
+    }
+}
+
+impl Drop for ConnectAttemptGuard {
+    fn drop(&mut self) {
+        self.connecting_sessions.remove(&self.session_id);
+    }
+}
+
 impl RuntimeIngress {
     pub(super) fn session_authenticator(&self) -> &SessionAuthenticator {
         &self.authenticator
@@ -133,6 +159,31 @@ impl ConnectDiagnosticsBudget {
 }
 
 impl SessionAuthenticator {
+    fn reserve_connect_attempt(
+        &self,
+        session_id: u64,
+    ) -> Result<ConnectAttemptGuard, IngressDecision> {
+        ConnectAttemptGuard::try_acquire(&self.registry, session_id).ok_or_else(|| {
+            self.reject_connect(
+                session_id,
+                &ConnectRefusal {
+                    code: crate::protocol::error_codes::protocol::ERR_BAD_REQUEST,
+                    message: "CONNECT already in progress for this session".to_owned(),
+                },
+            )
+        })
+    }
+
+    fn reject_completed_connect(&self, session_id: u64) -> IngressDecision {
+        self.reject_connect(
+            session_id,
+            &ConnectRefusal {
+                code: crate::protocol::error_codes::protocol::ERR_BAD_REQUEST,
+                message: "CONNECT already completed for this session".to_owned(),
+            },
+        )
+    }
+
     fn log_connect_failure(&self, session_id: u64, compact: &str, stage: &str, error: &str) {
         const MAX_LOGGED_ERROR_CHARS: usize = 512;
 
@@ -195,6 +246,11 @@ impl SessionAuthenticator {
         } else {
             None
         };
+        let _connect_attempt = if connect.is_some() {
+            Some(self.reserve_connect_attempt(session_id)?)
+        } else {
+            None
+        };
         if connect.is_some()
             && self
                 .registry
@@ -202,13 +258,7 @@ impl SessionAuthenticator {
                 .get(&session_id)
                 .is_some_and(|entry| entry.authenticated)
         {
-            return Err(self.reject_connect(
-                session_id,
-                &ConnectRefusal {
-                    code: crate::protocol::error_codes::protocol::ERR_BAD_REQUEST,
-                    message: "CONNECT already completed for this session".to_owned(),
-                },
-            ));
+            return Err(self.reject_completed_connect(session_id));
         }
         let verified_auth = if needs_authentication && self.auth_required {
             let Some(connect) = connect.as_ref() else {
@@ -235,6 +285,11 @@ impl SessionAuthenticator {
                 "unknown session: {session_id}"
             )));
         };
+
+        if connect.is_some() && entry.authenticated {
+            drop(entry);
+            return Err(self.reject_completed_connect(session_id));
+        }
 
         let control_reply_family = entry.route_family;
         let mut notify_frame = None;

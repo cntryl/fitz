@@ -495,8 +495,8 @@ impl QueueActor {
                 .collect();
         };
 
-        if let Err(message) = self.commit_ack_batch_delete(&deletes) {
-            return vec![QueueResponse::Error { message }; acknowledgements.len()];
+        if let Err(error) = self.commit_ack_batch_delete(&deletes) {
+            return vec![error.into_response(); acknowledgements.len()];
         }
 
         for delete in deletes {
@@ -557,8 +557,8 @@ impl QueueActor {
         }
 
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
-        if let Err(message) = self.commit_ack_delete(id, index_plan) {
-            return QueueResponse::Error { message };
+        if let Err(error) = self.commit_ack_delete(id, index_plan) {
+            return error.into_response();
         }
 
         self.finish_ack_success(id, dedup_key)
@@ -698,7 +698,7 @@ impl QueueActor {
         &mut self,
         id: MessageId,
         index_plan: PersistedIndexMutationPlan,
-    ) -> Result<(), String> {
+    ) -> Result<(), super::mutation_storage::QueueMutationError> {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
 
@@ -715,13 +715,16 @@ impl QueueActor {
                 error_reason = %error,
                 "Failed to commit queue delete transaction"
             );
-            format!("Failed to commit delete txn for message {id}: {error}")
+            error.with_context(&format!("Failed to commit delete txn for message {id}"))
         })?;
         self.apply_index_mutation_plan(id, index_plan, None);
         Ok(())
     }
 
-    fn commit_ack_batch_delete(&self, deletes: &[AckBatchDelete]) -> Result<(), String> {
+    fn commit_ack_batch_delete(
+        &self,
+        deletes: &[AckBatchDelete],
+    ) -> Result<(), super::mutation_storage::QueueMutationError> {
         self.commit_ack_with_admission_retry(|txn| {
             for delete in deletes {
                 Self::delete_record(txn, delete.header_key.clone(), delete.body_key.clone())
@@ -743,7 +746,7 @@ impl QueueActor {
                 ack_count = deletes.len(),
                 "Failed to commit queue ack batch transaction"
             );
-            format!("Failed to commit queue ack batch transaction: {error}")
+            error.with_context("Failed to commit queue ack batch transaction")
         })
     }
 

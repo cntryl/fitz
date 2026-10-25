@@ -151,9 +151,9 @@ impl QueueActor {
             prepare(txn).map_err(Self::enqueue_staging_error)
         });
         if let Err(error) = result {
-            return QueueResponse::Error {
-                message: format!("Failed to commit transaction: {error}"),
-            };
+            return error
+                .with_context("Failed to commit transaction")
+                .into_response();
         }
         Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
 
@@ -239,9 +239,9 @@ impl QueueActor {
                 .map_err(Self::enqueue_staging_error)
         });
         if let Err(error) = result {
-            return QueueResponse::Error {
-                message: format!("Failed to commit transaction: {error}"),
-            };
+            return error
+                .with_context("Failed to commit transaction")
+                .into_response();
         }
         Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
 
@@ -300,9 +300,20 @@ impl QueueActor {
                 self.queue_key.family.id(),
                 super::recovery_store::QueueTransactionMode::ReadWrite,
             )
-            .map_err(|error| QueueResponse::Error {
-                message: format!("Failed to begin transaction: {error:?}"),
-            })
+            .map_err(|error| Self::store_error_response(&error, "Failed to begin transaction"))
+    }
+
+    fn store_error_response(
+        error: &super::recovery_store::QueueStoreError,
+        context: &str,
+    ) -> QueueResponse {
+        let timed_out = error.is_timeout();
+        let message = format!("{context}: {error:?}");
+        if timed_out {
+            QueueResponse::Timeout { message }
+        } else {
+            QueueResponse::Error { message }
+        }
     }
 
     fn send_timing(
@@ -347,12 +358,12 @@ impl QueueActor {
             Self::encode_record_header(record),
             None,
         )
-        .map_err(|error| QueueResponse::Error {
-            message: format!("Failed to add message header to transaction: {error:?}"),
+        .map_err(|error| {
+            Self::store_error_response(&error, "Failed to add message header to transaction")
         })?;
         txn.put(self.cached_body_key(id), body.to_vec(), None)
-            .map_err(|error| QueueResponse::Error {
-                message: format!("Failed to add message body to transaction: {error:?}"),
+            .map_err(|error| {
+                Self::store_error_response(&error, "Failed to add message body to transaction")
             })?;
 
         if let Some((shard, range)) = ready_index_write {
@@ -361,13 +372,13 @@ impl QueueActor {
                 Self::encode_ready_range_value(range),
                 None,
             )
-            .map_err(|error| QueueResponse::Error {
-                message: format!("Failed to update queue ready index: {error:?}"),
+            .map_err(|error| {
+                Self::store_error_response(&error, "Failed to update queue ready index")
             })?;
         } else {
             txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
-                .map_err(|error| QueueResponse::Error {
-                    message: format!("Failed to update queue delayed index: {error:?}"),
+                .map_err(|error| {
+                    Self::store_error_response(&error, "Failed to update queue delayed index")
                 })?;
         }
 
@@ -515,5 +526,25 @@ impl QueueActor {
             next_id,
             reserved_limit,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QueueActor;
+    use crate::domains::queue::{actor::recovery_store::QueueStoreError, QueueResponse};
+
+    #[test]
+    fn should_preserve_timeout_when_queue_storage_fails_before_commit() {
+        // Arrange
+        let error = QueueStoreError::from_midge(cntryl_midge::MidgeError::Timeout(
+            "begin deadline elapsed".to_string(),
+        ));
+
+        // Act
+        let response = QueueActor::store_error_response(&error, "Failed to begin transaction");
+
+        // Assert
+        assert!(matches!(response, QueueResponse::Timeout { .. }));
     }
 }

@@ -136,6 +136,7 @@ pub fn encode_response(_message_type: u16, response: &QueueResponse) -> Vec<u8> 
         | QueueResponse::SubscriptionLimit
         | QueueResponse::QueueNotFound
         | QueueResponse::Busy
+        | QueueResponse::Timeout { .. }
         | QueueResponse::Error { .. } => {
             let (code, message) = queue_error_code_and_message(response);
             return crate::protocol::error_codes::encode_error_body(code, &message);
@@ -167,6 +168,7 @@ fn queue_error_code_and_message(response: &QueueResponse) -> (u16, String) {
             "queue pending reserve capacity reached".to_string(),
         ),
         QueueResponse::Error { message } => (queue::ERR_BACKEND_ERROR, message.clone()),
+        QueueResponse::Timeout { message } => (queue::ERR_TIMEOUT, message.clone()),
         _ => unreachable!("queue_error_code_and_message called for success response"),
     }
 }
@@ -679,6 +681,29 @@ mod tests {
         assert_eq!(encoded.len(), 9); // 1 status byte + 8 bytes for u64
         assert_eq!(encoded[0], 0); // status: success
         assert_eq!(u64::from_be_bytes(encoded[1..9].try_into().unwrap()), 42);
+    }
+
+    #[test]
+    fn should_encode_timeout_with_indeterminate_effect() {
+        // Arrange
+        let response = QueueResponse::Timeout {
+            message: "queue commit response deadline elapsed".to_string(),
+        };
+
+        // Act
+        let encoded = encode_response(msg_type::ENQUEUE, &response);
+        let decoded = crate::protocol::error_codes::decode_wire_error(&encoded)
+            .expect("timeout error envelope");
+
+        // Assert
+        assert_eq!(
+            decoded.code,
+            crate::protocol::error_codes::queue::ERR_TIMEOUT
+        );
+        assert_eq!(
+            decoded.effect,
+            crate::protocol::wire2::envelope::Effect::Indeterminate
+        );
     }
 
     #[test]

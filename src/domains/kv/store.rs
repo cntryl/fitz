@@ -80,10 +80,8 @@ impl KvStore {
             | cntryl_midge::MidgeError::WriteStall(_)
             | cntryl_midge::MidgeError::LeaseHeld(_)
             | cntryl_midge::MidgeError::LeaseUnavailable(_)
-            | cntryl_midge::MidgeError::Busy(_)
-            | cntryl_midge::MidgeError::Timeout(_) => {
-                KvError::BackendUnavailable(error.to_string())
-            }
+            | cntryl_midge::MidgeError::Busy(_) => KvError::BackendUnavailable(error.to_string()),
+            cntryl_midge::MidgeError::Timeout(_) => KvError::Timeout(error.to_string()),
             cntryl_midge::MidgeError::NotFound
             | cntryl_midge::MidgeError::InvalidArgument(_)
             | cntryl_midge::MidgeError::Corruption(_)

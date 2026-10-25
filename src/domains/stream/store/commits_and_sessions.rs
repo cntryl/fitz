@@ -238,19 +238,26 @@ impl StreamStore {
                     admission.wait(&self.db)?;
                 }
                 Err(error) => {
+                    let prefix = if matches!(&error, cntryl_midge::MidgeError::Timeout(_)) {
+                        crate::domains::stream::protocol::ERR_STREAM_TIMEOUT
+                    } else {
+                        ""
+                    };
                     if matches!(
-                        error,
+                        &error,
                         cntryl_midge::MidgeError::OutcomeUnknown(_)
                             | cntryl_midge::MidgeError::Timeout(_)
                     ) {
                         drop(sequence_lock);
                         self.recover_global_ordering_after_unknown_commit(family).map_err(|recovery_error| {
                             format!(
-                                "commit global reservation failed with unknown outcome: {error:?}; recovery failed: {recovery_error}"
+                                "{prefix}commit global reservation failed with unknown outcome: {error:?}; recovery failed: {recovery_error}"
                             )
                         })?;
                     }
-                    return Err(format!("commit global reservation failed: {error:?}"));
+                    return Err(format!(
+                        "{prefix}commit global reservation failed: {error:?}"
+                    ));
                 }
             }
         }

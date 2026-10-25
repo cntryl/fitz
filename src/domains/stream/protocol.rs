@@ -574,6 +574,7 @@ pub struct GetMetadataResponse {
 pub const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: &str = "ERR_STREAM_FILTER_UNSUPPORTED_VERSION";
 pub const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLOAD";
 pub const ERR_READ_RESPONSE_TOO_LARGE: &str = "ERR_READ_RESPONSE_TOO_LARGE";
+pub const ERR_STREAM_TIMEOUT: &str = "ERR_STREAM_TIMEOUT:";
 
 /// The client-visible condition behind a Stream error. The wire codec maps
 /// each kind to its numeric code; the domain never deals in numbers.
@@ -594,6 +595,8 @@ pub enum StreamClientErrorKind {
     /// Any failure the domain cannot attribute to a client condition. It is
     /// fatal for the request and says nothing about whether it took effect.
     Backend,
+    /// Accepted storage operation reached its deadline with an indeterminate effect.
+    Timeout,
 }
 
 /// A Stream error as the client will see it: a typed kind plus the message.
@@ -638,6 +641,9 @@ fn classify_stream_error_message(message: &str) -> StreamClientErrorKind {
     }
     if message.starts_with(ERR_READ_RESPONSE_TOO_LARGE) {
         return Kind::ReadResponseTooLarge;
+    }
+    if message.starts_with(ERR_STREAM_TIMEOUT) {
+        return Kind::Timeout;
     }
 
     match message {
@@ -800,6 +806,7 @@ mod tests {
                 "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0",
                 Kind::ReadResponseTooLarge,
             ),
+            ("ERR_STREAM_TIMEOUT: midge commit timed out", Kind::Timeout),
             (
                 "backend concurrency conflict diagnostic unavailable",
                 Kind::Backend,

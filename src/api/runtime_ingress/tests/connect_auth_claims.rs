@@ -84,6 +84,48 @@ fn should_reject_connect_with_unmapped_identity_claim() {
 }
 
 #[test]
+fn should_reject_connect_while_another_connect_is_being_verified() {
+    // Arrange
+    let ingress = runtime_ingress_with_jwks_auth();
+    let session_id = 57;
+    let session = make_session_info(session_id, TransportKind::Tcp);
+    let jwt = signed_jwks_jwt(serde_json::json!({
+        "iss": "",
+        "aud": "fitz-broker",
+        "sub": "user:57",
+        "exp": 9_999_999_999_u64,
+        "permissions": ["notice://prod/orders/**#read"]
+    }));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        ingress.on_open(session).await.unwrap();
+    });
+    assert!(ingress
+        .authenticator
+        .registry
+        .connecting_sessions
+        .insert(session_id));
+
+    // Act
+    let decision = rt.block_on(ingress.on_frame(
+        session_id,
+        ChannelId::Control,
+        crate::protocol::message::MessageType::CONNECT,
+        connect_payload(&jwt),
+        None,
+    ));
+
+    // Assert
+    assert!(matches!(decision, IngressDecision::Close(_)));
+    assert!(!ingress.get_session(session_id).unwrap().authenticated);
+    ingress
+        .authenticator
+        .registry
+        .connecting_sessions
+        .remove(&session_id);
+}
+
+#[test]
 fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_order() {
     // Arrange
     let jwt_for = |subject: &str| {
@@ -386,6 +428,8 @@ async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
             .await
     });
     sleep(Duration::from_millis(100)).await;
+    let concurrent_connect =
+        duplicate_connect_while_verification_is_pending(&ingress, &issuer).await;
     timeout(
         Duration::from_millis(100),
         ingress.on_close(83, CloseReason::ClientClose),
@@ -410,6 +454,7 @@ async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
 
     // Assert
     assert!(!connect.is_finished());
+    assert!(matches!(concurrent_connect, IngressDecision::Close(_)));
     assert!(ingress.get_session(83).is_none());
     assert_eq!(frame_decision, IngressDecision::Accept);
     release_response_tx.send(()).unwrap();
@@ -418,6 +463,32 @@ async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
         IngressDecision::Close(reason) if reason.contains("connect failed")
     ));
     server.await.unwrap();
+}
+
+async fn duplicate_connect_while_verification_is_pending(
+    ingress: &RuntimeIngress,
+    issuer: &str,
+) -> IngressDecision {
+    let jwt = signed_jwks_jwt(serde_json::json!({
+        "iss": issuer,
+        "aud": "fitz-broker",
+        "sub": "user:82-second-connect",
+        "exp": 9_999_999_999_u64,
+        "tid": "acme-prod",
+        "permissions": ["notice://prod/orders/**#write"]
+    }));
+    tokio::time::timeout(
+        tokio::time::Duration::from_millis(100),
+        ingress.on_frame(
+            82,
+            ChannelId::Control,
+            crate::protocol::message::MessageType::CONNECT,
+            connect_payload(&jwt),
+            None,
+        ),
+    )
+    .await
+    .expect("a duplicate CONNECT must not wait for a second JWKS verification")
 }
 
 #[test]

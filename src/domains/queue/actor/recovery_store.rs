@@ -76,6 +76,13 @@ impl QueueStoreError {
     pub(super) fn is_admission_pressure(&self, family: u32) -> bool {
         self.admission_stalled || self.is_l0_admission_rejection(family)
     }
+
+    pub(super) fn is_timeout(&self) -> bool {
+        matches!(
+            self.midge_error.as_ref(),
+            Some(cntryl_midge::MidgeError::Timeout(_))
+        )
+    }
 }
 
 impl QueueStore {
