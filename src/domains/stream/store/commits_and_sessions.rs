@@ -186,7 +186,7 @@ impl StreamStore {
         batch_size: usize,
     ) -> Result<GlobalReservation, String> {
         let guard = self.family_sequence_guard(family);
-        let _lock = guard.lock();
+        let sequence_lock = guard.lock();
         let admission = super::write_admission::StreamWriteAdmission::new(family);
         loop {
             let mut txn = self
@@ -232,7 +232,22 @@ impl StreamStore {
                     admission.rejected();
                     admission.wait(&self.db)?;
                 }
-                Err(error) => return Err(format!("commit global reservation failed: {error:?}")),
+                Err(error) => {
+                    if matches!(
+                        error,
+                        cntryl_midge::MidgeError::OutcomeUnknown(_)
+                            | cntryl_midge::MidgeError::Timeout(_)
+                    ) {
+                        drop(sequence_lock);
+                        self.recovered_global_families.lock().remove(&family);
+                        self.recover_global_ordering_once(family).map_err(|recovery_error| {
+                            format!(
+                                "commit global reservation failed with unknown outcome: {error:?}; recovery failed: {recovery_error}"
+                            )
+                        })?;
+                    }
+                    return Err(format!("commit global reservation failed: {error:?}"));
+                }
             }
         }
     }
