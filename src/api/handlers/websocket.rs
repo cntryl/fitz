@@ -12,7 +12,7 @@ use hyper_tungstenite::tungstenite::protocol::WebSocketConfig;
 use hyper_tungstenite::tungstenite::Error as WsError;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tracing::info;
 
 mod reader;
@@ -31,13 +31,13 @@ fn websocket_close_reason(result: &Result<(), String>) -> CloseReason {
     }
 }
 
-fn epoch_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
+fn monotonic_elapsed_millis(origin: Instant) -> u64 {
+    origin.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+fn websocket_pong_timed_out(last_pong_ms: u64, now_ms: u64, timeout: Duration) -> bool {
+    let timeout_ms = timeout.as_millis().try_into().unwrap_or(u64::MAX);
+    now_ms.saturating_sub(last_pong_ms) >= timeout_ms
 }
 
 fn is_normal_websocket_disconnect(error: &WsError) -> bool {
@@ -218,6 +218,7 @@ async fn run_websocket_writer<S>(
     ingress_for_writes: Arc<dyn Ingress>,
     mut control_rx: tokio::sync::mpsc::Receiver<hyper_tungstenite::tungstenite::Message>,
     last_pong: Arc<AtomicU64>,
+    monotonic_origin: Arc<Instant>,
     outbound_sink: Arc<crate::api::outbound::SessionOutboundSink>,
 ) -> Result<(), String>
 where
@@ -262,14 +263,12 @@ where
                 }
             }
             _ = ping_interval.tick() => {
-                let elapsed_ms = epoch_millis().saturating_sub(last_pong.load(Ordering::Acquire));
-                if ping_sent
-                    && elapsed_ms
-                        >= crate::api::ingress::WEBSOCKET_PONG_TIMEOUT
-                            .as_millis()
-                            .try_into()
-                            .unwrap_or(u64::MAX)
-                {
+                let now_ms = monotonic_elapsed_millis(*monotonic_origin);
+                if ping_sent && websocket_pong_timed_out(
+                    last_pong.load(Ordering::Acquire),
+                    now_ms,
+                    crate::api::ingress::WEBSOCKET_PONG_TIMEOUT,
+                ) {
                     return Err("websocket pong timeout".to_string());
                 }
                 ws_sender.send(Message::Ping(bytes::Bytes::new())).await.map_err(|error| format!("WebSocket ping error: {error}"))?;
@@ -351,7 +350,8 @@ where
     let (ws_sender, mut ws_receiver) = ws_stream.split();
     let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(8);
-    let last_pong = Arc::new(AtomicU64::new(epoch_millis()));
+    let monotonic_origin = Arc::new(Instant::now());
+    let last_pong = Arc::new(AtomicU64::new(0));
 
     let buffer_budget = config.session_buffer_budget();
     let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
@@ -384,6 +384,7 @@ where
     let ingress_for_writes = ingress.clone();
     // Capture the handle so we can await graceful drain when the session closes.
     let writer_last_pong = last_pong.clone();
+    let writer_monotonic_origin = monotonic_origin.clone();
     let writer_sink = sink.clone();
     let writer_handle = tokio::spawn(async move {
         run_websocket_writer(
@@ -394,6 +395,7 @@ where
             ingress_for_writes,
             control_rx,
             writer_last_pong,
+            writer_monotonic_origin,
             writer_sink,
         )
         .await
@@ -415,6 +417,7 @@ where
                 frames: frame_tx,
                 control: &control_tx,
                 last_pong: &last_pong,
+                monotonic_origin: &monotonic_origin,
                 session_id,
                 sink: &sink,
             },
@@ -578,7 +581,7 @@ mod tests {
     use super::{
         bounded_websocket_config, cache_websocket_authentication, finish_websocket_writer,
         is_normal_websocket_disconnect, send_websocket_batch, websocket_close_reason,
-        websocket_origin_allowed, websocket_session_frame_error_reason,
+        websocket_origin_allowed, websocket_pong_timed_out, websocket_session_frame_error_reason,
     };
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError};
@@ -589,6 +592,30 @@ mod tests {
     use hyper_tungstenite::tungstenite::Message;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn should_expire_pong_only_after_monotonic_timeout_boundary() {
+        // Arrange
+        let last_pong_ms = 250;
+
+        // Act
+        let timeout_ms = u64::try_from(crate::api::ingress::WEBSOCKET_PONG_TIMEOUT.as_millis())
+            .expect("timeout fits");
+        let before_deadline = websocket_pong_timed_out(
+            last_pong_ms,
+            last_pong_ms + timeout_ms - 1,
+            crate::api::ingress::WEBSOCKET_PONG_TIMEOUT,
+        );
+        let at_deadline = websocket_pong_timed_out(
+            last_pong_ms,
+            last_pong_ms + timeout_ms,
+            crate::api::ingress::WEBSOCKET_PONG_TIMEOUT,
+        );
+
+        // Assert
+        assert!(!before_deadline);
+        assert!(at_deadline);
+    }
 
     struct DropSignal(Arc<AtomicBool>);
 

@@ -1,6 +1,6 @@
 //! Keep WebSocket control traffic live while ordered domain dispatch waits.
 
-use super::{epoch_millis, is_normal_websocket_disconnect};
+use super::{is_normal_websocket_disconnect, monotonic_elapsed_millis};
 use crate::api::buffer_budget::BufferBudget;
 use crate::api::ingress::IngressConfig;
 use bytes::Bytes;
@@ -22,6 +22,7 @@ pub(super) struct ReaderContext<'a> {
     pub(super) frames: mpsc::Sender<ReceivedFrame>,
     pub(super) control: &'a mpsc::Sender<Message>,
     pub(super) last_pong: &'a Arc<AtomicU64>,
+    pub(super) monotonic_origin: &'a Arc<std::time::Instant>,
     pub(super) session_id: u64,
     pub(super) sink: &'a crate::api::outbound::SessionOutboundSink,
 }
@@ -64,7 +65,10 @@ where
                 .control
                 .try_send(Message::Pong(payload))
                 .map_err(|_| "WebSocket control queue full or closed".to_owned())?,
-            Ok(Message::Pong(_)) => context.last_pong.store(epoch_millis(), Ordering::Release),
+            Ok(Message::Pong(_)) => context.last_pong.store(
+                monotonic_elapsed_millis(**context.monotonic_origin),
+                Ordering::Release,
+            ),
             Ok(Message::Close(_)) => return Ok(()),
             Ok(_) => {}
             Err(error) if is_normal_websocket_disconnect(&error) => return Ok(()),
