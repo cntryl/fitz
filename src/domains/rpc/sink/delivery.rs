@@ -9,8 +9,8 @@ use super::state_model::RPC_MSG_TYPE_REQUEST;
 use super::state_model::{
     RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RpcPendingErrorDelivery,
     RpcPendingRequest, RpcQueuedDispatch, RpcRequestRejection, RpcWorkerDispatch,
-    RPC_BACKPRESSURE_ERROR, RPC_DUPLICATE_CORRELATION_ERROR, RPC_MAX_PENDING_REQUESTS,
-    RPC_NO_WORKERS_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
+    RPC_BACKPRESSURE_ERROR, RPC_DUPLICATE_CORRELATION_ERROR, RPC_NO_WORKERS_ERROR,
+    RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -103,7 +103,7 @@ impl RpcFamilyRuntime<'_> {
             caller_inbox_addr,
             request_timeout,
             route_pending_capacity,
-            RPC_MAX_PENDING_REQUESTS,
+            self.core.global_pending_capacity,
             Some(global_pending_count.as_ref()),
         );
         let state_hold_us = state_hold_start.map_or(0, Self::elapsed_micros_u64);

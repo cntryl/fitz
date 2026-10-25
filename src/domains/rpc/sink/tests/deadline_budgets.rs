@@ -262,6 +262,7 @@ fn should_release_queued_dispatch_credit_on_timeout() {
         request_timeout: Duration::from_secs(30),
         cancellation_grace_period: Duration::from_secs(5),
         route_pending_capacity: 32,
+        global_pending_capacity: super::RPC_MAX_PENDING_REQUESTS,
         global_pending_count: Arc::new(AtomicUsize::new(1)),
         snapshot_epoch: Instant::now(),
         metrics: None,
@@ -286,6 +287,7 @@ fn should_release_queued_dispatch_credit_on_timeout() {
     core.state
         .pending
         .track_pending_for_family(family, request.correlation_id, pending);
+    core.state.global_capacity_reservations = 1;
     let active = AtomicBool::new(true);
     let mut runtime = RpcFamilyRuntime {
         core: &mut core,

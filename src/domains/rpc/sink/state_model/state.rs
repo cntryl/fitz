@@ -15,6 +15,7 @@ pub(in crate::domains::rpc::sink) struct RpcState {
     pub(super) ready_routes: RouteReadyQueue,
     next_route_sequence: u64,
     pub(in crate::domains::rpc::sink) pending: RpcPendingTable,
+    pub(in crate::domains::rpc::sink) global_capacity_reservations: usize,
 }
 
 pub(in crate::domains::rpc::sink) enum RpcWorkerRegistration {
@@ -164,6 +165,7 @@ impl RpcState {
             ready_routes: RouteReadyQueue::new(),
             next_route_sequence: 1,
             pending: RpcPendingTable::new(),
+            global_capacity_reservations: 0,
         }
     }
 
@@ -605,10 +607,15 @@ impl RpcState {
                 reason: RpcRequestRejection::GlobalCapacityFull,
             };
         };
+        if reserved_global_capacity {
+            self.global_capacity_reservations = self.global_capacity_reservations.saturating_add(1);
+        }
 
         let correlation_id = request.correlation_id;
         let Some(action) = self.select_action(family, &route, correlation_id) else {
             if reserved_global_capacity {
+                self.global_capacity_reservations =
+                    self.global_capacity_reservations.saturating_sub(1);
                 if let Some(global_pending_count) = global_pending_count {
                     global_pending_count.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
                 }
