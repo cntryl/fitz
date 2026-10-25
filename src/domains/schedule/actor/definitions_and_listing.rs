@@ -120,6 +120,7 @@ impl ScheduleActor {
             } else {
                 crate::observability::counter_inc(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
             }
+            self.reconcile_unknown_commit()?;
             return Err(error);
         }
 
@@ -281,6 +282,7 @@ impl ScheduleActor {
                 .insert_batch(self.family.as_u64(), &store_items, self.write_policy)
         }) {
             Self::record_batch_persistence_failures(&pending);
+            self.reconcile_unknown_commit()?;
             return Err(error);
         }
 
@@ -348,6 +350,7 @@ impl ScheduleActor {
             )
         }) {
             crate::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
+            self.reconcile_unknown_commit()?;
             return Err(error);
         }
 

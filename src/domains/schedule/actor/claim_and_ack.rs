@@ -35,6 +35,20 @@ fn acknowledge_claim_batch<P: SchedulePersistence>(
 pub(crate) type ScheduleListPage = (Arc<Vec<Arc<ScheduleListEntry>>>, bool, Option<String>);
 
 impl ScheduleActor {
+    pub(crate) fn reconcile_unknown_commit(&mut self) -> Result<bool, String> {
+        if self.reconciled_commit_generation == self.store.unknown_commit_generation() {
+            return Ok(false);
+        }
+        let recovered = Self::try_new_with_clock(
+            self.family,
+            self.store.clone(),
+            self.write_policy,
+            self.clock.clone(),
+        )?;
+        *self = recovered;
+        Ok(true)
+    }
+
     pub(super) fn insert_pending_claim(
         &mut self,
         fire_ms: u64,
@@ -292,6 +306,9 @@ impl ScheduleActor {
             )
         }) {
             warn!("Failed to persist schedule reschedule batch: {error}");
+            if self.reconcile_unknown_commit().unwrap_or(false) {
+                return false;
+            }
             for item in claims {
                 self.ready_heap
                     .push((Reverse(item.previous_fire_ms), item.route.clone()));
@@ -346,6 +363,9 @@ impl ScheduleActor {
     }
 
     pub(super) fn claim_due_fires_at(&mut self, now: Instant) -> Vec<PersistedPendingFireClaim> {
+        if self.reconcile_unknown_commit().is_err() {
+            return Vec::new();
+        }
         if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
             return Vec::new();
         }
@@ -474,14 +494,17 @@ impl ScheduleActor {
             })
             .collect();
 
-        super::retry_persistence(|| {
+        if let Err(error) = super::retry_persistence(|| {
             acknowledge_claim_batch(
                 &self.store,
                 self.family.as_u64(),
                 &store_items,
                 self.write_policy,
             )
-        })?;
+        }) {
+            self.reconcile_unknown_commit()?;
+            return Err(error);
+        }
 
         let mut acked = 0;
         for (fire_ms, route) in handed_off_occurrences {

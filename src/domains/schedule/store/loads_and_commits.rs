@@ -292,6 +292,12 @@ impl ScheduleStore {
     }
 
     #[cfg(test)]
+    pub fn report_unknown_after_next_applied_commit_for_tests(&self) {
+        self.unknown_after_apply
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
     pub(in crate::domains::schedule::store) fn commit_or_inject(
         &self,
         txn: cntryl_midge::Transaction,
@@ -313,8 +319,32 @@ impl ScheduleStore {
             ));
         }
 
-        txn.commit(write_policy.into())
-            .map_err(|error| SchedulePersistenceError::midge("commit failed", error))
+        match txn.commit(write_policy.into()) {
+            Ok(()) => {
+                if self
+                    .unknown_after_apply
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    self.mark_unknown_commit_outcome();
+                    Err(SchedulePersistenceError::midge(
+                        "commit response lost after apply",
+                        cntryl_midge::MidgeError::OutcomeUnknown("injected applied commit".into()),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Err(error) => {
+                if matches!(
+                    error,
+                    cntryl_midge::MidgeError::OutcomeUnknown(_)
+                        | cntryl_midge::MidgeError::Timeout(_)
+                ) {
+                    self.mark_unknown_commit_outcome();
+                }
+                Err(SchedulePersistenceError::midge("commit failed", error))
+            }
+        }
     }
 
     #[cfg(not(test))]
@@ -326,7 +356,14 @@ impl ScheduleStore {
         txn: cntryl_midge::Transaction,
         write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
-        txn.commit(write_policy.into())
-            .map_err(|error| SchedulePersistenceError::midge("commit failed", error))
+        txn.commit(write_policy.into()).map_err(|error| {
+            if matches!(
+                error,
+                cntryl_midge::MidgeError::OutcomeUnknown(_) | cntryl_midge::MidgeError::Timeout(_)
+            ) {
+                self.mark_unknown_commit_outcome();
+            }
+            SchedulePersistenceError::midge("commit failed", error)
+        })
     }
 }

@@ -96,10 +96,13 @@ pub struct PersistedPendingFireClaim {
 #[derive(Clone)]
 pub struct ScheduleStore {
     pub(super) db: crate::storage::FitzStorageEngine,
+    pub(super) unknown_commit_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     #[cfg(test)]
     pub(super) fail_next_commit: std::sync::Arc<std::sync::atomic::AtomicBool>,
     #[cfg(test)]
     pub(super) stall_next_commit: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    pub(super) unknown_after_apply: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug)]

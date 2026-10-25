@@ -24,11 +24,25 @@ impl ScheduleStore {
     pub(crate) fn new_with_storage(db: crate::storage::FitzStorageEngine) -> Self {
         Self {
             db,
+            unknown_commit_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             #[cfg(test)]
             fail_next_commit: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(test)]
             stall_next_commit: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            unknown_after_apply: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn unknown_commit_generation(&self) -> u64 {
+        self.unknown_commit_generation
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) fn mark_unknown_commit_outcome(&self) {
+        self.unknown_commit_generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
 
     pub(crate) fn has_family(

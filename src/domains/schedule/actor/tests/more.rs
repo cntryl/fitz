@@ -464,6 +464,89 @@ fn should_not_remove_schedule_given_cancel_persistence_failure() {
 }
 
 #[test]
+#[serial]
+fn should_reconcile_schedule_after_cancel_commit_outcome_is_unknown() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/cancel-unknown/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.store.report_unknown_after_next_applied_commit_for_tests();
+
+    // Act
+    let result = actor.delete_schedule(route);
+    let persisted = actor
+        .store
+        .load_all(actor.family.as_u64(), actor.write_policy)
+        .expect("read persisted schedules");
+
+    // Assert
+    assert!(result.is_err(), "cancel should report the ambiguous outcome");
+    assert!(persisted.is_empty(), "the injected cancel should have applied");
+    assert!(
+        !actor.schedules.contains_key(route),
+        "actor must reconcile its cache before serving more schedule work"
+    );
+}
+
+#[test]
+#[serial]
+fn should_recover_claimed_occurrence_after_claim_commit_outcome_is_unknown() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/claim-unknown/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    actor.store.report_unknown_after_next_applied_commit_for_tests();
+
+    // Act
+    let returned_claims = actor.bench_claim_due_fires();
+
+    // Assert
+    assert!(returned_claims.is_empty(), "unknown claims are not delivered inline");
+    assert_eq!(actor.pending_fire_count(), 1);
+    assert_eq!(actor.pending_claimed_occurrences_for_publish()[0].route, route);
+}
+
+#[test]
+#[serial]
+fn should_reconcile_acknowledged_occurrence_after_ack_commit_outcome_is_unknown() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/ack-unknown/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    let claimed = actor.bench_claim_due_fires();
+    assert_eq!(claimed.len(), 1);
+    actor.store.report_unknown_after_next_applied_commit_for_tests();
+
+    // Act
+    let result = actor.ack_pending_fire_claims(&[(claimed[0].fire_ms, route.to_string())]);
+
+    // Assert
+    assert!(result.is_err(), "ACK should report the ambiguous outcome");
+    assert_eq!(actor.pending_fire_count(), 0);
+    assert_eq!(actor.schedules[route].executions_total, 1);
+}
+
+#[test]
 fn should_page_a_byte_bounded_list_to_completion_via_cursor() {
     // Arrange
     // A page is bounded by the wire budget and can therefore hold fewer

@@ -100,6 +100,9 @@ impl ScheduleActor {
     }
 
     pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
+        if let Err(error) = self.reconcile_unknown_commit() {
+            return ScheduleResponse::Error(ScheduleFailure::parse(error));
+        }
         match msg {
             ScheduleMessage::Create {
                 route,
