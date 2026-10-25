@@ -80,6 +80,8 @@ pub struct ScheduleActor {
     pub(super) family: RouteFamily,
     /// Durable schedule storage for current schedule definitions and claims.
     pub(super) store: ScheduleStore,
+    /// Latest ambiguous-commit generation loaded into this actor's cache.
+    pub(super) reconciled_commit_generation: u64,
     /// In-memory schedule cache: route -> `ScheduleDef`.
     pub(super) schedules: FastMap<String, ScheduleDef>,
     /// Parsed cron expressions reused across repeated creates/upserts.

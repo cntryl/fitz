@@ -82,6 +82,7 @@ impl ScheduleActor {
     ) -> Result<Self, String> {
         let mut actor = Self {
             family,
+            reconciled_commit_generation: store.unknown_commit_generation(),
             store,
             schedules: HashMap::with_capacity_and_hasher(128, FxBuildHasher),
             cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
