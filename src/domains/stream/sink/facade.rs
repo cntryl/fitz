@@ -634,8 +634,9 @@ impl StreamDomain {
 
     pub(crate) fn durable_metrics_snapshot(
         &self,
+        limit: usize,
     ) -> crate::domains::stream::metrics::StreamDurableMetricsSnapshot {
-        self.config.durable_metrics.snapshot()
+        self.config.durable_metrics.snapshot_bounded(limit)
     }
 
     pub(crate) fn initialize_admin_snapshot(&self) {

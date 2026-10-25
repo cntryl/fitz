@@ -46,3 +46,25 @@ fn should_include_client_reported_service_name_in_active_sessions() {
         Some("orders-worker")
     );
 }
+
+#[test]
+fn should_bound_active_session_snapshots() {
+    // Arrange
+    let ingress = RuntimeIngress::new(false);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        for session_id in 1..=3 {
+            ingress
+                .on_open(make_session_info(session_id, TransportKind::Tcp))
+                .await
+                .unwrap();
+        }
+    });
+
+    // Act
+    let (sessions, truncated) = ingress.active_sessions_bounded(2);
+
+    // Assert
+    assert_eq!(sessions.len(), 2);
+    assert!(truncated);
+}

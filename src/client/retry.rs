@@ -153,6 +153,7 @@ impl RetryableError {
 ///
 /// Retryable errors:
 /// - `ECONNREFUSED`: connection refused
+///
 /// Timeouts, connection resets, resource contention, and unknown errors are
 /// indeterminate: the operation may already have taken effect.
 ///

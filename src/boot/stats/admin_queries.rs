@@ -5,6 +5,27 @@ use crate::domains::queue::{MessageId, QueueKey};
 use crate::domains::stream::admin::AdminStreamReadRequest;
 use crate::runtime::routing::RouteFamily;
 use chrono::{DateTime, Utc};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+struct RefreshGuard<'a>(&'a AtomicBool);
+
+impl Drop for RefreshGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn try_run_admin_snapshot_refresh(refreshing: &AtomicBool, refresh: impl FnOnce()) -> bool {
+    if refreshing
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return false;
+    }
+    let _guard = RefreshGuard(refreshing);
+    refresh();
+    true
+}
 
 impl Runtime {
     fn refresh_queue_admin_snapshot(&self) {
@@ -42,18 +63,15 @@ impl Runtime {
         }
     }
 
-    /// Attempt each domain's best-effort projection refresh once, without
-    /// copying a snapshot.
     pub(crate) fn refresh_admin_snapshots(&self) {
         let domains = self.domain_admins.read().clone();
         if let Some(domains) = domains {
-            domains.refresh_admin_snapshots();
+            try_run_admin_snapshot_refresh(&self.admin_snapshot_refreshing, || {
+                domains.refresh_admin_snapshots();
+            });
         }
     }
 
-    /// Attempt dirty domain projection refreshes, then copy one family-selected
-    /// snapshot with a collection limit. Failed refreshes can leave cached data;
-    /// the domains do not share an atomic observation point.
     pub(crate) fn refreshed_admin_snapshot(
         &self,
         family: Option<u64>,
@@ -65,11 +83,12 @@ impl Runtime {
 
     pub(crate) fn stream_durable_metrics_snapshot(
         &self,
+        limit: usize,
     ) -> Option<crate::domains::stream::metrics::StreamDurableMetricsSnapshot> {
         self.domain_admins
             .read()
             .as_ref()
-            .map(DomainAdminPorts::stream_durable_metrics_snapshot)
+            .map(|domains| domains.stream_durable_metrics_snapshot(limit))
     }
 
     #[must_use]
@@ -355,13 +374,6 @@ impl Runtime {
             .unwrap_or_default()
     }
 
-    pub(crate) fn stream_list_area_watermark_details(
-        &self,
-    ) -> Vec<crate::control::admin::StreamAreaWatermarkDetail> {
-        self.refresh_stream_admin_snapshot();
-        self.admin_read_model.stream_area_watermarks()
-    }
-
     pub(crate) fn stream_area_watermark_detail(
         &self,
         realm: &str,
@@ -620,30 +632,107 @@ impl Runtime {
         ingress
             .active_sessions()
             .into_iter()
-            .map(|session| {
-                let claims = session.claims.as_ref();
-                crate::control::admin::SessionInfo {
-                    session_id: session.session_id.to_string(),
-                    service_name: session.metadata.service_name(),
-                    route_family: session.route_family.as_u64(),
-                    subject: claims.map(|claims| claims.sub.clone()).unwrap_or_default(),
-                    identity_claim: claims
-                        .and_then(|claims| claims.identity_claim.clone())
-                        .unwrap_or_default(),
-                    identity_value: claims
-                        .and_then(|claims| claims.identity_value.clone())
-                        .unwrap_or_default(),
-                    connected_at: DateTime::<Utc>::from(session.connected_at()).to_rfc3339(),
-                    idle_seconds: session.idle_seconds(),
-                    messages_received: session.messages_received(),
-                    messages_sent: session.messages_sent(),
-                    transport: session.transport_kind.to_string(),
-                    remote_addr: session
-                        .peer_addr
-                        .map(|addr| addr.to_string())
-                        .unwrap_or_default(),
-                }
-            })
+            .map(|session| session_info(&session))
             .collect()
+    }
+
+    pub(crate) fn list_sessions_bounded(
+        &self,
+        limit: usize,
+    ) -> (Vec<crate::control::admin::SessionInfo>, bool) {
+        let Some(ingress) = self.ingress.read().clone() else {
+            let snapshot = self.admin_read_model.bounded_snapshot(None, limit);
+            return (snapshot.sessions, snapshot.truncated);
+        };
+        let (sessions, truncated) = ingress.active_sessions_bounded(limit);
+        (
+            sessions
+                .into_iter()
+                .map(|session| session_info(&session))
+                .collect(),
+            truncated,
+        )
+    }
+
+    pub(crate) fn list_sessions_for_family_bounded(
+        &self,
+        family: u64,
+        limit: usize,
+        max_examined: usize,
+    ) -> (Vec<crate::control::admin::SessionInfo>, bool) {
+        let Some(ingress) = self.ingress.read().clone() else {
+            return self.admin_read_model.bounded_sessions(Some(family), limit);
+        };
+        let (sessions, truncated) =
+            ingress.active_sessions_bounded_for_family(family, limit, max_examined);
+        (
+            sessions
+                .into_iter()
+                .map(|session| session_info(&session))
+                .collect(),
+            truncated,
+        )
+    }
+}
+
+fn session_info(session: &crate::session::SessionInfo) -> crate::control::admin::SessionInfo {
+    let claims = session.claims.as_ref();
+    crate::control::admin::SessionInfo {
+        session_id: session.session_id.to_string(),
+        service_name: session.metadata.service_name(),
+        route_family: session.route_family.as_u64(),
+        subject: claims.map(|claims| claims.sub.clone()).unwrap_or_default(),
+        identity_claim: claims
+            .and_then(|claims| claims.identity_claim.clone())
+            .unwrap_or_default(),
+        identity_value: claims
+            .and_then(|claims| claims.identity_value.clone())
+            .unwrap_or_default(),
+        connected_at: DateTime::<Utc>::from(session.connected_at()).to_rfc3339(),
+        idle_seconds: session.idle_seconds(),
+        messages_received: session.messages_received(),
+        messages_sent: session.messages_sent(),
+        transport: session.transport_kind.to_string(),
+        remote_addr: session
+            .peer_addr
+            .map(|addr| addr.to_string())
+            .unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::try_run_admin_snapshot_refresh;
+    use std::sync::{atomic::AtomicBool, mpsc, Arc};
+
+    #[test]
+    fn should_skip_projection_refresh_while_another_refresh_is_running() {
+        // Arrange
+        let refreshing = Arc::new(AtomicBool::new(false));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker_refreshing = refreshing.clone();
+        let worker = std::thread::spawn(move || {
+            try_run_admin_snapshot_refresh(&worker_refreshing, || {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            })
+        });
+        entered_rx.recv().unwrap();
+        let second_refresh_ran = Arc::new(AtomicBool::new(false));
+        let observed = second_refresh_ran.clone();
+
+        // Act
+        let second_started = try_run_admin_snapshot_refresh(&refreshing, move || {
+            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        release_tx.send(()).unwrap();
+        let first_started = worker.join().unwrap();
+
+        // Assert
+        assert!(first_started);
+        assert!(!second_started);
+        assert!(!second_refresh_ran.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!refreshing.load(std::sync::atomic::Ordering::Acquire));
     }
 }

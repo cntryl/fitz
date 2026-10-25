@@ -78,6 +78,7 @@ impl Runtime {
             admin_blocking_slots: Arc::new(std::sync::atomic::AtomicUsize::new(
                 super::ADMIN_BLOCKING_EXECUTOR_CAPACITY,
             )),
+            admin_snapshot_refreshing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 

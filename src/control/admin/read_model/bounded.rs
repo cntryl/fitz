@@ -1,7 +1,8 @@
 //! Bounded family-selected copies of the shared administrative projections.
 use super::{
     AdminReadModel, KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter,
-    QueueInflight, QueueInfo, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo, StreamInfo,
+    QueueInflight, QueueInfo, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo,
+    StreamAreaWatermarkDetail, StreamInfo, StreamRealmWatermarkDetail,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -35,6 +36,26 @@ fn copy_page<'a, T: Clone + 'a>(
 }
 
 impl AdminReadModel {
+    pub(crate) fn bounded_stream_realm_watermarks(
+        &self,
+        limit: usize,
+    ) -> (Vec<StreamRealmWatermarkDetail>, bool) {
+        let watermarks = self.stream_realm_watermarks.read();
+        let mut remaining = limit;
+        let mut truncated = watermarks.len() > limit;
+        let mut bounded = Vec::with_capacity(limit.min(watermarks.len()));
+        for detail in watermarks.values().take(limit) {
+            let mut detail = detail.clone();
+            if detail.family_watermarks.len() > remaining {
+                detail.family_watermarks.truncate(remaining);
+                truncated = true;
+            }
+            remaining = remaining.saturating_sub(detail.family_watermarks.len());
+            bounded.push(detail);
+        }
+        (bounded, truncated)
+    }
+
     pub(crate) fn bounded_snapshot(&self, family: Option<u64>, limit: usize) -> AdminSnapshot {
         let mut truncated = false;
         let sessions = copy_page(self.sessions.read().scoped(family), limit, &mut truncated);
@@ -143,6 +164,26 @@ impl AdminReadModel {
         let mut truncated = false;
         let sessions = copy_page(self.sessions.read().scoped(family), limit, &mut truncated);
         (sessions, truncated)
+    }
+
+    pub(crate) fn bounded_stream_area_watermarks(
+        &self,
+        limit: usize,
+    ) -> (Vec<StreamAreaWatermarkDetail>, bool) {
+        let watermarks = self.stream_area_watermarks.read();
+        let mut remaining = limit;
+        let mut truncated = watermarks.len() > limit;
+        let mut bounded = Vec::with_capacity(limit.min(watermarks.len()));
+        for detail in watermarks.values().take(limit) {
+            let mut detail = detail.clone();
+            if detail.family_watermarks.len() > remaining {
+                detail.family_watermarks.truncate(remaining);
+                truncated = true;
+            }
+            remaining = remaining.saturating_sub(detail.family_watermarks.len());
+            bounded.push(detail);
+        }
+        (bounded, truncated)
     }
 }
 

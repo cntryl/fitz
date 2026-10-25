@@ -358,7 +358,7 @@ fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
 }
 
 #[test]
-fn should_rescan_inventory_after_crash_between_data_commit_and_estimate_update() {
+fn should_rescan_inventory_after_failed_estimate_update() {
     // Arrange
     let family = RouteFamily::new(1);
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);

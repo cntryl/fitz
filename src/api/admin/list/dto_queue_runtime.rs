@@ -172,4 +172,6 @@ pub struct SchedulesList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionsList {
     pub sessions: Vec<SessionInfo>,
+    pub truncated: bool,
+    pub limit: usize,
 }

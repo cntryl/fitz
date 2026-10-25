@@ -332,3 +332,35 @@ fn should_export_registered_queue_admission_counters_once() {
         .filter(|sample| names.contains(&sample.name.as_str()))
         .all(|sample| sample.kind == "counter" && sample.labels.is_empty()));
 }
+
+#[test]
+fn should_bound_family_attributable_metrics_snapshot() {
+    // Arrange
+    let model = crate::control::admin::read_model::AdminReadModel::new();
+    model.replace_rpc_workers(
+        (0..300)
+            .map(|id| {
+                crate::control::admin::RpcWorker::snapshot(
+                    1,
+                    id,
+                    "acme",
+                    &format!("rpc://acme/app/work-{id}/run"),
+                    "2026-10-04T00:00:00Z",
+                    0,
+                    0.0,
+                )
+            })
+            .collect(),
+    );
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), model);
+
+    // Act
+    let samples = family_attributable_samples(&runtime, 1);
+
+    // Assert
+    let workers = samples
+        .iter()
+        .find(|sample| sample.name == "fitz_rpc_workers_registered")
+        .expect("family worker metric");
+    assert_eq!(workers.value, 100.0);
+}

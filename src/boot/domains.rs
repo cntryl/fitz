@@ -272,8 +272,6 @@ impl DomainAdminPorts {
         self.stream.refresh_admin_snapshot_if_dirty();
     }
 
-    /// Refresh every lazily projected domain; KV, Lease and session projections
-    /// have no deferred refresh.
     pub(crate) fn refresh_admin_snapshots(&self) {
         self.refresh_queue_admin_snapshot();
         self.refresh_rpc_admin_snapshot();
@@ -284,8 +282,9 @@ impl DomainAdminPorts {
 
     pub(crate) fn stream_durable_metrics_snapshot(
         &self,
+        limit: usize,
     ) -> crate::domains::stream::metrics::StreamDurableMetricsSnapshot {
-        self.stream.durable_metrics_snapshot()
+        self.stream.durable_metrics_snapshot(limit)
     }
 
     pub(crate) fn kv_active_transaction_count(&self) -> usize {

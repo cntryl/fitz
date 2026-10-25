@@ -29,8 +29,22 @@ pub(crate) fn build_family_troubleshooting(
     runtime: &Runtime,
     family: u64,
 ) -> GlobalTroubleshootingDiagnostics {
-    let snapshot = runtime.refreshed_admin_snapshot(Some(family), usize::MAX);
-    build_projection_troubleshooting(&snapshot)
+    let snapshot = runtime.refreshed_admin_snapshot(
+        Some(family),
+        crate::api::admin::list::MAX_ADMIN_RECORD_LIMIT,
+    );
+    let mut diagnostics = build_projection_troubleshooting(&snapshot);
+    if snapshot.truncated && diagnostics.top_bottleneck.is_none() {
+        diagnostics.incident_summary.status = IncidentStatus::Unknown;
+        diagnostics.incident_summary.title =
+            "Health is unknown from bounded family evidence".into();
+        diagnostics.incident_summary.confidence = diagnostics
+            .incident_summary
+            .confidence
+            .min(FAMILY_HEALTHY_CONFIDENCE);
+        diagnostics.incident_summary.explanation = "No pressure was visible in the bounded cached projection rows. Additional rows were omitted, so this result cannot establish full family health.".into();
+    }
+    diagnostics
 }
 
 pub(crate) fn build_projection_troubleshooting(

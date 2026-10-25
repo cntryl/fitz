@@ -92,6 +92,34 @@ impl SessionRegistry {
             .collect()
     }
 
+    pub(super) fn active_sessions_bounded(&self, limit: usize) -> (Vec<SessionInfo>, bool) {
+        self.active_sessions_bounded_for_family(None, limit, limit.saturating_add(1))
+    }
+
+    pub(super) fn active_sessions_bounded_for_family(
+        &self,
+        family: Option<u64>,
+        limit: usize,
+        max_examined: usize,
+    ) -> (Vec<SessionInfo>, bool) {
+        let mut sessions = Vec::with_capacity(limit);
+        let mut truncated = false;
+        let mut examined = 0;
+        for entry in self.sessions.iter().take(max_examined) {
+            examined += 1;
+            if family.is_some_and(|family| entry.route_family.as_u64() != family) {
+                continue;
+            }
+            if sessions.len() == limit {
+                truncated = true;
+                break;
+            }
+            sessions.push(entry.value().clone());
+        }
+        truncated |= examined == max_examined && self.sessions.len() > examined;
+        (sessions, truncated)
+    }
+
     pub(super) fn session_count(&self) -> usize {
         self.sessions.len()
     }

@@ -174,6 +174,23 @@ impl RuntimeIngress {
         self.session_registry().active_sessions()
     }
 
+    pub(crate) fn active_sessions_bounded(&self, limit: usize) -> (Vec<SessionInfo>, bool) {
+        self.session_registry().active_sessions_bounded(limit)
+    }
+
+    pub(crate) fn active_sessions_bounded_for_family(
+        &self,
+        family: u64,
+        limit: usize,
+        max_examined: usize,
+    ) -> (Vec<SessionInfo>, bool) {
+        self.session_registry().active_sessions_bounded_for_family(
+            Some(family),
+            limit,
+            max_examined,
+        )
+    }
+
     /// Get session count
     /// Send GOAWAY to every live session: the planned drain, a forced close,
     /// or a changed limit, with the grace the client has to reconnect.

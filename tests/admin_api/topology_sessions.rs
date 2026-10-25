@@ -838,6 +838,8 @@ async fn should_return_sessions_collection_only() {
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let sessions = payload["sessions"].as_array().unwrap();
+    assert_eq!(payload["limit"], 100);
+    assert_eq!(payload["truncated"], false);
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0]["session_id"], "41");
     assert_eq!(sessions[0]["route_family"], 41);
