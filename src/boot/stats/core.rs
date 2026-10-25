@@ -20,6 +20,10 @@ fn current_epoch_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+fn drain_grace_millis(grace_seconds: u64) -> u64 {
+    grace_seconds.saturating_mul(1_000)
+}
+
 fn u64_to_f64(value: u64) -> f64 {
     let high = u32::try_from(value >> 32).unwrap_or(u32::MAX);
     let low = u32::try_from(value & u64::from(u32::MAX)).unwrap_or(u32::MAX);
@@ -372,7 +376,7 @@ impl Runtime {
 
         if previous == LIFECYCLE_RUNNING {
             let started = current_epoch_ms();
-            let grace_ms = self.drain_grace_seconds() * 1_000;
+            let grace_ms = drain_grace_millis(self.drain_grace_seconds());
             self.drain_started_epoch_ms.store(started, Ordering::SeqCst);
             self.drain_deadline_epoch_ms
                 .store(started.saturating_add(grace_ms), Ordering::SeqCst);
@@ -801,6 +805,34 @@ mod tests {
         // Assert
         assert_eq!(runtime.drain_deadline_epoch_ms(), first_deadline);
         assert_eq!(runtime.drain_close_reason(), "second drain");
+    }
+
+    #[test]
+    fn should_saturate_drain_deadline_given_maximum_configured_grace() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let runtime = Runtime::new(router);
+        runtime.configure_drain(u64::MAX, "large grace".to_string());
+
+        // Act
+        runtime.begin_drain();
+
+        // Assert
+        assert_eq!(runtime.drain_deadline_epoch_ms(), Some(u64::MAX));
+    }
+
+    #[test]
+    fn should_saturate_drain_grace_only_after_millisecond_range_is_exceeded() {
+        // Arrange
+        let largest_exact_seconds = u64::MAX / 1_000;
+
+        // Act
+        let exact_millis = drain_grace_millis(largest_exact_seconds);
+        let saturated_millis = drain_grace_millis(largest_exact_seconds + 1);
+
+        // Assert
+        assert_eq!(exact_millis, largest_exact_seconds * 1_000);
+        assert_eq!(saturated_millis, u64::MAX);
     }
 
     #[test]
