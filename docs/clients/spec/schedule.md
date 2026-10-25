@@ -172,6 +172,9 @@ Brokers MUST support standard 5-field cron format:
 +------------ Minute (0-59)
 ```
 
+All cron fields are evaluated in UTC. Schedule definitions do not select a
+local timezone, and daylight-saving transitions do not alter their cadence.
+
 **Supported patterns:**
 
 - `*` = every unit (e.g., `* * * * *` = every minute)

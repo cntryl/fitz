@@ -3,8 +3,6 @@
 use crate::runtime::clock::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,
 };
-#[cfg(test)]
-use std::time::Duration;
 use std::time::Instant;
 
 /// A validated cron expression whose compiled matchers stay consistent with its fields.

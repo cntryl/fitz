@@ -194,10 +194,19 @@ fn should_calculate_next_fire_time_given_fixed_utc_clock_reference() {
 
     // Act
     let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
+    let next_fire_epoch_ms =
+        instant_to_epoch_ms_with_reference(next_fire, clock.now_instant(), clock.now_epoch_ms());
 
     // Assert
     assert_eq!(
-        next_fire.duration_since(clock.now_instant()),
-        Duration::from_mins(30)
+        next_fire_epoch_ms,
+        u64::try_from(
+            chrono::Utc
+                .with_ymd_and_hms(2026, 3, 31, 6, 0, 0)
+                .single()
+                .expect("valid UTC next fire")
+                .timestamp_millis()
+        )
+        .expect("expected time should be after unix epoch")
     );
 }

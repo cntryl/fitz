@@ -84,6 +84,10 @@ provider acknowledgement,
 definitions and pending fire claims are recovered before schedule traffic is
 accepted.
 
+Five-field cron expressions are evaluated in UTC. A definition has no
+per-schedule timezone, and daylight-saving transitions do not change its
+cadence.
+
 Each definition persists one delivery mode. `broadcast` attempts all live
 matching registrations. `single` selects at most one accepted live handoff by
 a per-concrete-route round-robin cursor. Strict whole-segment `*` and `**`
