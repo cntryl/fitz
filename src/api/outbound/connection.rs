@@ -91,7 +91,26 @@ impl ConnectionState {
             303 if payload.get(24).is_some_and(|flags| flags & 1 != 0) => {
                 uuid(payload).map(Request::Rpc)
             }
-            305 if payload.first() == Some(&4) => uuid(&payload[1..]).map(Request::Cancel),
+            305 if payload.first() == Some(&4) => {
+                if payload.get(17)
+                    == Some(
+                        &(crate::protocol::rpc_codec::RpcCancellationResult::QueuedRemoved as u8),
+                    )
+                {
+                    if let Some(id) = uuid(&payload[1..]) {
+                        let mut requests = self.requests.lock();
+                        for request in [Request::Cancel(id), Request::Rpc(id)] {
+                            if let Some(index) =
+                                requests.iter().position(|pending| *pending == request)
+                            {
+                                requests.swap_remove(index);
+                            }
+                        }
+                        return;
+                    }
+                }
+                uuid(&payload[1..]).map(Request::Cancel)
+            }
             302 | 303 | 305 => return,
             kind => Some(Request::Header(kind, header.correlation)),
         };

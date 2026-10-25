@@ -230,6 +230,8 @@ impl Ingress for RuntimeIngress {
             .await;
 
         self.session_registry().finalize_close(session_id);
+        self.domain_frame_dispatcher()
+            .forget_session_announcement(session_id);
 
         // Notify handler if present
         if let Some(handler) = &self.registry.event_handler {

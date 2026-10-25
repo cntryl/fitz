@@ -56,6 +56,9 @@ impl RuntimeIngress {
             )),
             queue_family_dispatch: Arc::new(DashMap::new()),
             max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES,
+            drain_announcements: Arc::new(parking_lot::Mutex::new(
+                super::domain_frame_dispatcher::DrainAnnouncements::default(),
+            )),
         };
         Self {
             registry,

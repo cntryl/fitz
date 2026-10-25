@@ -216,7 +216,7 @@ before a request reaches a domain.
 | 6050 | WORKER_NOT_FOUND | 9 | INDETERMINATE | 6002 | A dispatched worker may have applied the operation before disconnecting; retry only idempotent work or verify first |
 | 6051 | ROUTE_NOT_REGISTERED | 9 | NOT_APPLIED | 6004 | No worker registered for the route |
 | 6052 | CORRELATION_NOT_FOUND | 9 | NOT_APPLIED | 6005 | Response, ACK, or cancel named an unknown or finished request |
-| 6053 | INVALID_SEQUENCE | 8 | NOT_APPLIED | 6006 | Chunks must start at 0 and advance contiguously |
+| 6053 | INVALID_SEQUENCE | 8 | INDETERMINATE | 6006 | The worker may have applied the operation before sending an out-of-sequence response; retry only idempotent work or verify first |
 | 6054 | DUPLICATE_CORRELATION | 8 | NOT_APPLIED | 6007 | Caller reused a live request identifier |
 | 6055 | WRONG_WORKER | 1 | NOT_APPLIED | 6008 | Response or ACK from a worker that does not own the request |
 

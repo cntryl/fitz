@@ -228,6 +228,34 @@ fn should_release_only_the_cancel_slot_for_a_cancellation_result() {
 }
 
 #[test]
+fn should_release_the_rpc_slot_when_queued_cancellation_removes_the_call() {
+    // Arrange
+    let state = ConnectionState::default();
+    fill_leases(&state, MAX_IN_FLIGHT - 2);
+    let id = uuid::Uuid::new_v4();
+    assert!(state.admit(&request(302, 63, id.as_bytes())));
+    let mut cancel = vec![1];
+    cancel.extend_from_slice(id.as_bytes());
+    cancel.push(1);
+    assert!(state.admit(&request(304, 64, &cancel)));
+
+    // Act
+    state.sent(&crate::protocol::rpc_codec::encode_cancel_result_frame(
+        &id,
+        crate::protocol::rpc_codec::RpcCancellationResult::QueuedRemoved,
+    ));
+    let first = state.admit(&request(400, 65, &[]));
+    let second = state.admit(&request(400, 66, &[]));
+
+    // Assert
+    assert!(first);
+    assert!(
+        second,
+        "both cancellation and original RPC slots are retired"
+    );
+}
+
+#[test]
 fn should_keep_connection_admission_independent() {
     // Arrange
     let full = ConnectionState::default();

@@ -109,3 +109,51 @@ fn should_announce_goaway_when_the_runtime_begins_draining() {
     );
     assert_eq!(goaway.reason, runtime.drain_close_reason());
 }
+
+#[test]
+fn should_wait_until_hello_to_announce_goaway_to_a_connecting_session() {
+    // Arrange
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let router = Arc::new(crate::runtime::Router::new());
+    let ingress = RuntimeIngress::new(false).with_router(router.clone());
+    let session_id = 9_203;
+    let frames: Captured = Arc::new(std::sync::Mutex::new(Vec::new()));
+    router.register(
+        crate::runtime::routing::RouteAddress::new(
+            crate::runtime::routing::RouteFamily::new(1),
+            crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+        ),
+        Arc::new(CapturingSink(frames.clone())) as Arc<dyn MailboxSink>,
+    );
+    let mut session = make_session_info(session_id, TransportKind::Tcp);
+    session.route_family = crate::runtime::routing::RouteFamily::new(1);
+    rt.block_on(ingress.on_open(session)).unwrap();
+
+    // Act
+    ingress.announce_goaway(
+        crate::protocol::wire2::catalog::DRAINING,
+        25_000,
+        "redeploy",
+    );
+    let before_connect = frames.lock().unwrap().clone();
+    rt.block_on(ingress.on_frame(
+        session_id,
+        ChannelId::Control,
+        crate::protocol::message::MessageType::CONNECT,
+        connect_payload(""),
+        None,
+    ));
+
+    // Assert
+    assert!(before_connect.is_empty(), "GOAWAY cannot precede HELLO");
+    let captured = frames.lock().unwrap();
+    assert_eq!(captured.len(), 2, "HELLO followed by GOAWAY");
+    assert_eq!(
+        captured[0].meta.message_type,
+        crate::protocol::wire2::control::HELLO
+    );
+    assert_eq!(
+        captured[1].meta.message_type,
+        crate::protocol::wire2::control::GOAWAY
+    );
+}

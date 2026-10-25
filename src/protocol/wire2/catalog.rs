@@ -131,7 +131,7 @@ pub const DOMAIN_ROWS: [CodeEntry; 38] = {
         row(6050, "WORKER_NOT_FOUND", C::NotFound, Ind),
         row(6051, "ROUTE_NOT_REGISTERED", C::NotFound, No),
         row(6052, "CORRELATION_NOT_FOUND", C::NotFound, No),
-        row(6053, "INVALID_SEQUENCE", C::BadRequest, No),
+        row(6053, "INVALID_SEQUENCE", C::BadRequest, Ind),
         row(6054, "DUPLICATE_CORRELATION", C::BadRequest, No),
         row(6055, "WRONG_WORKER", C::Unauthorized, No),
         row(7050, "SCHEDULE_NOT_FOUND", C::NotFound, No),
@@ -343,5 +343,17 @@ mod tests {
         assert_eq!(per_block, [10; 8]);
         assert_eq!(shared(block::SCHEDULE, ErrorClass::Busy), Some(7005));
         assert_eq!(shared(block::KV, ErrorClass::Domain), None);
+    }
+
+    #[test]
+    fn should_mark_invalid_rpc_sequence_effect_indeterminate() {
+        // Arrange
+        let entry = lookup(6053).expect("RPC invalid sequence catalog entry");
+
+        // Act
+        let effect = entry.effect;
+
+        // Assert
+        assert_eq!(effect, Effect::Indeterminate);
     }
 }

@@ -618,7 +618,7 @@ routing, without confirming that a remote handler stopped.
 | 6005 | ERR_BUSY | The broker's RPC pending queue is full | Retry with exponential backoff and jitter |
 | 6051 | ERR_ROUTE_NOT_REGISTERED | No live worker is registered for the route | Retry with backoff after allowing workers to register |
 | 6052 | ERR_CORRELATION_NOT_FOUND | Response, ACK, or cancellation referenced an unknown or finished correlation | Treat the correlation as invalid or finished; do not blindly retry the same correlation |
-| 6053 | ERR_RPC_INVALID_SEQUENCE | Worker response chunks were out of sequence | Fatal for the current correlation; do not retry the same correlation |
+| 6053 | ERR_RPC_INVALID_SEQUENCE | Worker response chunks were out of sequence; the worker may have applied the operation | Retry only idempotent work or verify the outcome first |
 | 6054 | ERR_RPC_DUPLICATE_CORRELATION | Caller reused a correlation ID that is still live | Fatal for the current correlation; retry only with a fresh correlation ID if the operation is safe to retry |
 | 6055 | ERR_RPC_WRONG_WORKER | Response or ACK came from a worker that does not own the request | Fatal for the current correlation; do not retry the same correlation |
 | 6001 | ERR_UNAUTHORIZED | Permissions do not allow this RPC operation | Fatal until credentials or permissions change |

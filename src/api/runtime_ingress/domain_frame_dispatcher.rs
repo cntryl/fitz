@@ -91,6 +91,14 @@ pub(super) struct DomainFrameDispatcher {
     /// The limit HELLO advertises: the largest message, header included, the
     /// transport accepts and the outbound sink frames.
     pub(super) max_message_bytes: u32,
+    pub(super) drain_announcements: std::sync::Arc<parking_lot::Mutex<DrainAnnouncements>>,
+}
+
+#[derive(Default)]
+pub(super) struct DrainAnnouncements {
+    drain: Option<(u16, u32, String)>,
+    hello_sessions: std::collections::HashSet<u64>,
+    goaway_sessions: std::collections::HashSet<u64>,
 }
 
 impl RuntimeIngress {
@@ -313,6 +321,7 @@ impl DomainFrameDispatcher {
             max_in_flight: u32::try_from(crate::api::outbound::MAX_IN_FLIGHT).unwrap_or(u32::MAX),
             session_id,
         };
+        let mut announcements = self.drain_announcements.lock();
         announce_control_frame(
             router,
             session_id,
@@ -321,6 +330,18 @@ impl DomainFrameDispatcher {
             Bytes::from(hello.encode()),
             "HELLO",
         );
+        announcements.hello_sessions.insert(session_id);
+        if let Some((code, grace_ms, reason)) = announcements.drain.clone() {
+            Self::announce_goaway_once(
+                router,
+                &mut announcements,
+                session_id,
+                route_family,
+                code,
+                grace_ms,
+                &reason,
+            );
+        }
     }
 
     /// Tell every live session the broker is going away and how long it will
@@ -330,6 +351,47 @@ impl DomainFrameDispatcher {
         let Some(router) = &self.router else {
             return;
         };
+        let mut announcements = self.drain_announcements.lock();
+        announcements
+            .drain
+            .get_or_insert_with(|| (code, grace_ms, reason.to_owned()));
+        let (code, grace_ms, reason) = announcements
+            .drain
+            .clone()
+            .expect("drain announcement was just set");
+        for session in self.registry.active_sessions() {
+            if announcements.hello_sessions.contains(&session.session_id) {
+                Self::announce_goaway_once(
+                    router,
+                    &mut announcements,
+                    session.session_id,
+                    session.route_family,
+                    code,
+                    grace_ms,
+                    &reason,
+                );
+            }
+        }
+    }
+
+    pub(super) fn forget_session_announcement(&self, session_id: u64) {
+        let mut announcements = self.drain_announcements.lock();
+        announcements.hello_sessions.remove(&session_id);
+        announcements.goaway_sessions.remove(&session_id);
+    }
+
+    fn announce_goaway_once(
+        router: &crate::runtime::Router,
+        announcements: &mut DrainAnnouncements,
+        session_id: u64,
+        route_family: crate::runtime::routing::RouteFamily,
+        code: u16,
+        grace_ms: u32,
+        reason: &str,
+    ) {
+        if !announcements.goaway_sessions.insert(session_id) {
+            return;
+        }
         let payload = Bytes::from(
             crate::protocol::wire2::handshake::GoAway {
                 code,
@@ -338,16 +400,14 @@ impl DomainFrameDispatcher {
             }
             .encode(),
         );
-        for session in self.registry.active_sessions() {
-            announce_control_frame(
-                router,
-                session.session_id,
-                session.route_family,
-                crate::protocol::wire2::control::GOAWAY,
-                payload.clone(),
-                "GOAWAY",
-            );
-        }
+        announce_control_frame(
+            router,
+            session_id,
+            route_family,
+            crate::protocol::wire2::control::GOAWAY,
+            payload,
+            "GOAWAY",
+        );
     }
 
     pub(super) fn send_domain_error_frame(
