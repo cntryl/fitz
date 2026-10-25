@@ -3,7 +3,7 @@
 //! Implements the retry strategy specified in Phase A error handling tests:
 //! - Exponential backoff: base 100ms, max 30s
 //! - Max retries: 10 (configurable)
-//! - Error classification: retryable vs fatal
+//! - Error classification: retryable, fatal, or indeterminate
 
 use std::time::Duration;
 
@@ -94,10 +94,22 @@ impl RetryConfig {
         }
     }
 
-    /// Calculate if we should retry after this attempt
+    /// Check whether another attempt is within the configured retry budget.
+    ///
+    /// This method does not classify an error. Use [`Self::should_retry_error`]
+    /// when the error message is available.
     #[must_use]
     pub fn should_retry(&self, attempt: u32) -> bool {
         attempt < self.max_retries
+    }
+
+    /// Check the attempt limit and classify an error before retrying.
+    ///
+    /// A retry can duplicate an operation when its outcome is indeterminate.
+    /// Callers must also ensure the operation is safe to repeat.
+    #[must_use]
+    pub fn should_retry_error(&self, attempt: u32, error: &str) -> bool {
+        self.should_retry(attempt) && (self.classify)(error) == ErrorClassification::Retryable
     }
 
     /// Get delay for next attempt
@@ -120,11 +132,14 @@ impl Default for RetryConfig {
 /// Error classification for retry decisions
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorClassification {
-    /// Should retry: connection refused, connection reset, timeout
+    /// The failure is known to have happened before dispatch and can be retried.
     Retryable,
 
-    /// Should not retry: protocol violation, authorization failure
+    /// The request is known to have failed due to a protocol or authorization error.
     Fatal,
+
+    /// The operation may have taken effect, so retrying could duplicate it.
+    Indeterminate,
 }
 
 /// Retryable error wrapper
@@ -153,10 +168,8 @@ impl RetryableError {
 ///
 /// Retryable errors:
 /// - `ECONNREFUSED`: connection refused
-/// - `ECONNRESET`: connection reset
-/// - `ETIMEDOUT`: operation timeout
-/// - `EAGAIN`: resource temporarily unavailable
-/// - `timeout`: application-level timeout
+/// Timeouts, connection resets, resource contention, and unknown errors are
+/// indeterminate: the operation may already have taken effect.
 ///
 /// Fatal errors:
 /// - `ERR_FRAME_TOO_LARGE`: protocol violation
@@ -167,16 +180,8 @@ impl RetryableError {
 pub fn default_error_classification(error_msg: &str) -> ErrorClassification {
     let msg_lower = error_msg.to_lowercase();
 
-    // Retryable patterns
-    if msg_lower.contains("econnrefused")
-        || msg_lower.contains("connection refused")
-        || msg_lower.contains("econnreset")
-        || msg_lower.contains("connection reset")
-        || msg_lower.contains("etimedout")
-        || msg_lower.contains("timeout")
-        || msg_lower.contains("eagain")
-        || msg_lower.contains("resource temporarily unavailable")
-    {
+    // A refused connection is known to have failed before request dispatch.
+    if msg_lower.contains("econnrefused") || msg_lower.contains("connection refused") {
         return ErrorClassification::Retryable;
     }
 
@@ -194,8 +199,8 @@ pub fn default_error_classification(error_msg: &str) -> ErrorClassification {
         return ErrorClassification::Fatal;
     }
 
-    // Default: treat as retryable if uncertain
-    ErrorClassification::Retryable
+    // The operation may have reached the broker, so uncertainty is not safe to retry.
+    ErrorClassification::Indeterminate
 }
 
 #[cfg(test)]
@@ -224,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn should_classify_retryable_errors() {
+    fn should_classify_retry_outcomes() {
         // Arrange
         // Act
         // Assert
@@ -238,11 +243,19 @@ mod tests {
         );
         assert_eq!(
             default_error_classification("ECONNRESET"),
-            ErrorClassification::Retryable
+            ErrorClassification::Indeterminate
         );
         assert_eq!(
             default_error_classification("timeout"),
+            ErrorClassification::Indeterminate
+        );
+        assert_eq!(
+            default_error_classification("connection refused"),
             ErrorClassification::Retryable
+        );
+        assert_eq!(
+            default_error_classification("connection reset after request write"),
+            ErrorClassification::Indeterminate
         );
     }
 
@@ -275,5 +288,18 @@ mod tests {
         assert!(config.should_retry(0));
         assert!(config.should_retry(9));
         assert!(!config.should_retry(10));
+    }
+
+    #[test]
+    fn should_retry_only_classified_errors_within_attempt_limit() {
+        // Arrange
+        let config = RetryConfig::default();
+
+        // Act
+        // Assert
+        assert!(config.should_retry_error(0, "connection refused"));
+        assert!(!config.should_retry_error(0, "operation timeout"));
+        assert!(!config.should_retry_error(10, "connection refused"));
+        assert!(!config.should_retry_error(0, "unrecognized failure"));
     }
 }

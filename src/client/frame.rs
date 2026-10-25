@@ -1,19 +1,16 @@
-//! Frame validation and protocol safety.
+//! Frame size validation and UTF-8 helpers for client-side code.
 //!
-//! Validates frames before processing to prevent:
-//! - frame too large (buffering `DoS`)
-//! - invalid UTF-8 (protocol violation)
-//! - malformed TLV (protocol violation)
+//! These helpers do not decode or validate a complete Wire2 message.
 
 use std::str;
 
 /// Frame size limits
 #[derive(Clone, Debug)]
 pub struct FrameLimits {
-    /// Maximum frame size in bytes (default 100 MB)
+    /// Maximum frame size in bytes (default matches Wire2's default message limit)
     pub max_frame_size: usize,
 
-    /// Maximum buffer size for frame assembly (default 500 MB)
+    /// Maximum buffer size for frame assembly (default is five times the frame limit)
     pub max_buffer_size: usize,
 }
 
@@ -29,9 +26,10 @@ impl FrameLimits {
 
 impl Default for FrameLimits {
     fn default() -> Self {
+        let max_frame_size = crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize;
         Self {
-            max_frame_size: 100 * 1024 * 1024, // 100 MB (client-side default; server default is 1 MB)
-            max_buffer_size: 500 * 1024 * 1024, // 500 MB
+            max_frame_size,
+            max_buffer_size: max_frame_size * 5,
         }
     }
 }
@@ -47,9 +45,6 @@ pub enum FrameValidation {
 
     /// Invalid UTF-8 in string field
     InvalidUtf8,
-
-    /// Malformed TLV encoding
-    MalformedTlv(String),
 }
 
 /// Validate frame before processing
@@ -66,7 +61,7 @@ pub fn validate_frame(data: &[u8], limits: &FrameLimits) -> FrameValidation {
     FrameValidation::Valid
 }
 
-/// Validate a UTF-8 string (for example, in `TLV` fields).
+/// Validate a UTF-8 string field.
 ///
 /// # Errors
 ///
@@ -93,6 +88,20 @@ mod tests {
         let limits = FrameLimits::default();
         let data = b"test frame data";
         assert_eq!(validate_frame(data, &limits), FrameValidation::Valid);
+    }
+
+    #[test]
+    fn should_default_to_wire2_message_limit() {
+        // Arrange
+        let limits = FrameLimits::default();
+
+        // Act
+        // Assert
+        assert_eq!(
+            limits.max_frame_size,
+            crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize
+        );
+        assert_eq!(limits.max_buffer_size, limits.max_frame_size * 5);
     }
 
     #[test]

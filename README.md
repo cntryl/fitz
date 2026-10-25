@@ -141,7 +141,9 @@ Important defaults:
 - `FITZ_AUTH_REQUIRED` defaults to `true`.
 - `FITZ_ROUTE_FAMILIES` defaults to `1`; configure a contiguous allowlist such as `1,2,3` before serving multiple isolated families.
 - `FITZ_STORAGE_MODE` accepts `memory`, `local`, or `cloud`.
-- Queue persistence is always best effort; accepted enqueues and ACKs can be lost before background persistence completes.
+- Queue is for regenerable or loss-tolerant work. Accepted enqueues and ACKs can
+  be lost before background persistence completes, so an enqueue response is
+  not a durable commit.
 - `FITZ_STORAGE_CLOUD_DURABILITY` accepts `background` or `strict` for broker-selected durable cloud writes.
 
 ## Documentation
