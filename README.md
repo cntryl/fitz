@@ -115,6 +115,7 @@ See the compose files for ports and credentials.
 Use these references to configure and operate a Fitz process:
 
 - Storage: [docs/operations/cloud-setup.md](docs/operations/cloud-setup.md)
+- Operator guide: [docs/operations/operator-guide.md](docs/operations/operator-guide.md)
 - Auth and browser perimeter: [docs/operations/auth-browser-deployment.md](docs/operations/auth-browser-deployment.md)
 - Probes and metrics: [docs/operations/observability.md](docs/operations/observability.md)
 - Operations runbook: [docs/operations/operations-runbook.md](docs/operations/operations-runbook.md)

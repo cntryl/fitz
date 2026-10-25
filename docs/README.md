@@ -24,6 +24,7 @@ protocol contracts, operations, and contributor references.
 
 ## Operate Fitz
 
+- [Operator guide](operations/operator-guide.md)
 - [Storage setup](operations/cloud-setup.md)
 - [Auth and browser deployment](operations/auth-browser-deployment.md)
 - [Probes and observability](operations/observability.md)

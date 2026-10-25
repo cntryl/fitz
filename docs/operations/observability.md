@@ -15,6 +15,11 @@ Wire2 message codec activity.
   transport, and storage activity. Metric names and labels are part of the
   admin API contract; see [admin API overview](../admin/api/overview-probes-metrics.md)
   and [admin API reference](../admin/admin-api.md).
+- `fitz_admin_observation_overload_rejections_total` counts REST, MCP, and
+  Prometheus observations rejected because shared admin worker capacity was
+  full. MCP also exports its own admission counters. This signal describes
+  admin observation load and does not by itself mean data-plane work was
+  rejected.
 
 ## Health probes
 
