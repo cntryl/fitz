@@ -24,6 +24,11 @@ struct PreparedSessionReservation {
 }
 
 impl StreamStore {
+    fn recover_global_ordering_after_unknown_commit(&self, family: u64) -> Result<(), String> {
+        self.recovered_global_families.lock().remove(&family);
+        self.recover_global_ordering_once(family)
+    }
+
     fn preserve_retryable_global_reservation(
         &self,
         key: SequenceGuardKey,
@@ -239,8 +244,7 @@ impl StreamStore {
                             | cntryl_midge::MidgeError::Timeout(_)
                     ) {
                         drop(sequence_lock);
-                        self.recovered_global_families.lock().remove(&family);
-                        self.recover_global_ordering_once(family).map_err(|recovery_error| {
+                        self.recover_global_ordering_after_unknown_commit(family).map_err(|recovery_error| {
                             format!(
                                 "commit global reservation failed with unknown outcome: {error:?}; recovery failed: {recovery_error}"
                             )
@@ -354,6 +358,16 @@ impl StreamStore {
             });
         let (response, resource_meta_after) = match commit_result {
             Ok(result) => result,
+            Err(PromotionCommitFailure::Ambiguous(error)) => {
+                if let Err(recovery_error) =
+                    self.recover_global_ordering_after_unknown_commit(family)
+                {
+                    return Err(format!(
+                        "{error}; global ordering recovery failed: {recovery_error}"
+                    ));
+                }
+                return Err(error);
+            }
             Err(error) => {
                 self.preserve_retryable_global_reservation(
                     reservation_key,

@@ -48,9 +48,9 @@ fn should_resolve_applied_unknown_global_reservation_before_later_commit() {
     assert_eq!(store.get_global_watermark(1).expect("initialize family"), 0);
     let failed_events = single_event(b"unknown reservation");
     let later_events = single_event(b"later committed event");
-    let _outcome = super::super::write_admission::inject_commit_outcomes_after_apply([
+    let _outcome = super::super::write_admission::inject_commit_outcomes_after_apply([Some(
         cntryl_midge::MidgeError::OutcomeUnknown("reservation applied; response lost".to_string()),
-    ]);
+    )]);
 
     // Act
     let failed = store.commit_records(CommitRecordsParams {
@@ -92,6 +92,107 @@ fn should_resolve_applied_unknown_global_reservation_before_later_commit() {
         watermark, 2,
         "the applied reservation must be resolved as a skip"
     );
+    assert_eq!(event_records(records).len(), 1);
+}
+
+#[test]
+fn should_recover_applied_unknown_promotion_before_later_commit() {
+    // Arrange
+    let store = store();
+    assert_eq!(store.get_global_watermark(1).expect("initialize family"), 0);
+    let uncertain_events = single_event(b"uncertain committed event");
+    let later_events = single_event(b"later committed event");
+    let _outcomes = super::super::write_admission::inject_commit_outcomes_after_apply([
+        None,
+        Some(cntryl_midge::MidgeError::OutcomeUnknown(
+            "promotion applied; response lost".to_string(),
+        )),
+    ]);
+
+    // Act
+    let uncertain = store.commit_records(CommitRecordsParams {
+        family: 1,
+        realm: "north",
+        area: "orders",
+        resource: "uncertain",
+        expected_resource_next_offset: 0,
+        events: &uncertain_events,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Sync,
+    });
+    let later = store.commit_records(CommitRecordsParams {
+        family: 1,
+        realm: "north",
+        area: "orders",
+        resource: "later",
+        expected_resource_next_offset: 0,
+        events: &later_events,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Sync,
+    });
+    let watermark = store
+        .get_global_watermark(1)
+        .expect("read global watermark");
+    let (records, _) = store
+        .read_global(1, 0, 10, None, None)
+        .expect("read global stream");
+
+    // Assert
+    assert!(uncertain
+        .expect_err("promotion result must remain unknown")
+        .contains("OutcomeUnknown"));
+    assert!(later.is_ok(), "later append should commit after recovery");
+    assert_eq!(watermark, 2);
+    assert_eq!(event_records(records).len(), 2);
+}
+
+#[test]
+fn should_retry_unapplied_unknown_promotion_after_resolving_its_reservation() {
+    // Arrange
+    let store = store();
+    assert_eq!(store.get_global_watermark(1).expect("initialize family"), 0);
+    let events = single_event(b"retryable uncertain event");
+    let _outcomes = inject_commit_outcomes([
+        None,
+        Some(cntryl_midge::MidgeError::OutcomeUnknown(
+            "promotion did not apply; response lost".to_string(),
+        )),
+    ]);
+
+    // Act
+    let uncertain = store.commit_records(CommitRecordsParams {
+        family: 1,
+        realm: "north",
+        area: "orders",
+        resource: "retryable",
+        expected_resource_next_offset: 0,
+        events: &events,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Sync,
+    });
+    let retried = store.commit_records(CommitRecordsParams {
+        family: 1,
+        realm: "north",
+        area: "orders",
+        resource: "retryable",
+        expected_resource_next_offset: 0,
+        events: &events,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Sync,
+    });
+    let watermark = store
+        .get_global_watermark(1)
+        .expect("read global watermark");
+    let (records, _) = store
+        .read_global(1, 0, 10, None, None)
+        .expect("read global stream");
+
+    // Assert
+    assert!(uncertain
+        .expect_err("promotion result must remain unknown")
+        .contains("OutcomeUnknown"));
+    assert!(retried.is_ok(), "unapplied event should be retryable");
+    assert_eq!(watermark, 2);
     assert_eq!(event_records(records).len(), 1);
 }
 

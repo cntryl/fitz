@@ -110,9 +110,9 @@ fn should_prune_resolved_range_behind_persisted_watermark_after_unknown_applied_
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     assert_eq!(store.get_global_watermark(1).expect("initialize family"), 0);
-    let _outcome = super::super::write_admission::inject_commit_outcomes_after_apply([
+    let _outcome = super::super::write_admission::inject_commit_outcomes_after_apply([Some(
         cntryl_midge::MidgeError::OutcomeUnknown("watermark applied; response lost".to_string()),
-    ]);
+    )]);
 
     // Act
     let failed_resolution = store.resolve_global_range(1, 0, 1);

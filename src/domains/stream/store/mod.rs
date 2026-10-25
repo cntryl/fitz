@@ -152,6 +152,7 @@ struct PendingGlobalReservation {
 enum PromotionCommitFailure {
     ScopeConflict,
     Retryable(String),
+    Ambiguous(String),
     Resolved(String),
 }
 
@@ -169,7 +170,9 @@ impl PromotionCommitFailure {
             Self::ScopeConflict => StreamStoreError::ConcurrencyConflict
                 .store_code()
                 .to_string(),
-            Self::Retryable(message) | Self::Resolved(message) => message,
+            Self::Retryable(message) | Self::Ambiguous(message) | Self::Resolved(message) => {
+                message
+            }
         }
     }
 }
@@ -189,6 +192,7 @@ impl From<String> for PromotionWriteFailure {
 enum PromotionTransactionFailure {
     AdmissionRejected,
     WriteConflict,
+    Ambiguous(String),
     Other(String),
 }
 
