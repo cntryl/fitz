@@ -107,7 +107,6 @@ pub fn spawn_http_listener_with_bound_socket(
                             };
                             record_connection_opened();
 
-                            info!("HTTP connection from {}", peer_addr);
                             runtime.increment_connections();
                             let accepted_at = tokio::time::Instant::now();
                             let lifecycle = ConnectionLifecycle::new(runtime.clone(), permit);
@@ -120,7 +119,7 @@ pub fn spawn_http_listener_with_bound_socket(
                             connections.lock().await.spawn(async move {
                                 let _http_permit = http_permit;
                                 if let Err(e) = handle_http_upgrade(stream, peer_addr, ingress, config, runtime, websocket_tasks, ws_allowed_origins, mcp_state, lifecycle, accepted_at).await {
-                                    tracing::error!("HTTP handler error: {}", e);
+                                    tracing::debug!(transport = "http", %peer_addr, error = %e, "HTTP connection ended with an error");
                                 }
                             });
                         }

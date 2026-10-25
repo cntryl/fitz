@@ -105,6 +105,7 @@ impl McpServer {
             &cancellation_token,
         )?;
         let Some(shared_admin_permit) = self.runtime.try_acquire_admin_blocking_permit() else {
+            crate::api::admin::observation_metrics::record_overload_rejection();
             crate::api::mcp::telemetry::record_overload();
             context.record_transport_denial(&tool_name, "shared_admin_capacity_full");
             return Err("Admin observation capacity is full; retry later".into());
@@ -229,6 +230,7 @@ impl McpServer {
             }
         };
         let Some(shared_admin_permit) = self.runtime.try_acquire_admin_blocking_permit() else {
+            crate::api::admin::observation_metrics::record_overload_rejection();
             crate::api::mcp::telemetry::record_overload();
             actions.record_request_interruption(
                 tool_name,

@@ -25,6 +25,28 @@ fn current_epoch_ms() -> u64 {
     .unwrap_or(u64::MAX)
 }
 
+#[test]
+fn should_expose_shared_admin_observation_overload_counter() {
+    // Arrange
+    let runtime = crate::boot::Runtime::new(Arc::new(Router::new()));
+    let before = crate::api::admin::observation_metrics::overload_rejections();
+    crate::api::admin::observation_metrics::record_overload_rejection();
+
+    // Act
+    let metrics = generate_prometheus_metrics(&runtime);
+
+    // Assert
+    assert!(metrics.contains("# TYPE fitz_admin_observation_overload_rejections_total counter"));
+    let recorded = metrics
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("fitz_admin_observation_overload_rejections_total ")
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+        .expect("overload metric sample");
+    assert!(recorded > before);
+}
+
 fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();

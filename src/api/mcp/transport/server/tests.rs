@@ -100,6 +100,7 @@ async fn should_reject_mcp_read_when_shared_admin_capacity_is_full() {
     // Arrange
     let directory = tempfile::tempdir().expect("temporary audit directory");
     let server = action_server(directory.path(), McpCapabilityPolicy::read_only());
+    let overloads_before = crate::api::admin::observation_metrics::overload_rejections();
     let shared_permits = (0..2)
         .map(|_| {
             server
@@ -123,6 +124,10 @@ async fn should_reject_mcp_read_when_shared_admin_capacity_is_full() {
     assert_eq!(
         result.expect_err("shared capacity should reject MCP work"),
         "Admin observation capacity is full; retry later"
+    );
+    assert!(
+        crate::api::admin::observation_metrics::overload_rejections() > overloads_before,
+        "shared admin overload should be visible to operators"
     );
     drop(shared_permits);
 }

@@ -49,6 +49,7 @@ async fn run_bounded_admin_observation(
     operation: impl FnOnce(Arc<Runtime>) -> Response + Send + 'static,
 ) -> Result<Response, Infallible> {
     let Some(permit) = runtime.try_acquire_admin_blocking_permit() else {
+        crate::api::admin::observation_metrics::record_overload_rejection();
         return Ok(error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "Admin observation capacity is full",
@@ -61,10 +62,13 @@ async fn run_bounded_admin_observation(
     .await
     {
         Ok(response) => Ok(response),
-        Err(error) => Ok(error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            &format!("Admin observation failed: {error}"),
-        )),
+        Err(error) => {
+            tracing::error!(operation = "admin_observation", failure_class = "worker_join", %error, "Admin observation worker failed");
+            Ok(error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                &format!("Admin observation failed: {error}"),
+            ))
+        }
     }
 }
 

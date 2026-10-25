@@ -119,6 +119,7 @@ async fn handle_metrics_connection(
 
 async fn handle_metrics_observation(runtime: Arc<Runtime>) -> crate::api::http::Response {
     let Some(permit) = runtime.try_acquire_admin_blocking_permit() else {
+        crate::api::admin::observation_metrics::record_overload_rejection();
         return hyper::http::Response::builder()
             .status(hyper::StatusCode::SERVICE_UNAVAILABLE)
             .body(crate::api::http::Body::from(
@@ -134,7 +135,7 @@ async fn handle_metrics_observation(runtime: Arc<Runtime>) -> crate::api::http::
     {
         Ok(response) => response,
         Err(error) => {
-            tracing::error!(%error, "Metrics observation failed");
+            tracing::error!(transport = "prometheus", operation = "metrics_observation", failure_class = "worker_join", %error, "Metrics observation worker failed");
             hyper::http::Response::builder()
                 .status(hyper::StatusCode::SERVICE_UNAVAILABLE)
                 .body(crate::api::http::Body::from("Metrics observation failed"))

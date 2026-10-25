@@ -4,6 +4,7 @@
 //! All endpoints coexist with data plane on same port (path-based routing).
 
 mod assets;
+pub(crate) mod observation_metrics;
 pub(crate) use list::snapshot_detail;
 pub mod auth;
 pub(crate) mod commands;
