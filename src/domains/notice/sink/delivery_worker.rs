@@ -39,6 +39,10 @@ impl NoticeDeliveryJob {
             payload,
         }
     }
+
+    pub(super) fn target_count(&self) -> usize {
+        self.targets.len()
+    }
 }
 
 pub(super) fn spawn_notice_delivery_worker(
@@ -94,13 +98,16 @@ pub(super) fn notice_delivery_worker(
 /// only to the global collector made an injected collector silently incomplete,
 /// and made any assertion on the global count depend on what every other live
 /// Notice sink in the process happened to be doing.
-pub(super) fn record_delivery_drop(
+pub(super) fn record_delivery_drops(
     metrics: Option<&crate::domains::notice::metrics::NoticeMetrics>,
+    count: usize,
 ) {
+    let count = u64::try_from(count).unwrap_or(u64::MAX);
     match metrics {
-        Some(metrics) => metrics.record_delivery_drop(),
-        None => crate::observability::counter_inc(
+        Some(metrics) => metrics.record_delivery_drops(count),
+        None => crate::observability::counter_add(
             crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
+            count,
         ),
     }
 }
@@ -175,7 +182,7 @@ fn deliver_with_retry_for(
                 std::thread::yield_now();
             }
             Err(_) => {
-                record_delivery_drop(metrics);
+                record_delivery_drops(metrics, 1);
                 return;
             }
         }
