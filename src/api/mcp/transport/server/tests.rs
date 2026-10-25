@@ -96,6 +96,38 @@ fn action_server(audit_directory: &std::path::Path, policy: McpCapabilityPolicy)
 }
 
 #[tokio::test]
+async fn should_reject_mcp_read_when_shared_admin_capacity_is_full() {
+    // Arrange
+    let directory = tempfile::tempdir().expect("temporary audit directory");
+    let server = action_server(directory.path(), McpCapabilityPolicy::read_only());
+    let shared_permits = (0..2)
+        .map(|_| {
+            server
+                .runtime
+                .try_acquire_admin_blocking_permit()
+                .expect("acquire runtime-wide admin permit")
+        })
+        .collect::<Vec<_>>();
+
+    // Act
+    let result = server
+        .execute_read_tool(
+            server.context.clone(),
+            CancellationToken::new(),
+            "get_mcp_discovery".into(),
+            None,
+        )
+        .await;
+
+    // Assert
+    assert_eq!(
+        result.expect_err("shared capacity should reject MCP work"),
+        "Admin observation capacity is full; retry later"
+    );
+    drop(shared_permits);
+}
+
+#[tokio::test]
 async fn should_not_durably_audit_action_calls_from_principal_without_action_capability() {
     // Arrange
     let directory = tempfile::tempdir().expect("temporary audit directory");

@@ -117,6 +117,45 @@ fn should_report_admin_dead_letters_given_retained_dlq_messages() {
 }
 
 #[test]
+fn should_leave_ready_messages_reservable_after_admin_snapshot_reads() {
+    // Arrange
+    let clock = MockClock::new();
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let mut actor = QueueActor::with_clock(
+        RouteFamily::new(0),
+        unique_queue_key("jobs-admin-read-only"),
+        store,
+        Box::new(clock),
+        Some(2),
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let QueueResponse::Sent { id } = actor.handle_send(Bytes::from("work"), None) else {
+        panic!("Expected Sent response");
+    };
+
+    // Act
+    let snapshot = actor.admin_snapshot();
+    let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+    // Assert
+    assert_eq!(snapshot.messages_ready, 1);
+    match response {
+        QueueResponse::Received { messages } => {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].id, id);
+        }
+        other => panic!("Expected Received response, found {other:?}"),
+    }
+}
+
+#[test]
 fn should_replay_dead_letter_given_retained_dlq_message() {
     // Arrange
     let clock = MockClock::new();

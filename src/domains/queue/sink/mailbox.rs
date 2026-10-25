@@ -53,12 +53,14 @@ impl QueueFamilyRuntime {
             }
             QueueDomainCommand::SweepRuntimeStateAt(now, Some(reply)) => {
                 self.core.sweep_runtime_state_at(now);
+                self.core.refresh_admin_snapshot_if_dirty();
                 let _ = reply.send(());
             }
             QueueDomainCommand::SweepRuntimeStateAt(now, None) => {
                 let pending = self.core.runtime_sweep_pending.clone();
                 let _pending_reset = RuntimeSweepPendingReset(&pending);
                 self.core.sweep_runtime_state_at(now);
+                self.core.refresh_admin_snapshot_if_dirty();
             }
             QueueDomainCommand::ReplayDeadLetter(key, id, reply) => {
                 let _ = reply.send(self.core.replay_dead_letter(&key, id));
