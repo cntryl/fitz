@@ -37,10 +37,20 @@ pub enum ManifestDecoder {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CorrelationPolicy {
+    Required,
+    NoResponse,
+    AckOptional,
+    RpcCancelOrAck,
+    Handshake,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MessageManifestEntry {
     pub message_id: u16,
     pub domain: &'static str,
     pub direction: ManifestDirection,
+    pub correlation: CorrelationPolicy,
     pub route_scheme: Option<&'static str>,
     pub authorization: ManifestAuthorization,
     pub decoder: ManifestDecoder,
@@ -53,10 +63,18 @@ const fn client(
     authorization: ManifestAuthorization,
     decoder: ManifestDecoder,
 ) -> MessageManifestEntry {
+    let correlation = match message_id {
+        1 => CorrelationPolicy::Handshake,
+        303 => CorrelationPolicy::NoResponse,
+        304 => CorrelationPolicy::RpcCancelOrAck,
+        500 => CorrelationPolicy::AckOptional,
+        _ => CorrelationPolicy::Required,
+    };
     MessageManifestEntry {
         message_id,
         domain,
         direction: ManifestDirection::ClientToServer,
+        correlation,
         route_scheme,
         authorization,
         decoder,
@@ -73,6 +91,7 @@ const fn server(
         message_id,
         domain,
         direction: ManifestDirection::ServerToClient,
+        correlation: CorrelationPolicy::NoResponse,
         route_scheme,
         authorization: ManifestAuthorization::None,
         decoder,

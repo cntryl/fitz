@@ -60,6 +60,28 @@ fn should_allow_zero_correlation_for_uuid_addressed_rpc_worker_acknowledgements(
     assert_eq!(result, Ok(()));
 }
 
+#[test]
+fn should_reject_nonzero_correlation_for_manifest_no_response_message() {
+    // Arrange
+    let state = ConnectionState::default();
+    state.validate_request(&request(1, 0, &[])).unwrap();
+    // Act
+    let result = state.validate_request(&request(303, 7, &[]));
+    // Assert
+    assert_eq!(result, Err("message must use zero correlation"));
+}
+
+#[test]
+fn should_require_correlation_for_rpc_cancel_request() {
+    // Arrange
+    let state = ConnectionState::default();
+    state.validate_request(&request(1, 0, &[])).unwrap();
+    // Act
+    let result = state.validate_request(&request(304, 0, &[1]));
+    // Assert
+    assert_eq!(result, Err("request correlation must be non-zero"));
+}
+
 fn request(kind: u16, id: u64, payload: &[u8]) -> ChannelMessage {
     ChannelMessage::new(
         ChannelId::Lease,

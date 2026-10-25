@@ -37,18 +37,36 @@ impl ConnectionState {
     pub(crate) fn validate_request(&self, message: &ChannelMessage) -> Result<(), &'static str> {
         let kind = message.msg_type.as_u16();
         if kind == 1 {
+            if message.correlation.is_some() || message.flags.bits() != 0 {
+                return Err("CONNECT must use zero correlation and flags");
+            }
             self.connect_seen.store(true, Ordering::Release);
             return Ok(());
         }
         if !self.connect_seen.load(Ordering::Acquire) {
             return Err("CONNECT must be the first message");
         }
-        // Worker RESPONSE and lifecycle acknowledgements are addressed by RPC
-        // UUID, rather than being new connection-level requests.
-        let rpc_worker_reply = kind == 303 || (kind == 304 && message.payload.first() != Some(&1));
-        let unacknowledged_publish = kind == 500 && !message.flags.is_ack_requested();
-        if !rpc_worker_reply && !unacknowledged_publish && message.correlation.is_none() {
+        let policy = crate::protocol::manifest::client_entry(
+            crate::protocol::message::MessageType::new(kind),
+        )
+        .map_err(|_| "unsupported client message type")?
+        .correlation;
+        let correlation_required = match policy {
+            crate::protocol::manifest::CorrelationPolicy::Required => true,
+            crate::protocol::manifest::CorrelationPolicy::NoResponse
+            | crate::protocol::manifest::CorrelationPolicy::Handshake => false,
+            crate::protocol::manifest::CorrelationPolicy::AckOptional => {
+                message.flags.is_ack_requested()
+            }
+            crate::protocol::manifest::CorrelationPolicy::RpcCancelOrAck => {
+                message.payload.first() == Some(&1)
+            }
+        };
+        if correlation_required && message.correlation.is_none() {
             return Err("request correlation must be non-zero");
+        }
+        if !correlation_required && message.correlation.is_some() {
+            return Err("message must use zero correlation");
         }
         Ok(())
     }

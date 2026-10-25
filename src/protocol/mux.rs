@@ -28,7 +28,8 @@ pub struct ChannelMessage {
     pub payload: Bytes,
     /// Correlation from the message header, if the client labelled the request.
     pub correlation: Option<std::num::NonZeroU64>,
-    /// Header flags; only `ACK_REQUESTED` is defined.
+    /// Header flags, including `ACK_REQUESTED` on requests and
+    /// `RESPONSE_FINAL` on terminal correlated responses.
     pub flags: crate::protocol::wire2::header::HeaderFlags,
 }
 
