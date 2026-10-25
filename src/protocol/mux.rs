@@ -1,7 +1,7 @@
 //! Multiplexing layer for logical channels
 //!
-//! This module maps TLV message types to logical channels and enforces
-//! per-channel backpressure via simple counters.
+//! This module maps Wire2 message types to logical channels and enforces
+//! per-channel backpressure.
 
 use crate::protocol::frame::ChannelId;
 use crate::protocol::message::{MessageType, WireMessage};

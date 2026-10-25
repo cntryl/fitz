@@ -1,7 +1,5 @@
 # KV Domain Spec
 
-Split from the former `queue-rpc-kv.md`; the Queue and RPC domains are in [queue-rpc.md](queue-rpc.md).
-
 ### KV Domain (Durable Key-Value)
 
 **Purpose:** Transaction-based CRUD and range operations with isolation.

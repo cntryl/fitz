@@ -1,6 +1,6 @@
 //! Transport benchmark helpers
 //!
-//! Minimal TLV frame builders and parsers reused by tier4 benches.
+//! Wire2 test-frame builders and parsers used by broker benchmarks.
 
 use crate::testkit::transport::{FrameBuilder, FrameParser};
 use bytes::BufMut;
@@ -27,13 +27,13 @@ fn u32_to_usize(value: u32) -> usize {
     usize::try_from(value).unwrap_or_else(|_| panic!("u32 value does not fit usize: {value}"))
 }
 
-/// Extract the single TLV field from a test frame for direct-to-sink delivery.
+/// Extract the message value from a test frame for direct-to-sink delivery.
 /// # Panics
-/// This function panics when the frame does not contain a single TLV field.
+/// This function panics when the frame is not exactly one valid Wire2 message.
 #[must_use]
 pub fn extract_single_tlv_field(frame: &[u8]) -> (u16, Bytes) {
     let mut parser = FrameParser::new(frame);
-    let (msg_type, payload) = parser.next_field_ref().expect("single TLV field");
+    let (msg_type, payload) = parser.next_field_ref().expect("single Wire2 message");
     (msg_type, Bytes::copy_from_slice(payload))
 }
 
@@ -104,7 +104,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = FrameParser::new(response);
 
-    // Server sends single TLV record: [msg_type][len][payload]
+    // Server sends one Wire2 message per transport frame.
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if payload.is_empty() { 1 } else { payload[0] };

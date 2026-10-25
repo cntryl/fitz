@@ -1,6 +1,6 @@
 //! Lease domain codec - ephemeral lock operations
 //!
-//! Encodes/decodes TLV messages for the lease domain inside one running broker.
+//! Encodes and decodes Wire2 payloads for lease operations inside one broker.
 //! Supports Acquire, Extend, Release, Query, Subscribe, and Unsubscribe operations.
 //!
 //! Wire format follows `CLIENT_SPEC`: ACQUIRE success includes `response_type`
@@ -92,7 +92,7 @@ pub fn parse_frame(
     }
 }
 
-/// Parse incoming message from TLV-encoded bytes.
+/// Parse an incoming Lease payload.
 ///
 /// `route_family` is injected by the session layer — it is never read
 /// from the wire payload.

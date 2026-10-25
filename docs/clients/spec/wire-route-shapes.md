@@ -1,6 +1,4 @@
-# Wire Route Shapes
-
-Route acceptance rules, global route rules, per-domain route shapes, and the lock-in rule, moved from [wire-routing.md](wire-routing.md).
+# Route Shapes
 
 ## Route Acceptance Criteria (Authoritative)
 

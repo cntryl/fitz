@@ -339,7 +339,7 @@ Every operation includes route:
 
 ### RPC Domain (Request/Response & Streaming)
 
-**Purpose:** Low-latency request/response with session-derived caller routing and optional streaming.
+**Purpose:** Request/response with session-derived caller routing and optional streaming.
 
 #### Message Types
 
@@ -427,8 +427,8 @@ broker cannot identify a terminal RPC reply and may close the session.
 If the caller session or inbox has already disappeared, the broker cannot
 deliver a terminal reply; the caller treats that connection loss as an
 indeterminate outcome, not as a retryable rejection.
-See [the compatibility and rollout plan](../rpc-request-failure-rollout.md)
-for the prior uncorrelated 302 ingress-error behavior and mixed-version handling.
+See the [wire-format migration guide](../../operations/migration-guide.md) for
+mixed-version and upgrade requirements.
 
 #### REQUEST Delivery (Server forwards to worker)
 

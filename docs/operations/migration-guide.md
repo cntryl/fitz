@@ -4,12 +4,10 @@ This guide covers safe upgrades between Fitz releases.
 
 ## 0.3.0: wire format 2 (breaking, flag day)
 
-Fitz 0.3.0 speaks only wire format 2, the format Fitz intends to freeze as
-1.0.0. There is no negotiation with wire format 1 clients: a 0.3.0 broker
+Fitz 0.3.0 speaks only wire format 2. There is no negotiation with wire format
+1 clients: a 0.3.0 broker
 cannot serve a 0.2.x SDK, and a 0.2.x broker cannot serve a 2.0 SDK. The
-complete list of changes is the
-[0.3.0 breaking-change ledger](../development/release-0.3.0-breaking-changes.md);
-the client-facing contract is `docs/clients/` and the code table is
+client-facing contract is in `docs/clients/`, and the code table is
 [error-codes.md](../clients/spec/error-codes.md).
 
 What every client sees change:
@@ -35,8 +33,7 @@ broker generation. Consumers reconnect to the new broker using their 2.0 SDK.
 
 **Rollback.** Roll back the broker and the SDKs together; the same
 prohibition applies in reverse. The wire change touches no persisted data.
-Storage changes that ship in the same release are listed in the ledger's
-storage rows and carry their own migration notes.
+Storage changes that ship in the same release carry their own migration notes.
 
 **Configuration.** `FITZ_MAX_MESSAGE_BYTES` (default 1 MiB) is now the one
 message limit: the transport frame bound, the outbound framing bound, and the

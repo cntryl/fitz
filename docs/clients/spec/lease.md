@@ -1,7 +1,5 @@
 # Lease Domain Spec
 
-Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.md](schedule.md).
-
 ### Lease Domain (Ephemeral Exclusive Coordination with Queueing)
 
 **Purpose:** In-memory exclusive leases for single-broker coordination with optional FIFO queue-based acquisition, process-local fencing tokens, and configurable wait timeouts.
@@ -447,7 +445,7 @@ event log.
 
 #### Usage Scenarios (with Pseudocode)
 
-**Scenario 1: Immediate Acquire (Fast Path)**
+**Scenario 1: Immediate Acquire**
 
 ```python
 # Try to acquire with no wait
@@ -610,12 +608,6 @@ elif response.type == "Fenced":
 - Each token change represents a new ownership epoch, not a renewal of the current one
 - Holders with newer tokens always supersede older tokens
 - Safe for strong consistency coordination
-
-**Timeout Tuning:**
-- **Short waits (1-2s):** Fast-fail scenarios; high throughput, less fairness
-- **Medium waits (5-10s):** Balanced; allows real contention, bounded latency
-- **Long waits (20-30s):** High fairness; higher latency for unavailable resources
-- **No wait (wait_seconds=0):** Pessimistic locking; immediate fail-fast
 
 **Queue Monitoring:**
 - Use QUERY to inspect `pending_waiters` count

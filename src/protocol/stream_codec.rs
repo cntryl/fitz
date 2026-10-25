@@ -1,6 +1,6 @@
 //! Stream domain codec - append-only streaming
 //!
-//! Encodes/decodes TLV messages for the stream domain.
+//! Encodes and decodes Stream payloads.
 //! Supports Begin, Append, Commit, Rollback, Read, Last, `GetMetadata` operations.
 //!
 //! `route_family` is a server-internal concept supplied by the session layer
@@ -29,7 +29,7 @@ fn map_stream_filter_decode_error(error: &str) -> String {
     format!("{ERR_STREAM_FILTER_INVALID_PAYLOAD}: {error}")
 }
 
-/// Parse incoming message from TLV-encoded bytes.
+/// Parse an incoming Stream payload.
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
 /// session layer — they are never read from the wire payload.
@@ -134,7 +134,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     }
 }
 
-/// Encode domain response to TLV-encoded bytes
+/// Encode a domain response payload.
 #[must_use]
 pub fn encode_response(message_type: u16, response: &StreamClientResponseBody) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();

@@ -1,26 +1,11 @@
 //! Retry logic with exponential backoff
 //!
-//! Implements the retry strategy specified in Phase A error handling tests:
-//! - Exponential backoff: base 100ms, max 30s
-//! - Max retries: 10 (configurable)
-//! - Error classification: retryable, fatal, or indeterminate
+//! Retries errors classified as retryable and stops on fatal or indeterminate
+//! outcomes.
 
 use std::time::Duration;
 
-/// Exponential backoff calculator.
-///
-/// Formula: `backoff = min(base * (2 ^ attempt), max_backoff)`.
-/// Example sequence (`base=100ms`, `max=30s`):
-///   attempt 1: `100ms`
-///   attempt 2: `200ms`
-///   attempt 3: `400ms`
-///   attempt 4: `800ms`
-///   attempt 5: `1600ms`
-///   attempt 6: `3200ms`
-///   attempt 7: `6400ms`
-///   attempt 8: `12800ms`
-///   attempt 9: `25600ms`
-///   attempt 10: `30000ms` (capped at max)
+/// Calculate an exponentially increasing delay, capped by `max_ms`.
 #[derive(Clone, Debug)]
 pub struct ExponentialBackoff {
     base_ms: u64,
@@ -57,7 +42,7 @@ impl ExponentialBackoff {
 }
 
 impl Default for ExponentialBackoff {
-    /// Default: base 100ms, max 30s (as per Phase A spec)
+    /// Default retry delay starts at 100 ms and is capped at 30 seconds.
     fn default() -> Self {
         Self {
             base_ms: 100,

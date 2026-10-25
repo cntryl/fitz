@@ -1,14 +1,12 @@
 # Environment Variables Reference
 
 This is the canonical reference for environment variables read by Fitz runtime
-code and repository-owned deployment or benchmark surfaces. Use it instead of
-inferring settings from Compose files, tests, or source code.
+code and repository-owned deployment files.
 
 ## Reading the Tables
 
 - **Unset** means Fitz does not supply a value.
-- Settings marked as local-development or benchmark-only are scoped to those
-  repository workflows.
+- Settings marked as local-development are scoped to those repository examples.
 - Provider-specific storage settings are read only when
   `FITZ_STORAGE_MODE=cloud`.
 - Never put passwords, JWT secrets, or provider credentials directly in
@@ -234,12 +232,6 @@ semantics, defaults, and security requirements are documented in
 | Key | Scope | Description |
 | --- | --- | --- |
 | FITZ_SQRZL_PROVIDER | compose.cloud.yml only | Chooses the local emulator front door in the compose flow. Not read directly by runtime code. |
-
-## Benchmark-Only Variables
-
-| Key | Allowed Values / Format | Default | Description |
-| --- | --- | --- | --- |
-| FITZ_BENCH_ALLOW_LOGS | `true` or `false` | `false` | Enables Fitz transport and startup logs in Tier 4 benchmark binaries. The broker runtime does not read it. |
 
 ## Removed or Unsupported Keys
 

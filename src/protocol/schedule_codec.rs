@@ -1,7 +1,7 @@
 //! Schedule domain codec for durable timing intent.
 //!
-//! Encodes and decodes TLV messages for schedule definition management and
-//! ephemeral live notifications.
+//! Encodes and decodes Schedule payloads for definition management and live
+//! notifications.
 
 use crate::dispatch::wire::schedule::{
     ScheduleCreateEntry, ScheduleDeliveryMode, ScheduleFailure, ScheduleFailureCategory,
@@ -14,7 +14,7 @@ use crate::session::SessionId;
 
 const MAX_SCHEDULE_LIST_LIMIT: u64 = 1_000;
 
-/// Parse incoming message from TLV-encoded bytes.
+/// Parse an incoming Schedule payload.
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
 /// session layer — they are never read from the wire payload.
@@ -117,7 +117,7 @@ pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<&str>, String> {
     Ok(routes)
 }
 
-/// Encode domain response to TLV-encoded bytes
+/// Encode a domain response payload.
 #[must_use]
 pub fn encode_response(message_type: u16, response: &ScheduleResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();

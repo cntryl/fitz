@@ -710,12 +710,9 @@ fn should_keep_route_order_index_in_sync_with_schedule_mutations() {
 #[test]
 fn should_bound_list_response_to_one_wire_frame() {
     // Arrange
-    // A schedule LIST response is encoded into a single TLV value, whose
-    // length prefix is a u16. `limit = 0` means "all remaining", so a few
-    // hundred ordinary schedules with 1 KiB payloads produce a response far
-    // past 65_535 bytes - which panicked the outbound sink rather than
-    // paginating. Every entry here is individually small and legal; only the
-    // aggregate is oversized.
+    // Schedule LIST has a domain payload limit. `limit = 0` means "all remaining";
+    // this fixture verifies that multiple valid entries are paginated when
+    // their combined payload exceeds the page ceiling.
     let mut actor = make_actor();
     let payload = Bytes::from(vec![b'p'; 1024]);
     for index in 0..250 {
@@ -823,10 +820,9 @@ fn should_keep_list_continuation_inside_one_wire_frame() {
 #[test]
 fn should_reject_schedule_whose_definition_could_never_be_listed() {
     // Arrange
-    // A CREATE arrives as one TLV value, so a payload can be ~140 bytes larger
-    // than a LIST entry for the same route can encode. Accepting one leaves a
-    // definition that is stored but permanently unlistable: the page cannot be
-    // framed, so the response is dropped rather than answered.
+    // A CREATE request can be larger than a LIST entry for the same route
+    // because it carries fields that the returned entry does not. Accepting an
+    // oversized definition would make it impossible to return in a LIST page.
     let mut actor = make_actor();
     let route = "schedule://acme/jobs/unlistable/run";
     let cron = "* * * * *";

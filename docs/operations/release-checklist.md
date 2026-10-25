@@ -1,123 +1,27 @@
 # Release Checklist
 
-Use this checklist before approving a Fitz release.
+Use this checklist for a Fitz release candidate.
 
-For the 0.2.0 candidate, track evidence and remaining gates in the
-[qualification record](release-0.2.0.md).
+## Contract and compatibility
 
-## Build and Test
+- Review the changes against the [domain contracts](../development/domain-boundaries-spec.md).
+- Update the user, operations, and protocol documentation affected by the release.
+- Document wire and storage compatibility requirements in the
+  [migration guide](migration-guide.md).
+- For a wire change, validate the broker and supported SDKs against the shared
+  [client scenarios](../clients/cross-language-conformance-suite.yaml).
 
-1. All CI checks green.
-2. Required unit, integration, and benchmark suites completed.
-3. No unresolved critical or high-severity regressions.
+## Validation
 
-## Documentation
-
-1. [docs/README.md](../README.md) links validated.
-2. API and admin behavior changes documented.
-3. Migration notes added for any compatibility impacts.
-4. Broker and all supported client codecs validated against each breaking wire contract.
-
-## Operations Readiness
-
-1. [operations-runbook.md](operations-runbook.md) reviewed and current.
-2. Alerts and dashboards updated for new signals.
-3. Rollback plan verified.
-4. Required storage export/replay or reset rehearsed for breaking persisted-format changes.
-
-## Sign-off
-
-1. Engineering sign-off.
-2. Operations sign-off.
-3. Security sign-off for auth or policy changes.
-
-## Promote the release candidate
-
-1. Open a pull request from `develop` to `main` only when the release is ready.
-2. Confirm the `backend` and `frontend` CI jobs passed on the exact pull request head. Review the separate GitHub default CodeQL analysis for that head.
-3. Merge with a merge commit to preserve ancestry for the next release promotion. This update to `main` starts the `Containers` workflow below.
+- Run the required local checks from [Contributing](../../CONTRIBUTING.md).
+- Confirm the required CI checks pass on the exact release candidate commit.
+- For storage changes, verify the applicable write, shutdown, restart, and
+  recovery paths using the supported storage modes.
+- Review open critical defects and record any release-blocking limitations.
 
 ## Publish
 
-1. Every push to `main` automatically runs `Containers` and updates the
-   moving `ghcr.io/cntryl/fitz:main` and `:latest` multi-architecture aliases.
-   A green run must report both `linux/amd64` and `linux/arm64` in its manifest.
-   Every push to `develop` likewise updates the moving
-   `ghcr.io/cntryl/fitz:develop` alias for integration testing; never deploy it
-   as a release.
-2. Dispatch the `Publish` workflow from `main` only for a stable release. Its
-   called `Containers` workflow reads the package version from `Cargo.toml` via
-   `version.yml`; bump that manifest version before dispatching a new release.
-   Repeating the same publish for the same source SHA is idempotent:
-   the existing image and source tag are verified and reused. A conflicting
-   existing `v<semver>` tag still fails safely.
-3. Confirm the called `Containers` workflow published the multi-architecture
-   `ghcr.io/cntryl/fitz:<semver>` manifest. That tag is immutable: publishing
-   different image content under the same SemVer fails.
-4. Confirm the workflow created the annotated `v<semver>` repository tag only
-   after the container manifest succeeded. A failed container build does not
-   tag the source commit.
-5. For rollback, deploy the previous immutable SemVer image. Do not move or
-   replace an existing image or repository version tag.
-
-Use the standalone `Containers` workflow to publish the moving `main` or
-`develop` branch image aliases. It does not publish a versioned image or create
-a repository release tag.
-
-## Midge 0.3 cloud storage release gate
-
-Before upgrading a broker from Midge 0.2.0 to the 0.3 release line, confirm every
-cloud-mode deployment (`FITZ_STORAGE_MODE=cloud`) has chosen logical migration
-or a fresh prefix, and has preserved its original prefix and cache for
-rollback. Rehearse the chosen path on a copy, including restart recovery and
-recovery after local-cache loss. Local-mode deployments only need a verified
-copy of `FITZ_STORAGE_PATH`. Follow the procedure in the
-[migration guide](migration-guide.md).
-
-For the 0.3.1 to 0.3.2 dependency update, preserve a verified pre-upgrade copy
-and qualify reads, writes, shutdown, and recovery separately; include empty-cache
-recovery for cloud deployments. No logical export/import is required solely by
-this update. Verify that lease-loss storage errors remain terminal and do not
-become successful reads or automatic mutation retries.
-
-Fitz uses the official crates.io Midge 0.4.1 release. Confirm the lockfile uses
-the registry package and checksum. FORMAT 8 and cloud catalog v3 require a
-fresh store populated by logical migration from older versions; qualify reads,
-writes, shutdown, restart, and cloud fresh-cache recovery before release.
-Preserve the original store and broker for rollback. See the
-[migration guide](migration-guide.md#midge-041). Qualify the final published-crate
-broker image with the catalog-pressure and live 1 GiB Stream recovery workloads
-at 0.25 CPU, 512 MiB RAM, no extra swap, and the unchanged 180-second readiness
-deadline. Record native ARM64 and AMD64 evidence separately. See the
-[qualification report](../development/cloud-catalog-pressure.md).
-
-For Fitz 0.2.0, the maintainer accepted local Apple Silicon Mac verification on
-2026-10-16 in place of a separate native AMD64 campaign. Preserve the actual
-architecture and scope in the release record; this exception does not establish
-AMD64 runtime results or relax resource, readiness, correctness or performance
-budgets. Workflow files remain unchanged.
-
-## Wire format 2 release gate (0.3.0)
-
-Record the released .NET, TypeScript, Go, Python, and Rust SDK 2.0 versions
-that pass the cross-language conformance runner against the release candidate
-broker. Confirm the golden contract test is green on the exact broker commit,
-that every ledger row is landed or deferred with a reason, and that the
-migration guide's 0.3.0 section states the mixed-version prohibition. Rehearse
-the drain-based broker upgrade with a 2.0 SDK consumer reconnecting through
-`GOAWAY`. Publish SDKs first, then activate compatible consumers and broker
-together; follow the together-rollback order in
-[migration guidance](../operations/migration-guide.md).
-
-## Historical wire 1: Stream error envelope generation 2 release gate
-
-This gate applies to pre-0.3.0 releases. The wire-2 gate above supersedes it.
-
-For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK
-versions that decode status 2 before releasing the broker change. Verify legacy
-status-1 decoding, APPEND and COMMIT code `2001` over a real broker, unrelated
-wording with `2001`, misleading wording with another code, and backend `2012`.
-Requalify both linked Portia assertions using the exact broker and client
-artifacts, including original failure and pending-batch preservation through
-cleanup failures. Follow the client-first upgrade and broker-first rollback in
-[migration guidance](../operations/migration-guide.md).
+- Confirm the package and image versions match the intended release.
+- Publish through the repository's release workflow.
+- Verify the published artifact and immutable version tag before announcing it.
+- Keep the previous release artifact available for rollback.

@@ -1,4 +1,4 @@
-// KV domain TLV message types and codec
+// KV domain message types and payload codec
 
 use crate::dispatch::wire::kv::KvError;
 use crate::dispatch::wire::kv::{

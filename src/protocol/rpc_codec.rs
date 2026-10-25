@@ -1,6 +1,6 @@
 //! RPC domain codec - request/response operations
 //!
-//! Encodes/decodes TLV messages for the RPC domain.
+//! Encodes and decodes RPC payloads.
 //! Supports Subscribe, Unsubscribe, Request, Response operations.
 //!
 //! `route_family` is a server-internal concept supplied by the session layer
@@ -154,7 +154,7 @@ pub fn terminal_error_response_message_capacity(message: &str) -> usize {
     UUID_BYTES_LEN + U64_LEN + U8_LEN + encoded_bytes_len(error_body_capacity(message))
 }
 
-/// Parse incoming message from TLV-encoded bytes.
+/// Parse an incoming RPC payload.
 ///
 /// `route_family` is injected by the session layer — it is never read
 /// from the wire payload.
@@ -221,7 +221,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     }
 }
 
-/// Encode domain response to TLV-encoded bytes
+/// Encode a domain response payload.
 #[must_use]
 pub fn encode_response(response: &RpcClientResponseBody) -> Vec<u8> {
     let mut enc = PayloadEncoder::with_capacity(response_body_capacity(response));
@@ -605,11 +605,7 @@ pub fn encode_terminal_error_response_message_into(
     response_enc.finish()
 }
 
-/// Encode a complete RPC client response TLV frame directly into the final wire buffer.
-///
-/// # Panics
-///
-/// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
+/// Encode an RPC client response payload. The transport adds the Wire2 header.
 #[must_use]
 pub fn encode_client_response_payload(response: &RpcClientResponseBody) -> Bytes {
     let payload_len = response_body_capacity(response);
@@ -658,12 +654,7 @@ pub fn encode_worker_request_payload(request: &RpcRequest, remaining_budget_ms: 
     buf.freeze()
 }
 
-/// Encode a complete RPC response message (`303`) TLV frame directly into the
-/// final wire buffer.
-///
-/// # Panics
-///
-/// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
+/// Encode an RPC response payload (`303`). The transport adds the Wire2 header.
 #[must_use]
 pub fn encode_response_message_payload(response: &RpcResponse) -> Bytes {
     let payload_len = response_message_capacity(response);
@@ -678,12 +669,7 @@ pub fn encode_response_message_payload(response: &RpcResponse) -> Bytes {
     buf.freeze()
 }
 
-/// Encode a complete RPC terminal error response (`303`) TLV frame directly into
-/// the final wire buffer.
-///
-/// # Panics
-///
-/// Panics if the encoded RPC payload exceeds the TLV `u16` value-length limit.
+/// Encode a terminal RPC error response payload (`303`).
 #[must_use]
 pub fn encode_terminal_error_response_message_payload(
     correlation_id: &Uuid,

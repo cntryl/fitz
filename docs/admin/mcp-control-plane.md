@@ -162,36 +162,6 @@ in the background. Its permit remains held, and Fitz does not return its late
 result to the cancelled request. Admission failures return a retryable busy
 response; callers should use bounded backoff.
 
-### Local budget measurement
-
-On 2026-10-04 the explicit debug-build acceptance measurement executed all ten
-read tools 20 times each against a local runtime whose cached admin read model
-contained 500 RPC worker snapshots. It measured tool execution and encoded tool-result bytes
-under concurrent local test load, using cached indexed projections. It did not
-include OAuth provider latency or HTTP/network time and does not establish a
-hard execution deadline. Reproduce with:
-
-```sh
-cargo test --lib should_measure_bounded_operational_reads_without_promising_hard_preemption -- --ignored --nocapture
-```
-
-| Tool | p95 (ms) | Largest result (bytes) |
-| --- | ---: | ---: |
-| `get_global_stats` | 1.506 | 9,097 |
-| `get_global_troubleshooting` | 0.537 | 1,368 |
-| `inspect_resource_detail` | 0.153 | 972 |
-| `inspect_resource_timeline` | 0.158 | 2,483 |
-| `explain_global_troubleshooting` | 0.519 | 1,368 |
-| `get_mcp_discovery` | 0.081 | 1,601 |
-| `get_sessions` | 0.040 | 641 |
-| `get_topology` | 5.363 | 69,307 |
-| `get_structured_metrics` | 0.216 | 2,947 |
-| `list_resource_inventory` | 1.036 | 9,285 |
-
-No read exceeded its item/byte/wait budget in these 200 calls. The largest
-elapsed time was 5.514 ms (`get_topology`). These are focused acceptance
-observations, not production latency targets or measurements of source age.
-
 MCP audit records retained in memory are bounded to the most recent 1,024
 entries and share a bounded buffer across the MCP HTTP listener's callers. Text fields are
 capped at 512 UTF-8 bytes and control characters are replaced. Argument values

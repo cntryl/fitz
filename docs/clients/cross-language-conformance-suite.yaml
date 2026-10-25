@@ -1,13 +1,5 @@
 version: "1.0"
 name: "fitz-cross-language-client-conformance"
-status: "draft"
-updated: "2026-05-16"
-owners:
-  - "fitz server"
-  - "fitz-go"
-  - "fitz-ts"
-  - "fitz-py"
-
 policy:
   strict_reconnect_parity: true
   behavioral_equivalence_over_naming: true
@@ -67,7 +59,6 @@ result_schema:
     - auth_mode
     - verdict
     - evidence
-    - latency_ms
     - correlation_enabled
 
 scenarios:
@@ -372,6 +363,8 @@ reporting:
     - "client"
     - "transport"
     - "auth_mode"
-    - "p0_pass_rate"
-    - "p1_pass_rate"
+    - "p0_pass"
+    - "p0_total"
+    - "p1_pass"
+    - "p1_total"
     - "overall_status"

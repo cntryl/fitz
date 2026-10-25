@@ -1,8 +1,8 @@
-//! Frame context: Associates TLV frame metadata with router `Envelope`
+//! Frame context: Associates Wire2 message metadata with router `Envelope`
 //!
 //! # Purpose
 //!
-//! The transport layer extracts `session_id`, `channel_id`, and `msg_type` from the TLV frame,
+//! The transport layer extracts `session_id`, `channel_id`, and `msg_type` from a Wire2 message,
 //! but the `Envelope` struct doesn't carry this metadata. This module defines `FrameContext`
 //! which combines the transport metadata needed by domain handlers.
 //!
@@ -24,16 +24,16 @@ use std::num::NonZeroU64;
 /// Created at the ingress boundary when a transport frame arrives.
 /// Stored as the payload of an `Envelope` for routing.
 /// This allows domain sinks to access the original frame metadata
-/// needed for TLV parsing and session correlation.
+/// needed for payload parsing and session correlation.
 #[derive(Clone)]
 pub struct FrameContext {
     /// Session ID from transport.
     pub session_id: u64,
     /// Channel ID from transport (for example, `Data`, `Control`, `Priority`).
     pub channel_id: ChannelId,
-    /// Message type from TLV header.
+    /// Message type from the Wire2 header.
     pub msg_type: MessageType,
-    /// Raw TLV payload bytes.
+    /// Raw message value bytes after the Wire2 header.
     pub payload: Bytes,
     /// `RouteFamily` assigned to this session.
     pub route_family: RouteFamily,

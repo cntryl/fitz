@@ -1,12 +1,10 @@
 //! Wire-size budget for KV scan responses.
 //!
-//! A scan response is carried as a single TLV value with a `u16` length, so the
-//! page must be bounded by bytes and not only by item count. Every pair can be
-//! individually small and legal while the aggregate is unencodable: at 1 KiB
-//! values the frame overflows at roughly 63 items, far below the 1,024-item
-//! cap a client gets when it omits `limit`.
+//! KV scan responses have a domain-specific 65,535-byte payload ceiling,
+//! separate from the larger Wire2 message limit. Pages must respect both this
+//! byte ceiling and their item limit.
 
-/// A KV response is carried as one TLV value, whose length prefix is a `u16`.
+/// Maximum encoded KV response payload size, independent of the Wire2 limit.
 pub(crate) const MAX_KV_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
 
 /// A scan response's non-item bytes, exactly as `encode_response` writes them:
@@ -28,7 +26,7 @@ pub(crate) fn kv_scan_response_byte_ceiling() -> usize {
     MAX_KV_RESPONSE_PAYLOAD_BYTES.saturating_sub(KV_SCAN_ENVELOPE_OVERHEAD_BYTES)
 }
 
-/// A SCAN request is carried as one TLV value too. Resuming a page requires
+/// A SCAN request also has a domain payload ceiling. Resuming a page requires
 /// re-issuing SCAN with `start_key` set to the last returned key (plus
 /// `start_exclusive`), so a page boundary is only useful if that key can
 /// itself be echoed back inside a fresh request.

@@ -1,7 +1,7 @@
 // LAYER: SESSION
 //! Session lifecycle and multiplexed frame handling
 //!
-//! Each session owns a TLV decoder, a mux, and permission metadata. The session
+//! Each session decodes Wire2 messages and owns a mux and permission metadata. The session
 //! pipeline decodes frames, demuxes them into logical channels, and dispatches
 //! them through the runtime ingress boundary.
 

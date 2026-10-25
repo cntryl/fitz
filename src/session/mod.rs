@@ -3,7 +3,7 @@
 //!
 //! This layer provides:
 //! - Per-connection session state (metadata, permissions, ID)
-//! - Synchronous TLV decoding and multiplexing
+//! - Synchronous Wire2 message decoding and channel multiplexing
 //! - `SessionId` generation
 //! - Session lifecycle (open, close, reason tracking)
 //!

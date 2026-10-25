@@ -2,10 +2,8 @@
 
 Status: **authoritative design and implementation contract**
 
-This document is the single design contract for route patterns used by Fitz
-reads, subscriptions, watches, and worker registrations. It also defines the
-storage and execution design required to support the complete Stream selector
-surface with correct ordering and bounded cost.
+This document defines route patterns used by Fitz reads, subscriptions, watches,
+and worker registrations, along with Stream ordering and read semantics.
 
 The authoritative domain meanings remain in
 `docs/development/domain-boundaries-spec.md`, and the architectural constraints
@@ -63,22 +61,9 @@ watermarks are the only cross-resource ordering authority.
 
 ### 1.1 Authority and current implementation
 
-This document supersedes the former `docs/development/route-design.md` and is
-the sole routing design contract. The table below records the implemented
-state and the remaining validation work.
-
-| Surface | Current implementation | Target status |
-| --- | --- | --- |
-| Queue concrete route depth | Rejects trailing segments | Aligned |
-| Lease concrete route depth | Rejects trailing segments | Aligned |
-| Stream selector classification | All eight literal/`*` kinds and two aliases | Aligned |
-| Resource, area, and realm reads | Dedicated offset spaces and visibility frontiers | Aligned |
-| Global and global-filter reads | Direct family-global pages in assigned commit order | Aligned |
-| Global storage citizens | Durable counter, watermark, discriminator, immutable pages, four postings, and writer epoch | Aligned |
-| Read continuation | Global selectors use captured-watermark cursors with keyed integrity tokens; existing scopes retain the legacy cursor wire layout | Aligned |
-| Filtered selector execution | Sparse posting fragments with exact parent-fragment locators | Aligned |
-| Subscription delivery | Bounded pending delivery gated by selector frontier | Aligned |
-| Performance validation | Correctness and work bounds implemented | Contention and amplification benchmarks remain release evidence, not a semantic gap |
+The contract is implemented across the router, domain codecs, and Stream store.
+Its normative user-facing behavior is summarized in the client domain
+specifications.
 
 ## 2. Terms
 
@@ -200,8 +185,8 @@ interpreted differently by another is a correctness defect.
 
 ## 5. What support means
 
-A pattern is supported only when both correctness and performance contracts are
-complete.
+A pattern is supported only when its grammar, authorization, isolation,
+delivery, lifecycle, and recovery behavior are defined and implemented.
 
 ### 5.1 Correctness contract
 
@@ -221,24 +206,6 @@ complete.
    and cursor mismatches return errors instead of narrowing results silently.
 10. Restart reconstructs every durable catalog, ordered index, counter, and
     watermark required by the contract.
-
-### 5.2 Performance contract
-
-1. Concrete routes use direct hash/keyed lookups.
-2. Wildcard registrations use a segment trie or equivalent index, never a full
-   registration scan on each event.
-3. Client-controlled work is bounded separately by returned items, examined
-   items, matched identities, bytes, fanout, queued delivery, and execution
-   slice where applicable.
-4. Resumable reads return a cursor after the last examined position, including
-   zero-result pages. A mutating operation without continuation rejects an
-   over-broad selector before changing state.
-5. Storage, actor-map, and inventory guards are not held across delivery,
-   flushing, or unrelated I/O.
-6. Concrete route values are parsed/formatted once per source run and shared
-   across its items.
-7. Metrics expose patterns examined, identities examined, records examined,
-   results returned, fanout, cursor resumes, and budget exhaustion.
 
 ## 6. Domain overview
 
@@ -536,14 +503,10 @@ Posting indexes preserve the order of their parent scope:
 - A posting miss below the governing read frontier advances the cursor to that
   frontier, so an empty suffix can complete.
 
-The public filtered selectors are performance-complete only when these posting
-indexes exist. A bounded parent-page scan can be useful during internal rollout
-or recovery tooling, but it is not the intended steady-state plan for sparse
-production reads.
-
 ## 10. Stream commit, concurrency, and global order
 
-Moved to [routing-design-stream-commit.md](routing-design-stream-commit.md).
+Stream commit ordering is specified in
+[routing-design-stream-commit.md](routing-design-stream-commit.md).
 
 ## 11. Stream read semantics
 
@@ -745,7 +708,7 @@ postings transactionally or retain compact tombstone/range metadata, provided:
 - a reader can advance to its governing frontier,
 - no expired record is returned,
 - restart reconstruction reaches the same state, and
-- compaction work is bounded and benchmarked.
+- compaction work is bounded.
 
 ## 14. Implemented sequence
 
@@ -764,8 +727,7 @@ postings transactionally or retain compact tombstone/range metadata, provided:
 7. Examined-work limits, zero-result continuations, cursor integrity, and
    parent-fragment reuse bound sparse reads.
 8. Recovery and activation validation cover every new storage citizen.
-9. Correctness tests are part of the workspace suite. Contention, sparse-read,
-   storage-amplification, and end-to-end benchmarks remain release evidence.
+9. Correctness tests are part of the workspace suite.
 
 ## 15. Required tests
 
@@ -830,24 +792,6 @@ postings transactionally or retain compact tombstone/range metadata, provided:
 - Storage activation rejects an older generation before traffic.
 - TTL/compaction keeps global pages, postings, sidecars, and cursors coherent.
 
-### 15.5 Performance and capacity
-
-- Pattern match cost as total registrations grow with fixed match count.
-- Fanout cost as matches grow.
-- Queue wildcard reserve over many empty queues and sparse hot queues.
-- Stream sparse realm/global filters with zero or few matches.
-- Stream allocation-head latency plus commit throughput and tail latency under
-  same-family concurrent resources, different-family parallelism, and varying
-  batch sizes.
-- Read amplification, write amplification, page density, posting density, and
-  route allocations for every Stream plan.
-- RPC new-route matching and new-registration reconciliation at cache limits.
-- Schedule fairness state and cleanup under high route cardinality.
-- Memory retained after mass disconnect.
-
-Tests should assert work counters or complexity proxies as well as timing.
-Wall-clock benchmarks alone cannot prove bounded examination.
-
-A pattern is public only when it satisfies section 5 and the applicable tests
-in section 15. Grammar, authorization, indexed execution, ordering, identity,
-work bounds, lifecycle, recovery, and migration must all be complete.
+A pattern is public only when it satisfies the correctness contract and its
+applicable tests. Grammar, authorization, ordering, identity, lifecycle,
+recovery, and migration behavior must be complete.

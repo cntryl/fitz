@@ -1,6 +1,6 @@
 ### Notice Domain (Fire-and-Forget Live Fanout)
 
-**Purpose:** Low-latency session-scoped notifications with wildcard pattern matching.
+**Purpose:** Ephemeral session-scoped notifications with wildcard pattern matching.
 
 #### Message Types
 
@@ -363,7 +363,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - **Session-Scoped**: Subscriptions tied to connection; lost on disconnect
 - **Acknowledgements & Retries**: `NOTIFY` frames are never acknowledged by clients and are never retried by the broker. Clients MUST NOT send acknowledgements for `NOTIFY` frames and MUST NOT expect guaranteed replay.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
-- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation and redelivery with best-effort persistence. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
+- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation and redelivery with best-effort persistence. Use RPC for live request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
 
 ##### Pattern Matching & Precedence
 
@@ -541,8 +541,8 @@ a convenience default in its API, but it must always encode the byte, and its
 documentation must name the mode it defaults to, because the choice is the
 durability contract.
 
-- **Sync (mode=1)**: COMMIT uses the broker's sync write policy before success is returned. Higher latency, stronger crash durability.
-- **Buffered (mode=0)**: COMMIT uses the broker's buffered write policy. Lower latency, best-effort durability until the buffered write is persisted.
+- **Sync (mode=1)**: COMMIT uses the broker's sync write policy before success is returned. Stronger crash durability.
+- **Buffered (mode=0)**: COMMIT uses the broker's buffered write policy. Best-effort durability until the buffered write is persisted.
 
 #### ROLLBACK Request
 
@@ -959,6 +959,6 @@ Watermark advance notification:
 
 **Delivery Semantics:**
 - **Best-effort**: notifications may be dropped under backpressure
-- **Debounced**: commit notifications are batched per 25ms window — multiple rapid commits to the same resource produce a single notification covering the full offset range
+- **Debounced**: commit notifications may be coalesced — multiple commits to the same resource can produce a single notification covering the full offset range
 - **Session-scoped**: all subscriptions lost on disconnect; clients must re-subscribe after reconnecting
 - `subscription_id` tells the client which subscription matched; client demultiplexes to local handlers

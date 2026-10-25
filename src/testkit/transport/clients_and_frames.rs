@@ -421,7 +421,7 @@ impl TestWebSocketClient {
     }
 }
 
-/// TLV encoder for building protocol frames
+/// Wire2 message builder for protocol test frames.
 /// Builds one wire format 2 message: a 15-byte header followed by the value.
 /// One message per transport frame, so `encode_field` may be called once.
 pub struct FrameBuilder {

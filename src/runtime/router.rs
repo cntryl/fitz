@@ -251,9 +251,7 @@ struct RouteRegistry {
 impl RouteRegistry {
     fn new() -> Self {
         Self {
-            // Router lookups and registrations are hot paths. Use a faster
-            // non-cryptographic hasher and reserve a modest working set up front
-            // to reduce repeated rehashing during actor registration bursts.
+            // Use a non-cryptographic hasher and reserve initial registry capacity.
             sinks: DashMap::with_capacity_and_hasher(1024, FxBuildHasher),
             domain_patterns: DashMap::with_capacity_and_hasher(32, FxBuildHasher),
         }
@@ -722,8 +720,7 @@ impl Default for Router {
     }
 }
 
-/// Helper: Determine if current hot path operation should be sampled
-/// Returns true ~1 in 1000 times (0.1% sampling ratio)
+/// Determine whether the selected instrumentation event should be sampled.
 fn should_sample_hot_path() -> bool {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

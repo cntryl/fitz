@@ -107,7 +107,7 @@ impl ScheduleActor {
     ///
     /// Every entry may be individually small and legal while the aggregate is
     /// unencodable; without this the response is built, handed to the outbound
-    /// sink, and fails the TLV length assertion.
+    /// sink, and fails the Wire2 message-size check.
     /// # Errors
     ///
     /// Returns the offending route when a single entry exceeds the ceiling on

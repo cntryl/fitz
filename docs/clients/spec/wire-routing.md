@@ -696,7 +696,7 @@ publishes and worker response/cleanup frames do not occupy request slots.
 **Client behavior on backpressure errors:**
 
 1. Pause sending to the affected domain
-2. Apply exponential backoff (starting at 100ms, max 30s)
+2. Apply bounded exponential backoff. The retry policy is client-controlled.
 3. Retry the failed operation after backoff
 4. If backpressure persists, surface error to caller
 

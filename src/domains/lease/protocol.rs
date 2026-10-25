@@ -15,13 +15,9 @@ use bytes::Bytes;
 
 /// Largest `owner_id` `ACQUIRE` accepts, in bytes.
 ///
-/// `owner_id` was otherwise unbounded (only implicitly limited by the
-/// ACQUIRE request's own ~64 KiB wire frame). A single oversized `owner_id`
-/// combined with a near-maximum route can make one `LIST` item alone exceed
-/// the response's TLV payload limit, permanently breaking every matching
-/// `LIST` scan until that lease disappears — this bound closes that off at
-/// its source rather than trying to special-case an oversized item in the
-/// `LIST` response.
+/// `owner_id` is part of the ACQUIRE payload and also appears in LIST results.
+/// This limit ensures a single lease can fit in a LIST response page together
+/// with its route and other fields.
 pub const LEASE_MAX_OWNER_ID_BYTES: usize = 512;
 /// Default `LIST` page size when the caller does not request one.
 pub const LEASE_LIST_DEFAULT_PAGE_SIZE: u32 = 100;
@@ -41,23 +37,17 @@ pub(crate) const LEASE_LIST_MAX_SNAPSHOTS: usize = 256;
 /// candidate count exceeds this bound therefore fails the scan outright with
 /// a typed error asking the caller to narrow the selector, rather than
 /// silently doing unbounded work or silently weakening the snapshot
-/// guarantee. This is generous enough that realistic Lease usage (explicit
-/// coordination locks, not bulk storage) never hits it in one family.
+/// guarantee.
 ///
-/// Shrunk under `cfg(test)` so the ceiling itself is exercised by a
-/// realistically small, fast-running fixture instead of requiring tens of
-/// thousands of real leases.
+/// Tests use a smaller ceiling so the limit can be exercised with a compact
+/// fixture.
 #[cfg(not(test))]
 pub(crate) const LEASE_LIST_MAX_CANDIDATES_PER_SCAN: usize = 50_000;
 #[cfg(test)]
 pub(crate) const LEASE_LIST_MAX_CANDIDATES_PER_SCAN: usize = 50;
-/// Soft ceiling on one `LIST` page's encoded byte size, kept well under the
-/// 65_535-byte TLV frame payload limit (`encode_single_tlv_frame`) so a page
-/// full of near-maximum-length routes and owner IDs still fits on the wire.
-/// Items are appended to a page only while under this budget; anything left
-/// over is served on a later page instead. `LEASE_MAX_OWNER_ID_BYTES` keeps
-/// any single item comfortably under this budget on its own (issue #219
-/// §2/§8).
+/// Maximum encoded item bytes in one `LIST` page. Items beyond this page budget
+/// are returned on a later page. `LEASE_MAX_OWNER_ID_BYTES` keeps one item
+/// within the page budget.
 pub(crate) const LEASE_LIST_PAGE_BYTE_BUDGET: usize = 60_000;
 /// Largest total number of not-yet-served items retained across every
 /// outstanding `LIST` snapshot at once (every session, every family). A

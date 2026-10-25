@@ -51,11 +51,6 @@ The browser client reads these public Vite env vars through `src/shared/config.t
 - `VITE_FITZ_DASHBOARD_POLL_INTERVAL_MS`
 - `VITE_FITZ_ENVIRONMENT_LABEL`
 
-## UI Clarity
-
-- [Domain UI/UX review](docs/domain-ux-review.md)
-- Treat it as the visual and copy standard for new screens and feature surfaces.
-
 ## Routing
 
 - `/` boots the SPA

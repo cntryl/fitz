@@ -13,5 +13,5 @@ Stable entrypoint for the Fitz wire protocol and client contract. Detailed secti
 - [KV domain details](spec/kv.md)
 - [Lease domain details](spec/lease.md)
 - [Schedule domain details](spec/schedule.md)
-- [Constants, message registry, acceptance, and broker-specific behavior](spec/registry-acceptance.md)
+- [Message registry and broker-specific behavior](spec/registry-acceptance.md)
 - [Error codes, classes, and effects (wire format 2)](spec/error-codes.md)

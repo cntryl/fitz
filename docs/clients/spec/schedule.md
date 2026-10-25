@@ -1,7 +1,5 @@
 # Schedule Domain Spec
 
-Split from the former `lease-schedule.md`; the Lease domain is in [lease.md](lease.md).
-
 ### Schedule Domain (Delayed/Recurring Tasks)
 
 **Purpose:** Durable scheduling of delayed tasks and recurring jobs.

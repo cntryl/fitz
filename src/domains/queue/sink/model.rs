@@ -64,7 +64,7 @@ pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 ///
 /// This core:
 /// - Maintains per-queue `QueueActor` instances keyed by `QueueKey`
-/// - Parses TLV frames to `QueueMessage`
+/// - Parses Queue message payloads into `QueueMessage`
 /// - Dispatches to the correct actor based on route
 /// - Returns responses
 /// - Tracks queue-local watch subscriptions for the current broker process

@@ -1,4 +1,4 @@
-//! Queue domain TLV message types and codec
+//! Queue domain message types and payload codec
 
 use crate::dispatch::wire::queue::{
     MessageId, QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage,
