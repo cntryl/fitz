@@ -78,6 +78,11 @@ impl KvActor {
                 error: KvError::InvalidTxId,
             };
         };
+        if !active.inventory_delta.is_empty() {
+            if let Err(error) = Self::mark_inventory_incomplete_in_transaction(&mut active) {
+                return KvResponse::Error { error };
+            }
+        }
         let inventory_scope = active.scope.clone();
         let inventory_column_family = active.column_family;
         let inventory_delta = std::mem::take(&mut active.inventory_delta);
@@ -85,6 +90,9 @@ impl KvActor {
         let inventory_write_policy = Self::inventory_write_policy(write_policy);
         match active.tx.commit(write_policy) {
             Ok(()) => {
+                #[cfg(test)]
+                Self::panic_after_data_commit_if_requested_for_tests();
+
                 if let Err(error) = Self::apply_inventory_delta(
                     &self.store,
                     inventory_column_family,

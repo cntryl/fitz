@@ -357,6 +357,96 @@ fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
     assert!(!estimate.estimate_complete);
 }
 
+#[test]
+fn should_rescan_inventory_after_crash_between_data_commit_and_estimate_update() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let sink = KvDomain::new(
+        store.clone(),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let scope = KvResourceScope::new(family, "acme", "app", "users");
+    let fixture_scope = scope.clone();
+    let kv_store = sink.run_on_family_for_tests(family, move |runtime| {
+        let mut tx = runtime
+            .core
+            .store
+            .begin(family.id(), crate::domains::kv::TxMode::ReadWrite)
+            .expect("begin inventory fixture transaction");
+        let prefix = crate::domains::kv::KvActor::realm_resource_prefix(
+            &fixture_scope.realm,
+            &fixture_scope.area,
+            &fixture_scope.resource,
+        );
+        tx.put(
+            crate::domains::kv::KvActor::encode_scoped_key(&prefix, b"existing"),
+            b"value".to_vec(),
+        )
+        .expect("seed committed value");
+        tx.put(
+            crate::domains::kv::KvActor::inventory_metadata_key(
+                &fixture_scope.realm,
+                &fixture_scope.area,
+                &fixture_scope.resource,
+            ),
+            crate::domains::kv::inventory::encode_estimate(
+                crate::domains::kv::inventory::KvInventoryEstimate {
+                    estimated_record_count: 1,
+                    estimated_storage_bytes: 12,
+                    estimate_complete: true,
+                },
+            ),
+        )
+        .expect("seed complete inventory estimate");
+        tx.commit(crate::domains::WritePolicy::Sync)
+            .expect("commit inventory fixture");
+        runtime.core.store.clone()
+    });
+    let mut actor = crate::domains::kv::KvActor::new(kv_store);
+    let crate::domains::kv::KvResponse::BeginOk { tx_id } =
+        actor.handle(crate::domains::kv::KvMessage::Begin {
+            scope: scope.clone(),
+            mode: crate::domains::kv::TxMode::ReadWrite,
+        })
+    else {
+        panic!("begin write transaction");
+    };
+    assert!(matches!(
+        actor.handle(crate::domains::kv::KvMessage::Insert {
+            tx_id,
+            scope: scope.clone(),
+            key: Bytes::from_static(b"new"),
+            value: Bytes::from_static(b"value"),
+        }),
+        crate::domains::kv::KvResponse::InsertOk
+    ));
+
+    // Act
+    crate::domains::kv::KvActor::panic_after_next_data_commit_for_tests();
+    let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        actor.handle(crate::domains::kv::KvMessage::Commit {
+            tx_id,
+            scope: scope.clone(),
+            persistence: crate::domains::CommitPersistence::Sync,
+        })
+    }));
+    drop(actor);
+    let inventory = sink
+        .admin_inventory_resource(family, "acme", "app", "users")
+        .expect("read inventory after simulated crash")
+        .expect("inventory resource exists");
+
+    // Assert
+    assert!(crash.is_err(), "failpoint must interrupt after data commit");
+    assert_eq!(
+        inventory.estimated_record_count, 2,
+        "a crash must not leave a stale complete estimate authoritative"
+    );
+    assert!(inventory.estimate_complete);
+}
+
 /// Sequence: an inventory repair retry fails -> another KV frame arrives at once.
 ///
 /// Invariant: retries back off, so a failing store does not add a storage
