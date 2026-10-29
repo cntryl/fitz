@@ -1,0 +1,1 @@
+{"flushed_through":[{"cf_id":0,"through_sequence":0},{"cf_id":1,"through_sequence":0}],"files":[],"column_families":[{"id":1,"name":"tenant_default","created_at":1793305312400,"reclaimed":false}],"next_sst_seqs":{},"edit_checkpoint_id":1}

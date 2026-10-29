@@ -74,9 +74,47 @@ is now internal to the actor. Use `ScheduleCreateEntry` for creation input and
 runtime cache should own that model. These are intentional Rust source changes
 and do not change the wire or persisted Schedule formats.
 
+## Midge 0.5.0
+
+Fitz 0.3.0 embeds the published `cntryl-midge` 0.5.0 package. It writes
+database FORMAT 9 and SST V5, and uses cloud metadata layout v2, lease v4,
+and initialization sentinel v3. The cloud WAL publication catalog remains
+v3, but this does not make a 0.4.x cloud prefix compatible. A 0.5.0 engine
+rejects the old local format and cloud metadata; there is no in-place upgrade.
+An attempted local open can still update writer-lease metadata before it
+reports the format error, so perform compatibility checks on a copy.
+
+1. Quiesce all writers and export the required logical application data with
+   the old broker or its matching Midge version while it can still read the
+   store. Preserve column-family definitions and the application metadata
+   needed to reconstruct expiration. Midge's public scans do not expose raw
+   TTL timestamps, so explicitly decide how to handle already-expired values.
+2. Complete shutdown and preserve a verified copy of the entire original
+   database or cloud prefix, independently of the cache, with the matching
+   old broker image. Keep this copy for rollback.
+3. Import or replay into a new empty database or cloud prefix and a fresh
+   cache. Do not copy FORMAT markers, WAL, SST, lease, or metadata files from
+   the old store. Fitz does not ship a general export/import tool. A raw row
+   import is insufficient when Fitz domain row formats have also changed;
+   see the Stream and single-generation format sections in this guide. Replay
+   creates new Stream records and does not preserve their original offsets or
+   timestamps. Rebuild or reconcile application state and expiration as needed.
+4. Qualify the resulting data, reads, writes, TTL behavior, clean shutdown,
+   restart, and cloud recovery after complete cache loss before cutover.
+   Queue persistence remains best effort; unpersisted backlog and ephemeral
+   session, subscription, lease, and inflight state are not recovered.
+
+Rollback requires the preserved 0.4.x store or prefix and matching old broker;
+the old binary cannot open the new store. Writes accepted after cutover need
+separate reconciliation. Never rewrite format markers. Cloud mode reserves a
+quarter of a local storage budget of at least 32 MiB for the SST range cache,
+leaving three quarters for WAL, spill, flush, and staging admission; qualify
+resource limits for the deployment. See the [Midge 0.5.0 migration guide](https://github.com/cntryl/midge/blob/v0.5.0/docs/operations/migration-guide.md)
+and [release notes](https://github.com/cntryl/midge/releases/tag/v0.5.0).
+
 ## Midge 0.4.1
 
-Fitz uses the published crates.io `cntryl-midge` 0.4.1 package. This patch
+The previous Fitz release uses the published crates.io `cntryl-midge` 0.4.1 package. This patch
 fixes cloud catalog memory admission during recovery, publication, retirement,
 and salvage. Relative to 0.4.0, FORMAT 8, SST V4, catalog v3, lease metadata v3,
 and Fitz row encodings are unchanged; this patch alone requires no logical

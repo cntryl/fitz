@@ -519,17 +519,26 @@ mod tests {
     }
 
     #[test]
-    fn should_lookup_assigned_ids_and_keep_manifest_holes_empty() {
+    fn should_lookup_assigned_id() {
         // Arrange
         let assigned = MessageType::new(100);
-        let unassigned = MessageType::new(150);
 
         // Act
         let assigned_entry = entry(assigned);
-        let hole_entry = entry(unassigned);
 
         // Assert
         assert_eq!(assigned_entry.map(|item| item.message_id), Some(100));
+    }
+
+    #[test]
+    fn should_return_none_for_manifest_hole() {
+        // Arrange
+        let unassigned = MessageType::new(150);
+
+        // Act
+        let hole_entry = entry(unassigned);
+
+        // Assert
         assert!(hole_entry.is_none());
     }
 

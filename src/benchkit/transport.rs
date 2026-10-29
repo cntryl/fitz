@@ -143,7 +143,7 @@ pub fn build_notice_publish(route: &str, data: &[u8]) -> Vec<u8> {
     buf.put_u32(u32_len(data.len()));
     buf.put_slice(data);
 
-    let mut builder = FrameBuilder::new();
+    let mut builder = FrameBuilder::new().with_correlation(0);
     builder.encode_field(500, &buf);
     builder.build()
 }

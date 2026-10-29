@@ -41,7 +41,9 @@ fn worker_cleanup_ack(correlation_id: Uuid) -> Vec<u8> {
     let mut payload = Vec::with_capacity(17);
     payload.put_u8(3);
     payload.put_slice(correlation_id.as_bytes());
-    frame(304, &payload)
+    let mut builder = FrameBuilder::new().with_correlation(0);
+    builder.encode_field(304, &payload);
+    builder.build()
 }
 
 fn assert_lifecycle(frame_bytes: &[u8], kind: u8, correlation_id: Uuid, value: u8) {

@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use std::time::Duration;
 use tempfile::TempDir;
 
+mod compatibility;
 mod lease_lifecycle;
 mod write_admission;
 
@@ -272,7 +273,7 @@ fn should_skip_sqrzl_test_for_transport_errors() {
         "prepare Sqrzl namespace failed: error sending request for url (http://127.0.0.1:9000/fitz-sqrzl-s3)";
 
     // Act
-    let should_skip = should_skip_sqrzl_test(error);
+    let should_skip = should_skip_sqrzl_test(error, false);
 
     // Assert
     assert!(
@@ -283,22 +284,32 @@ fn should_skip_sqrzl_test_for_transport_errors() {
 
 #[test]
 fn should_skip_sqrzl_test_for_missing_content_length() {
-    // Arrange: local mock GCS servers can reject a PUT without an explicit
-    // Content-Length header, which is a mock-server quirk unrelated to the
-    // recovery behavior under test.
+    // Arrange: the default local endpoint may point at an incompatible emulator.
     let error = "prepare Sqrzl namespace failed: GCS setup request PUT /fitz-sqrzl-gcs failed \
         with status 411 Length Required: <?xml version=\"1.0\" encoding=\"UTF-8\"?>\
         <Error><Code>MissingContentLength</Code>\
         <Message>Content-Length is required unless Transfer-Encoding is chunked.</Message></Error>";
 
     // Act
-    let should_skip = should_skip_sqrzl_test(error);
+    let should_skip = should_skip_sqrzl_test(error, false);
 
     // Assert
     assert!(
         should_skip,
         "expected a mock-server 411 Length Required response to be skippable"
     );
+}
+
+#[test]
+fn should_fail_sqrzl_setup_errors_when_an_endpoint_is_explicitly_selected() {
+    // Arrange
+    let error = "Sqrzl setup failed with status 403 Forbidden";
+
+    // Act
+    let should_skip = should_skip_sqrzl_test(error, true);
+
+    // Assert
+    assert!(!should_skip);
 }
 
 #[test]
@@ -363,7 +374,7 @@ async fn should_recover_marker_from_sqrzl_s3_after_cache_loss() {
     // Act
     let recovered = match recover_marker_from_sqrzl("sqrzl-s3", provider).await {
         Ok(value) => value,
-        Err(error) if should_skip_sqrzl_test(&error) => {
+        Err(error) if should_skip_sqrzl_test(&error, sqrzl_endpoint_was_selected()) => {
             eprintln!("Skipping sqrzl-s3 recovery test: {error}");
             return;
         }
@@ -382,7 +393,7 @@ async fn should_recover_marker_from_sqrzl_azure_after_cache_loss() {
     // Act
     let recovered = match recover_marker_from_sqrzl("sqrzl-azure", provider).await {
         Ok(value) => value,
-        Err(error) if should_skip_sqrzl_test(&error) => {
+        Err(error) if should_skip_sqrzl_test(&error, sqrzl_endpoint_was_selected()) => {
             eprintln!("Skipping sqrzl-azure recovery test: {error}");
             return;
         }
@@ -401,7 +412,7 @@ async fn should_recover_marker_from_sqrzl_gcs_after_cache_loss() {
     // Act
     let recovered = match recover_marker_from_sqrzl("sqrzl-gcs", provider).await {
         Ok(value) => value,
-        Err(error) if should_skip_sqrzl_test(&error) => {
+        Err(error) if should_skip_sqrzl_test(&error, sqrzl_endpoint_was_selected()) => {
             eprintln!("Skipping sqrzl-gcs recovery test: {error}");
             return;
         }
@@ -492,7 +503,14 @@ async fn recover_marker_from_sqrzl(
     Ok(marker)
 }
 
-fn should_skip_sqrzl_test(error: &str) -> bool {
+fn sqrzl_endpoint_was_selected() -> bool {
+    std::env::var_os("FITZ_TEST_SQRZL_ENDPOINT").is_some()
+}
+
+fn should_skip_sqrzl_test(error: &str, endpoint_selected: bool) -> bool {
+    if endpoint_selected {
+        return false;
+    }
     let lower = error.to_ascii_lowercase();
     lower.contains("connection refused")
         || lower.contains("error sending request")
@@ -564,14 +582,15 @@ async fn ensure_sqrzl_s3_bucket(bucket: &str) -> Result<(), String> {
 async fn signed_s3_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<u8>, String> {
     use sha2::{Digest, Sha256};
 
-    let host = "127.0.0.1:9000";
+    let endpoint = reqwest::Url::parse(sqrzl_endpoint()).map_err(|error| error.to_string())?;
+    let host = endpoint.authority().to_string();
     let region = "us-east-1";
     let now = chrono::Utc::now();
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
     let date = now.format("%Y%m%d").to_string();
     let payload_hash = hex::encode(Sha256::digest(body));
     let mut headers = [
-        ("host".to_string(), host.to_string()),
+        ("host".to_string(), host.clone()),
         ("x-amz-content-sha256".to_string(), payload_hash.clone()),
         ("x-amz-date".to_string(), amz_date.clone()),
     ];
@@ -591,7 +610,7 @@ async fn signed_s3_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<
         scope,
         hex::encode(Sha256::digest(canonical_request.as_bytes()))
     );
-    let k_date = hmac_sha256(format!("AWS{}", sqrzl_secret_key()).as_bytes(), &date);
+    let k_date = hmac_sha256(format!("AWS4{}", sqrzl_secret_key()).as_bytes(), &date);
     let k_region = hmac_sha256(&k_date, region);
     let k_service = hmac_sha256(&k_region, "s3");
     let k_signing = hmac_sha256(&k_service, "aws4_request");
@@ -611,7 +630,7 @@ async fn signed_s3_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<
             reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?,
             format!("{}{}", sqrzl_endpoint(), path),
         )
-        .header("host", host)
+        .header("host", &host)
         .header("x-amz-content-sha256", payload_hash)
         .header("x-amz-date", amz_date)
         .header("authorization", authorization)
@@ -666,6 +685,7 @@ async fn signed_gcs_request(
             format!("{}{}", sqrzl_endpoint(), path),
         )
         .header("date", date)
+        .header("content-length", body.len())
         .header(
             "authorization",
             format!("GOOG1 {}:{signature}", sqrzl_access_key()),
@@ -739,7 +759,7 @@ async fn signed_azure_request(
             let _ = write!(canonical_resource, "\n{key}:{value}");
         }
     }
-    let string_to_sign = [
+    let standard_headers = [
         method.to_string(),
         header_value("Content-Encoding"),
         header_value("Content-Language"),
@@ -752,10 +772,9 @@ async fn signed_azure_request(
         header_value("If-None-Match"),
         header_value("If-Unmodified-Since"),
         header_value("Range"),
-        canonical_headers,
-        canonical_resource,
     ]
     .join("\n");
+    let string_to_sign = format!("{standard_headers}\n{canonical_headers}{canonical_resource}");
     let key = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         sqrzl_secret_key(),
@@ -784,6 +803,7 @@ async fn signed_azure_request(
             "authorization",
             format!("SharedKey {}:{signature}", sqrzl_access_key()),
         )
+        .header("content-length", body.len())
         .body(body.to_vec());
     for (name, value) in headers {
         request = request.header(name, value);
