@@ -833,7 +833,9 @@ impl TestServer {
         drop(permit);
         let mut store = wait_for_exclusive_store(store).await?;
         store
-            .shutdown(STORE_SHUTDOWN_RELEASE_TIMEOUT)
+            .shutdown(crate::testkit::scaled_test_timeout(
+                STORE_SHUTDOWN_RELEASE_TIMEOUT,
+            ))
             .map_err(|error| format!("Midge shutdown failed: {error}"))?;
         Ok(())
     }
