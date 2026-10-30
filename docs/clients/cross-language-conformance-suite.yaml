@@ -35,7 +35,8 @@ contract:
       - "client sends its configured service name in CONNECT"
       - "client labels every request with a unique non-zero u64 correlation"
       - "client matches responses by correlation identifier, not arrival order"
-      - "client routes a frame whose correlation is no longer pending by message type"
+      - "client routes a non-zero correlation only to its matching pending request"
+      - "client rejects or drops an unmatched non-zero correlation without message-type or notification fallback"
       - "client never treats a non-zero correlation as a response-vs-notification test"
 
   reconnect_contract:
