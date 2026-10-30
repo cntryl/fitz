@@ -1,4 +1,4 @@
-//! Queue domain TLV message types and codec
+//! Queue domain message types and payload codec
 
 use crate::dispatch::wire::queue::{
     MessageId, QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage,
@@ -78,7 +78,7 @@ pub fn parse_request(
 
 /// Encode Queue response to bytes
 #[must_use]
-pub fn encode_response(message_type: u16, response: &QueueResponse) -> Vec<u8> {
+pub fn encode_response(_message_type: u16, response: &QueueResponse) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
@@ -135,14 +135,11 @@ pub fn encode_response(message_type: u16, response: &QueueResponse) -> Vec<u8> {
         | QueueResponse::InvalidSubscriptionPattern { .. }
         | QueueResponse::SubscriptionLimit
         | QueueResponse::QueueNotFound
+        | QueueResponse::Busy
+        | QueueResponse::Timeout { .. }
         | QueueResponse::Error { .. } => {
             let (code, message) = queue_error_code_and_message(response);
-            if matches!(message_type, msg_type::ENQUEUE | msg_type::RESERVE) {
-                return crate::protocol::error_codes::encode_error_body(code, &message);
-            }
-            buf.put_u8(1);
-            buf.put_u32(usize_to_u32_saturating(message.len()));
-            buf.put_slice(message.as_bytes());
+            return crate::protocol::error_codes::encode_error_body(code, &message);
         }
     }
     buf
@@ -166,7 +163,12 @@ fn queue_error_code_and_message(response: &QueueResponse) -> (u16, String) {
             "subscription registration limit exceeded".to_string(),
         ),
         QueueResponse::QueueNotFound => (queue::ERR_QUEUE_NOT_FOUND, "QueueNotFound".to_string()),
+        QueueResponse::Busy => (
+            queue::ERR_BUSY,
+            "queue pending reserve capacity reached".to_string(),
+        ),
         QueueResponse::Error { message } => (queue::ERR_BACKEND_ERROR, message.clone()),
+        QueueResponse::Timeout { message } => (queue::ERR_TIMEOUT, message.clone()),
         _ => unreachable!("queue_error_code_and_message called for success response"),
     }
 }
@@ -682,6 +684,29 @@ mod tests {
     }
 
     #[test]
+    fn should_encode_timeout_with_indeterminate_effect() {
+        // Arrange
+        let response = QueueResponse::Timeout {
+            message: "queue commit response deadline elapsed".to_string(),
+        };
+
+        // Act
+        let encoded = encode_response(msg_type::ENQUEUE, &response);
+        let decoded = crate::protocol::error_codes::decode_wire_error(&encoded)
+            .expect("timeout error envelope");
+
+        // Assert
+        assert_eq!(
+            decoded.code,
+            crate::protocol::error_codes::queue::ERR_TIMEOUT
+        );
+        assert_eq!(
+            decoded.effect,
+            crate::protocol::wire2::envelope::Effect::Indeterminate
+        );
+    }
+
+    #[test]
     fn should_encode_reserved_response() {
         use crate::dispatch::wire::queue::ReservedMessage;
 
@@ -803,12 +828,13 @@ mod tests {
                 0, 0, 0, 0, 0, 0, 0, 3,
             ]
         );
+        let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
         assert_eq!(
-            error,
-            [
-                1, 0, 0, 15, 164, 0, 0, 0, 13, b'Q', b'u', b'e', b'u', b'e', b'N', b'o', b't',
-                b'F', b'o', b'u', b'n', b'd',
-            ]
+            (decoded.code, decoded.message.as_str()),
+            (
+                crate::protocol::error_codes::queue::ERR_QUEUE_NOT_FOUND,
+                "QueueNotFound"
+            )
         );
     }
 }

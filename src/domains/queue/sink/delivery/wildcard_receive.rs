@@ -2,8 +2,8 @@ use super::{OperationOutcome, QueueFamilyState};
 use crate::runtime::routing::RouteFamily;
 
 use crate::domains::queue::protocol::{
-    MAX_QUEUE_RESPONSE_PAYLOAD_BYTES, RECEIVED_RESPONSE_HEADER_BYTES,
-    RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES, ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES,
+    RECEIVED_RESPONSE_HEADER_BYTES, RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES,
+    ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES,
 };
 
 struct WildcardActorOutcome {
@@ -113,7 +113,7 @@ impl QueueFamilyState {
         let mut notifications = Vec::new();
         let mut state_changed = false;
         let mut response_bytes_remaining =
-            MAX_QUEUE_RESPONSE_PAYLOAD_BYTES - RECEIVED_RESPONSE_HEADER_BYTES;
+            self.response_payload_limit - RECEIVED_RESPONSE_HEADER_BYTES;
 
         for offset in 0..keys.len() {
             if routed.len() == limit {
@@ -196,7 +196,7 @@ impl QueueFamilyState {
         response_bytes_remaining: &mut usize,
         route: &crate::runtime::routing::Route,
     ) -> Result<(WildcardActorOutcome, bool), String> {
-        self.with_actor(key, |actor| {
+        let (mut outcome, created_actor, reconstructed) = self.with_actor(key, |actor| {
             let counts_before = actor.live_counts();
             let changed = actor.process_due_work();
             let (response, wire_budget_exhausted) = receive_with_route_wire_budget(
@@ -214,7 +214,14 @@ impl QueueFamilyState {
                 counts,
                 changed: changed || counts != counts_before,
             }
-        })
+        })?;
+        if reconstructed {
+            if let Some(warm_actor) = self.actor_registry.get_mut(key) {
+                outcome.counts = warm_actor.actor.live_counts();
+                outcome.changed = true;
+            }
+        }
+        Ok((outcome, created_actor))
     }
 
     #[cfg(test)]

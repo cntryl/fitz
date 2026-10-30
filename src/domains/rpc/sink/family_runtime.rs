@@ -76,6 +76,7 @@ impl RpcDomain {
             request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
             cancellation_grace_period: configured_cancellation_grace_period(),
             route_pending_capacity: RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
+            global_pending_capacity: super::state_model::RPC_MAX_PENDING_REQUESTS,
             global_pending_count: Arc::new(AtomicUsize::new(0)),
             snapshot_epoch: Instant::now(),
             metrics: None,
@@ -109,68 +110,74 @@ impl RpcDomain {
                         core: state,
                         active: active.as_ref(),
                     };
-                    match command {
-                        RpcDomainCommand::Deliver(envelope, reply) => {
-                            let result = if *envelope.destination().family() == family {
-                                runtime.deliver_envelope(&envelope)
-                            } else {
-                                Err(DeliveryError::ActorStopped)
-                            };
-                            let _ = reply.send(result);
-                        }
-                        RpcDomainCommand::ExpireTimedOutRequestsAt(now, reply) => {
-                            runtime.expire_timed_out_requests_at(now);
-                            if let Some(reply) = reply {
+                    let result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match command {
+                            RpcDomainCommand::Deliver(envelope, reply) => {
+                                let result = if *envelope.destination().family() == family {
+                                    runtime.deliver_envelope(&envelope)
+                                } else {
+                                    Err(DeliveryError::ActorStopped)
+                                };
+                                let _ = reply.send(result);
+                            }
+                            RpcDomainCommand::ExpireTimedOutRequestsAt(now, reply) => {
+                                runtime.expire_timed_out_requests_at(now);
+                                if let Some(reply) = reply {
+                                    let _ = reply.send(());
+                                }
+                            }
+                            RpcDomainCommand::ReadLiveCounts(reply) => {
+                                let _ = reply.send(runtime.live_counts());
+                            }
+                            #[cfg(test)]
+                            RpcDomainCommand::SyncAdminSnapshot(reply) => {
+                                runtime.sync_admin_snapshot();
+                                if let Some(reply) = reply {
+                                    let _ = reply.send(());
+                                }
+                            }
+                            RpcDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                                runtime.refresh_admin_snapshot_if_dirty();
+                                if let Some(reply) = reply {
+                                    let _ = reply.send(());
+                                }
+                            }
+                            #[cfg(test)]
+                            RpcDomainCommand::ApplySessionCleanupForTests(session_id, reply) => {
+                                let _ = reply.send(runtime.apply_session_cleanup(session_id));
+                            }
+                            #[cfg(test)]
+                            RpcDomainCommand::ApplyWorkerUnsubscribeForTests(
+                                worker_addr,
+                                session_id,
+                                reply,
+                            ) => {
+                                let _ = reply.send(
+                                    runtime.apply_worker_unsubscribe(&worker_addr, session_id),
+                                );
+                            }
+                            RpcDomainCommand::PanicForFailpoint => {
+                                panic!("injected RPC family actor panic");
+                            }
+                            #[cfg(test)]
+                            RpcDomainCommand::BlockForTests(entered, release) => {
+                                let _ = entered.send(());
+                                let _ = release.recv();
+                            }
+                            #[cfg(test)]
+                            RpcDomainCommand::InspectForTests(inspect, reply) => {
+                                inspect(runtime.core);
                                 let _ = reply.send(());
                             }
-                        }
-                        RpcDomainCommand::ReadLiveCounts(reply) => {
-                            let _ = reply.send(runtime.live_counts());
-                        }
-                        #[cfg(test)]
-                        RpcDomainCommand::SyncAdminSnapshot(reply) => {
-                            runtime.sync_admin_snapshot();
-                            if let Some(reply) = reply {
+                            #[cfg(test)]
+                            RpcDomainCommand::ForwardQueuedDispatchForTests(dispatch, reply) => {
+                                runtime.forward_queued_dispatch(&dispatch);
                                 let _ = reply.send(());
                             }
-                        }
-                        RpcDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                            runtime.refresh_admin_snapshot_if_dirty();
-                            if let Some(reply) = reply {
-                                let _ = reply.send(());
-                            }
-                        }
-                        #[cfg(test)]
-                        RpcDomainCommand::ApplySessionCleanupForTests(session_id, reply) => {
-                            let _ = reply.send(runtime.apply_session_cleanup(session_id));
-                        }
-                        #[cfg(test)]
-                        RpcDomainCommand::ApplyWorkerUnsubscribeForTests(
-                            worker_addr,
-                            session_id,
-                            reply,
-                        ) => {
-                            let _ = reply
-                                .send(runtime.apply_worker_unsubscribe(&worker_addr, session_id));
-                        }
-                        RpcDomainCommand::PanicForFailpoint => {
-                            panic!("injected RPC family actor panic");
-                        }
-                        #[cfg(test)]
-                        RpcDomainCommand::BlockForTests(entered, release) => {
-                            let _ = entered.send(());
-                            let _ = release.recv();
-                        }
-                        #[cfg(test)]
-                        RpcDomainCommand::InspectForTests(inspect, reply) => {
-                            inspect(runtime.core);
-                            let _ = reply.send(());
-                        }
-                        #[cfg(test)]
-                        RpcDomainCommand::ForwardQueuedDispatchForTests(dispatch, reply) => {
-                            runtime.forward_queued_dispatch(&dispatch);
-                            let _ = reply.send(());
-                        }
+                        }));
+                    if let Err(panic) = result {
+                        runtime.reclaim_failed_family_state();
+                        std::panic::resume_unwind(panic);
                     }
                 },
                 crate::domains::rpc::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
@@ -193,6 +200,7 @@ impl RpcDomain {
             request_timeout: config.request_timeout,
             cancellation_grace_period: config.cancellation_grace_period,
             route_pending_capacity: config.route_pending_capacity,
+            global_pending_capacity: config.global_pending_capacity,
             global_pending_count: config.global_pending_count.clone(),
             snapshot_dirty: AtomicBool::new(false),
             snapshot_syncing: AtomicBool::new(false),
@@ -226,6 +234,17 @@ impl RpcDomain {
     pub fn with_route_pending_capacity(mut self, route_pending_capacity: usize) -> Self {
         self.family_runtime.stop();
         self.config.route_pending_capacity = route_pending_capacity.max(1);
+        self.rebuild_actor();
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_global_pending_capacity_for_tests(
+        mut self,
+        global_pending_capacity: usize,
+    ) -> Self {
+        self.family_runtime.stop();
+        self.config.global_pending_capacity = global_pending_capacity.max(1);
         self.rebuild_actor();
         self
     }

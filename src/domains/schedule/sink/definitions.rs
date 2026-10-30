@@ -23,23 +23,8 @@ impl ScheduleDomainRuntime<'_> {
                 Self::apply_create_batch_message(actor, entries)
             }
             ScheduleMessage::Cancel { route } => Self::apply_cancel_message(actor, &route),
-            ScheduleMessage::List { offset, limit } => {
-                let response = match actor.list_entries(offset, limit) {
-                    Ok((entries, total_count)) => ScheduleResponse::ListDefs {
-                        entries,
-                        total_count,
-                    },
-                    Err(error) => {
-                        ScheduleResponse::Error(crate::domains::schedule::ScheduleFailure::new(
-                            crate::domains::schedule::ScheduleFailureCategory::InvalidTarget,
-                            error,
-                        ))
-                    }
-                };
-                (response, false)
-            }
-            ScheduleMessage::ListV2 { cursor, limit } => {
-                let response = match actor.list_entries_v2(cursor.as_deref(), limit) {
+            ScheduleMessage::List { cursor, limit } => {
+                let response = match actor.list_entries(cursor.as_deref(), limit) {
                     Ok((entries, has_more, continuation)) => ScheduleResponse::ListPage {
                         entries,
                         has_more,
@@ -99,7 +84,7 @@ impl ScheduleDomainRuntime<'_> {
         match actor.create_schedule_with_mode(route, cron, delivery_mode, payload) {
             Ok(changed) => (ScheduleResponse::Ok, changed),
             Err(error) => (
-                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                ScheduleResponse::Error(ScheduleFailure::operation_error(error)),
                 false,
             ),
         }
@@ -123,7 +108,7 @@ impl ScheduleDomainRuntime<'_> {
         match actor.create_schedules(entries) {
             Ok(changed) => (ScheduleResponse::Ok, changed > 0),
             Err(error) => (
-                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                ScheduleResponse::Error(ScheduleFailure::operation_error(error)),
                 false,
             ),
         }
@@ -138,7 +123,7 @@ impl ScheduleDomainRuntime<'_> {
         };
 
         if let Err(error) =
-            crate::domains::schedule::protocol::validate_concrete_schedule_route(route)
+            crate::domains::schedule::route_grammar::validate_concrete_schedule_route(route)
         {
             return (
                 ScheduleResponse::Error(ScheduleFailure::new(
@@ -152,7 +137,7 @@ impl ScheduleDomainRuntime<'_> {
         match actor.delete_schedule(route) {
             Ok(removed) => (ScheduleResponse::Ok, removed),
             Err(error) => (
-                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                ScheduleResponse::Error(ScheduleFailure::operation_error(error)),
                 false,
             ),
         }

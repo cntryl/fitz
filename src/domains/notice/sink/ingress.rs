@@ -70,7 +70,16 @@ impl NoticeFamilyState {
             return Ok(());
         }
 
+        let acknowledges_publish = meta.ack_requested
+            && matches!(
+                notice_msg,
+                crate::domains::notice::protocol::NotificationMessage::Publish(_)
+            );
         let (response_opt, should_sync_admin_snapshot) = self.dispatch_notice_message(notice_msg);
+        // Success here means accepted for fan-out, never delivered: a PUBLISH
+        // with no matching subscriber is still acknowledged.
+        let response_opt = response_opt
+            .or_else(|| acknowledges_publish.then_some(crate::domains::notice::NoticeResponse::Ok));
         if should_sync_admin_snapshot {
             self.mark_admin_snapshot_dirty();
         }

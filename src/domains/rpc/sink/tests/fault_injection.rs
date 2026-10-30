@@ -82,6 +82,101 @@ fn submit_request(
     correlation_id
 }
 
+#[test]
+fn should_release_failed_family_pending_capacity_for_healthy_families() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let failed_family = RouteFamily::new(1);
+    let healthy_family = RouteFamily::new(2);
+    let sink = RpcDomain::new_with_families(
+        router.clone(),
+        admin_read_model.clone(),
+        &[failed_family, healthy_family],
+    )
+    .with_global_pending_capacity_for_tests(1);
+    let failed_route = Route::new("rpc://acme/work/failed-family");
+    let healthy_route = Route::new("rpc://acme/work/healthy-family");
+    let failed_caller = session_inbox_address(failed_family, 7);
+    let healthy_caller = session_inbox_address(healthy_family, 8);
+    let failed_worker = session_inbox_address(failed_family, 42);
+    let healthy_worker = session_inbox_address(healthy_family, 43);
+    let failed_caller_mailbox = Arc::new(Mailbox::new(4));
+    let healthy_caller_mailbox = Arc::new(Mailbox::new(4));
+    let failed_worker_mailbox = Arc::new(Mailbox::new(4));
+    let healthy_worker_mailbox = Arc::new(Mailbox::new(4));
+    router.register(failed_caller, failed_caller_mailbox);
+    router.register(healthy_caller, healthy_caller_mailbox.clone());
+    router.register(failed_worker.clone(), failed_worker_mailbox.clone());
+    router.register(healthy_worker.clone(), healthy_worker_mailbox.clone());
+    sink.register_registration_for_tests(RpcWorker::with_stats(
+        RouteAddress::new(failed_family, failed_route.clone()),
+        failed_worker,
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
+    sink.register_registration_for_tests(RpcWorker::with_stats(
+        RouteAddress::new(healthy_family, healthy_route.clone()),
+        healthy_worker,
+        43,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
+
+    // Act
+    submit_request(&sink, failed_family, &failed_route, 7);
+    failed_worker_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .expect("failed family request dispatched before panic");
+    sink.sync_admin_snapshot();
+    sink.panic_family_actor_for_failpoint(failed_family);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !sink
+        .family_health_snapshot()
+        .failed_families
+        .contains(&failed_family)
+        && Instant::now() < deadline
+    {
+        std::thread::yield_now();
+    }
+    assert!(
+        sink.family_health_snapshot()
+            .failed_families
+            .contains(&failed_family),
+        "injected family failure should be observed"
+    );
+    submit_request(&sink, healthy_family, &healthy_route, 8);
+    let healthy_dispatch = healthy_worker_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_millis(100));
+
+    // Assert
+    assert!(
+        healthy_dispatch.is_ok(),
+        "a failed family's abandoned pending call must not consume healthy-family capacity"
+    );
+    assert_eq!(
+        sink.config
+            .global_pending_count
+            .load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "only the healthy family's dispatched request remains pending"
+    );
+    assert!(admin_read_model
+        .rpc_workers(None)
+        .iter()
+        .all(|worker| { worker.route_family != failed_family.as_u64() }));
+    assert!(admin_read_model
+        .rpc_pending(None)
+        .iter()
+        .all(|pending| { pending.route_family != failed_family.as_u64() }));
+    assert!(healthy_caller_mailbox.receiver().try_recv().is_err());
+}
+
 /// Sequence: request accepted -> worker slot claimed + pending recorded ->
 /// immediate dispatch to the worker fails `MailboxFull`.
 ///
@@ -139,10 +234,7 @@ fn should_recover_worker_credit_after_immediate_dispatch_hits_mailbox_full() {
     submit_request(&sink, family, &route, 8);
 
     // Assert
-    assert_eq!(
-        code,
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE
-    );
+    assert_eq!(code, crate::dispatch::protocol::error_codes::rpc::ERR_BUSY);
     assert_eq!(pending_after_rejection, 0);
     assert_eq!(
         workers_after_rejection, 1,

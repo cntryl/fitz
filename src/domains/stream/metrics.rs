@@ -19,6 +19,10 @@ pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_stream_notify_drops_total";
 /// operator-visible signal for a permanently degraded realm, since a
 /// per-family failure deliberately does not flip domain-wide health/liveness.
 pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_stream_family_failed_closed_total";
+/// Commits that could not reach a coordinator because every slot at the cap
+/// was busy; they are re-queued and serviced once a coordinator goes idle.
+pub const METRIC_WATERMARK_COORDINATION_DEFERRALS_TOTAL: &str =
+    "fitz_stream_watermark_coordination_deferrals_total";
 pub const METRIC_WATERMARK_COORDINATION_DROPS_TOTAL: &str =
     "fitz_stream_watermark_coordination_drops_total";
 pub const METRIC_MAINTENANCE_ATTEMPTS_TOTAL: &str = "fitz_stream_maintenance_attempts_total";
@@ -49,6 +53,7 @@ pub(crate) struct StreamDurableMetricsSnapshot {
     pub(crate) events_total: usize,
     pub(crate) realm_watermarks: Vec<StreamRealmWatermarkMetric>,
     pub(crate) area_watermarks: Vec<StreamAreaWatermarkMetric>,
+    pub(crate) truncated: bool,
 }
 
 impl StreamDurableMetricsSnapshot {
@@ -144,21 +149,28 @@ impl StreamDurableMetrics {
         self.watermark_generation.load(Ordering::Acquire)
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> StreamDurableMetricsSnapshot {
-        let realm_watermarks = self
-            .realm_watermarks
-            .read()
+        self.snapshot_bounded(usize::MAX)
+    }
+
+    pub(crate) fn snapshot_bounded(&self, limit: usize) -> StreamDurableMetricsSnapshot {
+        let realm_watermarks = self.realm_watermarks.read();
+        let realm_truncated = realm_watermarks.len() > limit;
+        let realm_watermarks = realm_watermarks
             .iter()
+            .take(limit)
             .map(|((family, realm), watermark)| StreamRealmWatermarkMetric {
                 family: *family,
                 realm: realm.clone(),
                 watermark: *watermark,
             })
             .collect();
-        let area_watermarks = self
-            .area_watermarks
-            .read()
+        let area_watermarks = self.area_watermarks.read();
+        let area_truncated = area_watermarks.len() > limit;
+        let area_watermarks = area_watermarks
             .iter()
+            .take(limit)
             .map(
                 |((family, realm, area), watermark)| StreamAreaWatermarkMetric {
                     family: *family,
@@ -172,6 +184,7 @@ impl StreamDurableMetrics {
             events_total: self.events_total.load(Ordering::Relaxed),
             realm_watermarks,
             area_watermarks,
+            truncated: realm_truncated || area_truncated,
         }
     }
 }
@@ -325,5 +338,23 @@ mod tests {
         // Assert
         assert_eq!(after_realm, 1);
         assert_eq!(metrics.watermark_generation(), 2);
+    }
+
+    #[test]
+    fn should_report_truncated_durable_metrics_after_limit() {
+        // Arrange
+        let metrics = StreamDurableMetrics::default();
+        for index in 0..3 {
+            metrics.set_realm_watermark(index, "prod", index);
+            metrics.set_area_watermark(index, "prod", "audit", index);
+        }
+
+        // Act
+        let snapshot = metrics.snapshot_bounded(2);
+
+        // Assert
+        assert_eq!(snapshot.realm_watermarks.len(), 2);
+        assert_eq!(snapshot.area_watermarks.len(), 2);
+        assert!(snapshot.truncated);
     }
 }

@@ -68,12 +68,12 @@ fn should_report_zero_remaining_budget_after_local_deadline() {
 }
 
 #[test]
-fn should_preserve_legacy_worker_request_bytes_with_local_deadline() {
+fn should_preserve_worker_request_bytes_with_local_deadline() {
     // Arrange
     let request = request(uuid::Uuid::new_v4());
     let mut state = RpcState::new();
     state.register_registration(test_rpc_worker(request.family_id, &request.route, 42));
-    let expected = crate::protocol::rpc_codec::encode_worker_request_tlv_frame(&request);
+    let expected = crate::protocol::rpc_codec::encode_worker_request_payload(&request, 5_000);
 
     // Act
     let result = admit_with_deadline(
@@ -90,7 +90,8 @@ fn should_preserve_legacy_worker_request_bytes_with_local_deadline() {
     else {
         panic!("request with worker credit should dispatch immediately");
     };
-    let actual = crate::protocol::rpc_codec::encode_worker_request_tlv_frame(&dispatched_request);
+    let actual =
+        crate::protocol::rpc_codec::encode_worker_request_payload(&dispatched_request, 5_000);
 
     // Assert
     assert_eq!(actual, expected);
@@ -261,6 +262,7 @@ fn should_release_queued_dispatch_credit_on_timeout() {
         request_timeout: Duration::from_secs(30),
         cancellation_grace_period: Duration::from_secs(5),
         route_pending_capacity: 32,
+        global_pending_capacity: super::RPC_MAX_PENDING_REQUESTS,
         global_pending_count: Arc::new(AtomicUsize::new(1)),
         snapshot_epoch: Instant::now(),
         metrics: None,
@@ -285,6 +287,7 @@ fn should_release_queued_dispatch_credit_on_timeout() {
     core.state
         .pending
         .track_pending_for_family(family, request.correlation_id, pending);
+    core.state.global_capacity_reservations = 1;
     let active = AtomicBool::new(true);
     let mut runtime = RpcFamilyRuntime {
         core: &mut core,
@@ -309,10 +312,7 @@ fn should_release_queued_dispatch_credit_on_timeout() {
     assert_eq!(frames.len(), 1);
     let response = parse_forwarded_rpc_response(&frames[0]);
     let (error_code, _) = crate::protocol::rpc_codec::decode_error_body(&response.body).unwrap();
-    assert_eq!(
-        error_code,
-        crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT
-    );
+    assert_eq!(error_code, crate::protocol::error_codes::rpc::ERR_TIMEOUT);
     assert!(available.is_some());
     assert_eq!(runtime.core.state.registration_count(), 1);
     assert_eq!(runtime.core.state.live_request_count(), 0);

@@ -69,3 +69,15 @@ Queue-domain flush worker. A family has at most one flush in flight; new writes
 stay dirty for a later pass, and a full worker queue leaves work pending for
 retry. The storage flush no longer occupies the Queue request actor, but slow or
 failed storage can delay persistence without a fixed loss-window bound.
+
+## Required transport outcomes
+
+A domain may claim one terminal reply before trying delivery. If the transport
+cannot carry that required reply, it ends the session through its independent
+close signal. It must not leave an open connection with permanently occupied
+admission slots. This does not undo an accepted operation or make retries safe.
+Live domain notifications retain best-effort delivery.
+
+Socket control reads are independent of synchronous domain waits; application
+frames still dispatch in connection order. Transport byte reservations are
+shared across both listeners and follow frame owners through handoff.

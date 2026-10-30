@@ -1,186 +1,385 @@
-//! Authoritative Error Code Allocation for All Fitz Domains
+//! Authoritative error code allocation for all Fitz domains, wire format 2.
 //!
-//! See `CLIENT_SPEC.md` sections for each domain for the official error code allocations.
-//! All domains use numeric error codes allocated in 100-block ranges.
-//! Error codes are returned in domain-specific response envelopes as
-//! `[u8 1][u32 code][u32 msg_len][msg]`.
+//! The human mirror is `docs/clients/spec/error-codes.md`; the class and
+//! typical effect of every code live in [`crate::protocol::wire2::catalog`].
+//! Every error travels in the one envelope
+//! `[u8 1][u16 code][u8 class][u8 effect][string message]`.
 //!
-//! ## Backpressure Signaling (Per `CLIENT_SPEC` §Flow Control & Backpressure)
-//! When a domain's internal queue is full, the broker returns a backpressure error:
-//! - RPC: 6003 = `ERR_RPC_BACKPRESSURE` (client should retry with exponential backoff)
-//! - Queue: 4005 = `ERR_QUEUE_FULL` (client should retry with exponential backoff)
-//! - Other domains: connection may close if internal buffers overflow
-//! - Notice PUBLISH: silently drops notifications on backpressure (fire-and-forget semantics, no response sent)
+//! Blocks are decimal thousands per domain. In every block, slots `x001`
+//! through `x010` carry the same meaning: unauthorized, invalid route,
+//! invalid pattern, registration limit, busy, backend, timeout, bad request,
+//! not found, unsupported. Domain-specific codes start at `x050`.
+//!
+//! Backpressure is `BUSY` in every domain with `effect = NOT_APPLIED`: the
+//! broker declined the request, nothing applied, re-sending after a backoff
+//! is safe. Notice `PUBLISH` without `ACK_REQUESTED` is still dropped
+//! silently under backpressure.
 
-use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
+use crate::protocol::payload_codec::PayloadEncoder;
+use crate::protocol::wire2::catalog;
+use crate::protocol::wire2::envelope::{self, Effect, ErrorClass, Response, WireError};
+
+/// Build the error a client sees for `code`, taking the class and typical
+/// effect from the catalog. An unknown code is reported as a backend failure
+/// with an indeterminate effect, the most conservative reading.
+#[must_use]
+pub fn wire_error(code: u16, message: &str) -> WireError {
+    let (class, effect) = catalog::lookup(code)
+        .map_or((ErrorClass::Backend, Effect::Indeterminate), |entry| {
+            (entry.class, entry.effect)
+        });
+    debug_assert!(
+        catalog::lookup(code).is_some(),
+        "error code {code} is not in the catalog"
+    );
+    WireError {
+        code,
+        class,
+        effect,
+        message: message.to_owned(),
+    }
+}
 
 #[must_use]
 pub fn encode_error_body(code: u16, message: &str) -> Vec<u8> {
-    let mut enc = PayloadEncoder::new();
-    encode_error_body_into(code, message, &mut enc)
+    envelope::encode_error(&wire_error(code, message))
 }
 
+/// Encode an error envelope into a reusable encoder, replacing its contents.
 pub fn encode_error_body_into(code: u16, message: &str, enc: &mut PayloadEncoder) -> Vec<u8> {
     enc.clear();
-    enc.put_u8(1);
-    enc.put_u32(u32::from(code));
-    enc.put_string(message);
+    enc.put_raw(&encode_error_body(code, message));
     enc.finish()
 }
 
+/// Decode an error envelope to its code and message.
+///
 /// # Errors
 ///
-/// Returns an error if the payload is not a valid Fitz error envelope.
+/// Returns an error if the payload is not a valid error envelope.
 pub fn decode_error_body(payload: &[u8]) -> Result<(u16, String), String> {
-    let mut dec = PayloadDecoder::new(payload);
-    if dec.get_u8()? != 1 {
-        return Err("Payload is not an error envelope".to_string());
+    match envelope::decode_response(payload).map_err(|error| error.to_string())? {
+        Response::Error(error) => Ok((error.code, error.message)),
+        Response::Success(_) => Err("Payload is not an error envelope".to_string()),
     }
-
-    let code = dec.get_u32()?;
-    if code > u32::from(u16::MAX) {
-        return Err("Error code exceeds u16 range".to_string());
-    }
-
-    let message = dec.get_string()?;
-    if !dec.is_complete() {
-        return Err("Trailing data in error envelope".to_string());
-    }
-
-    Ok((
-        u16::try_from(code).map_err(|_| "Error code exceeds u16 range".to_string())?,
-        message,
-    ))
 }
 
-/// KV domain error codes (per `CLIENT_SPEC` KV Domain section)
+/// Decode the full error envelope.
+///
+/// # Errors
+///
+/// Returns an error if the payload is not a valid error envelope.
+pub fn decode_wire_error(payload: &[u8]) -> Result<WireError, String> {
+    match envelope::decode_response(payload).map_err(|error| error.to_string())? {
+        Response::Error(error) => Ok(error),
+        Response::Success(_) => Err("Payload is not an error envelope".to_string()),
+    }
+}
+
+/// Protocol and session block (0xxx): answered before a request reaches a domain.
+pub mod protocol {
+    pub const ERR_UNAUTHORIZED: u16 = 1;
+    pub const ERR_BUSY: u16 = 5;
+    pub const ERR_BAD_REQUEST: u16 = 8;
+    pub const ERR_UNSUPPORTED: u16 = 10;
+}
+
+/// KV domain (block 1xxx).
 pub mod kv {
-    pub const ERR_TRANSACTION_NOT_FOUND: u16 = 1001;
-    pub const ERR_INVALID_MODE: u16 = 1002;
-    pub const ERR_KEY_NOT_FOUND: u16 = 1003;
-    pub const ERR_ISOLATION_CONFLICT: u16 = 1004;
-    pub const ERR_WRITE_IN_READONLY: u16 = 1005;
-    pub const ERR_KEY_EXISTS: u16 = 1006;
-    pub const ERR_INVALID_ROUTE: u16 = 1007;
-    pub const ERR_REALM_MISMATCH: u16 = 1008;
-    pub const ERR_BACKEND_ERROR: u16 = 1009;
-    pub const ERR_TRANSACTION_ABORTED: u16 = 1010;
-    pub const ERR_UNAUTHORIZED: u16 = 1011; // AC-KV-010: Permission denied for KV operation
-    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 1012;
-    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 1013;
-    /// The domain mailbox was full, so the request was never accepted.
-    ///
-    /// Retryable: nothing was enqueued and nothing applied, so re-sending after
-    /// a backoff is safe. Distinct from `ERR_BACKEND_ERROR`, which is fatal and
-    /// says nothing about whether the request took effect.
-    pub const ERR_BUSY: u16 = 1014;
+    pub const ERR_UNAUTHORIZED: u16 = 1001;
+    pub const ERR_INVALID_ROUTE: u16 = 1002;
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 1003;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 1004;
+    pub const ERR_BUSY: u16 = 1005;
+    pub const ERR_BACKEND_ERROR: u16 = 1006;
+    pub const ERR_TIMEOUT: u16 = 1007;
+    pub const ERR_BAD_REQUEST: u16 = 1008;
+    pub const ERR_NOT_FOUND: u16 = 1009;
+    pub const ERR_UNSUPPORTED: u16 = 1010;
+    pub const ERR_TRANSACTION_NOT_FOUND: u16 = 1050;
+    pub const ERR_INVALID_MODE: u16 = 1051;
+    pub const ERR_KEY_NOT_FOUND: u16 = 1052;
+    pub const ERR_ISOLATION_CONFLICT: u16 = 1053;
+    pub const ERR_WRITE_IN_READONLY: u16 = 1054;
+    pub const ERR_KEY_EXISTS: u16 = 1055;
+    pub const ERR_REALM_MISMATCH: u16 = 1056;
+    pub const ERR_TRANSACTION_ABORTED: u16 = 1057;
 }
 
-/// Stream domain error codes (per `CLIENT_SPEC` Stream Domain section)
+/// Stream domain (block 2xxx).
 pub mod stream {
-    pub const ERR_CONCURRENCY_CONFLICT: u16 = 2001;
-    pub const ERR_SESSION_ALREADY_ACTIVE: u16 = 2002;
-    pub const ERR_SESSION_NOT_FOUND: u16 = 2003;
-    pub const ERR_INVALID_READ_BOUND: u16 = 2004;
-    pub const ERR_RESOURCE_NOT_FOUND: u16 = 2005;
-    pub const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: u16 = 2006;
-    pub const ERR_STREAM_FILTER_INVALID_PAYLOAD: u16 = 2007;
-    pub const ERR_UNAUTHORIZED: u16 = 2009; // AC-STREAM-005: Permission denied for stream operation
-    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 2010;
-    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 2011;
-    pub const ERR_BACKEND_ERROR: u16 = 2012;
-    /// A single record's wire-encoded size alone exceeds the maximum size of
-    /// one broker response frame, so it cannot be returned by any read call.
-    pub const ERR_READ_RESPONSE_TOO_LARGE: u16 = 2013;
-    /// The domain mailbox was full, so the request was never accepted.
-    ///
-    /// Retryable: nothing was enqueued and nothing applied, so re-sending after
-    /// a backoff is safe. Distinct from `ERR_BACKEND_ERROR`, which is fatal and
-    /// says nothing about whether the request took effect.
-    pub const ERR_BUSY: u16 = 2014;
+    pub const ERR_UNAUTHORIZED: u16 = 2001;
+    pub const ERR_INVALID_ROUTE: u16 = 2002;
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 2003;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 2004;
+    pub const ERR_BUSY: u16 = 2005;
+    pub const ERR_BACKEND_ERROR: u16 = 2006;
+    pub const ERR_TIMEOUT: u16 = 2007;
+    pub const ERR_BAD_REQUEST: u16 = 2008;
+    pub const ERR_NOT_FOUND: u16 = 2009;
+    pub const ERR_UNSUPPORTED: u16 = 2010;
+    pub const ERR_CONCURRENCY_CONFLICT: u16 = 2050;
+    pub const ERR_SESSION_ALREADY_ACTIVE: u16 = 2051;
+    pub const ERR_SESSION_NOT_FOUND: u16 = 2052;
+    pub const ERR_INVALID_READ_BOUND: u16 = 2053;
+    pub const ERR_RESOURCE_NOT_FOUND: u16 = 2054;
+    pub const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: u16 = 2055;
+    pub const ERR_STREAM_FILTER_INVALID_PAYLOAD: u16 = 2056;
+    /// A single record's wire-encoded size alone exceeds `max_message_bytes`.
+    pub const ERR_READ_RESPONSE_TOO_LARGE: u16 = 2057;
 }
 
-/// Notice domain error codes (per `CLIENT_SPEC` Notice Domain section)
+/// Notice domain (block 3xxx).
 pub mod notice {
-    pub const ERR_INVALID_ROUTE: u16 = 3001;
-    pub const ERR_INVALID_PATTERN: u16 = 3002;
-    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 3003;
-    pub const ERR_TRANSPORT_CLOSED: u16 = 3004;
-    pub const ERR_BACKEND_ERROR: u16 = 3005;
-    pub const ERR_UNAUTHORIZED: u16 = 3009; // AC-NOTICE-009: Permission denied for notice operation
-    /// The domain mailbox was full, so the request was never accepted.
-    ///
-    /// Retryable: nothing was enqueued and nothing applied, so re-sending after
-    /// a backoff is safe. Distinct from `ERR_BACKEND_ERROR`, which is fatal and
-    /// says nothing about whether the request took effect.
-    pub const ERR_BUSY: u16 = 3006;
+    pub const ERR_UNAUTHORIZED: u16 = 3001;
+    pub const ERR_INVALID_ROUTE: u16 = 3002;
+    pub const ERR_INVALID_PATTERN: u16 = 3003;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 3004;
+    pub const ERR_BUSY: u16 = 3005;
+    pub const ERR_BACKEND_ERROR: u16 = 3006;
+    pub const ERR_TIMEOUT: u16 = 3007;
+    pub const ERR_BAD_REQUEST: u16 = 3008;
+    pub const ERR_NOT_FOUND: u16 = 3009;
+    pub const ERR_UNSUPPORTED: u16 = 3010;
+    pub const ERR_TRANSPORT_CLOSED: u16 = 3050;
 }
 
-/// Queue domain error codes (per `CLIENT_SPEC` Queue Domain section)
+/// Queue domain (block 4xxx).
 pub mod queue {
-    pub const ERR_INVALID_TOKEN: u16 = 4001; // AC-QUEUE-006: Invalid or wrong inflight token
-    pub const ERR_INFLIGHT_EXPIRED: u16 = 4002;
-    pub const ERR_MESSAGE_NOT_FOUND: u16 = 4003;
-    pub const ERR_QUEUE_NOT_FOUND: u16 = 4004;
-    pub const ERR_QUEUE_FULL: u16 = 4005; // Backpressure: queue at capacity, client should retry with backoff
-    pub const ERR_BAD_REQUEST: u16 = 4006;
-    pub const ERR_BACKEND_ERROR: u16 = 4007;
-    pub const ERR_UNAUTHORIZED: u16 = 4009; // AC-QUEUE-008: Permission denied for queue operation
-    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 4010;
-    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 4011;
+    pub const ERR_UNAUTHORIZED: u16 = 4001;
+    pub const ERR_INVALID_ROUTE: u16 = 4002;
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 4003;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 4004;
+    pub const ERR_BUSY: u16 = 4005;
+    pub const ERR_BACKEND_ERROR: u16 = 4006;
+    pub const ERR_TIMEOUT: u16 = 4007;
+    pub const ERR_BAD_REQUEST: u16 = 4008;
+    pub const ERR_NOT_FOUND: u16 = 4009;
+    pub const ERR_UNSUPPORTED: u16 = 4010;
+    pub const ERR_INVALID_TOKEN: u16 = 4050;
+    pub const ERR_INFLIGHT_EXPIRED: u16 = 4051;
+    pub const ERR_MESSAGE_NOT_FOUND: u16 = 4052;
+    pub const ERR_QUEUE_NOT_FOUND: u16 = 4053;
 }
 
-/// Lease domain error codes (per `CLIENT_SPEC` Lease Domain section)
+/// Lease domain (block 5xxx).
 pub mod lease {
-    pub const ERR_LEASE_HELD: u16 = 5001;
-    pub const ERR_INVALID_FENCE: u16 = 5002;
-    pub const ERR_LEASE_EXPIRED: u16 = 5003;
-    pub const ERR_LEASE_NOT_FOUND: u16 = 5004;
-    pub const ERR_INVALID_TOKEN: u16 = 5005; // AC-LEASE-009: Invalid or wrong lease token
-    pub const ERR_TIMEOUT: u16 = 5006;
-    pub const ERR_QUEUE_FULL: u16 = 5007;
+    pub const ERR_UNAUTHORIZED: u16 = 5001;
+    pub const ERR_INVALID_ROUTE: u16 = 5002;
+    /// SUBSCRIBE and LIST selector grammar.
+    pub const ERR_INVALID_PATTERN: u16 = 5003;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 5004;
+    pub const ERR_BUSY: u16 = 5005;
+    pub const ERR_BACKEND_ERROR: u16 = 5006;
+    /// Broker-side deadline after acceptance; not the acquire wait.
+    pub const ERR_TIMEOUT: u16 = 5007;
     pub const ERR_BAD_REQUEST: u16 = 5008;
-    pub const ERR_UNAUTHORIZED: u16 = 5009; // AC-LEASE-010: Permission denied for lease operation
-    pub const ERR_INVALID_SUBSCRIPTION_ROUTE: u16 = 5010;
-    pub const ERR_INVALID_LIST_CURSOR: u16 = 5011;
-    pub const ERR_INVALID_LIST_PATTERN: u16 = 5012;
+    pub const ERR_NOT_FOUND: u16 = 5009;
+    pub const ERR_UNSUPPORTED: u16 = 5010;
+    pub const ERR_LEASE_HELD: u16 = 5050;
+    pub const ERR_INVALID_FENCE: u16 = 5051;
+    pub const ERR_LEASE_EXPIRED: u16 = 5052;
+    pub const ERR_LEASE_NOT_FOUND: u16 = 5053;
+    pub const ERR_INVALID_TOKEN: u16 = 5054;
+    /// The caller's `wait_seconds` elapsed without a grant.
+    pub const ERR_ACQUIRE_WAIT_EXPIRED: u16 = 5055;
+    /// Too many pending waiters on the key; back off.
+    pub const ERR_WAITERS_LIMIT: u16 = 5056;
+    pub const ERR_INVALID_LIST_CURSOR: u16 = 5057;
 }
 
-/// RPC domain error codes (per `CLIENT_SPEC` RPC Domain section)
+/// RPC domain (block 6xxx).
 pub mod rpc {
-    pub const ERR_RPC_TIMEOUT: u16 = 6001;
-    pub const ERR_WORKER_NOT_FOUND: u16 = 6002;
-    pub const ERR_RPC_BACKPRESSURE: u16 = 6003; // Backpressure: queue at capacity, client should retry with backoff
-    pub const ERR_ROUTE_NOT_REGISTERED: u16 = 6004; // AC-RPC-003: No workers registered for route
-    pub const ERR_CORRELATION_NOT_FOUND: u16 = 6005;
-    pub const ERR_RPC_INVALID_SEQUENCE: u16 = 6006; // Response chunks must start at seq=0 and advance contiguously
-    pub const ERR_RPC_DUPLICATE_CORRELATION: u16 = 6007; // Caller attempted to reuse a live correlation ID
-    pub const ERR_RPC_WRONG_WORKER: u16 = 6008; // Response or ACK came from a worker that does not own the request
-    pub const ERR_UNAUTHORIZED: u16 = 6009; // AC-RPC-007, AC-RPC-008: Permission denied for RPC operation
-    pub const ERR_BACKEND_ERROR: u16 = 6010;
-    pub const ERR_INVALID_ROUTE: u16 = 6011;
-    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 6012;
-    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 6013;
+    pub const ERR_UNAUTHORIZED: u16 = 6001;
+    pub const ERR_INVALID_ROUTE: u16 = 6002;
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 6003;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 6004;
+    pub const ERR_BUSY: u16 = 6005;
+    pub const ERR_BACKEND_ERROR: u16 = 6006;
+    /// Accepted but not finished before its deadline; outcome unknown.
+    pub const ERR_TIMEOUT: u16 = 6007;
+    pub const ERR_BAD_REQUEST: u16 = 6008;
+    pub const ERR_NOT_FOUND: u16 = 6009;
+    pub const ERR_UNSUPPORTED: u16 = 6010;
+    pub const ERR_WORKER_NOT_FOUND: u16 = 6050;
+    pub const ERR_ROUTE_NOT_REGISTERED: u16 = 6051;
+    pub const ERR_CORRELATION_NOT_FOUND: u16 = 6052;
+    pub const ERR_RPC_INVALID_SEQUENCE: u16 = 6053;
+    pub const ERR_RPC_DUPLICATE_CORRELATION: u16 = 6054;
+    pub const ERR_RPC_WRONG_WORKER: u16 = 6055;
 }
 
-/// Schedule domain error codes (per `CLIENT_SPEC` Schedule Domain section)
+/// Schedule domain (block 7xxx).
 pub mod schedule {
-    pub const ERR_SCHEDULE_NOT_FOUND: u16 = 7001;
-    pub const ERR_INVALID_CRON: u16 = 7002; // AC-SCHEDULE-002: Invalid cron expression syntax
-    pub const ERR_SCHEDULE_LIMIT: u16 = 7003;
-    pub const ERR_PARSE_ERROR: u16 = 7004;
-    pub const ERR_INVALID_TARGET: u16 = 7005;
-    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 7006;
-    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 7007;
-    pub const ERR_INVALID_DELIVERY_MODE: u16 = 7008;
-    pub const ERR_UNAUTHORIZED: u16 = 7009; // AC-SCHEDULE-008: Permission denied for schedule operation
-                                            // Schedule had no generic backend/saturation code; every other domain has
-                                            // one. Without it a busy schedule actor had to borrow a code that means
-                                            // something else (e.g. "invalid cron"), which misdirects the client.
-    pub const ERR_BACKEND_ERROR: u16 = 7010;
-    // Distinct from 7010 on purpose. 7010 is classified retryable: it reports a
-    // request the broker declined to service, so re-sending it is safe. A
-    // deadline expiry is not that - the command was already accepted and may
-    // still apply - so it needs a code clients will not auto-retry.
-    pub const ERR_TIMEOUT: u16 = 7011;
+    pub const ERR_UNAUTHORIZED: u16 = 7001;
+    pub const ERR_INVALID_ROUTE: u16 = 7002;
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 7003;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 7004;
+    /// The saturation code; the broker declined the request, nothing applied.
+    pub const ERR_BUSY: u16 = 7005;
+    pub const ERR_BACKEND_ERROR: u16 = 7006;
+    pub const ERR_TIMEOUT: u16 = 7007;
+    pub const ERR_BAD_REQUEST: u16 = 7008;
+    pub const ERR_NOT_FOUND: u16 = 7009;
+    pub const ERR_UNSUPPORTED: u16 = 7010;
+    pub const ERR_SCHEDULE_NOT_FOUND: u16 = 7050;
+    pub const ERR_INVALID_CRON: u16 = 7051;
+    pub const ERR_DEFINITION_LIMIT: u16 = 7052;
+    pub const ERR_INVALID_TARGET: u16 = 7053;
+    pub const ERR_INVALID_DELIVERY_MODE: u16 = 7054;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NAMED_CODES: &[u16] = &[
+        protocol::ERR_UNAUTHORIZED,
+        protocol::ERR_BUSY,
+        protocol::ERR_BAD_REQUEST,
+        protocol::ERR_UNSUPPORTED,
+        kv::ERR_UNAUTHORIZED,
+        kv::ERR_INVALID_ROUTE,
+        kv::ERR_INVALID_SUBSCRIPTION_PATTERN,
+        kv::ERR_SUBSCRIPTION_LIMIT,
+        kv::ERR_BUSY,
+        kv::ERR_BACKEND_ERROR,
+        kv::ERR_TIMEOUT,
+        kv::ERR_BAD_REQUEST,
+        kv::ERR_NOT_FOUND,
+        kv::ERR_UNSUPPORTED,
+        kv::ERR_TRANSACTION_NOT_FOUND,
+        kv::ERR_INVALID_MODE,
+        kv::ERR_KEY_NOT_FOUND,
+        kv::ERR_ISOLATION_CONFLICT,
+        kv::ERR_WRITE_IN_READONLY,
+        kv::ERR_KEY_EXISTS,
+        kv::ERR_REALM_MISMATCH,
+        kv::ERR_TRANSACTION_ABORTED,
+        stream::ERR_UNAUTHORIZED,
+        stream::ERR_INVALID_ROUTE,
+        stream::ERR_INVALID_SUBSCRIPTION_PATTERN,
+        stream::ERR_SUBSCRIPTION_LIMIT,
+        stream::ERR_BUSY,
+        stream::ERR_BACKEND_ERROR,
+        stream::ERR_TIMEOUT,
+        stream::ERR_BAD_REQUEST,
+        stream::ERR_NOT_FOUND,
+        stream::ERR_UNSUPPORTED,
+        stream::ERR_CONCURRENCY_CONFLICT,
+        stream::ERR_SESSION_ALREADY_ACTIVE,
+        stream::ERR_SESSION_NOT_FOUND,
+        stream::ERR_INVALID_READ_BOUND,
+        stream::ERR_RESOURCE_NOT_FOUND,
+        stream::ERR_STREAM_FILTER_UNSUPPORTED_VERSION,
+        stream::ERR_STREAM_FILTER_INVALID_PAYLOAD,
+        stream::ERR_READ_RESPONSE_TOO_LARGE,
+        notice::ERR_UNAUTHORIZED,
+        notice::ERR_INVALID_ROUTE,
+        notice::ERR_INVALID_PATTERN,
+        notice::ERR_SUBSCRIPTION_LIMIT,
+        notice::ERR_BUSY,
+        notice::ERR_BACKEND_ERROR,
+        notice::ERR_TIMEOUT,
+        notice::ERR_BAD_REQUEST,
+        notice::ERR_NOT_FOUND,
+        notice::ERR_UNSUPPORTED,
+        notice::ERR_TRANSPORT_CLOSED,
+        queue::ERR_UNAUTHORIZED,
+        queue::ERR_INVALID_ROUTE,
+        queue::ERR_INVALID_SUBSCRIPTION_PATTERN,
+        queue::ERR_SUBSCRIPTION_LIMIT,
+        queue::ERR_BUSY,
+        queue::ERR_BACKEND_ERROR,
+        queue::ERR_TIMEOUT,
+        queue::ERR_BAD_REQUEST,
+        queue::ERR_NOT_FOUND,
+        queue::ERR_UNSUPPORTED,
+        queue::ERR_INVALID_TOKEN,
+        queue::ERR_INFLIGHT_EXPIRED,
+        queue::ERR_MESSAGE_NOT_FOUND,
+        queue::ERR_QUEUE_NOT_FOUND,
+        lease::ERR_UNAUTHORIZED,
+        lease::ERR_INVALID_ROUTE,
+        lease::ERR_INVALID_PATTERN,
+        lease::ERR_SUBSCRIPTION_LIMIT,
+        lease::ERR_BUSY,
+        lease::ERR_BACKEND_ERROR,
+        lease::ERR_TIMEOUT,
+        lease::ERR_BAD_REQUEST,
+        lease::ERR_NOT_FOUND,
+        lease::ERR_UNSUPPORTED,
+        lease::ERR_LEASE_HELD,
+        lease::ERR_INVALID_FENCE,
+        lease::ERR_LEASE_EXPIRED,
+        lease::ERR_LEASE_NOT_FOUND,
+        lease::ERR_INVALID_TOKEN,
+        lease::ERR_ACQUIRE_WAIT_EXPIRED,
+        lease::ERR_WAITERS_LIMIT,
+        lease::ERR_INVALID_LIST_CURSOR,
+        rpc::ERR_UNAUTHORIZED,
+        rpc::ERR_INVALID_ROUTE,
+        rpc::ERR_INVALID_SUBSCRIPTION_PATTERN,
+        rpc::ERR_SUBSCRIPTION_LIMIT,
+        rpc::ERR_BUSY,
+        rpc::ERR_BACKEND_ERROR,
+        rpc::ERR_TIMEOUT,
+        rpc::ERR_BAD_REQUEST,
+        rpc::ERR_NOT_FOUND,
+        rpc::ERR_UNSUPPORTED,
+        rpc::ERR_WORKER_NOT_FOUND,
+        rpc::ERR_ROUTE_NOT_REGISTERED,
+        rpc::ERR_CORRELATION_NOT_FOUND,
+        rpc::ERR_RPC_INVALID_SEQUENCE,
+        rpc::ERR_RPC_DUPLICATE_CORRELATION,
+        rpc::ERR_RPC_WRONG_WORKER,
+        schedule::ERR_UNAUTHORIZED,
+        schedule::ERR_INVALID_ROUTE,
+        schedule::ERR_INVALID_SUBSCRIPTION_PATTERN,
+        schedule::ERR_SUBSCRIPTION_LIMIT,
+        schedule::ERR_BUSY,
+        schedule::ERR_BACKEND_ERROR,
+        schedule::ERR_TIMEOUT,
+        schedule::ERR_BAD_REQUEST,
+        schedule::ERR_NOT_FOUND,
+        schedule::ERR_UNSUPPORTED,
+        schedule::ERR_SCHEDULE_NOT_FOUND,
+        schedule::ERR_INVALID_CRON,
+        schedule::ERR_DEFINITION_LIMIT,
+        schedule::ERR_INVALID_TARGET,
+        schedule::ERR_INVALID_DELIVERY_MODE,
+    ];
+
+    #[test]
+    fn should_round_trip_a_coded_error_with_its_catalog_class() {
+        // Arrange
+        let body = encode_error_body(kv::ERR_ISOLATION_CONFLICT, "lost the race");
+
+        // Act
+        let decoded = decode_wire_error(&body).expect("error envelope");
+
+        // Assert
+        assert_eq!(decoded.code, 1053);
+        assert_eq!(decoded.class, ErrorClass::Domain);
+        assert_eq!(decoded.effect, Effect::NotApplied);
+        assert_eq!(
+            decode_error_body(&body),
+            Ok((1053, "lost the race".to_owned()))
+        );
+    }
+
+    #[test]
+    fn should_give_every_named_constant_a_catalog_row() {
+        // Arrange
+        let named = NAMED_CODES;
+        // Act
+        let missing = named
+            .iter()
+            .filter(|code| catalog::lookup(**code).is_none())
+            .copied()
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(missing, Vec::<u16>::new());
+    }
 }

@@ -1,6 +1,6 @@
 ### Notice Domain (Fire-and-Forget Live Fanout)
 
-**Purpose:** Low-latency session-scoped notifications with wildcard pattern matching.
+**Purpose:** Ephemeral session-scoped notifications with wildcard pattern matching.
 
 #### Message Types
 
@@ -21,14 +21,18 @@
 [bytes]   payload
 ```
 
-**No success frame.** PUBLISH is fire-and-forget. An accepted PUBLISH fans out to matching subscribers and produces no response. The client MUST NOT wait for a response after sending PUBLISH.
+**No success frame by default.** PUBLISH is fire-and-forget. An accepted PUBLISH fans out to matching subscribers and produces no response. The client MUST NOT wait for a response after sending PUBLISH unless it set `ACK_REQUESTED`.
+
+**`ACK_REQUESTED` (header flag bit 0).** A PUBLISH sent with the flag is answered on message type 500 with the common envelope and the request's correlation. Success (`[u8 0]`) means the broker accepted the publish for fan-out; it never means a subscriber received it, and a publish with no matching subscriber is still acknowledged. A rejected publish answers the same error envelope as below. The flag costs one actor round trip per publish, so clients SHOULD leave it clear on hot paths and set it where a publisher needs to observe drops.
 
 A PUBLISH the broker rejects before fan-out is answered with a PUBLISH (500) error frame that uses the coded error envelope:
 
 ```
 Response (status=1):
   [u8]     1                    // status: error
-  [u32 BE] error_code           // 3001 invalid route, 3006 busy, 3009 unauthorized
+  [u16 BE] code           // 3002 invalid route, 3005 busy, 3001 unauthorized
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -53,7 +57,9 @@ Response (status=0):
   [u64 BE] subscription_id
 Response (status=1):
   [u8]     1                    // status: error
-  [u32 BE] error_code
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -81,7 +87,9 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
-  [u32 BE] error_code
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -100,7 +108,9 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
-  [u32 BE] error_code
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -145,16 +155,17 @@ Response (status=1):
 - Wildcard realms are valid (for example, `notice://*/orders/events`)
 - The scheme must be `notice://`, segments must be non-empty, and wildcards
   must occupy whole segments. No subscription is created for an invalid
-  pattern. On a broker without authentication, an empty pattern, a wrong
-  scheme, or an empty segment returns 3002, while a partial-segment wildcard
-  (`ord*ers`), adjacent `**` segments, or a pattern over 4096 bytes or 64
-  segments returns 3005 with a message naming the violation. On a broker that
-  requires authentication, ingress validates the route first and may close the
-  connection or answer 3009 before the Notice domain sees the request. Clients
-  already depend on these codes, so they are not changed in place
+  pattern. Every grammar violation (empty pattern, wrong scheme, empty
+  segment, partial-segment wildcard such as `ord*ers`, adjacent `**`
+  segments, or a pattern over 4096 bytes or 64 segments) answers 3003
+  `INVALID_PATTERN` with a message naming the violation. On a broker that
+  requires authentication, ingress validates the route first and may reject
+  malformed authorization routes before the Notice domain sees the request;
+  a permission denial answers 3001 `UNAUTHORIZED`
 - A session may retain at most 1,024 registrations total and 128 wildcard
   registrations. Duplicate `(session, original registration string)` requests
-  are idempotent and checked before either limit; overflow returns 3003
+  are idempotent and checked before either limit; overflow returns 3004
+  `SUBSCRIPTION_LIMIT`
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 
@@ -352,7 +363,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - **Session-Scoped**: Subscriptions tied to connection; lost on disconnect
 - **Acknowledgements & Retries**: `NOTIFY` frames are never acknowledged by clients and are never retried by the broker. Clients MUST NOT send acknowledgements for `NOTIFY` frames and MUST NOT expect guaranteed replay.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
-- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation and redelivery with best-effort persistence. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
+- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation and redelivery with best-effort persistence. Use RPC for live request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
 
 ##### Pattern Matching & Precedence
 
@@ -377,15 +388,15 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 #### Error Codes (3xxx range)
 
-- 3001 = ERR_INVALID_ROUTE
-- 3002 = ERR_INVALID_PATTERN
-- 3003 = ERR_SUBSCRIPTION_LIMIT
-- 3004 = ERR_TRANSPORT_CLOSED
-- 3005 = ERR_BACKEND_ERROR
-- 3006 = ERR_BUSY (retryable)
+- 3002 = ERR_INVALID_ROUTE
+- 3003 = ERR_INVALID_PATTERN
+- 3004 = ERR_SUBSCRIPTION_LIMIT
+- 3050 = ERR_TRANSPORT_CLOSED
+- 3006 = ERR_BACKEND_ERROR
+- 3005 = ERR_BUSY (retryable)
 
-`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
-- 3009 = ERR_UNAUTHORIZED
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe. `ERR_BACKEND_ERROR` has an indeterminate effect; retry only when the operation is idempotent or after verifying its outcome.
+- 3001 = ERR_UNAUTHORIZED
 
 #### Acceptance Tests
 
@@ -427,17 +438,14 @@ Stream is not a queue, a broker-managed consumer group system, an exactly-once c
 |  608 | UNSUBSCRIBE  | Client → Server            |
 |  609 | NOTIFY       | Server → Client (delivery) |
 
-#### Error envelope generation 2
+#### Error envelope
 
-All Stream request errors except READ use `[u8 status=2][u32 BE domain_code][string message]`.
-READ retains `[u8 status=1][u32 BE domain_code][string message]`.
-Success and NOTIFY layouts are unchanged. Codes are stable; messages are diagnostic.
-Unclassified backend failures use `2012`, never an inferred concurrency conflict.
-
-Updated SDKs also accept legacy status-1 non-READ errors (`[string message]`),
-preserving the absence of a domain code. They MUST NOT infer codes from wording.
-Upgrade all five SDKs before the broker; old decoders cannot interpret status 2.
-See [migration guidance](../../operations/migration-guide.md).
+Every Stream request error, READ included, uses the common envelope
+`[u8 status=1][u16 BE code][u8 class][u8 effect][string message]` from
+[error-codes.md](error-codes.md). Success and NOTIFY layouts are unchanged.
+Codes are stable; messages are diagnostic. Unclassified backend failures use
+`2006` BACKEND with effect INDETERMINATE, never an inferred concurrency
+conflict.
 
 #### BEGIN Request
 
@@ -452,9 +460,11 @@ Response (status=0):
   [u64 BE] session_id
   [u32 BE] data_len
   [bytes]  data (broker-defined opaque bytes; clients MUST treat as opaque and MAY ignore)
-Response (status=2):
-  [u8]     2
-  [u32 BE] error_code
+Response (status=1):
+  [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -478,23 +488,28 @@ Response (status=0):
   [u8]     0
   [u32 BE] data_len
   [bytes]  data
-Response (status=2):
-  [u8]     2
-  [u32 BE] error_code
+Response (status=1):
+  [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
-**expected_offset (OCC):** Clients MUST send `expected_offset` on every APPEND. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the append with status=2 and domain code `2001`. COMMIT MUST also return `2001` when a competing commit invalidates a staged batch. Clients MUST classify conflicts by code, independently of message wording. The application decides whether to reload and execute a new command; SDKs MUST NOT automatically retry APPEND or COMMIT.
+**expected_offset (OCC):** Clients MUST send `expected_offset` on every APPEND. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the append with status=1 and code `2050`. COMMIT MUST also return `2050` when a competing commit invalidates a staged batch. Clients MUST classify conflicts by code, independently of message wording. The application decides whether to reload and execute a new command; SDKs MUST NOT automatically retry APPEND or COMMIT.
 
 **Optional discriminator:** Clients MAY include an immutable discriminator string on APPEND. The broker stores it as a replay sidecar and uses it only for filtered reads. Clients that do not need filtered replay SHOULD omit it.
 
-**Event size:** `body_len + metadata_len` MUST NOT exceed 61,247 bytes. This
-limit reserves enough room in the `u16`-length READ response TLV for the
-largest valid 4,096-byte route and the encoded record/response overhead, so
-every accepted event can be replayed. The discriminator does not count toward
-this event-payload limit, but it still counts toward the configured append
-batch and ingress-frame limits.
+**Event size:** `body_len + metadata_len` MUST NOT exceed **400 KiB
+(409,600 bytes)**. APPEND accepts exactly that size and rejects one byte
+more with `2008 BAD_REQUEST / NOT_APPLIED`. The discriminator does not count
+toward this event-payload limit, but it still counts toward configured
+append-batch and ingress-frame limits.
+The minimum configurable message size is 512 KiB, so every accepted event
+can be replayed with a valid route up to 4,096 bytes plus response metadata.
+READ pages respect the deployment's advertised `max_message_bytes`; a page
+that fills the budget returns a continuation cursor without skipping events.
 
 **Design Note:** The `data` field in Stream responses carries broker-defined metadata (e.g., current watermark, stream info). Clients MUST parse past it (read `data_len` bytes) but SHOULD NOT interpret its contents unless broker documentation specifies a schema.
 
@@ -509,17 +524,25 @@ Response (status=0):
   [u8]     0
   [u32 BE] data_len
   [bytes]  data
-Response (status=2):
-  [u8]     2
-  [u32 BE] error_code
+Response (status=1):
+  [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
 **Commit Modes:**
 
-- **Sync (mode=1)**: COMMIT uses the broker's sync write policy before success is returned. Higher latency, stronger crash durability.
-- **Buffered (mode=0)**: COMMIT uses the broker's buffered write policy. Lower latency, best-effort durability until the buffered write is persisted.
+The mode byte is required on the wire. A COMMIT without it, or with any value
+other than 0 or 1, is rejected before the session is touched. An SDK may offer
+a convenience default in its API, but it must always encode the byte, and its
+documentation must name the mode it defaults to, because the choice is the
+durability contract.
+
+- **Sync (mode=1)**: COMMIT uses the broker's sync write policy before success is returned. Stronger crash durability.
+- **Buffered (mode=0)**: COMMIT uses the broker's buffered write policy. Best-effort durability until the buffered write is persisted.
 
 #### ROLLBACK Request
 
@@ -527,9 +550,11 @@ Response (status=2):
 [u64 BE]  session_id
 Response (status=0):
   [u8]     0
-Response (status=2):
-  [u8]     2
-  [u32 BE] error_code
+Response (status=1):
+  [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -557,7 +582,9 @@ Response (status=0):
   [bytes]  read_page_data
 Response (status=1):
   [u8]     1
-  [u32 BE] error_code
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -791,33 +818,32 @@ class StreamSession:
 - **Watermarks**: Reads stop at the current committed watermark; reading past it returns an empty success
 - **Optimistic Concurrency**: `expected_offset` on APPEND prevents lost updates
 - **Filtered Replay**: `StreamFilterSet` clauses are conjunctive and operate on the optional append discriminator sidecar
-- **Persistence**: Sync commits wait for the configured local or cloud persistence boundary; Buffered commits can lose recent writes on a crash.
+- **Persistence**: Sync commits wait for the configured local or cloud persistence boundary; Buffered commits can lose recent writes on a crash. The family-global watermark that gates global-scope reads is advanced after the commit and retried on failure, so a Sync COMMIT can be acknowledged briefly before global-scope visibility catches up; the records themselves are already durable and recovery rebuilds the frontier from committed pages.
 - **Isolation**: Only one active append session exists per resource at a time; subscriptions are separate live session-scoped state
 - **Resume Model**: Clients track resume offsets locally; `ReadCursor` is response metadata, not a durable broker cursor
 
 #### Error Codes (2xxx)
 
-Stream READ retains `[status=1][u32 BE error_code][string message]`.
-Every other Stream operation uses `[status=2][u32 BE error_code][string message]`.
-For legacy brokers only, non-READ status 1 means `[string message]` with no code.
-Select the decoder using both status and request message type; never infer a
+Every Stream operation, READ included, uses the common envelope
+`[status=1][u16 BE code][u8 class][u8 effect][string message]`. Never infer a
 code from message wording.
 
-- 2001 = ERR_CONCURRENCY_CONFLICT (expected_offset mismatch)
-- 2002 = ERR_SESSION_ALREADY_ACTIVE
-- 2003 = ERR_SESSION_NOT_FOUND
-- 2004 = ERR_INVALID_READ_BOUND
-- 2005 = ERR_RESOURCE_NOT_FOUND
-- 2006 = ERR_STREAM_FILTER_UNSUPPORTED_VERSION (read filter marker/version is not supported by this broker)
-- 2007 = ERR_STREAM_FILTER_INVALID_PAYLOAD (read filter payload malformed)
-- 2009 = ERR_UNAUTHORIZED
-- 2010 = ERR_INVALID_SUBSCRIPTION_PATTERN
-- 2011 = ERR_SUBSCRIPTION_LIMIT
-- 2012 = ERR_BACKEND_ERROR
-- 2013 = ERR_READ_RESPONSE_TOO_LARGE (a single record's wire-encoded size alone exceeds the maximum broker response frame size and can never be returned by any READ call at that offset; this is distinct from `max_bytes` pagination, which stops a page early instead of failing)
-- 2014 = ERR_BUSY (retryable)
+- 2050 = ERR_CONCURRENCY_CONFLICT (expected_offset mismatch)
+- 2051 = ERR_SESSION_ALREADY_ACTIVE
+- 2052 = ERR_SESSION_NOT_FOUND
+- 2053 = ERR_INVALID_READ_BOUND
+- 2054 = ERR_RESOURCE_NOT_FOUND
+- 2055 = ERR_STREAM_FILTER_UNSUPPORTED_VERSION (read filter marker/version is not supported by this broker)
+- 2056 = ERR_STREAM_FILTER_INVALID_PAYLOAD (read filter payload malformed)
+- 2001 = ERR_UNAUTHORIZED
+- 2003 = ERR_INVALID_PATTERN
+- 2004 = ERR_SUBSCRIPTION_LIMIT
+- 2006 = ERR_BACKEND_ERROR
+- 2007 = ERR_TIMEOUT (accepted, outcome indeterminate)
+- 2057 = ERR_READ_RESPONSE_TOO_LARGE (a single record's wire-encoded size alone exceeds `max_message_bytes` from HELLO and can never be returned by any READ call at that offset; this is distinct from `max_bytes` pagination, which stops a page early instead of failing)
+- 2005 = ERR_BUSY (retryable)
 
-`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe. `ERR_BACKEND_ERROR` and `ERR_TIMEOUT` have indeterminate effects; retry only when the operation is idempotent or after verifying its outcome. `ERR_TIMEOUT` retains the accepted operation's deadline failure class.
 
 #### Acceptance Tests
 
@@ -842,6 +868,9 @@ Response (status=0):
   [u64 BE] subscription_id
 Response (status=1):
   [u8]     1                    // status: error
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -862,10 +891,10 @@ The success response uses the "optional u64" encoding pattern: a 1-byte flag fol
 - `*` matches exactly one segment and `**` matches zero or more complete segments
 - The scheme must be `stream://`, segments must be non-empty, wildcards must be
   whole segments, and the pattern must be capable of matching a concrete
-  three-segment Stream route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 2010
+  three-segment Stream route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 2003
 - A session may retain at most 1,024 registrations total and 128 wildcard
   registrations. A duplicate is checked before either limit; overflow returns
-  2011
+  2004
 - Matching is isolated by `RouteFamily`. Overlapping registrations remain
   independent and exact registrations have no precedence
 
@@ -878,9 +907,11 @@ Unsubscribe from stream change notifications.
 [bytes]   route_pattern
 Response (status=0):
   [u8]     0
-Response (status=2):
-  [u8]     2
-  [u32 BE] error_code
+Response (status=1):
+  [u8]     1
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -928,6 +959,6 @@ Watermark advance notification:
 
 **Delivery Semantics:**
 - **Best-effort**: notifications may be dropped under backpressure
-- **Debounced**: commit notifications are batched per 25ms window — multiple rapid commits to the same resource produce a single notification covering the full offset range
+- **Debounced**: commit notifications may be coalesced — multiple commits to the same resource can produce a single notification covering the full offset range
 - **Session-scoped**: all subscriptions lost on disconnect; clients must re-subscribe after reconnecting
 - `subscription_id` tells the client which subscription matched; client demultiplexes to local handlers

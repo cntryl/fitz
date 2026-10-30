@@ -34,10 +34,21 @@ fn acknowledge_claim_batch<P: SchedulePersistence>(
 /// continuation cursor.
 pub(crate) type ScheduleListPage = (Arc<Vec<Arc<ScheduleListEntry>>>, bool, Option<String>);
 
-/// One page of schedule definitions plus the total definition count.
-pub(crate) type ScheduleListDefs = (Arc<Vec<Arc<ScheduleListEntry>>>, u64);
-
 impl ScheduleActor {
+    pub(crate) fn reconcile_unknown_commit(&mut self) -> Result<bool, String> {
+        if self.reconciled_commit_generation == self.store.unknown_commit_generation() {
+            return Ok(false);
+        }
+        let recovered = Self::try_new_with_clock(
+            self.family,
+            self.store.clone(),
+            self.write_policy,
+            self.clock.clone(),
+        )?;
+        *self = recovered;
+        Ok(true)
+    }
+
     pub(super) fn insert_pending_claim(
         &mut self,
         fire_ms: u64,
@@ -96,7 +107,7 @@ impl ScheduleActor {
     ///
     /// Every entry may be individually small and legal while the aggregate is
     /// unencodable; without this the response is built, handed to the outbound
-    /// sink, and fails the TLV length assertion.
+    /// sink, and fails the Wire2 message-size check.
     /// # Errors
     ///
     /// Returns the offending route when a single entry exceeds the ceiling on
@@ -154,7 +165,7 @@ impl ScheduleActor {
     ///
     /// Returns the offending route when a stored definition is too large to
     /// appear in any list response.
-    pub fn list_entries_v2(
+    pub fn list_entries(
         &mut self,
         cursor: Option<&str>,
         limit: u64,
@@ -165,7 +176,7 @@ impl ScheduleActor {
             .clamp(1, MAX_LIMIT);
         let family_prefix = format!("schedule-list-v1:{}:", self.family.as_u64());
         // An empty, foreign-family, or unprefixed cursor lists from the first
-        // page, as LIST_V2 always has; only a cursor naming a route in this
+        // page, as LIST always has; only a cursor naming a route in this
         // family continues after that route (even if it was since deleted).
         let cursor_route = cursor
             .and_then(|value| value.strip_prefix(&family_prefix))
@@ -203,48 +214,6 @@ impl ScheduleActor {
         let continuation =
             has_more.then(|| format!("{family_prefix}{}", ordered[fitted - 1].route));
         Ok((entries, has_more, continuation))
-    }
-
-    fn u64_to_usize_saturating(value: u64) -> usize {
-        usize::try_from(value).unwrap_or(usize::MAX)
-    }
-
-    /// # Errors
-    ///
-    /// Returns the offending route when a stored definition is too large to
-    /// appear in any list response.
-    pub fn list_entries(&mut self, offset: u64, limit: u64) -> Result<ScheduleListDefs, String> {
-        let total_count = self.schedules.len() as u64;
-        let start = Self::u64_to_usize_saturating(offset);
-        if start >= self.list_entries.len() {
-            return Ok((Arc::new(Vec::new()), total_count));
-        }
-
-        let remaining = self.list_entries.len() - start;
-        let requested = if limit == 0 {
-            remaining
-        } else {
-            remaining.min(Self::u64_to_usize_saturating(limit))
-        };
-        // `limit = 0` means "all remaining", so the caller's count cannot bound
-        // the response - only the wire budget can. Clients detect the short
-        // page by comparing entry count against `total_count` and continue
-        // from `offset`, which the V1 contract already supports.
-        let take = Self::bounded_page_len(&self.list_entries, start, requested, |_| 0)?;
-
-        if start == 0 && take == self.list_entries.len() {
-            if let Some(cache) = &self.list_cache {
-                return Ok((cache.clone(), total_count));
-            }
-            let cache = Arc::new(self.list_entries.clone());
-            self.list_cache = Some(cache.clone());
-            return Ok((cache, total_count));
-        }
-
-        Ok((
-            Arc::new(self.list_entries[start..start + take].to_vec()),
-            total_count,
-        ))
     }
 
     fn store_claims_for<'a>(
@@ -337,6 +306,9 @@ impl ScheduleActor {
             )
         }) {
             warn!("Failed to persist schedule reschedule batch: {error}");
+            if self.reconcile_unknown_commit().unwrap_or(false) {
+                return false;
+            }
             for item in claims {
                 self.ready_heap
                     .push((Reverse(item.previous_fire_ms), item.route.clone()));
@@ -391,6 +363,9 @@ impl ScheduleActor {
     }
 
     pub(super) fn claim_due_fires_at(&mut self, now: Instant) -> Vec<PersistedPendingFireClaim> {
+        if self.reconcile_unknown_commit().is_err() {
+            return Vec::new();
+        }
         if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
             return Vec::new();
         }
@@ -519,14 +494,17 @@ impl ScheduleActor {
             })
             .collect();
 
-        super::retry_persistence(|| {
+        if let Err(error) = super::retry_persistence(|| {
             acknowledge_claim_batch(
                 &self.store,
                 self.family.as_u64(),
                 &store_items,
                 self.write_policy,
             )
-        })?;
+        }) {
+            self.reconcile_unknown_commit()?;
+            return Err(error);
+        }
 
         let mut acked = 0;
         for (fire_ms, route) in handed_off_occurrences {
@@ -622,6 +600,27 @@ mod tests {
         assert_eq!(
             result.map_err(|error| error.to_string()),
             Err("claim failed".to_string())
+        );
+    }
+
+    #[test]
+    fn should_surface_ack_error_from_fake_persistence() {
+        // Arrange
+        let persistence = FailingPersistence;
+        let claims = [];
+
+        // Act
+        let result = acknowledge_claim_batch(
+            &persistence,
+            1,
+            &claims,
+            crate::domains::WritePolicy::Buffered,
+        );
+
+        // Assert
+        assert_eq!(
+            result.map_err(|error| error.to_string()),
+            Err("ack failed".to_string())
         );
     }
 

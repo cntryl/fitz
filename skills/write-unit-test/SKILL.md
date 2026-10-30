@@ -218,6 +218,5 @@ fn should_return_begin_ok_given_valid_realm() {
 
 ## Reference Examples in Codebase
 
-- Single-behavior tests: [src/index/range_tombstone.rs](../../src/index/range_tombstone.rs)
-- Clean AAA structure: [src/manifest.rs](../../src/manifest.rs)
-- Upload/download split pattern: [src/cloud/mock.rs](../../src/cloud/mock.rs)
+- Behavior-focused tests: [src/protocol/manifest.rs](../../src/protocol/manifest.rs)
+- AAA structure: [KV wire-budget tests](../../src/domains/kv/actor/tests/wire_budget.rs)

@@ -21,6 +21,46 @@ impl DeliveryDropKind {
 }
 
 impl LeaseFamilyRuntime<'_> {
+    pub(super) fn clear_failed_family_projection(&mut self) {
+        let family_id = self.core.route_family.as_u64();
+        for lease in self
+            .core
+            .admin_read_model
+            .leases_for_route_family(family_id)
+        {
+            self.core.admin_read_model.remove_lease(
+                family_id,
+                &lease.realm,
+                &lease.area,
+                &lease.resource,
+            );
+        }
+
+        let waiter_count = self
+            .core
+            .admin_read_model
+            .set_lease_family_waiter_count(family_id, 0);
+        let active_leases = self.core.admin_read_model.lease_count();
+        self.core
+            .list_snapshots
+            .lock()
+            .retain(|_, snapshot| snapshot.family_id != self.core.route_family);
+
+        if let Some(metrics) = &self.core.metrics {
+            metrics.set_active_leases(active_leases);
+            metrics.set_waiter_depth(waiter_count);
+        } else {
+            crate::observability::gauge_set(
+                crate::domains::lease::metrics::METRIC_ACTIVE_GAUGE,
+                active_leases as u64,
+            );
+            crate::observability::gauge_set(
+                crate::domains::lease::metrics::METRIC_WAITERS_GAUGE,
+                waiter_count as u64,
+            );
+        }
+    }
+
     pub(super) fn record_dropped_delivery(
         &mut self,
         kind: DeliveryDropKind,

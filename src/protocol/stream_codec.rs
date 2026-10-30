@@ -1,24 +1,21 @@
 //! Stream domain codec - append-only streaming
 //!
-//! Encodes/decodes TLV messages for the stream domain.
+//! Encodes and decodes Stream payloads.
 //! Supports Begin, Append, Commit, Rollback, Read, Last, `GetMetadata` operations.
 //!
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
 
 use crate::dispatch::wire::stream::{
-    IngestMetadata, StreamClientFrame, StreamClientResponseBody, StreamDiscriminator,
-    StreamFilterSet, StreamMessage, StreamSubscriptionFailure, StreamSubscriptionMessage,
-    StreamWriteMode,
+    IngestMetadata, StreamClientErrorKind, StreamClientFrame, StreamClientResponseBody,
+    StreamDiscriminator, StreamFilterSet, StreamMessage, StreamSubscriptionFailure,
+    StreamSubscriptionMessage, StreamWriteMode, ERR_STREAM_FILTER_INVALID_PAYLOAD,
+    ERR_STREAM_FILTER_UNSUPPORTED_VERSION,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
-
-const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: &str = "ERR_STREAM_FILTER_UNSUPPORTED_VERSION";
-const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLOAD";
-const ERR_READ_RESPONSE_TOO_LARGE: &str = "ERR_READ_RESPONSE_TOO_LARGE";
 
 fn u64_to_usize_saturating(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
@@ -32,7 +29,7 @@ fn map_stream_filter_decode_error(error: &str) -> String {
     format!("{ERR_STREAM_FILTER_INVALID_PAYLOAD}: {error}")
 }
 
-/// Parse incoming message from TLV-encoded bytes.
+/// Parse an incoming Stream payload.
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
 /// session layer — they are never read from the wire payload.
@@ -137,7 +134,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     }
 }
 
-/// Encode domain response to TLV-encoded bytes
+/// Encode a domain response payload.
 #[must_use]
 pub fn encode_response(message_type: u16, response: &StreamClientResponseBody) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
@@ -178,8 +175,8 @@ pub fn encode_response_into(
             return encode_error_response_into(
                 enc,
                 message_type,
-                stream_error_code_for_message(e),
-                e,
+                stream_error_code(e.kind),
+                &e.message,
             );
         }
         StreamClientResponseBody::SubscriptionError(error) => {
@@ -198,47 +195,40 @@ pub fn encode_response_into(
     enc.finish()
 }
 
-/// Encode the explicitly versioned Stream error envelope. READ retains its
-/// original status-1 coded envelope; other operations use status 2.
+/// Encode a Stream error in the common wire format 2 envelope. Every verb,
+/// READ included, uses the same layout; the message type is accepted so
+/// callers that key on it keep one signature.
 pub fn encode_error_response_into(
     enc: &mut PayloadEncoder,
-    message_type: u16,
+    _message_type: u16,
     code: u16,
     message: &str,
 ) -> Vec<u8> {
-    enc.clear();
-    enc.put_u8(if message_type == 604 { 1 } else { 2 });
-    enc.put_u32(u32::from(code));
-    enc.put_string(message);
-    enc.finish()
+    crate::protocol::error_codes::encode_error_body_into(code, message, enc)
 }
 
-fn stream_error_code_for_message(message: &str) -> u16 {
+/// The wire code for each client-visible Stream error kind.
+fn stream_error_code(kind: StreamClientErrorKind) -> u16 {
     use crate::protocol::error_codes::stream;
 
-    if message.starts_with(ERR_STREAM_FILTER_UNSUPPORTED_VERSION) {
-        return stream::ERR_STREAM_FILTER_UNSUPPORTED_VERSION;
-    }
-    if message.starts_with(ERR_STREAM_FILTER_INVALID_PAYLOAD) {
-        return stream::ERR_STREAM_FILTER_INVALID_PAYLOAD;
-    }
-    if message.starts_with(ERR_READ_RESPONSE_TOO_LARGE) {
-        return stream::ERR_READ_RESPONSE_TOO_LARGE;
-    }
-
-    match message {
-        "session already active" => stream::ERR_SESSION_ALREADY_ACTIVE,
-        "session not found" => stream::ERR_SESSION_NOT_FOUND,
-        "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => stream::ERR_CONCURRENCY_CONFLICT,
-        "resource not found" => stream::ERR_RESOURCE_NOT_FOUND,
-        "empty pattern" => stream::ERR_INVALID_SUBSCRIPTION_PATTERN,
-        message if message.starts_with("invalid read ") || message.starts_with("read bound ") => {
-            stream::ERR_INVALID_READ_BOUND
+    match kind {
+        StreamClientErrorKind::InvalidRoute => stream::ERR_INVALID_ROUTE,
+        StreamClientErrorKind::ConcurrencyConflict => stream::ERR_CONCURRENCY_CONFLICT,
+        StreamClientErrorKind::SessionAlreadyActive => stream::ERR_SESSION_ALREADY_ACTIVE,
+        StreamClientErrorKind::SessionNotFound => stream::ERR_SESSION_NOT_FOUND,
+        StreamClientErrorKind::InvalidReadBound => stream::ERR_INVALID_READ_BOUND,
+        StreamClientErrorKind::ResourceNotFound => stream::ERR_RESOURCE_NOT_FOUND,
+        StreamClientErrorKind::FilterUnsupportedVersion => {
+            stream::ERR_STREAM_FILTER_UNSUPPORTED_VERSION
         }
-        message if message.starts_with("subscription pattern ") => {
+        StreamClientErrorKind::FilterInvalidPayload => stream::ERR_STREAM_FILTER_INVALID_PAYLOAD,
+        StreamClientErrorKind::InvalidSubscriptionPattern => {
             stream::ERR_INVALID_SUBSCRIPTION_PATTERN
         }
-        _ => stream::ERR_BACKEND_ERROR,
+        StreamClientErrorKind::ReadResponseTooLarge => stream::ERR_READ_RESPONSE_TOO_LARGE,
+        StreamClientErrorKind::Backend => stream::ERR_BACKEND_ERROR,
+        StreamClientErrorKind::Timeout => stream::ERR_TIMEOUT,
+        StreamClientErrorKind::BadRequest => stream::ERR_BAD_REQUEST,
     }
 }
 
@@ -469,7 +459,7 @@ mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::manifest::{self, ManifestDecoder, ManifestDirection};
-    use crate::protocol::tlv::MessageType;
+    use crate::protocol::message::MessageType;
     use bytes::Bytes;
 
     const ROUTE_BYTES: &[u8] = b"\0\0\0\x0estream://r/a/x";
@@ -592,20 +582,24 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_versioned_stream_error_envelopes() {
+    fn should_use_the_common_envelope_for_begin_plus_read_errors() {
         // Arrange
-        let response = StreamClientResponseBody::Error("session not found".to_string());
+        let response = StreamClientResponseBody::Error("session not found".into());
 
         // Act
         let begin = encode_response(600, &response);
         let read = encode_response(604, &response);
 
         // Assert
-        assert_eq!(&begin[..5], &[2, 0, 0, 7, 211]);
-        assert_eq!(
-            &read[1..5],
-            &u32::from(crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND).to_be_bytes()
-        );
+        for payload in [begin, read] {
+            assert_eq!(payload[0], 1);
+            assert_eq!(
+                crate::protocol::error_codes::decode_error_body(&payload)
+                    .expect("error envelope")
+                    .0,
+                crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND
+            );
+        }
     }
 
     #[test]
@@ -613,9 +607,9 @@ mod tests {
         // Arrange: store-layer read paths raise this when a single record's
         // wire-encoded size alone exceeds the maximum response frame size.
         let response = StreamClientResponseBody::Error(
-            "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0 is 70000 bytes, exceeding the \
-             65535-byte read response limit"
-                .to_string(),
+            "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0 is 1100000 bytes, exceeding the \
+             configured read response limit"
+                .into(),
         );
 
         // Act
@@ -623,17 +617,17 @@ mod tests {
 
         // Assert
         assert_eq!(
-            &read[1..5],
-            &u32::from(crate::protocol::error_codes::stream::ERR_READ_RESPONSE_TOO_LARGE)
-                .to_be_bytes()
+            crate::protocol::error_codes::decode_error_body(&read)
+                .expect("error envelope")
+                .0,
+            crate::protocol::error_codes::stream::ERR_READ_RESPONSE_TOO_LARGE
         );
     }
 
     #[test]
     fn should_not_classify_stream_backend_message_from_incidental_read_word() {
         // Arrange
-        let response =
-            StreamClientResponseBody::Error("backend read replica unavailable".to_string());
+        let response = StreamClientResponseBody::Error("backend read replica unavailable".into());
 
         // Act
         let encoded = encode_response(604, &response);
@@ -644,6 +638,28 @@ mod tests {
         assert_eq!(
             code,
             crate::protocol::error_codes::stream::ERR_BACKEND_ERROR
+        );
+    }
+
+    #[test]
+    fn should_encode_stream_storage_timeout_with_indeterminate_effect() {
+        // Arrange
+        let response =
+            StreamClientResponseBody::Error("ERR_STREAM_TIMEOUT: midge commit timed out".into());
+
+        // Act
+        let encoded = encode_response(604, &response);
+
+        // Assert
+        let error = crate::protocol::error_codes::decode_wire_error(&encoded)
+            .expect("Stream timeout error envelope");
+        assert_eq!(
+            error.code,
+            crate::protocol::error_codes::stream::ERR_TIMEOUT
+        );
+        assert_eq!(
+            error.effect,
+            crate::protocol::wire2::envelope::Effect::Indeterminate
         );
     }
 
@@ -710,7 +726,7 @@ mod tests {
         );
         let error = encode_response(
             604,
-            &StreamClientResponseBody::Error("session not found".to_string()),
+            &StreamClientResponseBody::Error("session not found".into()),
         );
         let notification = encode_notify(7, &Route::new("stream://r/a/x"), b"ab");
 
@@ -719,12 +735,13 @@ mod tests {
             success,
             vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 2, b'o', b'k']
         );
+        let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
         assert_eq!(
-            error,
-            vec![
-                1, 0, 0, 7, 0xD3, 0, 0, 0, 17, b's', b'e', b's', b's', b'i', b'o', b'n', b' ',
-                b'n', b'o', b't', b' ', b'f', b'o', b'u', b'n', b'd',
-            ]
+            (decoded.code, decoded.message.as_str()),
+            (
+                crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND,
+                "session not found"
+            )
         );
         let mut expected_notification = vec![0, 0, 0, 0, 0, 0, 0, 7];
         expected_notification.extend_from_slice(ROUTE_BYTES);

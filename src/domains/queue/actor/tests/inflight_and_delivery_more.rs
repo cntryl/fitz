@@ -117,6 +117,45 @@ fn should_report_admin_dead_letters_given_retained_dlq_messages() {
 }
 
 #[test]
+fn should_leave_ready_messages_reservable_after_admin_snapshot_reads() {
+    // Arrange
+    let clock = MockClock::new();
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let mut actor = QueueActor::with_clock(
+        RouteFamily::new(0),
+        unique_queue_key("jobs-admin-read-only"),
+        store,
+        Box::new(clock),
+        Some(2),
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let QueueResponse::Sent { id } = actor.handle_send(Bytes::from("work"), None) else {
+        panic!("Expected Sent response");
+    };
+
+    // Act
+    let snapshot = actor.admin_snapshot();
+    let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+    // Assert
+    assert_eq!(snapshot.messages_ready, 1);
+    match response {
+        QueueResponse::Received { messages } => {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].id, id);
+        }
+        other => panic!("Expected Received response, found {other:?}"),
+    }
+}
+
+#[test]
 fn should_replay_dead_letter_given_retained_dlq_message() {
     // Arrange
     let clock = MockClock::new();
@@ -456,7 +495,7 @@ fn should_not_dead_letter_message_that_only_a_wildcard_reserve_cannot_carry() {
 fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
     // Arrange
     // The inbound SEND ceiling and the outbound RESERVE ceiling are the same
-    // 65_535-byte payload limit, but the response spends part of it on a
+    // configured payload limit, but the response spends part of it on a
     // header and a per-message envelope. A body accepted on write above that
     // budget can never be handed back, so it must be refused at SEND rather
     // than accepted and dead-lettered later, after the producer was told it
@@ -501,7 +540,7 @@ fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
         matches!(accepted, QueueResponse::Sent { .. }),
         "a body at the deliverable limit must still be accepted, got {accepted:?}"
     );
-    let QueueResponse::Error { message } = rejected else {
+    let QueueResponse::BadRequest { reason: message } = rejected else {
         panic!("expected an oversized SEND to be refused, got {rejected:?}");
     };
     assert!(
@@ -509,7 +548,7 @@ fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
         "unexpected error: {message}"
     );
     assert!(
-        matches!(rejected_batch, QueueResponse::Error { .. }),
+        matches!(rejected_batch, QueueResponse::BadRequest { .. }),
         "a batch carrying an oversized body must be refused too, got {rejected_batch:?}"
     );
     assert_eq!(

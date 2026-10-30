@@ -175,3 +175,66 @@ fn should_collect_family_topology_before_applying_connection_limit() {
         .iter()
         .all(|item| item.scope.route_family == Some(1)));
 }
+
+#[test]
+fn should_bound_selected_family_topology_snapshot_before_building_connections() {
+    // Arrange
+    let model = AdminReadModel::new();
+    model.replace_rpc_workers(
+        (0..700)
+            .map(|id| {
+                RpcWorker::snapshot(
+                    1,
+                    id,
+                    "acme",
+                    &format!("rpc://acme/app/work-{id}/run"),
+                    "2026-10-04T00:00:00Z",
+                    0,
+                    0.0,
+                )
+            })
+            .collect(),
+    );
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), model);
+
+    // Act
+    let snapshot = family_topology_snapshot(&runtime, 1);
+
+    // Assert
+    assert_eq!(snapshot.rpc_workers.len(), 512);
+    assert!(snapshot.truncated);
+    assert!(snapshot
+        .rpc_workers
+        .iter()
+        .all(|worker| worker.route_family == 1));
+}
+
+#[test]
+fn should_bound_global_topology_projection_snapshot() {
+    // Arrange
+    let model = AdminReadModel::new();
+    model.replace_rpc_workers(
+        (0..700)
+            .map(|id| {
+                RpcWorker::snapshot(
+                    1,
+                    id,
+                    "acme",
+                    &format!("rpc://acme/app/work-{id}/run"),
+                    "2026-10-04T00:00:00Z",
+                    0,
+                    0.0,
+                )
+            })
+            .collect(),
+    );
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), model);
+
+    // Act
+    let topology = build_messaging_topology(&runtime);
+
+    // Assert
+    assert!(topology.connections.truncated);
+    let rpc = topology.lanes.iter().find(|lane| lane.id == "rpc").unwrap();
+    assert_eq!(rpc.consumers, 512);
+}

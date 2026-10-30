@@ -1,15 +1,18 @@
-## Constants & TLV Registry
+# Message Registry
 
-### MessageType Ranges
+Message identifiers are fixed by wire format 2. Reserved identifiers are not
+valid operations. The broker manifest in `src/protocol/manifest.rs` is the
+implementation source of truth.
+
+## Message identifiers
 
 **Control (0–99):**
 | Value | Name | Direction |
 |---:|---|---|
 | 1 | CONNECT | Client→Server |
-| 2 | CORRELATE | Client→Server |
-| 3 | CORRELATED | Server→Client |
-| 4 | SERVER_HELLO | Server→Client |
-| 5 | SESSION_METADATA | Client→Server |
+| 2 | HELLO | Server→Client |
+| 3 | CONNECT_REJECTED | Server→Client |
+| 4 | GOAWAY | Server→Client |
 **KV Domain (100–111):**
 | Value | Name |
 |---:|---|
@@ -29,7 +32,6 @@
 | Value | Name |
 |---:|---|
 | 200 | ENQUEUE |
-| 201 | ENQUEUE_BATCH (reserved; servers may reject with unknown message type until defined) |
 | 202 | RESERVE |
 | 203 | EXTEND |
 | 204 | COMPLETE |
@@ -43,13 +45,17 @@
 | 301 | UNSUBSCRIBE_WORKER |
 | 302 | REQUEST |
 | 303 | RESPONSE |
-**Lease Domain (400–403):**
+**Lease messages:**
 | Value | Name |
 |---:|---|
 | 400 | ACQUIRE |
 | 401 | RENEW |
 | 402 | RELEASE |
 | 403 | QUERY |
+| 407 | SUBSCRIBE |
+| 408 | UNSUBSCRIBE |
+| 409 | NOTIFY |
+| 410 | LIST |
 **Notice Domain (500–504):**
 | Value | Name |
 |---:|---|
@@ -71,7 +77,7 @@
 | 607 | SUBSCRIBE |
 | 608 | UNSUBSCRIBE |
 | 609 | NOTIFY |
-**Schedule Domain (700–707):**
+**Schedule Domain (700–706):**
 | Value | Name |
 |---:|---|
 | 700 | CREATE |
@@ -81,37 +87,24 @@
 | 704 | UNSUBSCRIBE |
 | 705 | NOTIFY |
 | 706 | CREATE_BATCH (broker extension) |
-| 707 | LIST_V2 (broker extension; canonical clients use LIST 702) |
 
-### MessageType Routing
+### Message dispatch
 
-Each domain occupies an exclusive 100-code block. The broker's mux layer routes by numeric range — **no overlap, no disambiguation needed**.
-**Future compatibility:** If a domain exhausts its range, extend to a new 100-block (e.g., 1100–1199 for KV expansion)
+The listed identifiers are exact assignments. Gaps are reserved and are not
+implicitly assigned to a domain. The broker dispatches by the exact message
+manifest entry; numeric ranges do not grant authorization or select a decoder.
 
 ### Error Code Allocation (Authoritative)
 
-Error codes are allocated by domain in 100-block ranges:
-| Range | Domain | Capacity | Notes |
-| --------- | -------- | --------- | ----------------------------------- |
-| 1000–1099 | KV | 100 codes | Transactions, isolation, durability |
-| 2000–2099 | Stream | 100 codes | Concurrency, watermarks, ordering |
-| 3000–3099 | Notice | 100 codes | Routing, patterns, delivery |
-| 4000–4099 | Queue | 100 codes | Leasing, visibility, delivery |
-| 5000–5099 | Lease | 100 codes | Mutual exclusion, fencing, TTL |
-| 6000–6099 | RPC | 100 codes | Routing, backpressure, correlation |
-| 7000–7099 | Schedule | 100 codes | Scheduling, persistence, execution |
-**Expansion Strategy:**
-If domain exhausts range (>99 error codes allocated):
-
-- First expansion block: {base}100–{base}199 (e.g., 1100–1199 for KV)
-- Second expansion: {base}200–{base}299 (e.g., 1200–1299 for KV)
-- Continue as needed
-  **Cross-Domain Error Codes:**
-  These error codes are standardized across ALL domains:
-- `*001` = ERR_UNAUTHORIZED (permission denied, see Permissions section)
-- `*002` = ERR_INVALID_SCOPE (scope mismatch)
-- `*003` = ERR_REALM_MISMATCH (requested route realm is not authorized by the compiled permission set)
-  All other error codes are domain-specific and MUST NOT be reused across domains.
+The authoritative allocation, with class, effect, and the old-to-new mapping,
+is [error-codes.md](error-codes.md). In summary: blocks are decimal thousands
+per domain (`0xxx` protocol, `1xxx` KV, `2xxx` Stream, `3xxx` Notice, `4xxx`
+Queue, `5xxx` Lease, `6xxx` RPC, `7xxx` Schedule). Slots `x001`–`x010` carry
+the same shared meaning in every block (`x001` UNAUTHORIZED, `x002`
+INVALID_ROUTE, `x003` INVALID_PATTERN, `x004` REGISTRATION_LIMIT, `x005` BUSY,
+`x006` BACKEND, `x007` TIMEOUT, `x008` BAD_REQUEST, `x009` NOT_FOUND, `x010`
+UNSUPPORTED); domain-specific codes start at `x050`. Codes are append-only and
+MUST NOT be reused across domains.
 
 ### Channel IDs (Broker-Internal Reference)
 
@@ -126,238 +119,16 @@ Clients do NOT encode these; listed for reference:
 
 ### Type Encoding Rules
 
-- `type 0x00..0xFE`: single byte on wire
-- `type 0xFF`: escape marker — followed by `u16 BE` for actual type value (for types > 0xFE)
+`type` is a plain `u16 BE` in the fixed header. There is no escape byte and no
+variable-width form: CONNECT is `[0x00 0x01]`, KV BEGIN is `[0x00 0x64]`,
+Notice PUBLISH is `[0x01 0xF4]`.
 
-**Decoder pseudocode:**
+## Related contracts
 
-```python
-def read_message_type(stream):
-    """Read MessageType from wire. Returns u16."""
-    first_byte = stream.read_u8()
-    if first_byte == 0xFF:
-        # Escape: next 2 bytes are the actual type
-        return stream.read_u16_be()
-    else:
-        # Single byte type (0x00–0xFE)
-        return first_byte
-```
-
-**Encoder pseudocode:**
-
-```python
-def write_message_type(stream, msg_type):
-    """Write MessageType to wire."""
-    if msg_type <= 0xFE:
-        stream.write_u8(msg_type)
-    else:
-        stream.write_u8(0xFF)
-        stream.write_u16_be(msg_type)
-```
-
-**Current implications:**
-
-- CONNECT (type=1): encodes as 1 byte `[0x01]`
-- KV BEGIN (type=100): encodes as 1 byte `[0x64]`
-- Notice PUBLISH (type=500): encodes as 3 bytes `[0xFF][0x01][0xF4]`
-
-**IMPORTANT:** The wire examples elsewhere in this document show all MessageTypes as 2-byte `[u16 BE]` for readability. Conformant implementations MUST use the variable-length encoding described above.
-
-## Acceptance Criteria
-
-Client implementations MUST pass the following test suite against a reference broker:
-
-### Transport-Level Tests
-
-1. **WebSocket connect** - Establish WebSocket, send CONNECT, verify session opens
-2. **TCP connect** - Establish TCP, send length-prefixed CONNECT, verify session opens
-3. **Frame size enforcement** - Send frame > `max_frame_size`, broker closes connection
-4. **Reconnect** - Drop connection, reconnect, re-send CONNECT, verify session re-established
-
-### Domain-Level Tests (per domain)
-
-**Notice:**
-
-- Subscribe to pattern, receive matching publications
-- Multiple subscriptions on same pattern both receive
-- Publish with no subscribers returns ok
-- Unsubscribe stops delivery
-- Wildcard patterns match correctly
-  **Stream:**
-- Begin/append/commit cycle succeeds
-- Read returns records in offset order
-- Read beyond watermark returns an empty success
-- Append with mismatched expected_offset fails
-- Rollback discards uncommitted appends
-  **Queue:**
-- Enqueue/reserve/complete cycle succeeds
-- Lease expiry returns message to ready queue
-- Extend lease delays expiry
-- Complete with wrong token fails
-- Batch reserve returns up to specified count
-  **RPC:**
-- Single request/response cycle succeeds
-- Streaming response reassembled in order
-- Request timeout returns error
-- Multiple workers on same route handle requests
-  **KV:**
-- Begin/put/commit cycle succeeds
-- Begin/get on non-existent key handled correctly
-- ReadOnly mode rejects write operations
-- Two transactions on same resource conflict
-- Scan returns lexicographically ordered pairs
-  **Lease:**
-- Acquire succeeds when free, fails when held
-- Renew with valid token extends TTL
-- Release with valid token releases lease
-- Expired lease acquirable by new owner
-  **Schedule:**
-- Create schedule and verify execution
-- Cancel prevents future runs
-- List returns created schedules
-
-### Interoperability Tests
-
-Client implementations MUST pass these cross-cutting tests:
-**Multi-Realm Isolation:**
-
-- Create two clients with permissions scoped to different route realms
-- One client publishes to realm A, other subscribes in realm B
-- Verify no cross-realm delivery (subscriber receives nothing)
-  **Permission Enforcement:**
-- Client with `kv:read` scope sends PUT request
-- Broker returns ERR_UNAUTHORIZED (1001 domain error)
-- Verify client surfaces error correctly to caller
-  **Multiplexing Across Domains (Channel-Based):**
-- Client sends KV PUT (KV channel)
-- While KV is in-flight, client sends Notice PUBLISH (Notice channel)
-- Both proceed concurrently (independent channels)
-- Verify both responses received correctly
-  **Reconnect State:**
-- Client subscribes to pattern, closes connection
-- Reconnects with same JWT, old subscription is lost
-- Verify client must re-subscribe explicitly (no auto-recovery)
-  **Fanout Scale:**
-- Single PUBLISH to 1000 SUBSCRIBE clients
-- All clients receive NOTIFY within 100ms (broker-dependent)
-- Verify no message loss
-  **Within-Domain Pipelining (NOT Supported):**
-- Client sends KV REQUEST 1 without waiting for response
-- Client sends KV REQUEST 2 on same channel while REQUEST 1 pending
-- Broker MAY close connection or serialize; behavior undefined
-- Clients MUST NOT pipeline multiple requests within a single domain/channel
-  **RPC Multiplexing (Exception: Correlation ID Based):**
-- Client sends RPC REQUEST with correlation_id_1
-- Client sends another RPC REQUEST with correlation_id_2 (both in-flight)
-- Broker matches responses by correlation_id
-- Clients MAY truly multiplex RPC requests via correlation IDs
-
-## Known Broker-Specific Behaviors
-
-### Implementation Notes
-
-These items are **not standardized** and may require broker-specific implementation notes.
-
-#### Session IDs and State Tracking
-
-**When broker tracks session state:**
-
-- Notice subscriptions: Broker maintains per-session subscription list
-- Stream sessions: Broker maintains per-session stream offset and metadata
-- RPC workers: Broker maintains per-session worker registration
-  **Session ID lifetime:**
-- Issued on CONNECT, unique per connection
-- Lost on disconnect (previous session ID becomes invalid)
-- NOT returned to client in standard response (internal only, except where specified per domain)
-
-#### Wire Protocol Philosophy (Explicit Routing)
-
-**Fitz operations are always explicitly scoped, but not always by repeating the route:**
-- KV: Every operation includes `[tx_id][route_len][route]` (not just BEGIN)
-- Stream: `BEGIN` carries the route; `APPEND` / `COMMIT` / `ROLLBACK` carry the `session_id` bound by BEGIN
-- Queue: Every operation includes `[route_len][route]`
-- Notice: PUBLISH/SUBSCRIBE include full route/pattern
-- RPC: REQUEST includes full route
-- Lease: ACQUIRE/RENEW/RELEASE include full route
-- Schedule: CREATE uses `[route][cron][mode][payload]`, CREATE_BATCH repeats that
-  entry shape, CANCEL includes the full route, and LIST uses optional
-  offset/limit pagination while returning mode in every entry. Mode is required:
-  `0` is broadcast and `1` is single.
-
-**Why this design:**
-- Explicit scoping: Each message is addressable either by route or by a previously issued opaque handle
-- No hidden route defaults: Clients and brokers do not rely on per-connection realm/area/resource state
-- Domain state still exists where required: KV and Stream keep live transaction/session state, and reconnect requires re-establishing that state
-- Debuggable: Every message can be inspected without hidden addressing context
-
-**Client convenience wrappers:**
-- Client implementations MAY provide ergonomic wrapper objects (Transaction, Session, Subscription)
-- These wrappers store route/session_id internally to hide repetition from users
-- Example: `tx.put(key, value)` internally sends `[tx_id][route][key][value]` on wire
-- But the wire protocol always remains fully explicit
-
-**Session-scoped behavior:**
-- KV transactions and Stream append sessions: breaking connection aborts live handles
-- Notice, Queue, Lease, Stream, and Schedule subscriptions: breaking connection drops live subscriptions
-- RPC workers and pending RPC calls: breaking connection unregisters workers and interrupts pending calls
-- Queue item handles: breaking connection invalidates live inflight tokens from the client's perspective; reserve again
-- Leases: in-memory only; lost on disconnect or broker restart unless reacquired
-
-#### Serialization Formats (Domain-Specific)
-
-- **Stream data:** Binary-safe; format broker-defined (client treats as opaque payload)
-- **RPC response:** Binary-safe; serialization app-dependent
-- **Lease tokens:** Opaque binary; do not parse or modify
-
-#### Capability Negotiation
-
-The broker advertises its protocol version and capabilities with a
-`SERVER_HELLO` (4) frame, sent unsolicited once per session on `CONNECT`
-success. There is no client-sent probe, and clients MUST NOT invent one: an
-unknown client→server message type is fatal on a broker that predates it, so a
-probe would destroy the connection rather than be ignored.
-
-```
-MessageType: 4 (SERVER_HELLO)
-Value: [u16 BE protocol_version][u32 BE capability_bits]
-```
-
-| Bit | Name | Meaning |
-|---:|---|---|
-| 0 | `CAP_CORRELATION` | Broker accepts `CORRELATE` and echoes `CORRELATED` |
-| 1 | `CAP_SESSION_METADATA` | Broker accepts client-reported session metadata (message type 5) |
-
-Rules:
-
-1. Readers MUST ignore trailing bytes after the documented fields, so a later
-   version can append without consuming another message id.
-2. Clients MUST NOT block `connect()` on `SERVER_HELLO`. `CONNECT` is zero
-   round-trip and stays that way; requests issued before the advertisement
-   arrives are simply uncorrelated.
-3. **Absence means a legacy broker.** A client that never receives
-   `SERVER_HELLO` MUST behave exactly as before: no correlation, one in-flight
-   request per message type. There is no timeout and no fallback reconnect.
-4. Clients MUST ignore a `SERVER_HELLO` whose `protocol_version` they do not
-   recognise, and MUST ignore capability bits they do not implement.
-
-If new verbs are added:
-
-1. New verb codes use next available in range (e.g., 109 for KV)
-2. Old clients reject unknown verbs with ERR_UNKNOWN_VERB (domain error)
-3. Clients MUST gracefully handle unknown verbs (close connection or error)
-   Recommended: Brokers should document supported verbs and wire codes in deployment docs.
-
-### Broker-Specific Behaviors Summary
-
-1. **Session ID exposure**: Notice/Stream payloads include session IDs, but no standard server-to-client notification mechanism yet
-2. **KV routing**: KV payloads include route on every operation alongside `tx_id`; the broker still treats `tx_id` as a live session-scoped handle that becomes invalid after disconnect or restart
-3. **Stream response data**: Response data is opaque; serialization format is broker-defined
-4. **Verb code extensions**: New verbs added after current broker release use new wire codes in existing ranges
-   Clients SHOULD consult broker documentation for domain-specific behavior.
-
-## References
-
-- Fitz repository: https://github.com/cntryl/fitz
-- Domain specifications: See [Canonical operation reference](operations.md)
-- Codec implementations: See Fitz `src/protocol/` directory
-- Integration tests: See Fitz `tests/` directory
+- [Canonical operations](operations.md) defines the operations and shared
+  message behavior.
+- Each [domain specification](../client-spec.md) defines its payloads and
+  lifecycle rules.
+- [Error codes](error-codes.md) defines error classes and effects.
+- [Cross-language scenarios](../cross-language-conformance-suite.yaml) defines
+  shared observable client behavior.

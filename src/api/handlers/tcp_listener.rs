@@ -78,7 +78,6 @@ pub fn spawn_tcp_listener_with_bound_socket(
 
                             record_connection_opened();
 
-                            info!("TCP connection from {}", peer_addr);
                             runtime.increment_connections();
                             let accepted_at = tokio::time::Instant::now();
                             let lifecycle = ConnectionLifecycle::new(runtime.clone(), permit);
@@ -87,7 +86,7 @@ pub fn spawn_tcp_listener_with_bound_socket(
                             let runtime = runtime.clone();
                             sessions.lock().await.spawn(async move {
                                 if let Err(e) = handle_tcp_connection(stream, ingress, config, runtime, lifecycle, accepted_at).await {
-                                    tracing::error!("TCP handler error: {}", e);
+                                    tracing::debug!(transport = "tcp", %peer_addr, error = %e, "TCP connection ended with an error");
                                 }
                             });
                         }

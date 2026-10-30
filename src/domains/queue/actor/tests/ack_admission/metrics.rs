@@ -173,6 +173,7 @@ fn should_count_zero_budget_admission_timeout_without_retries_or_mutation() {
             // Assert
             assert!(result
                 .expect_err("storage admission stays closed")
+                .to_string()
                 .contains("storage admission"));
             assert_eq!(attempts, 1);
             assert_eq!(admission_counters(), (before.0, before.1 + 1));
@@ -210,7 +211,8 @@ fn should_not_count_unclassified_commit_errors_as_admission_pressure() {
                 .collect();
 
             // Assert
-            assert!(responses
+            assert!(matches!(responses[0], QueueResponse::Timeout { .. }));
+            assert!(responses[1..]
                 .iter()
                 .all(|response| matches!(response, QueueResponse::Error { .. })));
             assert_eq!(admission_counters(), before);

@@ -55,7 +55,7 @@ impl DomainFrameDispatcher {
         );
         self.send_domain_error_frame(
             frame,
-            Self::indeterminate_error_code(frame.domain),
+            Self::timeout_error_code(frame.domain),
             "domain timeout: request outcome unknown, do not blindly retry",
         )
         .map_or_else(|decision| decision, |()| IngressDecision::Accept)
@@ -95,9 +95,9 @@ impl DomainFrameDispatcher {
     /// A dead actor, a panicked sink, an unroutable domain or a response that
     /// cannot be framed are all failures of THIS request. None is a client
     /// protocol violation, so none justifies destroying a multiplexed session
-    /// and every other domain's in-flight work on it. Reported with a
-    /// non-retryable code, since the command may have partially applied (the
-    /// actor died holding it) or can never succeed.
+    /// and every other domain's in-flight work on it. Reported with the
+    /// domain's BACKEND code, whose effect is indeterminate: the command may
+    /// have partially applied (the actor died holding it) or can never succeed.
     pub(super) fn answer_unavailable_dispatch(
         &self,
         frame: DomainErrorFrame<'_>,
@@ -125,7 +125,7 @@ impl DomainFrameDispatcher {
         }
         self.send_domain_error_frame(
             frame,
-            Self::indeterminate_error_code(frame.domain),
+            Self::unavailable_error_code(frame.domain),
             "domain unavailable: request could not be completed",
         )
         .map_or_else(|decision| decision, |()| IngressDecision::Accept)

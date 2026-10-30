@@ -1,5 +1,4 @@
-# Fitz Server Implementation Guide
-**Authoritative guide for implementing a Fitz server broker.**
+# Fitz Architecture
 ## Table of Contents
 1. [Overview](#overview)
 2. [System Architecture](#system-architecture)
@@ -9,23 +8,17 @@
 6. [Authentication & TLS](#authentication--tls)
 7. [Boot & Initialization](#boot--initialization)
 8. [Testing & Validation](#testing--validation)
-9. [Performance & Tuning](#performance--tuning)
-10. [Error Handling](error-handling.md)
+9. [Error Handling](error-handling.md)
 ## Overview
-Fitz is a **layered, synchronous-core broker** designed for:
-- **Low-latency domain operations** (KV, queues, live fanout, streams, RPC, leases, scheduling)
-- **Two-axis isolation:** hard broker isolation by `RouteFamily`, plus app-visible namespace by `realm`
-- **Deterministic message routing** (no async jitter in hot paths)
-- **High fanout** (live fanout with wildcard patterns)
+Fitz is a layered broker with asynchronous transport edges and synchronous
+session, runtime, protocol, and domain code.
 
 For the strict internal contract that defines what each domain is allowed to do, what it must not do, and how domains compose safely, see [domain-boundaries-spec.md](domain-boundaries-spec.md).
 
 `RouteFamily` and `realm` are orthogonal identifiers. `RouteFamily` is the broker-internal routing and isolation key for session assignment, delivery partitioning, and storage partitioning. `realm` is the opaque application-visible namespace label used in Fitz routes, permissions, and admin/API payloads. `realm` and `RouteFamily` are separate axes and must never be inferred, aliased, substituted, or used as fallback values for each other.
 
-The server is implemented in **async I/O boundaries** (transport) with a **100% synchronous core** (routing, domains). This separation ensures:
-- Clean transport abstraction (WebSocket, TCP, HTTP)
-- Predictable domain latency (no async scheduling variability)
-- Efficient enforcement of RouteFamily and realm boundaries
+The async/sync boundary keeps transport I/O in `src/api/`. Core routing,
+protocol, session, and domain behavior stays synchronous.
 ## System Architecture
 ### Layered Design
 ```
@@ -38,12 +31,12 @@ Layer 2: SESSION (Sync but Transport-Driven)
 ├─ Frame parsing
 ├─ Permission enforcement
 └─ Route disambiguation
-Layer 3: RUNTIME (100% Sync, Deterministic)
+Layer 3: Runtime (synchronous, deterministic)
 ├─ Router (message delivery, subscription matching)
 ├─ Family actor pools (fixed affinity, bounded normal/control lanes)
 ├─ Ingress (session management)
 └─ Mux (frame multiplexing across channels)
-Layer 4: DOMAINS (100% Sync Business Logic)
+Layer 4: Domains (synchronous business logic)
 ├─ KV (transactions, isolation, durability)
 ├─ Queue (FIFO, leasing, visibility)
 ├─ Notice (live fanout, wildcard matching)
@@ -66,7 +59,7 @@ Layer 5: STORAGE (Persistent Backend)
 ```
 Async WebSocket Reader
     ↓ (frame bytes)
-Sync TLV Parser
+Sync Message Header Parser
     ↓ (route, message type)
 RuntimeIngress (async edge coordination)
     ↓ (bounded dispatch into sync core)
@@ -74,7 +67,7 @@ Sync Router (DashMap lookup)
     ↓ (domain sink)
 Sync Domain Handler (business logic)
     ↓ (domain response)
-Sync TLV Encoder
+Sync Message Encoder
     ↓ (response bytes)
 Async WebSocket Writer
 ```
@@ -101,6 +94,10 @@ ready-family scheduling. A full lane is explicit edge backpressure; it is not an
 unbounded async queue. Managed domain actors fail closed: a panic marks
 readiness unhealthy, stops new data-plane work, begins drain, and does not
 silently restart the failed actor.
+
+Durable commits run on the owning shard thread. A KV or Stream COMMIT with
+`Sync` persistence performs its storage acknowledgement inside the family actor
+handler. Other families assigned to that shard wait while the handler runs.
 
 ### Metrics Boundaries
 
@@ -171,9 +168,9 @@ This is a hard Fitz rule:
 - Extract route-shaped permissions from the configured custom claim, top-level `permissions`, configured role claim array, `scp`, or `scope`
 - Treat `realm` as an opaque route component authorized by permission patterns. Treat RouteFamily as a separate broker-internal routing key, never as a realm fallback or synonym.
 - Establish session with extracted claims
-- Assign unique session ID (internal; NOT sent to client)
+- Assign a diagnostic session ID exposed in HELLO
 - For each subsequent frame:
-  - Parse TLV header (MessageType, length)
+  - Parse the fixed message header (type, flags, correlation, length)
   - Extract route scheme (kv, notice, rpc, etc.)
   - Check route-shaped permissions against the frame's authorization route and access level
   - If permission check fails: return domain error with code ERR_UNAUTHORIZED
@@ -218,7 +215,8 @@ On reconnect with new CONNECT:
 - Clients **SHOULD** track stream offsets locally and resume from the last known offset.
 - Clients **MUST NOT** expect Stream subscribe state to resume historical delivery; replay requires an explicit read from a client-managed offset.
 - Clients **SHOULD** implement reconnect backoff.
-- Clients **MAY** cache subscription and worker registration configuration for fast rebuild.
+- Clients **MAY** cache subscription and worker registration configuration for
+  rebuilding state after reconnect.
 
 **Reconnect sequence guidance:**
 ```text
@@ -229,9 +227,6 @@ REGISTER (workers)
 RESUME (streams)
 READY
 ```
-
-**Performance expectation:**
-Rebuilding state after reconnect must be fast and deterministic. Fitz must keep subscription registration, worker registration, and stream resume paths cheap enough that client-driven rebuild remains practical.
 
 **Constraints:**
 - Do NOT implement domain business logic
@@ -315,7 +310,7 @@ impl XFamilyState {
 ```
 **Per-domain files:**
 - `src/domains/{domain}/sink/` - crate-private endpoint, commands, family state, outcomes, and admin port
-- `src/protocol/{domain}_codec.rs` - TLV encode/decode
+- `src/protocol/{domain}_codec.rs` - message encode/decode
 - `src/domains/{domain}/store/` - the sole durable-storage adapter when the domain is durable
 **Constraints:**
 - NEVER call `.await`
@@ -351,7 +346,7 @@ Lease has no Layer 5 persistent storage schema. Lease ownership, waiters, TTL st
 ## Wire Protocol Implementation
 ### Payload encoding (domain message bodies)
 **Location:** `src/protocol/payload_codec.rs`
-Sequential typed fields (not frame TLV): fixed-order scalars and length-prefixed strings/bytes. Used by domain codecs to encode request/response bodies. Frame-level TLV is in `src/protocol/tlv.rs`.
+Sequential typed fields: fixed-order scalars and length-prefixed strings/bytes. Used by domain codecs to encode request/response bodies. The fixed frame header is in `src/protocol/wire2/header.rs`.
 **Implementation pattern:**
 ```rust
 pub struct PayloadDecoder<'a> {
@@ -448,7 +443,7 @@ pub async fn handle_websocket(
 ### Codec Pattern (All Domains)
 Every domain has two core functions:
 ```rust
-/// Parse TLV bytes → typed message
+/// Parse message bytes → typed message
 pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
@@ -461,7 +456,7 @@ pub fn parse_request(
         _ => Err(format!("Unknown message type: {}", ctx.msg_type)),
     }
 }
-/// Encode response → TLV bytes
+/// Encode response → message bytes
 pub fn encode_response(response: &DomainResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     
@@ -849,7 +844,7 @@ Each domain should have comprehensive unit tests for:
 mod tests {
     use super::*;
     #[test]
-    fn should_parse_operation_from_tlv() {
+    fn should_parse_operation_from_message() {
         // Arrange
         let mut enc = PayloadEncoder::new();
         enc.put_u64(123);
@@ -899,54 +894,6 @@ async fn should_commit_kv_transaction_with_explicit_persistence() {
 - [ ] Backpressure handled (queue limits)
 - [ ] Disconnect destroys session state immediately
 - [ ] Clients can rebuild required state deterministically after reconnect
-## Performance & Tuning
-### Sync-Core Benefits
-1. **Predictable latency** - No async scheduling jitter
-2. **CPU efficiency** - No context switches in hot path
-3. **Deterministic behavior** - Reproducible test results
-4. **Easier debugging** - Stack traces are meaningful
-### Optimization Strategies
-#### 1. Lock-Free Data Structures
-Use DashMap for subscriptions and routing:
-```rust
-pub type SubscriptionMap = DashMap<String, Vec<Subscription>>;
-```
-#### 2. Pre-allocation
-Allocate response buffers once:
-```rust
-pub fn encode_response_into(response: &Response, buf: &mut Vec<u8>) {
-    buf.clear();
-    // ... encode into pre-allocated buffer
-}
-```
-#### 3. Zero-Copy Patterns
-Pass `&[u8]` slices instead of cloning:
-```rust
-pub fn handle(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-    // Store references, not copies
-}
-```
-#### 4. Batch Operations
-For fanout (Notice publish), batch notifications:
-```rust
-let mut batch = Vec::with_capacity(100);
-for subscriber in matched_subscribers {
-    batch.push(notification);
-}
-router.deliver_batch(batch);
-```
-### Monitoring
-
-See [Architecture monitoring](architecture-monitoring.md) for the tracing example.
-
-### Tuning Parameters
-| Parameter | Default | Use Case |
-|---|---:|---|
-| `max_frame_size` | 1 MB | Limit large uploads |
-| `channel_capacity` | 1000 | Transport channel backpressure threshold |
-| domain actor mailbox capacity | 16,384 | Bounded domain ingress burst absorption before hard backpressure |
-| `max_connections` | 10000 | Resource limits |
-| `family_actor_shards` | min(available_parallelism, provisioned families) | Synchronous family-owned actor workers |
 ## Error Handling
 See [error-handling.md](error-handling.md) for transport closure rules,
 domain response errors, and retry/idempotency guidance.
@@ -957,7 +904,7 @@ domain response errors, and retry/idempotency guidance.
 - Routing: `src/runtime/router.rs`
 - Codecs: `src/protocol/*_codec.rs`
 - Boot: `src/boot/mod.rs`
-- Tests: `tests/`, `benches/`
+- Tests: `tests/`
 
 Derived Schedule parse and Stream actor retention is described in
 [Derived cache retention](derived-cache-retention.md).

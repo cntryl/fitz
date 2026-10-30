@@ -1,6 +1,6 @@
 //! Lease domain codec - ephemeral lock operations
 //!
-//! Encodes/decodes TLV messages for the lease domain inside one running broker.
+//! Encodes and decodes Wire2 payloads for lease operations inside one broker.
 //! Supports Acquire, Extend, Release, Query, Subscribe, and Unsubscribe operations.
 //!
 //! Wire format follows `CLIENT_SPEC`: ACQUIRE success includes `response_type`
@@ -92,7 +92,7 @@ pub fn parse_frame(
     }
 }
 
-/// Parse incoming message from TLV-encoded bytes.
+/// Parse an incoming Lease payload.
 ///
 /// `route_family` is injected by the session layer — it is never read
 /// from the wire payload.
@@ -302,20 +302,21 @@ fn encode_plain_error_response_into(
 
     let (code, message) = match response {
         DomainLeaseResponse::Error(message) => (err::ERR_BAD_REQUEST, message.clone()),
-        DomainLeaseResponse::InvalidSubscriptionRoute(message) => {
-            (err::ERR_INVALID_SUBSCRIPTION_ROUTE, message.clone())
-        }
-        DomainLeaseResponse::InvalidListPattern(message) => {
-            (err::ERR_INVALID_LIST_PATTERN, message.clone())
+        DomainLeaseResponse::InvalidSubscriptionRoute(message)
+        | DomainLeaseResponse::InvalidListPattern(message) => {
+            (err::ERR_INVALID_PATTERN, message.clone())
         }
         DomainLeaseResponse::InvalidListCursor => (
             err::ERR_INVALID_LIST_CURSOR,
             "InvalidListCursor".to_string(),
         ),
-        DomainLeaseResponse::Timeout => (err::ERR_TIMEOUT, "Timeout".to_string()),
+        DomainLeaseResponse::Timeout => (
+            err::ERR_ACQUIRE_WAIT_EXPIRED,
+            "acquire wait expired".to_string(),
+        ),
         DomainLeaseResponse::QueueFull { pending_count } => (
-            err::ERR_QUEUE_FULL,
-            format!("QueueFull: {pending_count} pending"),
+            err::ERR_WAITERS_LIMIT,
+            format!("too many pending waiters: {pending_count}"),
         ),
         DomainLeaseResponse::HeldByOther { current_owner } => {
             (err::ERR_LEASE_HELD, format!("HeldByOther: {current_owner}"))
@@ -703,9 +704,13 @@ mod tests {
                 b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 0,
             ]
         );
+        let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
         assert_eq!(
-            error,
-            [1, 0, 0, 19, 140, 0, 0, 0, 7, b'N', b'o', b't', b'H', b'e', b'l', b'd',]
+            (decoded.code, decoded.message.as_str()),
+            (
+                crate::protocol::error_codes::lease::ERR_LEASE_NOT_FOUND,
+                "NotHeld"
+            )
         );
     }
 }

@@ -2,7 +2,7 @@ use super::*;
 use crate::dispatch::protocol::error_codes;
 use crate::dispatch::protocol::frame::ChannelId;
 use crate::dispatch::protocol::frame_context::FrameContext;
-use crate::dispatch::protocol::tlv::MessageType;
+use crate::dispatch::protocol::message::MessageType;
 use crate::domains::kv::KvResourceScope;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::{Envelope, Mailbox, MailboxSink, Router};

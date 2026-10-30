@@ -1,5 +1,5 @@
 // LAYER: RUNTIME
-//! High-performance subscription index for route pattern matching
+//! Subscription index for route pattern matching
 //!
 //! # Design
 //!
@@ -374,7 +374,7 @@ impl MatchCollector {
     }
 }
 
-/// High-performance subscription index for wildcard route matching
+/// Subscription index for wildcard route matching
 ///
 /// - Insert: O(depth) time
 /// - Remove: O(depth) time
@@ -458,8 +458,7 @@ impl SubscriptionIndex {
         self.insert_into_trie(root, &segments, 0, subscription_id);
     }
 
-    /// Insert multiple subscriptions in a single batched operation (reduces
-    /// allocation overhead and improves cache locality in batch setups).
+    /// Insert multiple subscriptions in one operation.
     pub fn insert_batch(&mut self, family_id: RouteFamily, items: &[(Route, SubscriptionId)]) {
         if items.is_empty() {
             return;

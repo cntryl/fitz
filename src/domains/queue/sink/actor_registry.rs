@@ -58,7 +58,11 @@ impl QueueActorRegistry {
     }
 
     pub(super) fn remove(&mut self, key: &QueueKey) -> Option<WarmQueueActor> {
-        self.actors.remove(key)
+        let removed = self.actors.remove(key);
+        if removed.is_some() {
+            self.idle_sweep_keys.retain(|candidate| candidate != key);
+        }
+        removed
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = (&QueueKey, &WarmQueueActor)> {

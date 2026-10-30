@@ -44,6 +44,34 @@ pub(super) enum AdminFamilyScope {
     Family(u64),
 }
 
+async fn run_bounded_admin_observation(
+    runtime: Arc<Runtime>,
+    operation: impl FnOnce(Arc<Runtime>) -> Response + Send + 'static,
+) -> Result<Response, Infallible> {
+    let Some(permit) = runtime.try_acquire_admin_blocking_permit() else {
+        crate::api::admin::observation_metrics::record_overload_rejection();
+        return Ok(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Admin observation capacity is full",
+        ));
+    };
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        operation(runtime)
+    })
+    .await
+    {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            tracing::error!(operation = "admin_observation", failure_class = "worker_join", %error, "Admin observation worker failed");
+            Ok(error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                &format!("Admin observation failed: {error}"),
+            ))
+        }
+    }
+}
+
 impl AdminFamilyScope {
     fn filter(self) -> Option<u64> {
         match self {
@@ -85,12 +113,20 @@ where
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
+    if method == Method::POST && path.starts_with("/destroyer/failpoints/") {
+        if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref()) {
+            return Ok(not_found());
+        }
+        // Panicking a live actor is a mutation of broker state; every
+        // failpoint route needs the same authority as the other mutating
+        // admin routes.
+        if let Err(response) = require_wildcard_admin_with_origin(&req, &runtime) {
+            return Ok(*response);
+        }
+    }
+
     if method == Method::POST {
         if let Some((domain, family)) = parse_family_actor_failpoint_path(&path) {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             let family = match family {
                 Ok(family) => family,
                 Err(message) => return Ok(error_response(StatusCode::BAD_REQUEST, message)),
@@ -116,80 +152,48 @@ where
         (Method::GET, "/startupz") => Ok(probes::handle_startup(runtime.as_ref())),
         (Method::GET, "/health") => Ok(probes::handle_health(runtime.as_ref())),
         (Method::POST, "/destroyer/failpoints/notice-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_notice_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "notice" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/queue-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_queue_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "queue" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/kv-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_kv_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "kv" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/lease-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_lease_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "lease" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/schedule-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_schedule_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "schedule" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/stream-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_stream_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "stream" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/rpc-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_rpc_actor_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domain": "rpc" }),
             ))
         }
         (Method::POST, "/destroyer/failpoints/all-domain-actor-panic") => {
-            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
-            {
-                return Ok(not_found());
-            }
             runtime.panic_all_domain_actors_for_failpoint();
             Ok(json_response(
                 serde_json::json!({ "injected": true, "domains": 7 }),
@@ -217,7 +221,8 @@ where
             if let Err(response) = require_wildcard_admin_only(&req, &runtime) {
                 return Ok(*response);
             }
-            Ok(list::list_sessions(runtime.as_ref()))
+            run_bounded_admin_observation(runtime, |runtime| list::list_sessions(runtime.as_ref()))
+                .await
         }
 
         (Method::GET, path) if path.starts_with("/api/v1/sessions/") => Ok(super::not_found()),
@@ -226,21 +231,30 @@ where
             if let Err(response) = require_wildcard_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
-            Ok(stats::handle_global_stats(runtime.as_ref()))
+            run_bounded_admin_observation(runtime, |runtime| {
+                stats::handle_global_stats(runtime.as_ref())
+            })
+            .await
         }
 
         (Method::GET, "/api/v1/topology") => {
             if let Err(response) = require_wildcard_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
-            Ok(topology::handle_topology(runtime.as_ref()))
+            run_bounded_admin_observation(runtime, |runtime| {
+                topology::handle_topology(runtime.as_ref())
+            })
+            .await
         }
 
         (Method::GET, "/api/v1/troubleshooting") => {
             if let Err(response) = require_wildcard_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
-            Ok(stats::handle_global_troubleshooting(runtime.as_ref()))
+            run_bounded_admin_observation(runtime, |runtime| {
+                stats::handle_global_troubleshooting(runtime.as_ref())
+            })
+            .await
         }
 
         (Method::GET, path) if path.starts_with("/api/v1/") && path.ends_with("/metrics") => {
@@ -259,10 +273,11 @@ where
                 Ok(scope) => scope,
                 Err(response) => return Ok(*response),
             };
-            Ok(metrics::handle_structured_metrics(
-                runtime.as_ref(),
-                scope.filter(),
-            ))
+            let family = scope.filter();
+            run_bounded_admin_observation(runtime, move |runtime| {
+                metrics::handle_structured_metrics(runtime.as_ref(), family)
+            })
+            .await
         }
 
         (Method::GET, path)
@@ -282,20 +297,57 @@ where
             };
             match scope {
                 AdminFamilyScope::All => match segments[3] {
-                    "sessions" => Ok(list::list_sessions(runtime.as_ref())),
-                    "stats" => Ok(stats::handle_global_stats(runtime.as_ref())),
-                    "topology" => Ok(topology::handle_topology(runtime.as_ref())),
-                    "troubleshooting" => Ok(stats::handle_global_troubleshooting(runtime.as_ref())),
+                    "sessions" => {
+                        run_bounded_admin_observation(runtime, |runtime| {
+                            list::list_sessions(runtime.as_ref())
+                        })
+                        .await
+                    }
+                    "stats" => {
+                        run_bounded_admin_observation(runtime, |runtime| {
+                            stats::handle_global_stats(runtime.as_ref())
+                        })
+                        .await
+                    }
+                    "topology" => {
+                        run_bounded_admin_observation(runtime, |runtime| {
+                            topology::handle_topology(runtime.as_ref())
+                        })
+                        .await
+                    }
+                    "troubleshooting" => {
+                        run_bounded_admin_observation(runtime, |runtime| {
+                            stats::handle_global_troubleshooting(runtime.as_ref())
+                        })
+                        .await
+                    }
                     _ => Ok(not_found()),
                 },
                 AdminFamilyScope::Family(family) => match segments[3] {
-                    "sessions" => Ok(list::list_sessions_for_family(runtime.as_ref(), family)),
-                    "stats" => Ok(stats::handle_family_stats(runtime.as_ref(), family)),
-                    "topology" => Ok(topology::handle_family_topology(runtime.as_ref(), family)),
-                    "troubleshooting" => Ok(stats::handle_family_troubleshooting(
-                        runtime.as_ref(),
-                        family,
-                    )),
+                    "sessions" => {
+                        run_bounded_admin_observation(runtime, move |runtime| {
+                            list::list_sessions_for_family(runtime.as_ref(), family)
+                        })
+                        .await
+                    }
+                    "stats" => {
+                        run_bounded_admin_observation(runtime, move |runtime| {
+                            stats::handle_family_stats(runtime.as_ref(), family)
+                        })
+                        .await
+                    }
+                    "topology" => {
+                        run_bounded_admin_observation(runtime, move |runtime| {
+                            topology::handle_family_topology(runtime.as_ref(), family)
+                        })
+                        .await
+                    }
+                    "troubleshooting" => {
+                        run_bounded_admin_observation(runtime, move |runtime| {
+                            stats::handle_family_troubleshooting(runtime.as_ref(), family)
+                        })
+                        .await
+                    }
                     _ => Ok(not_found()),
                 },
             }
@@ -309,11 +361,11 @@ where
             if let Err(response) = require_data_plane_ready(&runtime) {
                 return Ok(*response);
             }
-            Ok(search::handle_search(
-                req.uri(),
-                runtime.as_ref(),
-                &principal,
-            ))
+            let uri = req.uri().clone();
+            run_bounded_admin_observation(runtime, move |runtime| {
+                search::handle_search(&uri, runtime.as_ref(), &principal)
+            })
+            .await
         }
 
         (Method::GET, path) if path.starts_with("/api/v1/") => {
@@ -451,5 +503,52 @@ mod failpoint_tests {
             rpc.map(|(domain, family)| (domain, family.map(|value| value.id()))),
             Some(("rpc", Ok(9)))
         );
+    }
+}
+
+#[cfg(test)]
+mod observation_executor_tests {
+    use super::*;
+    use crate::runtime::Router;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn should_reject_admin_observation_when_capacity_is_exhausted() {
+        // Arrange
+        let runtime = Arc::new(Runtime::new(Arc::new(Router::new())));
+        let permits = (0..2)
+            .map(|_| runtime.try_acquire_admin_blocking_permit().unwrap())
+            .collect::<Vec<_>>();
+        let operation_called = Arc::new(AtomicBool::new(false));
+        let observed = operation_called.clone();
+
+        // Act
+        let response = run_bounded_admin_observation(runtime, move |_| {
+            observed.store(true, Ordering::SeqCst);
+            json_response(serde_json::json!({"ok": true}))
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!operation_called.load(Ordering::SeqCst));
+        drop(permits);
+    }
+
+    #[tokio::test]
+    async fn should_contain_admin_observation_panics_to_the_request() {
+        // Arrange
+        let runtime = Arc::new(Runtime::new(Arc::new(Router::new())));
+
+        // Act
+        let response = run_bounded_admin_observation(runtime, |_| -> Response {
+            panic!("simulated admin observation panic");
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

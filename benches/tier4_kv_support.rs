@@ -13,7 +13,7 @@ use fitz::domains::kv::{KvMessage, KvResourceScope, KvResponse, TxMode};
 use fitz::protocol::kv_codec::parse_request as parse_kv_request;
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::domain_internals::kv::KvActor;
-use fitz::testkit::transport::TlvFrameParser;
+use fitz::testkit::transport::FrameParser;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use futures_util::future::join_all;
 use std::time::Instant;
@@ -184,15 +184,11 @@ impl EncodedState {
         }
     }
     fn set_tx(frame: &mut [u8], tx_id: u64) {
-        let offset = if frame.first().copied() == Some(0xFF) {
-            5
-        } else {
-            3
-        };
+        let offset = fitz::protocol::wire2::header::HEADER_LEN;
         frame[offset..offset + 8].copy_from_slice(&tx_id.to_be_bytes());
     }
     fn dispatch(actor: &mut DirectKvActor, frame: &[u8]) -> KvResponse {
-        let mut parser = TlvFrameParser::new(frame);
+        let mut parser = FrameParser::new(frame);
         let (message_type, payload) = parser.next_field_ref().expect("KV field");
         let message =
             parse_kv_request(message_type, RouteFamily::new(1), payload).expect("KV decode");

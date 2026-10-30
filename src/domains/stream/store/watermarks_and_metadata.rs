@@ -43,6 +43,7 @@ impl StreamStore {
             .unwrap_or(persisted_watermark)
             .max(persisted_watermark);
         state.watermark = Some(previous_watermark);
+        state.resolved.retain(|_, end| *end > previous_watermark);
         let mut watermark = previous_watermark;
         let mut consumed = Vec::new();
         while let Some(end) = state.resolved.get(&watermark).copied() {
@@ -186,7 +187,14 @@ impl StreamStore {
                     admission.rejected();
                     admission.wait(&self.db)?;
                 }
-                Err(error) => return Err(format!("commit global watermark failed: {error:?}")),
+                Err(error) => {
+                    let prefix = if matches!(&error, cntryl_midge::MidgeError::Timeout(_)) {
+                        crate::domains::stream::protocol::ERR_STREAM_TIMEOUT
+                    } else {
+                        ""
+                    };
+                    return Err(format!("{prefix}commit global watermark failed: {error:?}"));
+                }
             }
         }
     }

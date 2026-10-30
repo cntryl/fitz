@@ -57,7 +57,7 @@ Operator tooling should not call `/admin/sessions/{id}/close` or
 ### Runtime And Observability Routes
 - `GET /api/v1/{family}/metrics` - Structured metrics for one authorized family.
 - `GET /api/v1/all/metrics` - Broker-wide structured metrics; wildcard authority required.
-- `POST /api/v1/runtime/drain` - Begin the planned runtime drain and continue automatically through session, listener, domain, and storage shutdown after the configured grace.
+- `POST /api/v1/runtime/drain` - Begin the planned runtime drain and continue automatically through session, listener, domain, and storage shutdown after the configured grace. Every live session receives a `GOAWAY` control message (code 0054 `DRAINING`, the remaining grace in milliseconds, and the configured close reason) the moment the drain begins.
 - `GET /api/v1/stats` - Global broker and domain statistics.
 - `GET /api/v1/{family}/stats` - Family-scoped broker and domain statistics.
 - `GET /api/v1/topology` - Messaging topology.
@@ -76,35 +76,64 @@ attributable to a family and are excluded, so a family with no hotspots reports
 check.
 
 ### Domain Routes
-Domain routes use `/api/v1/{domain}/...` for aggregate reads. A concrete route
-family can be selected with `/api/v1/{route_family}/{domain}/...`; wildcard
-admin sessions may use `/api/v1/all/{domain}/...` for aggregate reads.
+Domain routes are always family-scoped: `/api/v1/{family}/{scheme}/...`.
+`{family}` is a provisioned route-family number, or the literal `all` for a
+wildcard admin session reading across families. `{scheme}` is one of `kv`,
+`queue`, `notice`, `stream`, `rpc`, `lease`, or `schedule`. A bare
+`/api/v1/{scheme}/...` path is not a route: the family segment is required and
+the handler answers 404.
 
-- `GET /api/v1/{domain}/stats` - Domain statistics.
-- `GET /api/v1/{domain}/realms` - Realm collection.
-- `GET /api/v1/{domain}/realms/{realm}/areas` - Area collection.
-- `GET /api/v1/{domain}/realms/{realm}/areas/{area}/resources` - Resource collection.
-- `GET /api/v1/{domain}/realms/{realm}/areas/{area}/resources/{resource}` - Resource detail.
-- `GET /api/v1/{domain}/realms/{realm}/areas/{area}/resources/{resource}/events` - Resource timeline events.
-- `GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions` - Live KV transactions.
-- `GET /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}/records` - Stream records.
-- `GET /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}/executions` - Schedule executions.
-- `GET /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}/subscriptions` - Live Notice subscriptions.
-- `GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations` - RPC operations.
-- `GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}` - RPC operation detail.
-- `GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/workers` - RPC operation workers.
-- `GET /api/v1/rpc/pending` - Live pending RPC requests.
-- `GET /api/v1/{route_family}/lease/search` - Lease search.
-- `GET /api/v1/{route_family}/notice/deliveries` - Notice delivery observations.
-- `GET /api/v1/{route_family}/rpc/calls` - RPC call observations.
-- `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/inflight` - Live queue inflight entries.
-- `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters` - Queue dead letters.
-- `POST /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}/replay?family={family}` - Replay a queue dead letter.
-- `DELETE /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}?family={family}` - Purge a queue dead letter.
+- `GET /api/v1/{family}/{scheme}/stats` - Domain statistics.
+- `GET /api/v1/{family}/{scheme}/realms` - Realm collection.
+- `GET /api/v1/{family}/{scheme}/realms/{realm}` - Realm detail.
+- `GET /api/v1/{family}/{scheme}/realms/{realm}/areas` - Area collection.
+- `GET /api/v1/{family}/{scheme}/realms/{realm}/areas/{area}` - Area detail.
+- `GET /api/v1/{family}/{scheme}/realms/{realm}/areas/{area}/resources` - Resource collection.
+- `GET /api/v1/{family}/{scheme}/realms/{realm}/areas/{area}/resources/{resource}` - Resource detail.
+- `GET /api/v1/{family}/{scheme}/realms/{realm}/areas/{area}/resources/{resource}/events` - Resource timeline events.
+- `GET /api/v1/{family}/stream/realms/{realm}/watermarks` - Stream realm watermarks.
+- `GET /api/v1/{family}/stream/realms/{realm}/areas/{area}/watermarks` - Stream area watermarks.
+- `GET /api/v1/{family}/stream/search` - Stream search.
+- `GET /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions` - Live KV transactions.
+- `GET /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/rows` - KV rows.
+- `GET /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/value` - One KV value.
+- `GET /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/prefix` - KV prefix scan.
+- `GET /api/v1/{family}/stream/realms/{realm}/areas/{area}/resources/{resource}/records` - Stream records.
+- `GET /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/executions` - Schedule executions.
+- `GET /api/v1/{family}/notice/realms/{realm}/areas/{area}/resources/{resource}/subscriptions` - Live Notice subscriptions.
+- `GET /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations` - RPC operations.
+- `GET /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}` - RPC operation detail.
+- `GET /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/workers` - RPC operation workers.
+- `GET /api/v1/{family}/rpc/pending` - Live pending RPC requests.
+- `GET /api/v1/{family}/schedule/missed` - Missed schedule occurrences.
+- `GET /api/v1/{family}/{scheme}/realms/{realm}/areas/{area}/resources/{resource}/compare` - Resource comparison view.
+- `POST /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/run` - Run a schedule occurrence now.
+- `GET /api/v1/{family}/rpc/calls` - RPC call observations.
+- `GET /api/v1/{family}/lease/search` - Lease search.
+- `GET /api/v1/{family}/notice/deliveries` - Notice delivery observations.
+- `GET /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/inflight` - Live queue inflight entries.
+- `GET /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters` - Queue dead letters.
+- `POST /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}/replay` - Replay a queue dead letter.
+- `DELETE /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}` - Purge a queue dead letter.
 
 The current router does not implement admin commands for forcing KV rollback,
-Notice subscription cancellation, RPC request cancellation, Lease release,
-manual Schedule trigger, or Session close.
+Notice subscription cancellation, RPC request cancellation, Lease release, or
+Session close.
+
+### Fault-Injection Routes
+These routes rehearse fail-closed behavior in tests. They are compiled into the
+broker but answer 404 unless the process starts with
+`FITZ_DESTROYER_FAILPOINTS=enabled`. When enabled they require a wildcard
+admin session and a same-origin request, exactly like the other mutating admin
+routes. A successful call panics a live domain actor, or every domain actor at
+once, which fails those actors closed and marks readiness unhealthy. Never
+enable them on a broker that serves
+traffic.
+
+- `POST /destroyer/failpoints/{scheme}-actor-panic` - Panic every actor of one domain, where `{scheme}` is `kv`, `queue`, `notice`, `stream`, `rpc`, `lease`, or `schedule`.
+- `POST /destroyer/failpoints/all-domain-actor-panic` - Panic every actor of every domain.
+- `POST /destroyer/failpoints/stream-family-{family}-actor-panic` - Panic one Stream family actor.
+- `POST /destroyer/failpoints/rpc-family-{family}-actor-panic` - Panic one RPC family actor.
 
 ## Safety
 

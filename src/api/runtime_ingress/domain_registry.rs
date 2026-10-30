@@ -14,25 +14,23 @@ pub(crate) use crate::dispatch::DomainEnvelopeBuildRequest;
 pub(crate) struct IngressDomainDescriptor {
     pub(super) manifest: &'static crate::runtime::DomainDescriptor,
     pub(super) unauthorized_error_code: u16,
-    /// Code returned when the domain did not answer before its deadline.
+    /// Code answered when the domain did not reply before its deadline.
     ///
-    /// Deliberately NOT a backpressure/"queue full" code. Those mean the
-    /// request was rejected without being accepted, so a client may safely
-    /// retry. A deadline expiry means the opposite: the command was already
-    /// enqueued and may still execute, so the outcome is unknown. Only queue
-    /// ACK is deduplicated, so an automatic retry of a SEND would enqueue the
-    /// message twice.
+    /// The command was already enqueued and may still execute, so this is the
+    /// domain's shared `TIMEOUT` slot (`x007`), whose catalog effect is
+    /// INDETERMINATE. It is never the `BUSY` slot: that tells a compliant SDK
+    /// the request was never accepted and invites a duplicate send.
+    pub(super) timeout_error_code: u16,
+    /// Code answered when the domain could not be reached at all: a dead
+    /// actor, a panicked sink, or a response that cannot be framed.
     ///
-    /// Every value here must sit outside `REQ-PROTO-012`'s retryable set
-    /// (1004, 4005, 5001, 6001, 6002, 6003, 6004, 7010). Those codes tell a
-    /// compliant SDK the request was never accepted, which is the opposite of
-    /// what a deadline expiry means. Notably RPC uses its backend code rather
-    /// than `ERR_RPC_TIMEOUT`, which is documented retryable.
-    pub(super) indeterminate_error_code: u16,
+    /// The command may have partially applied, so this is the domain's shared
+    /// `BACKEND` slot (`x006`), also INDETERMINATE in the catalog.
+    pub(super) unavailable_error_code: u16,
     /// Code returned when the domain mailbox stayed full and the command was
     /// never enqueued.
     ///
-    /// The opposite of `indeterminate_error_code`: nothing was accepted, so the
+    /// The opposite of the two codes above: nothing was accepted, so the
     /// client may safely re-send. Every value here must be inside
     /// `REQ-PROTO-012`'s retryable set, or a compliant client gives up on a
     /// request it could have retried - the response message says "retry with
@@ -127,7 +125,7 @@ impl IngressDomainPolicy {
     }
 
     pub(super) fn dispatch_spec_for_msg_type(
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
     ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
         let Some(dispatch) = crate::dispatch::client_dispatch(msg_type)? else {
             return Ok(None);
@@ -141,7 +139,7 @@ impl IngressDomainPolicy {
     }
 
     pub(crate) fn descriptor_for_msg_type(
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
     ) -> Result<Option<&'static IngressDomainDescriptor>, &'static str> {
         let entry = crate::protocol::manifest::client_entry(msg_type)?;
         let Some(domain) = Self::domain_from_manifest_name(entry.domain) else {
@@ -167,7 +165,8 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         manifest: crate::runtime::DomainKind::Kv.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::kv::ERR_UNAUTHORIZED,
         backpressure_error_code: crate::protocol::error_codes::kv::ERR_BUSY,
-        indeterminate_error_code: crate::protocol::error_codes::kv::ERR_BACKEND_ERROR,
+        timeout_error_code: crate::protocol::error_codes::kv::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::kv::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::kv_codec::extract_auth_route,
         canonical_auth_route: crate::domains::kv::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
@@ -179,8 +178,9 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Queue.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::queue::ERR_UNAUTHORIZED,
-        backpressure_error_code: crate::protocol::error_codes::queue::ERR_QUEUE_FULL,
-        indeterminate_error_code: crate::protocol::error_codes::queue::ERR_BACKEND_ERROR,
+        backpressure_error_code: crate::protocol::error_codes::queue::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::queue::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::queue::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
         canonical_auth_route: crate::domains::queue::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
@@ -193,7 +193,8 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         manifest: crate::runtime::DomainKind::Notice.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::notice::ERR_UNAUTHORIZED,
         backpressure_error_code: crate::protocol::error_codes::notice::ERR_BUSY,
-        indeterminate_error_code: crate::protocol::error_codes::notice::ERR_BACKEND_ERROR,
+        timeout_error_code: crate::protocol::error_codes::notice::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::notice::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::notice_codec::extract_auth_route,
         canonical_auth_route: crate::domains::notice::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
@@ -206,7 +207,8 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         manifest: crate::runtime::DomainKind::Stream.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::stream::ERR_UNAUTHORIZED,
         backpressure_error_code: crate::protocol::error_codes::stream::ERR_BUSY,
-        indeterminate_error_code: crate::protocol::error_codes::stream::ERR_BACKEND_ERROR,
+        timeout_error_code: crate::protocol::error_codes::stream::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::stream::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::stream_codec::extract_auth_route,
         canonical_auth_route: crate::domains::stream::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
@@ -218,8 +220,9 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Rpc.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
-        backpressure_error_code: crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
-        indeterminate_error_code: crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+        backpressure_error_code: crate::protocol::error_codes::rpc::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::rpc::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
         canonical_auth_route: crate::domains::rpc::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
@@ -231,8 +234,9 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Lease.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::lease::ERR_UNAUTHORIZED,
-        backpressure_error_code: crate::protocol::error_codes::lease::ERR_QUEUE_FULL,
-        indeterminate_error_code: crate::protocol::error_codes::lease::ERR_TIMEOUT,
+        backpressure_error_code: crate::protocol::error_codes::lease::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::lease::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::lease::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
         canonical_auth_route: crate::domains::lease::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
@@ -244,8 +248,9 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Schedule.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
-        backpressure_error_code: crate::protocol::error_codes::schedule::ERR_BACKEND_ERROR,
-        indeterminate_error_code: crate::protocol::error_codes::schedule::ERR_TIMEOUT,
+        backpressure_error_code: crate::protocol::error_codes::schedule::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::schedule::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::schedule::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
         canonical_auth_route: crate::domains::schedule::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
@@ -298,7 +303,7 @@ mod tests {
             session_id: 7,
             channel_id: ChannelId::Lease,
             route_family: family,
-            msg_type: crate::protocol::tlv::MessageType::new(msg_type),
+            msg_type: crate::protocol::message::MessageType::new(msg_type),
             payload,
             source: crate::runtime::routing::RouteAddress::new(
                 family,
@@ -309,6 +314,7 @@ mod tests {
                 crate::runtime::routing::Route::new("lease://acme/locks/resource"),
             ),
             correlation: None,
+            ack_requested: false,
             received_at: std::time::Instant::now(),
         }
     }
@@ -421,14 +427,7 @@ mod tests {
                 )),
             ),
             (
-                707,
-                Some((
-                    DomainKind::Schedule,
-                    AuthorizationPolicy::WildcardScoped(crate::auth::Access::Read),
-                )),
-            ),
-            (
-                707,
+                702,
                 Some((
                     DomainKind::Schedule,
                     AuthorizationPolicy::WildcardScoped(crate::auth::Access::Read),
@@ -441,7 +440,7 @@ mod tests {
             .iter()
             .map(|(msg_type, _)| {
                 IngressDomainPolicy::dispatch_spec_for_msg_type(
-                    crate::protocol::tlv::MessageType::new(*msg_type),
+                    crate::protocol::message::MessageType::new(*msg_type),
                 )
                 .expect("dispatch policy should resolve")
                 .map(|spec| (spec.domain, spec.policy))
@@ -461,7 +460,7 @@ mod tests {
         // Arrange
         let cases = [
             111, 112, 199, 209, 201, 205, 299, 305, 306, 399, 409, 404, 504, 505, 609, 610, 699,
-            705, 799,
+            705, 707, 799,
         ];
 
         // Act
@@ -469,7 +468,7 @@ mod tests {
             .iter()
             .map(|msg_type| {
                 IngressDomainPolicy::dispatch_spec_for_msg_type(
-                    crate::protocol::tlv::MessageType::new(*msg_type),
+                    crate::protocol::message::MessageType::new(*msg_type),
                 )
                 .expect_err("message type should be rejected")
             })
@@ -477,7 +476,7 @@ mod tests {
         let expected = cases
             .iter()
             .map(|msg_type| {
-                if crate::protocol::manifest::entry(crate::protocol::tlv::MessageType::new(
+                if crate::protocol::manifest::entry(crate::protocol::message::MessageType::new(
                     *msg_type,
                 ))
                 .is_some()

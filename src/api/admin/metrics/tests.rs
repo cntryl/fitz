@@ -25,6 +25,28 @@ fn current_epoch_ms() -> u64 {
     .unwrap_or(u64::MAX)
 }
 
+#[test]
+fn should_expose_shared_admin_observation_overload_counter() {
+    // Arrange
+    let runtime = crate::boot::Runtime::new(Arc::new(Router::new()));
+    let before = crate::api::admin::observation_metrics::overload_rejections();
+    crate::api::admin::observation_metrics::record_overload_rejection();
+
+    // Act
+    let metrics = generate_prometheus_metrics(&runtime);
+
+    // Assert
+    assert!(metrics.contains("# TYPE fitz_admin_observation_overload_rejections_total counter"));
+    let recorded = metrics
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("fitz_admin_observation_overload_rejections_total ")
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+        .expect("overload metric sample");
+    assert!(recorded > before);
+}
+
 fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
@@ -331,4 +353,36 @@ fn should_export_registered_queue_admission_counters_once() {
         .iter()
         .filter(|sample| names.contains(&sample.name.as_str()))
         .all(|sample| sample.kind == "counter" && sample.labels.is_empty()));
+}
+
+#[test]
+fn should_bound_family_attributable_metrics_snapshot() {
+    // Arrange
+    let model = crate::control::admin::read_model::AdminReadModel::new();
+    model.replace_rpc_workers(
+        (0..300)
+            .map(|id| {
+                crate::control::admin::RpcWorker::snapshot(
+                    1,
+                    id,
+                    "acme",
+                    &format!("rpc://acme/app/work-{id}/run"),
+                    "2026-10-04T00:00:00Z",
+                    0,
+                    0.0,
+                )
+            })
+            .collect(),
+    );
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), model);
+
+    // Act
+    let samples = family_attributable_samples(&runtime, 1);
+
+    // Assert
+    let workers = samples
+        .iter()
+        .find(|sample| sample.name == "fitz_rpc_workers_registered")
+        .expect("family worker metric");
+    assert_eq!(workers.value, 100.0);
 }

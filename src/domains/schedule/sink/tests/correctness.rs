@@ -14,9 +14,9 @@ fn schedule_error_message(mailbox: &Mailbox, label: &str) -> String {
     let frame = receive_envelope(mailbox, label)
         .into_payload::<FrameContext>()
         .expect("schedule response frame");
-    let mut decoder = PayloadDecoder::new(&frame.payload);
-    assert_eq!(decoder.get_u8().expect("schedule response status"), 1);
-    decoder.get_string().expect("schedule error message")
+    crate::protocol::error_codes::decode_error_body(&frame.payload)
+        .expect("schedule error envelope")
+        .1
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn should_reject_schedule_request_when_source_and_destination_families_differ() 
             destination_family,
         ),
         Ok(crate::domains::schedule::ScheduleMessage::List {
-            offset: 0,
+            cursor: None,
             limit: 10,
         }),
     );

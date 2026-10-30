@@ -293,6 +293,22 @@ use validation::{
     validate_public_origin_security,
 };
 
+/// Environment key for the largest wire message the broker accepts and frames.
+pub const ENV_MAX_MESSAGE_BYTES: &str = "FITZ_MAX_MESSAGE_BYTES";
+/// Default wire message limit, header included.
+pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+/// The smallest deployment limit, leaving room for a 400 KiB Stream event
+/// plus its route, record fields, and replay cursor.
+pub const MIN_MAX_MESSAGE_BYTES: usize = 512 * 1024;
+/// Keep the shared and per-session transport byte budgets within Tokio's
+/// semaphore permit limit while allowing each configured frame twice over.
+pub const MAX_MAX_MESSAGE_BYTES: usize =
+    if tokio::sync::Semaphore::MAX_PERMITS / 2 < u32::MAX as usize {
+        tokio::sync::Semaphore::MAX_PERMITS / 2
+    } else {
+        u32::MAX as usize
+    };
+
 struct TransportConfig<'a> {
     boot: &'a BootConfig,
 }
@@ -306,6 +322,15 @@ impl<'a> TransportConfig<'a> {
         let config = self.boot;
         if config.metrics_bind_addr.trim().is_empty() {
             return Err("FITZ_METRICS_BIND_ADDR must not be empty".into());
+        }
+        if config.max_frame_size < MIN_MAX_MESSAGE_BYTES
+            || config.max_frame_size > MAX_MAX_MESSAGE_BYTES
+            || u32::try_from(config.max_frame_size).is_err()
+        {
+            return Err(format!(
+                "{ENV_MAX_MESSAGE_BYTES} must be between {MIN_MAX_MESSAGE_BYTES} and {MAX_MAX_MESSAGE_BYTES} bytes"
+            )
+            .into());
         }
         if let Some(value) = env_non_empty("FITZ_TCP_ENABLED") {
             value.parse::<bool>().map_err(|_| {
@@ -561,6 +586,10 @@ impl Default for BootConfig {
             .ok()
             .and_then(|value| value.parse::<bool>().ok())
             .unwrap_or(true);
+        let max_frame_size = std::env::var(ENV_MAX_MESSAGE_BYTES)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_MAX_MESSAGE_BYTES);
         let bind_addr = std::env::var("FITZ_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
         let metrics_bind_addr = std::env::var("FITZ_METRICS_BIND_ADDR")
             .unwrap_or_else(|_| DEFAULT_METRICS_BIND_ADDR.to_string());
@@ -611,7 +640,7 @@ impl Default for BootConfig {
             route_family_resolver: crate::auth::RouteFamilyResolverConfig::from_env(),
             route_families,
             max_connections: 10_000,
-            max_frame_size: 1024 * 1024,
+            max_frame_size,
             channel_capacity: 1000,
             cloud_durability: CloudDurabilityMode::from_env(),
             storage_memtable: StorageMemtableConfig::from_env(),

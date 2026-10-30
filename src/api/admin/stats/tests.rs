@@ -2,6 +2,7 @@ use super::build_bounded_global_stats;
 use crate::boot::Runtime;
 use crate::control::admin::read_model::AdminReadModel;
 use crate::control::admin::NoticeSubscription;
+use crate::control::admin::RpcWorker;
 use crate::runtime::Router;
 use std::sync::Arc;
 
@@ -57,4 +58,32 @@ fn should_report_fresh_queue_counts_in_family_stats_without_an_intervening_list_
     // Assert
     assert_eq!(stats.domains.queue.messages_ready, 1);
     assert_eq!(stats.domains.queue.messages_dead_lettered, 0);
+}
+
+#[test]
+fn should_bound_family_stats_projection_snapshot() {
+    // Arrange
+    let model = AdminReadModel::new();
+    model.replace_rpc_workers(
+        (0..300)
+            .map(|id| {
+                RpcWorker::snapshot(
+                    1,
+                    id,
+                    "acme",
+                    &format!("rpc://acme/app/work-{id}/run"),
+                    "2026-10-04T00:00:00Z",
+                    0,
+                    0.0,
+                )
+            })
+            .collect(),
+    );
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), model);
+
+    // Act
+    let stats = super::build_family_stats(&runtime, 1);
+
+    // Assert
+    assert_eq!(stats.domains.rpc.workers_registered, 100);
 }

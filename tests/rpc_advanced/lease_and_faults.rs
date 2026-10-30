@@ -57,7 +57,7 @@ fn should_reject_rpc_request_when_pending_capacity_reached_given_rpc_sink() {
 
     let (code, message) = fitz::protocol::rpc_codec::decode_error_body(&response.body)
         .expect("decode backpressure error");
-    assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE);
+    assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_BUSY);
     assert_eq!(message, "RPC backpressure: too many pending requests");
 }
 
@@ -183,10 +183,7 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
     let (timeout_code, timeout_message) =
         fitz::protocol::rpc_codec::decode_error_body(&timeout_response.body)
             .expect("decode timeout error");
-    assert_eq!(
-        timeout_code,
-        fitz::protocol::error_codes::rpc::ERR_RPC_TIMEOUT
-    );
+    assert_eq!(timeout_code, fitz::protocol::error_codes::rpc::ERR_TIMEOUT);
     assert_eq!(
         timeout_message,
         "Worker did not reply within timeout period"

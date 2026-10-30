@@ -105,11 +105,17 @@ impl LeaseDomain {
             active.clone(),
             move |family| LeaseFamilyState::new(&family_config, family),
             move |state, _family, _lane, command| {
-                LeaseFamilyRuntime {
+                let mut runtime = LeaseFamilyRuntime {
                     core: state,
                     active: active.as_ref(),
+                };
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    runtime.receive(command);
+                }));
+                if let Err(panic) = result {
+                    runtime.clear_failed_family_projection();
+                    std::panic::resume_unwind(panic);
                 }
-                .receive(command);
             },
             crate::domains::lease::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
         )

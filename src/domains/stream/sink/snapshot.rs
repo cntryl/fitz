@@ -225,6 +225,7 @@ impl StreamFamilyRuntime {
             };
             expected_offset = commit.last_resource_offset.saturating_add(1);
             self.enqueue_watermark_commit(WatermarkCommit {
+                targets: crate::domains::stream::sink::model::WatermarkTargets::both(),
                 family: self.core.family,
                 realm: realm.to_string(),
                 area: area.to_string(),

@@ -206,7 +206,6 @@ impl StreamFamilyState {
             if remove_family {
                 families.remove(&family_id.as_u64());
             }
-            let _ = families;
             self.remove_pending_notifications_for_pattern(session_id, pattern.as_str());
             StreamClientResponseBody::Ok {
                 session_id: None,

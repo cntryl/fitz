@@ -7,9 +7,7 @@
 
 // Re-export testkit types for test files
 use bytes::BufMut;
-pub use fitz::testkit::{
-    TestClient, TestServer, TestWebSocketClient, TlvFrameBuilder, TlvFrameParser,
-};
+pub use fitz::testkit::{FrameBuilder, FrameParser, TestClient, TestServer, TestWebSocketClient};
 
 #[inline]
 fn u32_len(value: usize) -> u32 {

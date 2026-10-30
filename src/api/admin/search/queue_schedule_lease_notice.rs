@@ -1,10 +1,9 @@
-use super::{
-    candidate, resource_href, route_triplet, AdminSearchResult, Candidate, Runtime, SearchOptions,
-};
+use super::model_and_sessions::SearchSnapshot;
+use super::{candidate, resource_href, route_triplet, AdminSearchResult, Candidate, SearchOptions};
 use std::collections::BTreeMap;
 
 pub(crate) fn collect_queue_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -12,17 +11,17 @@ pub(crate) fn collect_queue_candidates(
         return;
     }
 
-    collect_queue_resource_candidates(runtime, options, candidates);
-    collect_queue_inflight_candidates(runtime, options, candidates);
-    collect_queue_dead_letter_candidates(runtime, options, candidates);
+    collect_queue_resource_candidates(snapshot, options, candidates);
+    collect_queue_inflight_candidates(snapshot, options, candidates);
+    collect_queue_dead_letter_candidates(snapshot, options, candidates);
 }
 
 fn collect_queue_resource_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for queue in runtime.queue_list_queues(options.realm.as_deref()) {
+    for queue in snapshot.rows.queues.iter().cloned() {
         let route_family = queue.family.to_string();
         if !options.matches_scope(
             Some(&route_family),
@@ -96,11 +95,11 @@ fn collect_queue_resource_candidates(
 }
 
 fn collect_queue_inflight_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for inflight in runtime.queue_list_inflight(options.realm.as_deref()) {
+    for inflight in snapshot.rows.queue_inflight.iter().cloned() {
         let route_family = inflight.family.to_string();
         if !options.matches_scope(
             Some(&route_family),
@@ -156,11 +155,11 @@ fn collect_queue_inflight_candidates(
 }
 
 fn collect_queue_dead_letter_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for message in runtime.queue_list_dead_letters(options.realm.as_deref()) {
+    for message in snapshot.rows.queue_dead_letters.iter().cloned() {
         let route_family = message.family.to_string();
         if !options.matches_scope(
             Some(&route_family),
@@ -211,7 +210,7 @@ fn collect_queue_dead_letter_candidates(
 }
 
 pub(crate) fn collect_schedule_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -219,7 +218,7 @@ pub(crate) fn collect_schedule_candidates(
         return;
     }
 
-    for schedule in runtime.schedule_list_schedules(options.realm.as_deref()) {
+    for schedule in snapshot.rows.schedules.iter().cloned() {
         let route_family = schedule.route_family.to_string();
         if !options.matches_scope(
             Some(&route_family),
@@ -283,7 +282,7 @@ pub(crate) fn collect_schedule_candidates(
 }
 
 pub(crate) fn collect_lease_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -291,7 +290,7 @@ pub(crate) fn collect_lease_candidates(
         return;
     }
 
-    for lease in runtime.lease_list_leases(options.realm.as_deref()) {
+    for lease in snapshot.rows.leases.iter().cloned() {
         let route_family = lease.route_family.to_string();
         if !options.matches_scope(
             Some(&route_family),
@@ -342,7 +341,7 @@ pub(crate) fn collect_lease_candidates(
 }
 
 pub(crate) fn collect_notice_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -350,16 +349,16 @@ pub(crate) fn collect_notice_candidates(
         return;
     }
 
-    collect_notice_subscription_candidates(runtime, options, candidates);
-    collect_notice_route_candidates(runtime, options, candidates);
+    collect_notice_subscription_candidates(snapshot, options, candidates);
+    collect_notice_route_candidates(snapshot, options, candidates);
 }
 
 fn collect_notice_subscription_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for subscription in runtime.notice_list_subscriptions(options.realm.as_deref(), None) {
+    for subscription in snapshot.rows.notice_subscriptions.iter().cloned() {
         let route_family = subscription.route_family.to_string();
         let parsed = route_triplet(&subscription.pattern);
         if !options.matches_scope(
@@ -419,11 +418,11 @@ fn collect_notice_subscription_candidates(
 }
 
 fn collect_notice_route_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for route in runtime.notice_list_routes(options.realm.as_deref()) {
+    for route in snapshot.rows.notice_routes.iter().cloned() {
         let route_family = route.route_family.to_string();
         let parsed = route_triplet(&route.route);
         if !options.matches_scope(

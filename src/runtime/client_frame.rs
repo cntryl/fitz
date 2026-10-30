@@ -31,6 +31,12 @@ pub struct ClientFrameMeta {
     /// including deferred replies such as a parked Queue reserve, so a response
     /// stays attributable to its caller no matter how late it is emitted.
     pub correlation: Option<NonZeroU64>,
+    /// The client set `ACK_REQUESTED` in the message header. Notice PUBLISH
+    /// answers with the common envelope when this is set; every other verb
+    /// answers regardless and ignores it.
+    pub ack_requested: bool,
+    /// Marks a terminal frame in a correlated response sequence.
+    pub response_final: bool,
 }
 
 impl ClientFrameMeta {
@@ -48,6 +54,8 @@ impl ClientFrameMeta {
             message_type,
             route_family,
             correlation: None,
+            ack_requested: false,
+            response_final: true,
         }
     }
 
@@ -55,6 +63,19 @@ impl ClientFrameMeta {
     #[must_use]
     pub fn with_correlation(mut self, correlation: Option<NonZeroU64>) -> Self {
         self.correlation = correlation;
+        self
+    }
+
+    /// Record whether the client asked for an acknowledgement.
+    #[must_use]
+    pub fn with_ack_requested(mut self, ack_requested: bool) -> Self {
+        self.ack_requested = ack_requested;
+        self
+    }
+
+    #[must_use]
+    pub fn with_response_final(mut self, response_final: bool) -> Self {
+        self.response_final = response_final;
         self
     }
 }

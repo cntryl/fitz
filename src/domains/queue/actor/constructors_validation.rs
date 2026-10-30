@@ -94,6 +94,8 @@ impl QueueActor {
         let now = Instant::now();
 
         let mut actor = Self {
+            response_payload_limit:
+                crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES,
             persistence: super::recovery_store::QueuePersistence::new(store, &queue_key),
             queue_key,
             next_id: 1,

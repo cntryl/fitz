@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 /// Idempotency classification of an operation
 ///
-/// Defined per CLIENT.md lines 892–950.
+/// Classification shared by the per-domain client specs under `docs/clients/spec/`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Idempotency {
     /// Safe to retry unconditionally (read-only or state-neutral).
@@ -20,12 +20,6 @@ pub enum Idempotency {
 }
 
 impl Idempotency {
-    /// Returns true if the operation is safe to retry (either idempotent or context-dependent)
-    #[must_use]
-    pub fn is_safe_to_retry(&self) -> bool {
-        matches!(self, Self::Idempotent | Self::ContextDependent { .. })
-    }
-
     /// Returns the deduplication key description if context-dependent
     #[must_use]
     pub fn dedup_key(&self) -> Option<&'static str> {

@@ -212,14 +212,14 @@ where
                 .await
                 .expect("invalid Stream subscription response");
             let (_message_type, status, data) = parse_stream_response(&response);
-            assert_eq!(status, 2, "invalid pattern must fail: {pattern}");
-            let mut decoder = PayloadDecoder::new(&data[1..]);
-            assert_eq!(decoder.get_u32().expect("subscription error code"), 2010);
-            let message = decoder
-                .get_string()
+            assert_eq!(status, 1, "invalid pattern must fail: {pattern}");
+            let (code, message) = fitz::protocol::error_codes::decode_error_body(&data)
                 .expect("Stream subscription error envelope");
+            assert_eq!(
+                code,
+                fitz::protocol::error_codes::stream::ERR_INVALID_SUBSCRIPTION_PATTERN
+            );
             assert_ne!(message, "");
-            assert!(decoder.is_complete());
         }
     }
 }
@@ -266,14 +266,14 @@ where
     );
     assert_eq!(parse_stream_response(&exact).1, 0);
     let (_, overflow_status, overflow_data) = parse_stream_response(&overflow);
-    assert_eq!(overflow_status, 2);
-    let mut decoder = PayloadDecoder::new(&overflow_data[1..]);
-    assert_eq!(decoder.get_u32().expect("subscription limit code"), 2011);
-    let message = decoder
-        .get_string()
+    assert_eq!(overflow_status, 1);
+    let (code, message) = fitz::protocol::error_codes::decode_error_body(&overflow_data)
         .expect("Stream overflow error envelope");
+    assert_eq!(
+        code,
+        fitz::protocol::error_codes::stream::ERR_SUBSCRIPTION_LIMIT
+    );
     assert!(message.contains("subscription limit"));
-    assert!(decoder.is_complete());
 }
 
 pub(crate) async fn should_deliver_stream_notification_for_overlapping_wildcards<C>(

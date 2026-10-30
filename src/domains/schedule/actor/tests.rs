@@ -3,8 +3,9 @@ use crate::domains::schedule::metrics::{
     METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
     METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
 };
-use crate::domains::schedule::protocol::{Clock, ScheduleCreateEntry};
+use crate::domains::schedule::protocol::ScheduleCreateEntry;
 use crate::domains::schedule::store::{ScheduleInsert, SchedulePersistenceError, ScheduleStore};
+use crate::runtime::clock::Clock;
 use crate::runtime::routing::RouteFamily;
 use crate::testkit::create_test_engine_with_cfs;
 use bytes::Bytes;
@@ -479,40 +480,6 @@ fn should_clear_ready_heap_given_last_schedule_delete() {
     assert!(deleted);
     assert!(actor.ready_heap.is_empty());
     assert_eq!(actor.schedule_count(), 0);
-}
-
-#[test]
-fn should_invalidate_shared_full_list_cache_given_schedule_delete() {
-    // Arrange
-    let mut actor = make_actor();
-    let first_route = "schedule://acme/jobs/cache-first/run";
-    let second_route = "schedule://acme/jobs/cache-second/run";
-    actor
-        .create_schedule(
-            first_route.to_string(),
-            "* * * * *".to_string(),
-            Bytes::from_static(b"first"),
-        )
-        .expect("create first schedule");
-    actor
-        .create_schedule(
-            second_route.to_string(),
-            "0 * * * *".to_string(),
-            Bytes::from_static(b"second"),
-        )
-        .expect("create second schedule");
-    let (cached, _) = actor.list_entries(0, 0).expect("list entries");
-
-    // Act
-    actor.delete_schedule(first_route).expect("delete schedule");
-    let (refreshed, total_count) = actor.list_entries(0, 0).expect("list entries");
-
-    // Assert
-    assert_eq!(cached.len(), 2);
-    assert_eq!(refreshed.len(), 1);
-    assert_eq!(total_count, 1);
-    assert!(refreshed.iter().all(|entry| entry.route != first_route));
-    assert!(refreshed.iter().any(|entry| entry.route == second_route));
 }
 
 #[test]

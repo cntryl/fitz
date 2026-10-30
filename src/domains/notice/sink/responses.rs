@@ -18,7 +18,7 @@ impl NoticeFamilyState {
     }
 
     fn error_response(reason: &str) -> crate::domains::notice::NoticeResponse {
-        crate::domains::notice::NoticeResponse::Error(reason.to_string())
+        crate::domains::notice::NoticeResponse::Error(reason.into())
     }
 
     fn response_meta_for_source(
@@ -62,7 +62,7 @@ impl NoticeFamilyState {
             FrameContext::new(
                 meta.session_id,
                 crate::protocol::test_support::channel_id_from_client(meta.channel),
-                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::message::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )

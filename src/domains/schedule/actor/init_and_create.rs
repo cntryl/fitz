@@ -1,8 +1,8 @@
-use super::model::{PendingClaim, ScheduleActor};
-use crate::domains::schedule::protocol::{
-    parse_concrete_schedule_route, Clock, CronSchedule, ScheduleDef, SystemClock,
-};
+use super::model::{PendingClaim, ScheduleActor, ScheduleDef};
+use crate::domains::schedule::cron::CronSchedule;
+use crate::domains::schedule::route_grammar::parse_concrete_schedule_route;
 use crate::domains::schedule::store::{PersistedSchedule, ScheduleStore};
+use crate::runtime::clock::{Clock, SystemClock};
 use crate::runtime::routing::RouteFamily;
 use rustc_hash::FxBuildHasher;
 use std::cmp::Reverse;
@@ -82,13 +82,13 @@ impl ScheduleActor {
     ) -> Result<Self, String> {
         let mut actor = Self {
             family,
+            reconciled_commit_generation: store.unknown_commit_generation(),
             store,
             schedules: HashMap::with_capacity_and_hasher(128, FxBuildHasher),
             cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
             cron_cache_order: std::collections::VecDeque::new(),
             list_entries: Vec::new(),
             list_entries_by_route: BTreeMap::new(),
-            list_cache: None,
             write_policy,
             last_scan_time: now,
             scan_dedup_window: super::SCAN_DEDUP_WINDOW,

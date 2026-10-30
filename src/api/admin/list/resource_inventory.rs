@@ -638,19 +638,25 @@ pub(crate) fn rpc_operations_from_rows(
 /// Panics if called without prior HTTP-boundary validation of `family`.
 #[must_use]
 pub fn list_sessions(runtime: &Runtime) -> Response {
-    let sessions = runtime.list_sessions();
-    crate::api::admin::json_response(SessionsList { sessions })
+    let limit = super::MAX_ADMIN_RECORD_LIMIT;
+    let (sessions, truncated) = runtime.list_sessions_bounded(limit);
+    crate::api::admin::json_response(SessionsList {
+        sessions,
+        truncated,
+        limit,
+    })
 }
 
 /// Returns live admin session snapshots for one authorized route family.
 #[must_use]
 pub fn list_sessions_for_family(runtime: &Runtime, family: u64) -> Response {
-    let sessions = runtime
-        .list_sessions()
-        .into_iter()
-        .filter(|session| session.route_family == family)
-        .collect();
-    crate::api::admin::json_response(SessionsList { sessions })
+    let limit = super::MAX_ADMIN_RECORD_LIMIT;
+    let (sessions, truncated) = runtime.list_sessions_for_family_bounded(family, limit, 1_000);
+    crate::api::admin::json_response(SessionsList {
+        sessions,
+        truncated,
+        limit,
+    })
 }
 
 /// Returns active KV transactions for a specific resource.

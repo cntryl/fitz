@@ -50,6 +50,9 @@ impl QueueActor {
     ///
     /// Panics only if the timer heap is internally inconsistent after a successful `peek`.
     pub fn process_expired_timers(&mut self) -> bool {
+        if self.storage_outcome_is_unknown() {
+            return false;
+        }
         let now = self.clock.now_instant();
         let mut mutated = false;
         let mut processed = 0;

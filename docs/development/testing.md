@@ -10,8 +10,6 @@ Use Rust's normal split between unit and integration tests.
 - Integration tests live under `tests/`.
 - Domain end-to-end flows use `tests/*_e2e.rs`.
 - Cross-domain semantic boundary checks live under `tests/multi_domain_e2e.rs`.
-- [Domain behavior coverage](domain-behavior-coverage.md) maps invariants to actor,
-  transport, and recovery tests.
 
 Cover backend behavior in Rust and UI behavior in TypeScript. Use the existing
 test runners; do not add Python files or standalone scripts to reproduce or
@@ -102,8 +100,14 @@ Required coverage patterns:
 
 ## Determinism
 
+The storage-runtime Sqrzl recovery fixtures accept
+`FITZ_TEST_SQRZL_ENDPOINT` (default `http://127.0.0.1:9000`). Use an isolated
+compatible emulator when another local service occupies that default address.
+The fixture uses its existing test-only credentials and exercises the provider
+versions used by Midge; an unsupported service version is a fixture failure,
+not a reason to weaken the recovery assertions.
+
 - Prefer deterministic clocks and explicit test runtimes.
-- Keep setup outside benchmark measurement blocks.
 - Do not rely on sleeps unless the behavior is explicitly time based and no deterministic clock hook exists.
 - Do not use observability output as the source of correctness.
 
@@ -113,16 +117,9 @@ Required coverage patterns:
 checks directly; do not reproduce them with source-scanning tests. CI installs
 the pinned revision documented in `CONTRIBUTING.md`.
 
-Performance and stress workloads belong in the six benchmark tiers and use
-`cntryl-stress` through direct `cargo bench` commands. See
-[Benchmark Guidelines](benchmarks.md) for the dedicated workflows and framework
-artifacts. Correctness tests exercise broker behavior and benchmark accounting
-invariants; they do not launch performance campaigns.
-
 ```sh
 cntryl-tools validate-tests
 cntryl-tools check-module-sizes
-cntryl-tools validate-benchmarks
 cargo fmt --all -- --check
 cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic

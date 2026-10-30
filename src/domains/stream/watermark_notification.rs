@@ -35,6 +35,11 @@ impl WatermarkNotification {
         }
     }
 
+    /// True when nothing is queued and no debounce or retry timer is armed.
+    pub(super) const fn is_idle(&self) -> bool {
+        self.pending.is_none() && self.timer.is_none()
+    }
+
     pub(super) fn queue<A: Actor>(&mut self, event: DomainPublishEvent, ctx: &mut Context<A>) {
         self.pending = Some(event);
         self.retry_attempts = 0;

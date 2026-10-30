@@ -208,8 +208,99 @@ pub enum NoticeResponse {
     Ok,
     /// Subscribe succeeded and returns a subscription ID.
     SubscribeOk { subscription_id: u64 },
-    /// Operation failed with error message.
-    Error(String),
+    /// Operation failed; the kind selects the wire code, the message explains.
+    Error(NoticeClientError),
+}
+
+/// The client-visible condition behind a Notice error. The wire codec maps
+/// each kind to its numeric code; the domain never deals in numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeClientErrorKind {
+    InvalidRoute,
+    InvalidPattern,
+    SubscriptionLimit,
+    /// Any failure the domain cannot attribute to a client condition. It is
+    /// fatal for the request and says nothing about whether it took effect.
+    Backend,
+}
+
+/// A Notice error as the client will see it: a typed kind plus the message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeClientError {
+    pub kind: NoticeClientErrorKind,
+    pub message: String,
+}
+
+impl NoticeClientError {
+    pub fn new(kind: NoticeClientErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn invalid_pattern(message: impl Into<String>) -> Self {
+        Self::new(NoticeClientErrorKind::InvalidPattern, message)
+    }
+
+    pub fn subscription_limit(message: impl Into<String>) -> Self {
+        Self::new(NoticeClientErrorKind::SubscriptionLimit, message)
+    }
+
+    pub fn backend(message: impl Into<String>) -> Self {
+        Self::new(NoticeClientErrorKind::Backend, message)
+    }
+
+    /// Recover the kind from a free-text domain error. Shared validation
+    /// helpers still report some conditions as strings; this is the one place
+    /// that reads them, and `should_classify_every_known_notice_error_message`
+    /// pins each wording so a reword fails a test instead of silently
+    /// becoming `Backend`.
+    #[must_use]
+    pub fn from_message(message: String) -> Self {
+        let kind = classify_notice_error_message(&message);
+        Self { kind, message }
+    }
+}
+
+fn classify_notice_error_message(message: &str) -> NoticeClientErrorKind {
+    use NoticeClientErrorKind as Kind;
+
+    match message {
+        "empty pattern" | "route must not contain control characters" => Kind::InvalidPattern,
+        message
+            if message.starts_with("subscription pattern ")
+                || message.starts_with("invalid subscription pattern:") =>
+        {
+            Kind::InvalidPattern
+        }
+        message
+            if message.starts_with("notice subscription limit exceeded")
+                || message.starts_with("wildcard subscription limit exceeded") =>
+        {
+            Kind::SubscriptionLimit
+        }
+        "route family mismatch" => Kind::InvalidRoute,
+        message
+            if message.starts_with("invalid notice publish route:")
+                || message.starts_with("notice publish route ") =>
+        {
+            Kind::InvalidRoute
+        }
+        _ => Kind::Backend,
+    }
+}
+
+impl From<String> for NoticeClientError {
+    fn from(message: String) -> Self {
+        Self::from_message(message)
+    }
+}
+
+impl From<&str> for NoticeClientError {
+    fn from(message: &str) -> Self {
+        Self::from_message(message.to_owned())
+    }
 }
 
 impl NoticeResponse {
@@ -229,7 +320,7 @@ mod response_tests {
         let responses = [
             (NoticeResponse::Ok, false),
             (NoticeResponse::SubscribeOk { subscription_id: 1 }, false),
-            (NoticeResponse::Error("invalid".to_string()), true),
+            (NoticeResponse::Error("invalid".into()), true),
         ];
 
         // Act
@@ -241,24 +332,75 @@ mod response_tests {
         // Assert
         assert_eq!(classifications, [false, false, true]);
     }
-}
 
-/// Notice errors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoticeError {
-    /// Invalid realm format (3030)
-    InvalidRealm,
+    #[test]
+    fn should_classify_every_known_notice_error_message() {
+        // Arrange
+        use super::{NoticeClientError, NoticeClientErrorKind as Kind};
+        let cases = [
+            ("empty pattern", Kind::InvalidPattern),
+            (
+                "route must not contain control characters",
+                Kind::InvalidPattern,
+            ),
+            (
+                "subscription pattern must use notice://",
+                Kind::InvalidPattern,
+            ),
+            ("invalid subscription pattern: bad", Kind::InvalidPattern),
+            (
+                "notice subscription limit exceeded (1024 per session)",
+                Kind::SubscriptionLimit,
+            ),
+            (
+                "wildcard subscription limit exceeded (128 per session)",
+                Kind::SubscriptionLimit,
+            ),
+            ("route family mismatch", Kind::InvalidRoute),
+            ("invalid notice publish route: x", Kind::InvalidRoute),
+            (
+                "notice publish route must have three segments",
+                Kind::InvalidRoute,
+            ),
+            ("backend route cache unavailable", Kind::Backend),
+        ];
 
-    /// Realm mismatch - operation targets different realm than active subscription (3031)
-    RealmMismatch,
-}
+        // Act
+        let kinds = cases
+            .iter()
+            .map(|(message, _)| NoticeClientError::from(*message).kind)
+            .collect::<Vec<_>>();
 
-impl NoticeError {
-    #[must_use]
-    pub fn code(&self) -> u16 {
-        match self {
-            NoticeError::InvalidRealm => 3030,
-            NoticeError::RealmMismatch => 3031,
-        }
+        // Assert
+        let expected = cases.iter().map(|(_, kind)| *kind).collect::<Vec<_>>();
+        assert_eq!(kinds, expected);
+    }
+
+    #[test]
+    fn should_classify_real_pattern_compiler_errors_as_invalid_patterns() {
+        // Arrange: every pattern the compiler rejects is an invalid pattern,
+        // whatever wording it uses; the subscribe path wraps the message in
+        // that kind directly, and the free-text classifier agrees.
+        use super::{NoticeClientError, NoticeClientErrorKind as Kind};
+        let compile = |pattern: &str| {
+            crate::runtime::DomainKind::Notice
+                .descriptor()
+                .compile_registration_pattern(pattern)
+                .expect_err("pattern must be rejected")
+        };
+
+        // Act
+        let partial_wildcard =
+            NoticeClientError::invalid_pattern(compile("notice://r/ord*ers/x")).kind;
+        let adjacent_double_star =
+            NoticeClientError::invalid_pattern(compile("notice://r/**/**")).kind;
+        let control_character = NoticeClientError::from(compile("notice://r/a/b\u{1}")).kind;
+        let empty_segment = NoticeClientError::from(compile("notice://r//x")).kind;
+
+        // Assert
+        assert_eq!(partial_wildcard, Kind::InvalidPattern);
+        assert_eq!(adjacent_double_star, Kind::InvalidPattern);
+        assert_eq!(control_character, Kind::InvalidPattern);
+        assert_eq!(empty_segment, Kind::InvalidPattern);
     }
 }

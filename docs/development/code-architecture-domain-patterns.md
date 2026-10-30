@@ -12,7 +12,7 @@ guarantees. Shared code shape must not blur domain semantics.
 flowchart TB
     ENVELOPE["runtime::Envelope"]
     MAILBOX["MailboxSink impl<br/>deliver or deliver_high_priority"]
-    CLEANUP["SessionCleanup fast path"]
+    CLEANUP["SessionCleanup dispatch path"]
     REQUEST["Client request frame"]
     CODEC["protocol parse and encode"]
     SINKSTATE["domain sink state<br/>session indexes, warm actors, routes"]

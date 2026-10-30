@@ -3,7 +3,7 @@ use crate::stress_support::types::{BenchFailure, StepOutcome};
 use fitz::benchkit::{build_kv_begin, build_kv_commit, build_kv_put, build_kv_rollback};
 use fitz::protocol::error_codes::kv::ERR_BUSY;
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::{TestClient, TlvFrameBuilder};
+use fitz::testkit::{FrameBuilder, TestClient};
 use std::net::SocketAddr;
 
 const KEY_COUNT: usize = 32;
@@ -84,7 +84,7 @@ impl KvDriver {
         encoder.put_u64(tx_id);
         encoder.put_string(&self.route);
         encoder.put_bytes(format!("key-{slot}").as_bytes());
-        let mut frame = TlvFrameBuilder::new();
+        let mut frame = FrameBuilder::new();
         frame.encode_field(103, &encoder.finish());
         let body = request(&mut self.client, &frame.build(), 103).await?;
         require_ok(&body, "KV GET")?;

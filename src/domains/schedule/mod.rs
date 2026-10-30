@@ -17,19 +17,22 @@
 //! delivery backlog, or provide execution guarantees.
 
 pub(crate) mod actor;
+mod cron;
 mod definition_validation;
 pub(crate) mod list_wire_budget;
 pub mod metrics;
 pub mod protocol;
+mod route_grammar;
 pub(crate) mod sink;
 pub(crate) mod store;
 
 pub(crate) use actor::ScheduleActor;
+pub use cron::CronSchedule;
 pub use metrics::ScheduleMetrics;
 pub use protocol::{
-    CronSchedule, ScheduleClientNotification, ScheduleClientRequest, ScheduleClientResponse,
-    ScheduleCreateEntry, ScheduleDef, ScheduleDeliveryMode, ScheduleFailure,
-    ScheduleFailureCategory, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
+    ScheduleClientNotification, ScheduleClientRequest, ScheduleClientResponse, ScheduleCreateEntry,
+    ScheduleDeliveryMode, ScheduleFailure, ScheduleFailureCategory, ScheduleListEntry,
+    ScheduleMessage, ScheduleResponse,
 };
 pub(crate) use sink::{
     validate_run_now_route, ScheduleDomain, ScheduleRunNowError, ScheduleRunNowOutcome,

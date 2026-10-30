@@ -1,7 +1,7 @@
-use super::{complete, empty_legacy_success, error_code, payload, request, require_ok};
+use super::{complete, empty_success, error_code, payload, request, require_ok};
 use crate::stress_support::types::{BenchFailure, StepOutcome};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
-use fitz::protocol::error_codes::queue::ERR_QUEUE_FULL;
+use fitz::protocol::error_codes::queue::ERR_BUSY;
 use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::testkit::TestClient;
 use std::net::SocketAddr;
@@ -47,9 +47,9 @@ impl QueueDriver {
         .await?;
         // Only ENQUEUE rejection can leave this lifecycle without an outstanding message.
         if body.first().copied() != Some(0)
-            && error_code(&body, "Queue ENQUEUE")? == u32::from(ERR_QUEUE_FULL)
+            && error_code(&body, "Queue ENQUEUE")? == u32::from(ERR_BUSY)
         {
-            return Ok(StepOutcome::CapacityRejected(u32::from(ERR_QUEUE_FULL)));
+            return Ok(StepOutcome::CapacityRejected(u32::from(ERR_BUSY)));
         }
         require_ok(&body, "Queue ENQUEUE")?;
         let mut decoder = PayloadDecoder::new(&body);
@@ -69,12 +69,12 @@ impl QueueDriver {
             204,
         )
         .await?;
-        empty_legacy_success(&acknowledged, "Queue ACK")?;
+        empty_success(&acknowledged, "Queue ACK")?;
         Ok(if reservation.capacity_rejections == 0 {
             StepOutcome::Completed
         } else {
             StepOutcome::CompletedWithCapacityRejections {
-                code: u32::from(ERR_QUEUE_FULL),
+                code: u32::from(ERR_BUSY),
                 count: reservation.capacity_rejections,
             }
         })
@@ -86,7 +86,7 @@ impl QueueDriver {
             let response =
                 request(&mut self.client, &build_queue_dequeue(&self.route), 202).await?;
             if response.first().copied() != Some(0)
-                && error_code(&response, "Queue RESERVE")? == u32::from(ERR_QUEUE_FULL)
+                && error_code(&response, "Queue RESERVE")? == u32::from(ERR_BUSY)
             {
                 capacity_rejections = capacity_rejections.saturating_add(1);
                 tokio::time::sleep(reserve_backoff(capacity_rejections)).await;

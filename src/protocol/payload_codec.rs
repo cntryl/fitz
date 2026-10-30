@@ -1,9 +1,8 @@
 //! Sequential payload encoding for domain message bodies.
 //!
-//! This is **not** TLV (tag-length-value). It encodes/decodes a fixed order of
-//! typed fields (scalars, length-prefixed strings/bytes, optionals). Used by
-//! domain codecs (RPC, lease, schedule, notice, stream, etc.) to serialize
-//! the body of messages. For the wire-level frame format (real TLV), see [`crate::protocol::tlv`].
+//! It encodes and decodes a fixed order of typed fields (scalars,
+//! length-prefixed strings and bytes, and optionals) inside a Wire2 message
+//! value. The outer header is defined in [`crate::protocol::wire2::header`].
 
 use bytes::BufMut;
 use std::ops::Range;

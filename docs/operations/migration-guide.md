@@ -2,9 +2,119 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## 0.3.0: wire format 2 (breaking, flag day)
+
+Fitz 0.3.0 speaks only wire format 2. There is no negotiation with wire format
+1 clients: a 0.3.0 broker
+cannot serve a 0.2.x SDK, and a 0.2.x broker cannot serve a 2.0 SDK. The
+client-facing contract is in `docs/clients/`, and the code table is
+[error-codes.md](../clients/spec/error-codes.md).
+
+What every client sees change:
+
+- One fixed 15-byte message header with a mandatory `u64` correlation and a
+  `u32` length. TLV records, `CORRELATE`, `CORRELATED`, `SERVER_HELLO`, and
+  `SESSION_METADATA` are gone; the 64 KiB value cap is gone.
+- `CONNECT` is structured and is always answered by `HELLO` or
+  `CONNECT_REJECTED`. `GOAWAY` announces a planned drain with its grace.
+- Every error is `[1][u16 code][u8 class][u8 effect][string message]`, and
+  every code is renumbered: shared slots `x001`..`x010` per domain, domain
+  codes from `x050`. The old-to-new mapping is in `error-codes.md`.
+- Per-verb layout changes: Schedule `LIST` takes the cursor form (`LIST_V2`
+  retired), KV SCAN ends with an options byte, RPC registrations end with a
+  flags byte and requests with a budget presence byte, Notice `PUBLISH`
+  honors `ACK_REQUESTED`.
+
+**Upgrade order.** Publish and qualify the 2.0 line of every supported SDK
+(.NET, TypeScript, Go, Python, Rust) before cutover. Drain and stop the old
+broker and consumers, then activate the 0.3.0 broker and 2.0 consumers together.
+Mixed versions are prohibited: neither SDK line can connect to the other
+broker generation. Consumers reconnect to the new broker using their 2.0 SDK.
+
+**Rollback.** Roll back the broker and the SDKs together; the same
+prohibition applies in reverse. The wire change touches no persisted data.
+Storage changes that ship in the same release carry their own migration notes.
+
+**Configuration.** `FITZ_MAX_MESSAGE_BYTES` (default 1 MiB) is now the one
+message limit: the transport frame bound, the outbound framing bound, and the
+`max_message_bytes` every client reads from `HELLO`. It includes the 15-byte
+header; the supported range is 524,288 to 4,294,967,295 bytes. Stream APPEND
+accepts at most 400 KiB (409,600 bytes) of body plus metadata, increased from
+61,247 bytes. The 512 KiB message minimum reserves space to replay that event
+with the largest valid route and response metadata. Update SDK event-size
+validation accordingly. Stream READ pagination uses the configured message
+budget. These size changes do not change the persisted event encoding.
+Queue admission reserves enough space for routed reserve metadata and both reserve forms
+obey this configured budget. `HELLO.max_in_flight` is a per-connection bound
+through terminal completion; excess requests return protocol BUSY 0005,
+NOT_APPLIED, while the connection stays open. Smaller domain limits still
+apply (for example, 16 parked Queue reserves).
+
+**Retry policy.** RPC 6050 WORKER_NOT_FOUND is INDETERMINATE: a dispatched
+worker may have applied the operation before disconnecting. Retry only when
+the application knows the work is idempotent or verifies its outcome.
+
+**Rust embedding API.** The unused `QueueError` and `LeaseError` enums were
+removed. Use domain response types and the catalog-backed constants in
+`protocol::error_codes`; the removed numeric enums contained wire-1 codes.
+
+Parsed `CronSchedule` values are immutable. Replace direct reads of `minute`,
+`hour`, `day_of_month`, `month`, and `day_of_week` with their read-only methods
+(for example, `schedule.day_of_week()`). Parse a new expression to change a
+schedule. Direct field mutation previously changed only part of the compiled
+state and could calculate the wrong next occurrence. Both
+`domains::schedule::CronSchedule` and the existing
+`domains::schedule::protocol::CronSchedule` path remain available; route parsing
+and clock compatibility re-exports also remain available.
+
+`ScheduleDef` is no longer exported from the Schedule root or protocol module.
+It represents actor-local caches, monotonic timing and LIST bookkeeping, and
+is now internal to the actor. Use `ScheduleCreateEntry` for creation input and
+`ScheduleListEntry` for list data; embedded applications needing their own
+runtime cache should own that model. These are intentional Rust source changes
+and do not change the wire or persisted Schedule formats.
+
+## Midge 0.5.0
+
+Fitz 0.3.0 embeds the published `cntryl-midge` 0.5.0 package. It writes
+database FORMAT 9 and SST V5, and uses cloud metadata layout v2, lease v4,
+and initialization sentinel v3. The cloud WAL publication catalog remains
+v3, but this does not make a 0.4.x cloud prefix compatible. A 0.5.0 engine
+rejects the old local format and cloud metadata; there is no in-place upgrade.
+An attempted local open can still update writer-lease metadata before it
+reports the format error, so perform compatibility checks on a copy.
+
+1. Quiesce all writers and export the required logical application data with
+   the old broker or its matching Midge version while it can still read the
+   store. Preserve column-family definitions and the application metadata
+   needed to reconstruct expiration. Midge's public scans do not expose raw
+   TTL timestamps, so explicitly decide how to handle already-expired values.
+2. Complete shutdown and preserve a verified copy of the entire original
+   database or cloud prefix, independently of the cache, with the matching
+   old broker image. Keep this copy for rollback.
+3. Import or replay into a new empty database or cloud prefix and a fresh
+   cache. Do not copy FORMAT markers, WAL, SST, lease, or metadata files from
+   the old store. Fitz does not ship a general export/import tool. A raw row
+   import is insufficient when Fitz domain row formats have also changed;
+   see the Stream and single-generation format sections in this guide. Replay
+   creates new Stream records and does not preserve their original offsets or
+   timestamps. Rebuild or reconcile application state and expiration as needed.
+4. Qualify the resulting data, reads, writes, TTL behavior, clean shutdown,
+   restart, and cloud recovery after complete cache loss before cutover.
+   Queue persistence remains best effort; unpersisted backlog and ephemeral
+   session, subscription, lease, and inflight state are not recovered.
+
+Rollback requires the preserved 0.4.x store or prefix and matching old broker;
+the old binary cannot open the new store. Writes accepted after cutover need
+separate reconciliation. Never rewrite format markers. Cloud mode reserves a
+quarter of a local storage budget of at least 32 MiB for the SST range cache,
+leaving three quarters for WAL, spill, flush, and staging admission; qualify
+resource limits for the deployment. See the [Midge 0.5.0 migration guide](https://github.com/cntryl/midge/blob/v0.5.0/docs/operations/migration-guide.md)
+and [release notes](https://github.com/cntryl/midge/releases/tag/v0.5.0).
+
 ## Midge 0.4.1
 
-Fitz uses the published crates.io `cntryl-midge` 0.4.1 package. This patch
+The previous Fitz release uses the published crates.io `cntryl-midge` 0.4.1 package. This patch
 fixes cloud catalog memory admission during recovery, publication, retirement,
 and salvage. Relative to 0.4.0, FORMAT 8, SST V4, catalog v3, lease metadata v3,
 and Fitz row encodings are unchanged; this patch alone requires no logical
@@ -116,7 +226,9 @@ only in the new prefix and need application-level reconciliation.
 See [../development/format-compatibility.md](../development/format-compatibility.md)
 for the format detail.
 
-## Stream error envelope generation 2
+## Historical (wire format 1): Stream error envelope generation 2
+
+Superseded by wire format 2 in 0.3.0, where every Stream error uses the common envelope.
 
 Stream BEGIN, APPEND, COMMIT, ROLLBACK, LAST, GET_METADATA, SUBSCRIBE, and
 UNSUBSCRIBE errors now use `[u8 2][u32 BE domain_code][u32 BE message_length][UTF-8 message]`.
@@ -130,7 +242,9 @@ must wait until all consumers have migrated. Roll back the broker first while
 keeping the dual-generation clients. No capability negotiation was performed for
 this change.
 
-## Frame-level request correlation
+## Historical (wire format 1): Frame-level request correlation
+
+Superseded by wire format 2 in 0.3.0, where every request carries a header correlation.
 
 Adds control message types `CORRELATE` (2), `CORRELATED` (3), and
 `SERVER_HELLO` (4). No existing domain payload changes.
@@ -149,7 +263,9 @@ request per message type.
 Broker rollback is safe at any point; correlated clients fall back to the
 one-at-a-time path on reconnect. No persisted data is affected.
 
-## Client-reported session service names
+## Historical (wire format 1): Client-reported session service names
+
+Superseded by wire format 2 in 0.3.0, where `CONNECT` carries the service name.
 
 The broker advertises `CAP_SESSION_METADATA` in `SERVER_HELLO`. A client that
 has a configured service name may send `SESSION_METADATA` (5) after seeing that

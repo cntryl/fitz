@@ -15,8 +15,8 @@ misleading, mass-produced, or unsupported submissions to protect review capacity
 
 ## Dev Setup
 
-- Install the Rust toolchain pinned for CI in `.github/workflows/ci.yml` (currently 1.99.0). Advance it intentionally after pedantic Clippy, build, and workspace tests pass on the candidate stable release. The six `bench-tier*.yml` workflows pin the same `RUSTUP_TOOLCHAIN`; advance them together so benchmark results do not drift with compiler releases.
-- Install shared tooling for test conventions, module sizes, and benchmark reports:
+- Install the Rust toolchain pinned for CI in `.github/workflows/ci.yml`.
+- Install shared tooling for test conventions and module sizes:
   - `cargo install --locked --git https://github.com/cntryl/tools --rev d31924bfdbb75e7e417bcf498c7e7b15a4cb9273 cntryl-tools`
 - Clone the repo and run the workspace tests:
   - `cargo test --locked --workspace`
@@ -28,7 +28,6 @@ Run these before opening a behavior-changing PR:
 ```sh
 cntryl-tools validate-tests
 cntryl-tools check-module-sizes
-cntryl-tools validate-benchmarks
 cargo fmt --all -- --check
 cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic

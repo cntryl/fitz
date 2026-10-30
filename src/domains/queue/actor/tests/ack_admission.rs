@@ -120,7 +120,7 @@ fn should_leave_unknown_enqueue_commit_outcome_terminal() {
     let response = actor.handle_send(Bytes::from_static(b"work"), None);
 
     // Assert
-    assert!(matches!(response, QueueResponse::Error { .. }));
+    assert!(matches!(response, QueueResponse::Timeout { .. }));
     assert_eq!(actor.next_id, next_id);
     assert_eq!(actor.ready_count, 0);
     assert!(actor
@@ -145,12 +145,149 @@ fn should_leave_unknown_batch_enqueue_commit_outcome_terminal() {
     let response = actor.handle_send_batch(&items);
 
     // Assert
-    assert!(matches!(response, QueueResponse::Error { .. }));
+    assert!(matches!(response, QueueResponse::Timeout { .. }));
     assert_eq!(actor.next_id, next_id);
     assert_eq!(actor.ready_count, 0);
     for id in [MessageId::new(next_id), MessageId::new(next_id + 1)] {
         assert!(actor.load_record_metadata_from_store(id).is_err());
     }
+}
+
+#[test]
+fn should_not_reuse_message_id_after_enqueue_commit_applied_with_unknown_outcome() {
+    // Arrange
+    let mut actor = actor();
+    let first_id = MessageId::new(actor.next_id);
+    let family = actor.queue_key.family;
+    let key = actor.queue_key.clone();
+    let store = actor.persistence.store.clone();
+    let dedup_store = actor.dedup_store.clone();
+    QueueStore::fail_next_commit_after_apply_for_tests(cntryl_midge::MidgeError::OutcomeUnknown(
+        "enqueue applied; response lost".into(),
+    ));
+
+    // Act
+    let first_response = actor.handle_send(Bytes::from_static(b"first"), None);
+    let rejected_response = actor.handle_send(Bytes::from_static(b"second"), None);
+    let mut recovered = QueueActor::try_new(family, key, store, None, dedup_store)
+        .expect("reconstruct queue after unknown commit");
+    let second_response = recovered.handle_send(Bytes::from_static(b"second"), None);
+
+    // Assert
+    assert!(matches!(first_response, QueueResponse::Error { .. }));
+    assert!(matches!(rejected_response, QueueResponse::Error { .. }));
+    assert_eq!(
+        actor.load_body_from_store(first_id).unwrap(),
+        Bytes::from_static(b"first")
+    );
+    let QueueResponse::Sent { id } = second_response else {
+        panic!("recovered queue should accept the next enqueue: {second_response:?}");
+    };
+    assert_ne!(id, first_id, "an applied enqueue ID must not be reused");
+    assert_eq!(
+        recovered.load_body_from_store(first_id).unwrap(),
+        Bytes::from_static(b"first")
+    );
+}
+
+#[test]
+fn should_not_reuse_batch_message_ids_after_applied_unknown_commit() {
+    // Arrange
+    let mut actor = actor();
+    let first_id = MessageId::new(actor.next_id);
+    let family = actor.queue_key.family;
+    let key = actor.queue_key.clone();
+    let store = actor.persistence.store.clone();
+    let dedup_store = actor.dedup_store.clone();
+    let items = [
+        (Bytes::from_static(b"first-a"), None),
+        (Bytes::from_static(b"first-b"), None),
+    ];
+    QueueStore::fail_next_commit_after_apply_for_tests(cntryl_midge::MidgeError::OutcomeUnknown(
+        "batch enqueue applied; response lost".into(),
+    ));
+
+    // Act
+    let first_response = actor.handle_send_batch(&items);
+    let rejected_response = actor.handle_send(Bytes::from_static(b"second"), None);
+    let mut recovered = QueueActor::try_new(family, key, store, None, dedup_store)
+        .expect("reconstruct queue after unknown commit");
+    let second_response = recovered.handle_send(Bytes::from_static(b"second"), None);
+
+    // Assert
+    assert!(matches!(first_response, QueueResponse::Error { .. }));
+    assert!(matches!(rejected_response, QueueResponse::Error { .. }));
+    assert_eq!(actor.load_body_from_store(first_id).unwrap(), items[0].0);
+    assert_eq!(
+        actor
+            .load_body_from_store(MessageId::new(first_id.as_u64() + 1))
+            .unwrap(),
+        items[1].0
+    );
+    let QueueResponse::Sent { id } = second_response else {
+        panic!("recovered queue should accept the next enqueue: {second_response:?}");
+    };
+    assert!(id.as_u64() > first_id.as_u64() + 1);
+    assert_eq!(
+        recovered.load_body_from_store(first_id).unwrap(),
+        items[0].0
+    );
+    assert_eq!(
+        recovered
+            .load_body_from_store(MessageId::new(first_id.as_u64() + 1))
+            .unwrap(),
+        items[1].0
+    );
+}
+
+#[test]
+fn should_reconstruct_queue_after_unknown_applied_ack_commit() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut key = unique_queue_key("unknown-applied-ack");
+    key.family = RouteFamily::new(1);
+    let store = QueueStore::new(crate::testkit::create_test_engine_with_cfs(vec![1]));
+    let mut actor = QueueActor::with_clock(
+        RouteFamily::new(1),
+        key.clone(),
+        store.clone(),
+        Box::new(clock.clone()),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let id = match actor.handle_send(Bytes::from_static(b"work"), None) {
+        QueueResponse::Sent { id } => id,
+        response => panic!("expected enqueue success: {response:?}"),
+    };
+    let token = match actor.handle_receive_for_session(TEST_SESSION_ID, 1, Some(1)) {
+        QueueResponse::Received { messages } => messages[0].token,
+        response => panic!("expected reservation: {response:?}"),
+    };
+    QueueStore::fail_next_commit_after_apply_for_tests(cntryl_midge::MidgeError::OutcomeUnknown(
+        "ack applied; response lost".into(),
+    ));
+
+    // Act
+    let ack_response = actor.handle_ack_for_session(TEST_SESSION_ID, id, token);
+    clock.advance(Duration::from_secs(2));
+    actor.process_expired_timers();
+    let recovered = QueueActor::try_with_clock(
+        RouteFamily::new(1),
+        key,
+        store,
+        Box::new(clock),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    )
+    .expect("reconstruct queue after unknown ACK commit");
+
+    // Assert
+    assert!(matches!(ack_response, QueueResponse::Error { .. }));
+    assert!(actor.load_record_metadata_from_store(id).is_err());
+    assert!(actor.inflight.contains_key(&id));
+    assert!(actor.storage_outcome_is_unknown());
+    assert!(recovered.inflight.is_empty());
+    assert_eq!(recovered.ready_len(), 0);
 }
 
 #[test]
@@ -184,7 +321,7 @@ fn should_leave_unknown_ack_commit_outcome_terminal() {
     let response = actor.handle_ack_for_session(TEST_SESSION_ID, id, token);
 
     // Assert
-    assert!(matches!(response, QueueResponse::Error { .. }));
+    assert!(matches!(response, QueueResponse::Timeout { .. }));
     assert!(actor.inflight.contains_key(&id));
     assert!(actor.load_record_metadata_from_store(id).is_ok());
 }
@@ -280,7 +417,7 @@ fn should_leave_unknown_batch_ack_commit_outcome_terminal() {
     // Assert
     assert!(responses
         .iter()
-        .all(|response| matches!(response, QueueResponse::Error { .. })));
+        .all(|response| matches!(response, QueueResponse::Timeout { .. })));
     for (id, _) in [first, second] {
         assert!(actor.inflight.contains_key(&id));
         assert!(actor.load_record_metadata_from_store(id).is_ok());

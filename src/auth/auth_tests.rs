@@ -146,6 +146,7 @@ fn should_allow_http_jwks_url_when_insecure_http_env_is_enabled() {
 #[test]
 #[serial]
 fn should_build_auth_config_from_fallback_hmac_secret() {
+    // Arrange
     let previous_hmac_secret = std::env::var("FITZ_JWT_HMAC_SECRET").ok();
     let previous_jwks_map = std::env::var("FITZ_JWT_JWKS_MAP").ok();
 
@@ -154,6 +155,7 @@ fn should_build_auth_config_from_fallback_hmac_secret() {
         std::env::remove_var("FITZ_JWT_JWKS_MAP");
     }
 
+    // Act
     let config = AuthConfig::from_env(true);
 
     unsafe {
@@ -167,6 +169,7 @@ fn should_build_auth_config_from_fallback_hmac_secret() {
         }
     }
 
+    // Assert
     assert!(matches!(config, AuthConfig::Hmac(_)));
     if let AuthConfig::Hmac(config) = config {
         assert_eq!(config.secret, "test-secret-key");
@@ -213,6 +216,7 @@ fn should_reject_partially_invalid_jwks_map_from_environment() {
 #[test]
 #[serial]
 fn should_build_auth_config_from_valid_jwks_map_environment() {
+    // Arrange
     let previous_jwks_map = std::env::var("FITZ_JWT_JWKS_MAP").ok();
     unsafe {
         std::env::set_var(
@@ -221,6 +225,7 @@ fn should_build_auth_config_from_valid_jwks_map_environment() {
         );
     }
 
+    // Act
     let config = AuthConfig::from_env(true);
 
     unsafe {
@@ -230,6 +235,7 @@ fn should_build_auth_config_from_valid_jwks_map_environment() {
         }
     }
 
+    // Assert
     assert!(matches!(config, AuthConfig::Jwks(_)));
     if let AuthConfig::Jwks(config) = config {
         assert_eq!(config.issuers.len(), 1);

@@ -200,14 +200,14 @@ fn should_handle_multiple_schedules_with_different_frequencies() {
 
     // Verify all created
     let list_response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
     match list_response {
-        fitz::domains::schedule::ScheduleResponse::ListDefs { entries, .. } => {
+        fitz::domains::schedule::ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 4);
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 
@@ -474,15 +474,15 @@ fn should_replace_schedule_preserving_ordering() {
 
     // Verify updated
     let list_response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
     match list_response {
-        fitz::domains::schedule::ScheduleResponse::ListDefs { entries, .. } => {
+        fitz::domains::schedule::ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].cron, "0 3 * * *");
         }
-        _ => panic!("Expected ListDefs"),
+        _ => panic!("Expected ListPage"),
     }
 }
 
@@ -513,14 +513,14 @@ fn should_maintain_independence_between_schedules() {
 
     // Assert - only job2 remains
     let list_response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
     match list_response {
-        fitz::domains::schedule::ScheduleResponse::ListDefs { entries, .. } => {
+        fitz::domains::schedule::ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].route, "schedule://acme/jobs/job2/run");
         }
-        _ => panic!("Expected ListDefs"),
+        _ => panic!("Expected ListPage"),
     }
 }

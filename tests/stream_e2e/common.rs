@@ -56,13 +56,11 @@ pub(crate) fn parse_stream_error_message(frame: &[u8]) -> String {
 }
 
 pub(crate) fn parse_stream_error(frame: &[u8]) -> (u32, String) {
-    let (msg_type, status, payload) = parse_stream_response(frame);
-    assert_eq!(status, if msg_type == 92 { 1 } else { 2 });
-    let mut dec = PayloadDecoder::new(&payload[1..]);
-    let code = dec.get_u32().expect("stream domain code");
-    let message = dec.get_string().expect("stream error message");
-    assert!(dec.is_complete(), "expected complete stream error payload");
-    (code, message)
+    let (_msg_type, status, payload) = parse_stream_response(frame);
+    assert_eq!(status, 1);
+    let (code, message) =
+        fitz::protocol::error_codes::decode_error_body(&payload).expect("stream error envelope");
+    (u32::from(code), message)
 }
 
 pub(crate) fn event_records(items: &[StreamReadItem]) -> Vec<StreamRecord> {
@@ -109,7 +107,7 @@ pub(crate) fn build_stream_last(route: &str) -> Vec<u8> {
     buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(605, &buf);
     builder.build()
 }
@@ -119,7 +117,7 @@ pub(crate) fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(606, &buf);
     builder.build()
 }
@@ -128,7 +126,7 @@ pub(crate) fn build_stream_rollback(session_id: u64) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u64(session_id);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(603, &buf);
     builder.build()
 }
@@ -152,7 +150,7 @@ pub(crate) fn build_stream_read_with_options(
         None => buf.put_u8(0),
     }
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(604, &buf);
     builder.build()
 }
@@ -180,7 +178,7 @@ pub(crate) fn build_stream_read_with_raw_filter(
     buf.put_u32(usize_to_u32_saturating(filter.len()));
     buf.put_slice(filter);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(604, &buf);
     builder.build()
 }

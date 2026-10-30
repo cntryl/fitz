@@ -114,7 +114,7 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
         FrameContext::new(
             1,
             ChannelId::Pub,
-            crate::dispatch::protocol::tlv::MessageType::new(message_type),
+            crate::dispatch::protocol::message::MessageType::new(message_type),
             payload,
             family,
         ),
@@ -156,7 +156,7 @@ fn should_not_retain_append_session_when_begin_response_cannot_be_delivered() {
         FrameContext::new(
             1,
             ChannelId::Pub,
-            crate::dispatch::protocol::tlv::MessageType::new(message_type),
+            crate::dispatch::protocol::message::MessageType::new(message_type),
             payload,
             family,
         ),
@@ -592,6 +592,7 @@ fn should_project_persisted_unprovisioned_family_into_admin_snapshot() {
         StreamStorageLayout::default(),
         Some(&[RouteFamily::new(1)]),
         StreamStorageWriteOptions::local(),
+        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
     )
     .expect("create family-1-only Stream domain");
 

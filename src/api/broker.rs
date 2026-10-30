@@ -198,6 +198,7 @@ fn register_domains_stage(
     config: &BootConfig,
 ) -> BootStage<Arc<domains::BrokerDomains>> {
     let options = domains::DomainSetupOptions {
+        max_message_bytes: config.max_frame_size,
         route_families: config.route_families.clone(),
         schedule_write_policy: config.schedule_write_policy(),
 
@@ -243,13 +244,32 @@ async fn boot_with_shutdown(config: BootConfig, shutdown: ShutdownCoordinator) -
 
 async fn boot_with_shutdown_and_listeners(
     config: BootConfig,
-    mut shutdown: ShutdownCoordinator,
-    mut listener_bindings: BootListenerBindings,
+    shutdown: ShutdownCoordinator,
+    listener_bindings: BootListenerBindings,
 ) -> BootResult<()> {
     resource_limits::enforce_startup_resource_limits()?;
 
     let _metrics = observability::init_observability()?;
+    let boot_result = boot_initialized(config, shutdown, listener_bindings).await;
+    let tracer_shutdown =
+        match tokio::task::spawn_blocking(crate::observability::global::shutdown_tracer_provider)
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => Err(format!("OpenTelemetry shutdown task failed: {error}")),
+        };
 
+    if let Err(error) = tracer_shutdown {
+        tracing::error!(%error, "OpenTelemetry flush failed during broker shutdown");
+    }
+    boot_result
+}
+
+async fn boot_initialized(
+    config: BootConfig,
+    mut shutdown: ShutdownCoordinator,
+    mut listener_bindings: BootListenerBindings,
+) -> BootResult<()> {
     tracing::info!("Starting Fitz broker");
     config.validate()?;
     if let Some(signal) = shutdown.requested() {

@@ -8,7 +8,7 @@ const STREAM: &str = "stream://test/cloud/events";
 
 async fn request(client: &mut TestClient, frame: &[u8], expected: u16) -> Vec<u8> {
     let response = client.request(frame, 30_000).await.unwrap();
-    let mut parser = TlvFrameParser::new(&response);
+    let mut parser = FrameParser::new(&response);
     let (kind, payload) = parser.next_field().unwrap();
     assert_eq!(kind, expected);
     assert_eq!(payload.first(), Some(&0), "operation failed: {payload:?}");
@@ -40,7 +40,7 @@ async fn should_recover_committed_kv_and_stream_from_cloud_with_a_fresh_cache() 
     request(&mut client, &build_stream_append(session, 0, b"event"), 601).await;
     let mut payload = session.to_be_bytes().to_vec();
     payload.push(1); // Sync persistence waits for cloud storage.
-    let mut commit = TlvFrameBuilder::new();
+    let mut commit = FrameBuilder::new();
     commit.encode_field(602, &payload);
     request(&mut client, &commit.build(), 602).await;
     drop(client);

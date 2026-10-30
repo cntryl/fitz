@@ -21,7 +21,7 @@ use fitz::benchkit::{
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
-use fitz::testkit::transport::TlvFrameParser;
+use fitz::testkit::transport::FrameParser;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use std::time::Instant;
@@ -199,7 +199,7 @@ impl Drop for InProcessRpcFixture {
 }
 
 fn parse_tlv(frame: &[u8]) -> (u16, Bytes) {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (message_type, payload) = parser.next_field_ref().expect("one RPC TLV field");
     assert!(
         parser.next_field_ref().is_none(),

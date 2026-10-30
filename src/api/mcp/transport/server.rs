@@ -104,6 +104,12 @@ impl McpServer {
             &tool_name,
             &cancellation_token,
         )?;
+        let Some(shared_admin_permit) = self.runtime.try_acquire_admin_blocking_permit() else {
+            crate::api::admin::observation_metrics::record_overload_rejection();
+            crate::api::mcp::telemetry::record_overload();
+            context.record_transport_denial(&tool_name, "shared_admin_capacity_full");
+            return Err("Admin observation capacity is full; retry later".into());
+        };
         let runtime = self.runtime.clone();
         let registry = self.registry.clone();
         let context_for_worker = context.clone();
@@ -113,6 +119,7 @@ impl McpServer {
         let name = tool_name.clone();
         let execution = super::execution::spawn(
             permit,
+            shared_admin_permit,
             cancellation_token.clone(),
             context.clone(),
             tool_name.clone(),
@@ -222,6 +229,19 @@ impl McpServer {
                 return Err(message);
             }
         };
+        let Some(shared_admin_permit) = self.runtime.try_acquire_admin_blocking_permit() else {
+            crate::api::admin::observation_metrics::record_overload_rejection();
+            crate::api::mcp::telemetry::record_overload();
+            actions.record_request_interruption(
+                tool_name,
+                Some(&request_target),
+                &context,
+                self.token_fingerprint,
+                "shared_admin_capacity_full",
+                audit_authorized,
+            )?;
+            return Err("Admin observation capacity is full; retry later".into());
+        };
         let actions_for_observer = actions.clone();
         let actions = actions.clone();
         let runtime = self.runtime.clone();
@@ -233,6 +253,7 @@ impl McpServer {
         let worker_target = request_target.clone();
         let execution = tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            let _shared_admin_permit = shared_admin_permit;
             if worker_cancellation.is_cancelled() {
                 actions.record_request_interruption(
                     &operation_tool,

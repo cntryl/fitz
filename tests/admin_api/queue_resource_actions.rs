@@ -346,6 +346,7 @@ async fn should_purge_dead_letter_given_family_targeted_admin_request() {
 #[tokio::test]
 #[serial]
 async fn should_return_notice_subscriptions_under_resource() {
+    // Arrange
     let runtime = test_runtime();
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
@@ -357,10 +358,12 @@ async fn should_return_notice_subscriptions_under_resource() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload = String::from_utf8(body.to_vec()).unwrap();
@@ -370,6 +373,7 @@ async fn should_return_notice_subscriptions_under_resource() {
 #[tokio::test]
 #[serial]
 async fn should_return_rpc_workers_under_operation() {
+    // Arrange
     let runtime = test_runtime();
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
@@ -381,10 +385,12 @@ async fn should_return_rpc_workers_under_operation() {
         .body(Body::default())
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload = String::from_utf8(body.to_vec()).unwrap();

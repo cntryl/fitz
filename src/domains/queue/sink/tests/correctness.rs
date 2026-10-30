@@ -190,12 +190,9 @@ fn should_reject_queue_watch_given_empty_pattern() {
     let response = receive_response(&mailbox, "empty watch response");
 
     // Assert
-    let mut decoder =
-        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(response.payload.as_ref());
-    assert_eq!(decoder.get_u8().expect("error status"), 1);
-    let message = decoder
-        .get_string()
-        .expect("plain subscription error envelope");
+    let (_, message) =
+        crate::dispatch::protocol::error_codes::decode_error_body(response.payload.as_ref())
+            .expect("subscription error envelope");
     assert_eq!(message, "subscription pattern must use queue://");
     assert!(sink.watch_families_are_empty_for_tests());
 }

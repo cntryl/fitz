@@ -1,39 +1,39 @@
 use super::*;
 
-fn request_payload() -> Vec<u8> {
+/// A request payload up to, but not including, the budget presence byte.
+fn request_payload_before_budget() -> Vec<u8> {
     let request = RpcRequest::new(
         RouteFamily::new(1),
         Uuid::new_v4(),
         Route::new("rpc://realm/area/resource"),
         Bytes::from_static(b"body"),
     );
-    encode_request_into(&request, &mut PayloadEncoder::new())
+    let mut payload = encode_request_into(&request, &mut PayloadEncoder::new());
+    payload.pop();
+    payload
 }
 
 #[test]
-fn should_reject_malformed_remaining_budget_extensions() {
+fn should_reject_malformed_remaining_budget_fields() {
     // Arrange
-    let extensions = [
-        vec![2, 1, 0, 0, 0, 1],
-        vec![1, 2, 0, 0, 0, 1],
-        vec![1, 1],
-        vec![1, 1, 0, 0, 0, 1, 0],
-        [
-            vec![1, 1],
-            (MAX_RPC_BUDGET_MILLIS + 1).to_be_bytes().to_vec(),
-        ]
-        .concat(),
+    let tails = [
+        vec![2, 0, 0, 0, 1],
+        vec![1],
+        vec![1, 0, 0, 0, 1, 0],
+        [vec![1], (MAX_RPC_BUDGET_MILLIS + 1).to_be_bytes().to_vec()].concat(),
+        vec![0, 0],
+        vec![],
     ];
 
     // Act
-    let invalid = extensions.map(|extension| {
-        let mut payload = request_payload();
-        payload.extend(extension);
+    let invalid = tails.map(|tail| {
+        let mut payload = request_payload_before_budget();
+        payload.extend(tail);
         extract_request_remaining_budget_ms(&payload).is_err()
     });
 
     // Assert
-    assert_eq!(invalid, [true; 5]);
+    assert_eq!(invalid, [true; 6]);
 }
 
 #[test]
@@ -43,8 +43,8 @@ fn should_accept_remaining_budget_boundaries() {
 
     // Act
     let actual = budgets.map(|budget| {
-        let mut payload = request_payload();
-        payload.extend([1, 1]);
+        let mut payload = request_payload_before_budget();
+        payload.push(1);
         payload.extend(budget.to_be_bytes());
         extract_request_remaining_budget_ms(&payload).expect("valid boundary")
     });
@@ -73,19 +73,19 @@ fn should_reject_invalid_caller_cancellation_payloads() {
 }
 
 #[test]
-fn should_reject_invalid_registration_cancellation_extensions() {
+fn should_reject_invalid_registration_flags() {
     // Arrange
-    let extensions = [vec![2, 1], vec![1, 2], vec![1], vec![1, 1, 0]];
+    let tails = [vec![2], vec![], vec![1, 0]];
 
     // Act
-    let invalid = extensions.map(|extension| {
+    let invalid = tails.map(|tail| {
         let mut payload = BytesMut::new();
         put_payload_string(&mut payload, "rpc://realm/area/resource");
         payload.put_u32(1);
-        payload.extend(extension);
+        payload.extend(tail);
         extract_registration_cancellation_support(&payload).is_err()
     });
 
     // Assert
-    assert_eq!(invalid, [true; 4]);
+    assert_eq!(invalid, [true; 3]);
 }

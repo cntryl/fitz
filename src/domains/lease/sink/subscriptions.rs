@@ -90,7 +90,6 @@ impl LeaseFamilyRuntime<'_> {
         if remove_family {
             families.remove(&family_id.as_u64());
         }
-        let _ = families;
         self.refresh_metrics_gauges();
     }
 

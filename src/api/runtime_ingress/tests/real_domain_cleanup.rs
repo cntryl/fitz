@@ -569,7 +569,7 @@ async fn should_reject_non_connect_before_auth() {
         .on_frame(
             4,
             ChannelId::Pub,
-            crate::protocol::tlv::MessageType::new(100),
+            crate::protocol::message::MessageType::new(100),
             Bytes::from("payload"),
             None,
         )
@@ -592,7 +592,7 @@ async fn should_reject_control_non_connect_before_auth() {
         .on_frame(
             5,
             ChannelId::Control,
-            crate::protocol::tlv::MessageType::new(2),
+            crate::protocol::message::MessageType::new(2),
             Bytes::from("payload"),
             None,
         )
@@ -644,8 +644,8 @@ fn should_set_permissions_on_connect_with_valid_token() {
             .on_frame(
                 50,
                 ChannelId::Control,
-                crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt.clone()),
+                crate::protocol::message::MessageType::CONNECT,
+                connect_payload(&jwt),
                 None,
             )
             .await;
@@ -695,8 +695,8 @@ fn should_set_permissions_on_connect_for_auth0_shape() {
                 .on_frame(
                     57,
                     ChannelId::Control,
-                    crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    crate::protocol::message::MessageType::CONNECT,
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -738,8 +738,8 @@ fn should_set_permissions_on_connect_for_entra_delegated_shape() {
                 .on_frame(
                     58,
                     ChannelId::Control,
-                    crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    crate::protocol::message::MessageType::CONNECT,
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -781,8 +781,8 @@ fn should_set_permissions_on_connect_for_entra_app_only_shape() {
                 .on_frame(
                     59,
                     ChannelId::Control,
-                    crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    crate::protocol::message::MessageType::CONNECT,
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -832,8 +832,8 @@ fn should_set_permissions_on_connect_for_cognito_shape() {
                 .on_frame(
                     64,
                     ChannelId::Control,
-                    crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    crate::protocol::message::MessageType::CONNECT,
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -885,8 +885,8 @@ fn should_set_permissions_on_connect_for_okta_shape() {
                 .on_frame(
                     65,
                     ChannelId::Control,
-                    crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt),
+                    crate::protocol::message::MessageType::CONNECT,
+                    connect_payload(&jwt),
                     None
                 )
                 .await,
@@ -940,8 +940,8 @@ fn should_assign_route_families_from_verified_claims() {
                 .on_frame(
                     52,
                     ChannelId::Control,
-                    crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt_a),
+                    crate::protocol::message::MessageType::CONNECT,
+                    connect_payload(&jwt_a),
                     None
                 )
                 .await,
@@ -952,8 +952,8 @@ fn should_assign_route_families_from_verified_claims() {
                 .on_frame(
                     53,
                     ChannelId::Control,
-                    crate::protocol::tlv::MessageType::CONNECT,
-                    Bytes::from(jwt_b),
+                    crate::protocol::message::MessageType::CONNECT,
+                    connect_payload(&jwt_b),
                     None
                 )
                 .await,

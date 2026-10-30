@@ -16,12 +16,18 @@ pub fn build_troubleshooting_snapshot(runtime: &Runtime) -> TroubleshootingSnaps
 }
 
 pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
-    let snapshot = runtime.refreshed_admin_snapshot(None, usize::MAX);
-    build_runtime_diagnostics_with_schedule(
+    let snapshot =
+        runtime.refreshed_admin_snapshot(None, crate::api::admin::list::MAX_ADMIN_RECORD_LIMIT);
+    let mut diagnostics = build_runtime_diagnostics_with_schedule(
         runtime,
         &snapshot,
         ScheduleDiagnosticCounters::from_runtime(runtime),
-    )
+    );
+    if snapshot.truncated {
+        diagnostics.global.incident_summary =
+            bounded_incident_summary(diagnostics.global.incident_summary);
+    }
+    diagnostics
 }
 
 pub(crate) fn build_bounded_runtime_diagnostics(

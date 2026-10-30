@@ -7,11 +7,13 @@ use super::{
 use bytes::Bytes;
 use cntryl_midge::Query;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct QueueStore {
     engine: crate::storage::FitzStorageEngine,
+    unknown_commit_outcome: Arc<AtomicBool>,
 }
 
 pub(crate) struct QueueTransaction {
@@ -19,6 +21,7 @@ pub(crate) struct QueueTransaction {
     engine: crate::storage::FitzStorageEngine,
     family: u32,
     read_only: bool,
+    unknown_commit_outcome: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Copy)]
@@ -39,6 +42,7 @@ pub(crate) struct QueueStoreError {
 std::thread_local! {
     static FAIL_NEXT_FLUSH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static NEXT_COMMIT_ERROR: std::cell::RefCell<Option<cntryl_midge::MidgeError>> = const { std::cell::RefCell::new(None) };
+    static NEXT_COMMIT_ERROR_AFTER_APPLY: std::cell::RefCell<Option<cntryl_midge::MidgeError>> = const { std::cell::RefCell::new(None) };
 }
 
 impl std::fmt::Display for QueueStoreError {
@@ -72,13 +76,32 @@ impl QueueStoreError {
     pub(super) fn is_admission_pressure(&self, family: u32) -> bool {
         self.admission_stalled || self.is_l0_admission_rejection(family)
     }
+
+    pub(super) fn is_timeout(&self) -> bool {
+        matches!(
+            self.midge_error.as_ref(),
+            Some(cntryl_midge::MidgeError::Timeout(_))
+        )
+    }
 }
 
 impl QueueStore {
     pub(crate) fn new(engine: Arc<cntryl_midge::Engine>) -> Self {
         Self {
             engine: crate::storage::FitzStorageEngine::new(engine),
+            unknown_commit_outcome: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn for_actor(&self) -> Self {
+        Self {
+            engine: self.engine.clone(),
+            unknown_commit_outcome: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub(crate) fn has_unknown_commit_outcome(&self) -> bool {
+        self.unknown_commit_outcome.load(Ordering::Acquire)
     }
 
     pub(crate) fn begin(
@@ -98,6 +121,7 @@ impl QueueStore {
                 engine: self.engine.clone(),
                 family,
                 read_only,
+                unknown_commit_outcome: self.unknown_commit_outcome.clone(),
             })
             .map_err(QueueStoreError::from_midge)
     }
@@ -145,6 +169,11 @@ impl QueueStore {
     pub(crate) fn clear_commit_error_for_tests() {
         NEXT_COMMIT_ERROR.with(|cell| *cell.borrow_mut() = None);
     }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_commit_after_apply_for_tests(error: cntryl_midge::MidgeError) {
+        NEXT_COMMIT_ERROR_AFTER_APPLY.with(|cell| *cell.borrow_mut() = Some(error));
+    }
 }
 
 impl From<Arc<cntryl_midge::Engine>> for QueueStore {
@@ -155,7 +184,10 @@ impl From<Arc<cntryl_midge::Engine>> for QueueStore {
 
 impl From<crate::storage::FitzStorageEngine> for QueueStore {
     fn from(engine: crate::storage::FitzStorageEngine) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            unknown_commit_outcome: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -215,11 +247,31 @@ impl QueueTransaction {
         if let Some(error) = NEXT_COMMIT_ERROR.with(|cell| cell.borrow_mut().take()) {
             return Err(QueueStoreError::from_midge(error));
         }
-        super::ack_timing::measure(ack, super::ack_timing::Phase::Commit, || {
+        let result = super::ack_timing::measure(ack, super::ack_timing::Phase::Commit, || {
             self.inner
                 .commit(cntryl_midge::WriteOptions::best_effort())
                 .map_err(QueueStoreError::from_midge)
-        })
+        });
+        if result.as_ref().is_err_and(|error| {
+            matches!(
+                error.midge_error.as_ref(),
+                Some(
+                    cntryl_midge::MidgeError::OutcomeUnknown(_)
+                        | cntryl_midge::MidgeError::Timeout(_)
+                )
+            )
+        }) {
+            self.unknown_commit_outcome.store(true, Ordering::Release);
+        }
+        #[cfg(test)]
+        if result.is_ok() {
+            if let Some(error) = NEXT_COMMIT_ERROR_AFTER_APPLY.with(|cell| cell.borrow_mut().take())
+            {
+                self.unknown_commit_outcome.store(true, Ordering::Release);
+                return Err(QueueStoreError::from_midge(error));
+            }
+        }
+        result
     }
 
     pub(crate) fn scan_all(
@@ -251,7 +303,7 @@ pub(super) struct QueuePersistence {
 
 impl QueuePersistence {
     pub(super) fn new(engine: impl Into<QueueStore>, key: &QueueKey) -> Self {
-        let store = engine.into();
+        let store = engine.into().for_actor();
         Self {
             recovery: Arc::new(QueueRecoveryStore::new(store.clone(), key.clone())),
             body_key_prefix: QueueActor::body_key_prefix(key),

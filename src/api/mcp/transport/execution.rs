@@ -22,6 +22,7 @@ pub(super) fn admit(
 
 pub(super) fn spawn(
     permit: OwnedSemaphorePermit,
+    shared_admin_permit: crate::boot::stats::AdminBlockingPermit,
     cancellation: CancellationToken,
     context: McpExecutionContext,
     operation: String,
@@ -29,6 +30,7 @@ pub(super) fn spawn(
 ) -> tokio::task::JoinHandle<Result<serde_json::Value, String>> {
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
+        let _shared_admin_permit = shared_admin_permit;
         if cancellation.is_cancelled() {
             context.record_transport_denial(&operation, "request_cancelled_before_worker_start");
             return Err("MCP request was cancelled before execution".into());
@@ -88,10 +90,14 @@ mod tests {
         let context = McpExecutionContext::anonymous(SessionPermissions::empty());
         let cancellation = CancellationToken::new();
         let permit = admit(&slots, &context, "test_read", &cancellation).unwrap();
+        let runtime = crate::boot::stats::Runtime::new(Arc::new(crate::runtime::Router::new()));
+        let held_shared_permit = runtime.try_acquire_admin_blocking_permit().unwrap();
+        let shared_admin_permit = runtime.try_acquire_admin_blocking_permit().unwrap();
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let worker = spawn(
             permit,
+            shared_admin_permit,
             cancellation.clone(),
             context,
             "test_read".into(),
@@ -107,6 +113,7 @@ mod tests {
         cancellation.cancel();
         drop(worker);
         let retained = slots.available_permits();
+        assert!(runtime.try_acquire_admin_blocking_permit().is_none());
         release_tx.send(()).unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             while slots.available_permits() == 0 {
@@ -119,6 +126,19 @@ mod tests {
         // Assert
         assert_eq!(retained, 0);
         assert_eq!(slots.available_permits(), 1);
+        let released_shared_permit =
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                loop {
+                    if let Some(permit) = runtime.try_acquire_admin_blocking_permit() {
+                        break permit;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        drop(released_shared_permit);
+        drop(held_shared_permit);
     }
 
     #[tokio::test]
@@ -128,6 +148,8 @@ mod tests {
         let context = McpExecutionContext::anonymous(SessionPermissions::empty());
         let cancellation = CancellationToken::new();
         let permit = admit(&slots, &context, "test_read", &cancellation).unwrap();
+        let runtime = crate::boot::stats::Runtime::new(Arc::new(crate::runtime::Router::new()));
+        let shared_admin_permit = runtime.try_acquire_admin_blocking_permit().unwrap();
         cancellation.cancel();
         let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let called_by_worker = called.clone();
@@ -135,6 +157,7 @@ mod tests {
         // Act
         let result = spawn(
             permit,
+            shared_admin_permit,
             cancellation,
             context,
             "test_read".into(),
@@ -150,5 +173,32 @@ mod tests {
         assert!(result.is_err());
         assert!(!called.load(std::sync::atomic::Ordering::Relaxed));
         assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn should_release_shared_admin_permit_after_worker_panics() {
+        // Arrange
+        let slots = Arc::new(Semaphore::new(1));
+        let context = McpExecutionContext::anonymous(SessionPermissions::empty());
+        let runtime = crate::boot::stats::Runtime::new(Arc::new(crate::runtime::Router::new()));
+        let held_shared_permit = runtime.try_acquire_admin_blocking_permit().unwrap();
+        let shared_admin_permit = runtime.try_acquire_admin_blocking_permit().unwrap();
+        let permit = admit(&slots, &context, "test_read", &CancellationToken::new()).unwrap();
+
+        // Act
+        let result = spawn(
+            permit,
+            shared_admin_permit,
+            CancellationToken::new(),
+            context,
+            "test_read".into(),
+            || -> Result<serde_json::Value, String> { panic!("injected MCP worker panic") },
+        )
+        .await;
+
+        // Assert
+        assert!(result.is_err());
+        assert!(runtime.try_acquire_admin_blocking_permit().is_some());
+        drop(held_shared_permit);
     }
 }

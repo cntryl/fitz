@@ -48,6 +48,18 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     .await
     .expect("seed operator data");
     wait_for_seed_visibility(&server, seed.families.len()).await;
+    let seeded_queue_scopes = seed
+        .families
+        .iter()
+        .map(|family| {
+            (
+                family.route_family,
+                family.realm.as_str(),
+                family.area.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    wait_for_queue_projection(&server, &seeded_queue_scopes).await;
     let first = &seed.families[0];
     let second = &seed.families[1];
 
@@ -239,6 +251,31 @@ async fn wait_for_seed_visibility(server: &TestServer, family_count: usize) {
         server.runtime.notice_list_subscriptions(None, None).len(),
         server.runtime.rpc_workers_registered(),
         server.runtime.rpc_requests_pending(),
+    );
+}
+
+async fn wait_for_queue_projection(server: &TestServer, families: &[(u32, &str, &str)]) {
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let rows = server.runtime.admin_read_model().queues(None);
+            if families.iter().all(|(route_family, realm, area)| {
+                rows.iter().any(|row| {
+                    row.family == u64::from(*route_family)
+                        && row.realm == *realm
+                        && row.area == *area
+                        && row.resource == "settlement"
+                })
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "queue projection did not publish all seeded resources within 30 seconds: published={:?}",
+        server.runtime.admin_read_model().queues(None),
     );
 }
 

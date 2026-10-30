@@ -19,13 +19,10 @@ pub(crate) const STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES: usize = 64;
 
 /// Maximum combined body and metadata size for one event.
 ///
-/// Stream READ responses use a `u16` TLV payload. This limit reserves the
-/// conservative response/item overhead plus the maximum valid route length,
-/// so every accepted event can be replayed on every valid Stream route.
-pub const MAX_EVENT_SIZE: usize = (u16::MAX as usize)
-    - STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES
-    - STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES
-    - crate::utils::route_shape::MAX_ROUTE_BYTES;
+/// The 400 KiB payload ceiling is independent of the configured message
+/// budget. The broker's minimum message size reserves enough additional room
+/// for the largest valid route, record fields, and replay cursor.
+pub const MAX_EVENT_SIZE: usize = 400 * 1024;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CORE DATA TYPES
@@ -395,7 +392,7 @@ pub enum StreamClientResponseBody {
         session_id: Option<u64>,
         data: Vec<u8>,
     },
-    Error(String),
+    Error(StreamClientError),
     SubscriptionError(StreamSubscriptionFailure),
 }
 
@@ -568,76 +565,112 @@ pub struct GetMetadataResponse {
     pub metadata: StreamMetadata,
 }
 
-/// Unified response type for all stream operations
-#[derive(Debug, Clone)]
-pub enum StreamResponse {
-    /// Response to Begin operation
-    BeginOk(BeginSessionResponse),
-    /// Response to Append operation
-    AppendOk(AppendResponse),
-    /// Response to Commit operation
-    CommitOk(CommitSessionResponse),
-    /// Response to Rollback operation
-    RollbackOk,
-    /// Response to Read operation
-    ReadOk(ReadResponse),
-    /// Response to Last operation
-    LastOk(PeekResponse),
-    /// Response to `GetMetadata` operation
-    MetadataOk(GetMetadataResponse),
-    /// Error response for any operation
-    Error(StreamError),
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Stream errors
-#[derive(Debug, Clone, Copy)]
-pub enum StreamError {
-    /// Invalid realm format (3000)
-    InvalidRealm,
+/// Message prefixes that the store and codec layers put on free-text errors
+/// so the client error kind can be recovered without a wire dependency.
+pub const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: &str = "ERR_STREAM_FILTER_UNSUPPORTED_VERSION";
+pub const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLOAD";
+pub const ERR_READ_RESPONSE_TOO_LARGE: &str = "ERR_READ_RESPONSE_TOO_LARGE";
+pub const ERR_STREAM_TIMEOUT: &str = "ERR_STREAM_TIMEOUT:";
 
-    /// Realm mismatch - operation targets different realm than active session (3001)
-    RealmMismatch,
-
-    /// Optimistic concurrency conflict - `expected_offset` mismatch (2001)
+/// The client-visible condition behind a Stream error. The wire codec maps
+/// each kind to its numeric code; the domain never deals in numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamClientErrorKind {
+    /// Route shape, scheme, or route family mismatch.
+    InvalidRoute,
     ConcurrencyConflict,
-
-    /// Session already active for this resource (2002)
     SessionAlreadyActive,
-
-    /// Session not found (2003)
     SessionNotFound,
-
-    /// Invalid read bounds (2004)
     InvalidReadBound,
-
-    /// Event too large (2006)
-    EventTooLarge,
-
-    /// Session full - lease capacity reached (2007)
-    SessionFull,
-
-    /// Batch too large (2008)
-    BatchTooLarge,
+    ResourceNotFound,
+    FilterUnsupportedVersion,
+    FilterInvalidPayload,
+    InvalidSubscriptionPattern,
+    ReadResponseTooLarge,
+    BadRequest,
+    /// Any failure the domain cannot attribute to a client condition. It is
+    /// fatal for the request and says nothing about whether it took effect.
+    Backend,
+    /// Accepted storage operation reached its deadline with an indeterminate effect.
+    Timeout,
 }
 
-impl StreamError {
-    #[must_use]
-    pub fn code(&self) -> u16 {
-        match self {
-            StreamError::InvalidRealm => 3000,
-            StreamError::RealmMismatch => 3001,
-            StreamError::ConcurrencyConflict => 2001,
-            StreamError::SessionAlreadyActive => 2002,
-            StreamError::SessionNotFound => 2003,
-            StreamError::InvalidReadBound => 2004,
-            StreamError::EventTooLarge => 2006,
-            StreamError::SessionFull => 2007,
-            StreamError::BatchTooLarge => 2008,
+/// A Stream error as the client will see it: a typed kind plus the message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamClientError {
+    pub kind: StreamClientErrorKind,
+    pub message: String,
+}
+
+impl StreamClientError {
+    pub fn new(kind: StreamClientErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
         }
+    }
+
+    pub fn backend(message: impl Into<String>) -> Self {
+        Self::new(StreamClientErrorKind::Backend, message)
+    }
+
+    /// Recover the kind from a free-text domain error. Stream internals still
+    /// report some conditions as strings; this is the one place that reads
+    /// them, and `should_classify_every_known_stream_error_message` pins each
+    /// wording so a reword fails a test instead of silently becoming
+    /// `Backend`.
+    #[must_use]
+    pub fn from_message(message: String) -> Self {
+        let kind = classify_stream_error_message(&message);
+        Self { kind, message }
+    }
+}
+
+fn classify_stream_error_message(message: &str) -> StreamClientErrorKind {
+    use StreamClientErrorKind as Kind;
+
+    if message.starts_with(ERR_STREAM_FILTER_UNSUPPORTED_VERSION) {
+        return Kind::FilterUnsupportedVersion;
+    }
+    if message.starts_with(ERR_STREAM_FILTER_INVALID_PAYLOAD) {
+        return Kind::FilterInvalidPayload;
+    }
+    if message.starts_with(ERR_READ_RESPONSE_TOO_LARGE) {
+        return Kind::ReadResponseTooLarge;
+    }
+    if message.starts_with(ERR_STREAM_TIMEOUT) {
+        return Kind::Timeout;
+    }
+
+    match message {
+        "session already active" => Kind::SessionAlreadyActive,
+        "session not found" => Kind::SessionNotFound,
+        "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => Kind::ConcurrencyConflict,
+        "resource not found" => Kind::ResourceNotFound,
+        "route family mismatch" => Kind::InvalidRoute,
+        "empty pattern" => Kind::InvalidSubscriptionPattern,
+        "event too large" => Kind::BadRequest,
+        message if message.starts_with("invalid read ") || message.starts_with("read bound ") => {
+            Kind::InvalidReadBound
+        }
+        message if message.starts_with("subscription pattern ") => Kind::InvalidSubscriptionPattern,
+        _ => Kind::Backend,
+    }
+}
+
+impl From<String> for StreamClientError {
+    fn from(message: String) -> Self {
+        Self::from_message(message)
+    }
+}
+
+impl From<&str> for StreamClientError {
+    fn from(message: &str) -> Self {
+        Self::from_message(message.to_owned())
     }
 }
 
@@ -741,5 +774,67 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_classify_every_known_stream_error_message() {
+        // Arrange
+        use StreamClientErrorKind as Kind;
+        let cases = [
+            ("session already active", Kind::SessionAlreadyActive),
+            ("session not found", Kind::SessionNotFound),
+            ("concurrency conflict", Kind::ConcurrencyConflict),
+            ("ERR_CONCURRENCY_CONFLICT", Kind::ConcurrencyConflict),
+            ("resource not found", Kind::ResourceNotFound),
+            ("empty pattern", Kind::InvalidSubscriptionPattern),
+            ("event too large", Kind::BadRequest),
+            ("invalid read limit 0", Kind::InvalidReadBound),
+            ("read bound exceeds watermark", Kind::InvalidReadBound),
+            (
+                "subscription pattern must use stream://",
+                Kind::InvalidSubscriptionPattern,
+            ),
+            (
+                "ERR_STREAM_FILTER_UNSUPPORTED_VERSION: missing marker",
+                Kind::FilterUnsupportedVersion,
+            ),
+            (
+                "ERR_STREAM_FILTER_INVALID_PAYLOAD: truncated",
+                Kind::FilterInvalidPayload,
+            ),
+            (
+                "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0",
+                Kind::ReadResponseTooLarge,
+            ),
+            ("ERR_STREAM_TIMEOUT: midge commit timed out", Kind::Timeout),
+            (
+                "backend concurrency conflict diagnostic unavailable",
+                Kind::Backend,
+            ),
+            ("route family mismatch", Kind::InvalidRoute),
+        ];
+
+        // Act
+        let kinds = cases
+            .iter()
+            .map(|(message, _)| StreamClientError::from((*message).to_owned()).kind)
+            .collect::<Vec<_>>();
+
+        // Assert
+        let expected = cases.iter().map(|(_, kind)| *kind).collect::<Vec<_>>();
+        assert_eq!(kinds, expected);
+    }
+
+    #[test]
+    fn should_keep_message_verbatim_when_classifying() {
+        // Arrange
+        let message = "ERR_READ_RESPONSE_TOO_LARGE: record at offset 7 is 70000 bytes";
+
+        // Act
+        let error = StreamClientError::from(message);
+
+        // Assert
+        assert_eq!(error.message, message);
+        assert_eq!(error.kind, StreamClientErrorKind::ReadResponseTooLarge);
     }
 }

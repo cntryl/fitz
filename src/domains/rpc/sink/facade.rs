@@ -155,6 +155,10 @@ impl RpcDomain {
                 pending,
             );
             if current_count > previous_count {
+                family_state.state.global_capacity_reservations = family_state
+                    .state
+                    .global_capacity_reservations
+                    .saturating_add(current_count - previous_count);
                 family_state
                     .global_pending_count
                     .fetch_add(current_count - previous_count, Ordering::AcqRel);

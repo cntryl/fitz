@@ -359,9 +359,9 @@ impl RpcFamilyRuntime<'_> {
         // least one response chunk, so the call may have partially executed.
         // `ERR_RPC_BACKPRESSURE` is documented and spec-classified (REQ-PROTO-012)
         // as safe to retry - it means "never accepted" - which is not true
-        // here. Use the domain's indeterminate/backend-error code instead,
-        // matching the `indeterminate_error_code` convention used elsewhere
-        // for "outcome unknown, do not blindly retry" so a client cannot
+        // here. Use the domain's BACKEND code instead, matching the
+        // `unavailable_error_code` convention ingress uses for "outcome
+        // unknown, do not blindly retry" so a client cannot
         // safely re-invoke a non-idempotent call whose side effects may have
         // already run.
         if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.clone() {

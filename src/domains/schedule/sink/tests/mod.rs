@@ -1,8 +1,8 @@
 use super::*;
 use crate::dispatch::protocol::frame::ChannelId;
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::message::MessageType;
 use crate::dispatch::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use crate::dispatch::protocol::tlv::MessageType;
 use crate::runtime::clock::Clock;
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

@@ -33,7 +33,7 @@ flowchart TB
     end
 
     subgraph PROTO["src/protocol"]
-        TLV["tlv.rs and frame modules"]
+        MESSAGE["message.rs, wire2 and frame modules"]
         CODECS["domain codecs<br/>kv, notice, queue, rpc, lease, stream, schedule"]
         DISPATCH["dispatch adapter<br/>decode, commands, responses"]
     end
@@ -82,7 +82,7 @@ flowchart TB
     HANDLERS --> INGRESS
     INGRESS --> AUTH
     INGRESS --> SESSION
-    INGRESS --> TLV
+    INGRESS --> MESSAGE
     INGRESS --> CODECS
     INGRESS --> DISPATCH
     INGRESS --> ROUTER
@@ -129,7 +129,7 @@ flowchart TB
     MCP --> OBS
     TESTKIT --> HANDLERS
     TESTKIT --> KV
-    CLIENT --> TLV
+    CLIENT --> MESSAGE
 ```
 
 ## Dependency Shape

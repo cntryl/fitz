@@ -13,6 +13,7 @@ use std::collections::HashMap;
 #[cfg(test)]
 std::thread_local! {
     static FAIL_NEXT_INVENTORY_UPDATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PANIC_AFTER_NEXT_DATA_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[derive(Default)]
@@ -38,6 +39,28 @@ impl KvInventoryDelta {
 }
 
 impl KvActor {
+    pub(super) fn mark_inventory_incomplete_in_transaction(
+        active: &mut super::ActiveKvTx,
+    ) -> Result<(), KvError> {
+        let key = Self::inventory_metadata_key(
+            &active.scope.realm,
+            &active.scope.area,
+            &active.scope.resource,
+        );
+        let existing = active.tx.get(&key)?;
+        let mut estimate = existing
+            .as_deref()
+            .map(crate::domains::kv::inventory::decode_estimate)
+            .transpose()
+            .map_err(KvError::BackendError)?
+            .unwrap_or_default();
+        if estimate.estimate_complete {
+            estimate.estimate_complete = false;
+            active.tx.put(key, encode_estimate(estimate))?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn inventory_write_policy(
         committed: crate::domains::WritePolicy,
     ) -> crate::domains::WritePolicy {
@@ -116,5 +139,17 @@ impl KvActor {
     #[cfg(test)]
     pub(crate) fn fail_next_inventory_update_for_tests() {
         FAIL_NEXT_INVENTORY_UPDATE.with(|cell| cell.set(true));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_after_next_data_commit_for_tests() {
+        PANIC_AFTER_NEXT_DATA_COMMIT.with(|cell| cell.set(true));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_after_data_commit_if_requested_for_tests() {
+        PANIC_AFTER_NEXT_DATA_COMMIT.with(|cell| {
+            assert!(!cell.replace(false), "injected KV crash after data commit");
+        });
     }
 }

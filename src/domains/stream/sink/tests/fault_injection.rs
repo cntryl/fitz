@@ -82,7 +82,7 @@ impl FaultHarness {
                 FrameContext::new(
                     session_id,
                     ChannelId::Pub,
-                    crate::dispatch::protocol::tlv::MessageType::new(msg_type),
+                    crate::dispatch::protocol::message::MessageType::new(msg_type),
                     payload,
                     self.family,
                 ),
@@ -244,7 +244,7 @@ fn should_preserve_append_state_when_response_cannot_be_delivered() {
             FrameContext::new(
                 1,
                 ChannelId::Pub,
-                crate::dispatch::protocol::tlv::MessageType::new(append_type),
+                crate::dispatch::protocol::message::MessageType::new(append_type),
                 append_payload,
                 family,
             ),

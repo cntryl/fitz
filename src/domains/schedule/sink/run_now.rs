@@ -8,7 +8,7 @@ use super::model::ScheduleRunNowError;
 ///
 /// Returns [`ScheduleRunNowError::InvalidRoute`] with the grammar violation.
 pub(crate) fn validate_run_now_route(route: &str) -> Result<(), ScheduleRunNowError> {
-    let parsed = crate::domains::schedule::protocol::parse_concrete_schedule_route(route)
+    let parsed = crate::domains::schedule::route_grammar::parse_concrete_schedule_route(route)
         .map_err(ScheduleRunNowError::InvalidRoute)?;
     if [
         parsed.realm.as_str(),

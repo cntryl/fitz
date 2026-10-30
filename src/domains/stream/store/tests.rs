@@ -52,6 +52,7 @@ use sessions_layout_and_watermarks::*;
 mod bounded_replay;
 mod commit_persistence;
 mod compacted_locator_cache;
+mod event_size;
 mod filters_ttl_and_metadata;
 mod global_ordering;
 mod global_recovery_and_filters;

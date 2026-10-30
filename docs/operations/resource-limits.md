@@ -1,19 +1,7 @@
 # Resource Limits
 
-Resource limits prevent noisy-neighbor behavior and keep latency predictable.
-
-## Limit Domains
-
-- Connection limits per realm
-- Subscription and wildcard pattern limits
-- Queue and stream depth limits
-- Memory quotas for active sessions and runtime buffers
-
-## Policy Principles
-
-1. Prefer realm-scoped limits over global hard stops.
-2. Define soft warning thresholds before hard rejection.
-3. Keep limits visible through admin stats and metrics.
+Fitz bounds live registrations and transport-owned frame bytes. Other limits
+are documented with their owning domain or configuration setting.
 
 ## Live Registration Limits
 
@@ -22,14 +10,27 @@ counting exact and wildcard registrations together. Wildcard registrations are
 also capped at 128 per session. Duplicate registrations remain idempotent and
 are checked before either cap.
 
-## Operational Signals
+## Transport byte admission
 
-- Rising rejection counts by realm
-- Mailbox depth saturation
-- Repeated permission-denied or route-mismatch bursts
+TCP and WebSocket share one frame-byte budget across their listeners. Each
+session shares a second budget between incoming frames and outgoing replies
+and notifications. Defaults are 64 MiB shared and 8 MiB per session. Each
+budget is raised to at least twice `max_message_bytes` when a larger message
+limit is configured. Message-count and connection limits also apply.
 
-## Escalation Actions
+Admission occurs before queueing a complete frame. A reservation remains held
+through processing and transport writes, including retained `Bytes` clones
+and slices. Releasing the final owner returns the capacity. Failed shared
+admission returns any provisional session reservation immediately.
 
-1. Apply temporary rate limits to high-impact realms.
-2. Scale out compute where bottlenecks are verified.
-3. Adjust durable storage throughput where needed.
+An incoming response-bearing request refused before dispatch receives
+BUSY/NOT_APPLIED when its session is established and the refusal can be queued.
+Unacknowledged Notice publishes may be dropped. Required protocol traffic
+that cannot be buffered, and required outgoing replies that cannot be encoded
+or queued, close the session, leaving outstanding outcomes indeterminate.
+Best-effort live notifications can be dropped. Actors never wait for a slow
+consumer to free byte capacity.
+
+These bounds cover transport-owned frame bytes. They are not a process RSS
+limit: socket/parser buffers, encoding workspaces, storage, and domain state
+have separate allocation and capacity boundaries.

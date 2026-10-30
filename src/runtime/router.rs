@@ -78,6 +78,10 @@ pub trait MailboxSink: Send + Sync {
     ///
     /// Returns `Ok(())` if the envelope was accepted, or an error describing
     /// why delivery failed (full, disconnected, etc.).
+    /// Acceptance does not promise domain completion or durable application.
+    /// A reply timeout or panic after handoff does not establish that the
+    /// envelope was not applied; callers must preserve the failure rather
+    /// than infer that retry is safe.
     ///
     /// # Errors
     ///
@@ -136,10 +140,9 @@ pub enum DeliveryError {
     SinkPanicked,
     /// The response could not be framed for the wire.
     ///
-    /// Permanent for this payload, and deliberately not saturation: a TLV
-    /// value carries a `u16` length, so an oversized response can never be
-    /// sent no matter how long the transport is given. Retrying it wastes
-    /// work; the fix is always to paginate at the source.
+    /// Permanent for this payload, and deliberately not saturation: the
+    /// encoded payload exceeds the destination's limit. Waiting for more
+    /// mailbox capacity cannot make that unchanged payload encodable.
     InvalidPayload { len: usize, max: usize },
     /// The destination sink does not support the envelope's payload type.
     UnsupportedPayload,
@@ -248,9 +251,7 @@ struct RouteRegistry {
 impl RouteRegistry {
     fn new() -> Self {
         Self {
-            // Router lookups and registrations are hot paths. Use a faster
-            // non-cryptographic hasher and reserve a modest working set up front
-            // to reduce repeated rehashing during actor registration bursts.
+            // Use a non-cryptographic hasher and reserve initial registry capacity.
             sinks: DashMap::with_capacity_and_hasher(1024, FxBuildHasher),
             domain_patterns: DashMap::with_capacity_and_hasher(32, FxBuildHasher),
         }
@@ -719,8 +720,7 @@ impl Default for Router {
     }
 }
 
-/// Helper: Determine if current hot path operation should be sampled
-/// Returns true ~1 in 1000 times (0.1% sampling ratio)
+/// Determine whether the selected instrumentation event should be sampled.
 fn should_sample_hot_path() -> bool {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

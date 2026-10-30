@@ -77,6 +77,23 @@ fn request(
         .expect("stream response")
 }
 
+/// Route a request and fail the benchmark on any error envelope, so a failing
+/// operation can never be counted as completed work.
+fn request_ok(
+    context: &StreamBenchContext,
+    destination: &str,
+    msg_type: u16,
+    payload: Bytes,
+) -> Bytes {
+    let response = request(context, destination, msg_type, payload);
+    assert_eq!(
+        response.first().copied(),
+        Some(0),
+        "stream {msg_type} on {destination} returned an error envelope: {response:?}"
+    );
+    response
+}
+
 fn begin_stream(context: &StreamBenchContext, route: &str) -> u64 {
     let begin_frame = build_stream_begin(route);
     let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
@@ -96,12 +113,12 @@ fn seed_committed_stream_route(
     for expected_offset in 0..event_count as u64 {
         let append_frame = build_stream_append(session_id, expected_offset, body);
         let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-        let _ = request(context, route, append_msg_type, append_payload);
+        request_ok(context, route, append_msg_type, append_payload);
     }
 
     let commit_frame = build_stream_commit(session_id, STREAM_SYNC_COMMIT_MODE);
     let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-    let _ = request(context, route, commit_msg_type, commit_payload);
+    request_ok(context, route, commit_msg_type, commit_payload);
 }
 
 fn prepare_validated_read(
@@ -134,17 +151,17 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, 0, b"read event");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
     for _ in 0..100 {
-        let _ = request(&context, route, append_msg_type, append_payload.clone());
+        request_ok(&context, route, append_msg_type, append_payload.clone());
     }
     let commit_frame = build_stream_commit(session_id, STREAM_SYNC_COMMIT_MODE);
     let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-    let _ = request(&context, route, commit_msg_type, commit_payload);
+    request_ok(&context, route, commit_msg_type, commit_payload);
 
     let read_frame = build_stream_read(route, 0);
     let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
 
     let iterations = ctx.measure_workload("complete_read_scan_throughput", || {
-        let _ = request(&context, route, read_msg_type, read_payload.clone());
+        request_ok(&context, route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
 }
@@ -175,7 +192,7 @@ fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
     let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
 
     let iterations = ctx.measure_workload("complete_area_wildcard_read_throughput", || {
-        let _ = request(&context, read_route, read_msg_type, read_payload.clone());
+        request_ok(&context, read_route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
 }

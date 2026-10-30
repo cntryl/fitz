@@ -34,7 +34,7 @@ impl RpcFamilyRuntime<'_> {
                     caller_session_id: pending.dispatch_info.caller_session_id,
                     caller_inbox_addr,
                 }],
-                crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+                crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
                 RPC_BUDGET_EXPIRED_ERROR,
                 "rpc_timeout_errors_forwarded_total",
                 "rpc_timeout_errors_dropped_total",

@@ -42,7 +42,7 @@ fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
     let queue_route = ingress
         .derive_route_for_frame(
             &session,
-            crate::protocol::tlv::MessageType::new(200),
+            crate::protocol::message::MessageType::new(200),
             &Bytes::from(queue_payload),
         )
         .unwrap()
@@ -59,7 +59,7 @@ fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
     let notice_route = ingress
         .derive_route_for_frame(
             &session,
-            crate::protocol::tlv::MessageType::new(501),
+            crate::protocol::message::MessageType::new(501),
             &Bytes::from(notice_payload),
         )
         .unwrap()
@@ -83,7 +83,7 @@ fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
     let stream_route = ingress
         .derive_route_for_frame(
             &session,
-            crate::protocol::tlv::MessageType::new(604),
+            crate::protocol::message::MessageType::new(604),
             &Bytes::from(stream_payload),
         )
         .unwrap()
@@ -911,7 +911,7 @@ async fn should_deny_expired_session_owned_frame_without_closing_session() {
 #[test]
 fn should_reject_unassigned_notice_message_types() {
     // Arrange
-    let msg_type = crate::protocol::tlv::MessageType::new(505);
+    let msg_type = crate::protocol::message::MessageType::new(505);
 
     // Act
     let result = RuntimeIngress::domain_dispatch_for_msg_type(msg_type);

@@ -65,7 +65,7 @@ pub fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: i32)
     // Wait seconds (u32, 0 for immediate)
     buf.put_u32(0);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(400, &buf);
     builder.build()
 }
@@ -88,7 +88,7 @@ pub fn build_lease_acquire_with_wait(
     buf.put_u64(u64_from_i32(ttl_secs));
     buf.put_u32(wait_seconds);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(400, &buf);
     builder.build()
 }
@@ -112,7 +112,7 @@ pub fn build_lease_renew(route: &str, owner_id: &str, token: u64, ttl_secs: i32)
     // TTL seconds (u64)
     buf.put_u64(u64_from_i32(ttl_secs));
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(401, &buf);
     builder.build()
 }
@@ -133,7 +133,7 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
     // Fencing token (u64)
     buf.put_u64(token);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(402, &buf);
     builder.build()
 }
@@ -144,7 +144,7 @@ pub fn build_lease_query(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(403, &buf);
     builder.build()
 }
@@ -155,7 +155,7 @@ pub fn build_lease_subscribe(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(407, &buf);
     builder.build()
 }
@@ -166,7 +166,7 @@ pub fn build_lease_unsubscribe(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(408, &buf);
     builder.build()
 }
@@ -182,7 +182,7 @@ pub fn build_lease_list(pattern: &str, limit: u32) -> Vec<u8> {
     buf.put_u8(0); // has_cursor
     buf.put_u32(limit);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(410, &buf);
     builder.build()
 }
@@ -204,7 +204,7 @@ pub fn build_lease_list_with_cursor(
     buf.put_u32(offset);
     buf.put_u32(limit);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(410, &buf);
     builder.build()
 }
@@ -286,7 +286,7 @@ pub struct LeaseWatchDelivery {
 pub fn parse_lease_watch_delivery(frame: &[u8]) -> Result<LeaseWatchDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field()
         .ok_or_else(|| "Missing lease watch delivery frame".to_string())?;
@@ -322,7 +322,7 @@ pub struct LeaseStatusPayload {
 
 /// Parse LEASE response: (`msg_type: u8`, `status: u8`, `data: Vec<u8>`)
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     // Server sends single TLV record: [`msg_type`][`len`][`payload`]
     // Payload format: [`u8` `status`][optional `u64` token]

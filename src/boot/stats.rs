@@ -18,7 +18,7 @@ const LIFECYCLE_SHUTTING_DOWN: u8 = 2;
 
 const DEFAULT_DRAIN_GRACE_SECONDS: u64 = 25;
 const DEFAULT_DRAIN_CLOSE_REASON: &str = "broker draining for redeploy";
-const ADMIN_BLOCKING_EXECUTOR_CAPACITY: usize = 8;
+const ADMIN_BLOCKING_EXECUTOR_CAPACITY: usize = 2;
 
 /// An owned slot in the bounded API-edge blocking executor.
 ///
@@ -148,4 +148,7 @@ pub struct Runtime {
     /// Available slots for synchronous storage-backed admin work moved off
     /// Tokio workers.
     pub(crate) admin_blocking_slots: Arc<AtomicUsize>,
+
+    /// At most one request refreshes dirty admin projections at a time.
+    pub(crate) admin_snapshot_refreshing: Arc<AtomicBool>,
 }

@@ -67,36 +67,36 @@ fn populate_actor(
     }
 }
 
-fn delete_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count: usize) {
+fn delete_then_first_list_page(ctx: &mut StressContext, name: &str, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
     let route = routes[victim_index].clone();
     let mut actor = create_test_actor();
     populate_actor(&mut actor, &routes, &crons, &payloads, count);
-    let count_u64 = count as u64;
     let mut total = Duration::ZERO;
 
     for _ in 0..DELETE_CHURN_OPERATION_COUNT {
-        let (cached, cached_total) = actor.list_entries(0, 0).expect("list entries");
+        let (first_page, _, _) = actor.list_entries(None, 1_000).expect("list entries");
         assert_eq!(
-            cached_total, count_u64,
+            actor.schedule_count(),
+            count,
             "delete churn setup should restore route"
         );
-        black_box(cached.len());
+        black_box(first_page.len());
 
         let started = Instant::now();
         let response = actor.handle(ScheduleMessage::Cancel {
             route: route.clone(),
         });
         assert!(matches!(response, ScheduleResponse::Ok));
-        let (entries, total_count) = actor.list_entries(0, 0).expect("list entries");
+        let (entries, _, _) = actor.list_entries(None, 1_000).expect("list entries");
         total += started.elapsed();
         assert_eq!(
-            total_count,
-            count_u64 - 1,
+            actor.schedule_count(),
+            count - 1,
             "delete churn should remove exactly one route"
         );
-        black_box((entries.len(), total_count));
+        black_box((entries.len(), actor.schedule_count()));
 
         let response = actor.handle(ScheduleMessage::Create {
             route: route.clone(),
@@ -113,7 +113,7 @@ fn delete_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
     tier2_stress::record_duration(ctx, name, total, DELETE_CHURN_OPERATION_COUNT);
 }
 
-fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count: usize) {
+fn upsert_then_first_list_page(ctx: &mut StressContext, name: &str, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
     let route = routes[victim_index].clone();
@@ -131,8 +131,8 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
     ];
     let mut actor = create_test_actor();
     populate_actor(&mut actor, &routes, &crons, &payloads, count);
-    let (cached, _) = actor.list_entries(0, 0).expect("list entries");
-    black_box(cached.len());
+    let (first_page, _, _) = actor.list_entries(None, 1_000).expect("list entries");
+    black_box(first_page.len());
 
     tier2_stress::measure_once(ctx, name, UPSERT_CHURN_OPERATION_COUNT, || {
         let mut replacement_index = 0usize;
@@ -145,28 +145,20 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
             });
             replacement_index = (replacement_index + 1) % replacement_crons.len();
             assert!(matches!(response, ScheduleResponse::Ok));
-            let (entries, total_count) = actor.list_entries(0, 0).expect("list entries");
-            black_box((entries.len(), total_count));
+            let (entries, has_more, _) = actor.list_entries(None, 1_000).expect("list entries");
+            black_box((entries.len(), has_more));
         }
     });
 }
 
-#[stress(tier = 2, name = "delete_then_full_list_shared_cache_1000_mixed_crons")]
-fn should_delete_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressContext) {
-    delete_then_full_list_shared_cache(
-        ctx,
-        "delete_then_full_list_shared_cache_1000_mixed_crons",
-        1000,
-    );
+#[stress(tier = 2, name = "delete_then_first_list_page_1000_mixed_crons")]
+fn should_delete_then_first_list_page_1000_mixed_crons(ctx: &mut StressContext) {
+    delete_then_first_list_page(ctx, "delete_then_first_list_page_1000_mixed_crons", 1000);
 }
 
-#[stress(tier = 2, name = "upsert_then_full_list_shared_cache_1000_mixed_crons")]
-fn should_upsert_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressContext) {
-    upsert_then_full_list_shared_cache(
-        ctx,
-        "upsert_then_full_list_shared_cache_1000_mixed_crons",
-        1000,
-    );
+#[stress(tier = 2, name = "upsert_then_first_list_page_1000_mixed_crons")]
+fn should_upsert_then_first_list_page_1000_mixed_crons(ctx: &mut StressContext) {
+    upsert_then_first_list_page(ctx, "upsert_then_first_list_page_1000_mixed_crons", 1000);
 }
 
 stress_main!();

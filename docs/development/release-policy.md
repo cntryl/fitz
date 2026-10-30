@@ -1,34 +1,18 @@
 # Release Policy
 
-Fitz release work is focused on explicit change communication and operator safety.
+Release changes must be documented, validated on the exact candidate commit,
+and recoverable according to their compatibility impact.
 
-An immutable stable SemVer tag identifies a release artifact; it is not a
-declaration of general availability and does not alter the product's release
-stage or support commitments. Fitz is pre-GA and is already used in production
-deployments.
+## Requirements
 
-## Policy
+- Add migration instructions for wire, stored-data, and deployment-configuration
+  changes.
+- Document changes to domain guarantees, routing, authorization, or recovery.
+- Require matching client support before releasing a breaking wire change.
+- Define rollback steps for stored-data changes and coordinated broker/client
+  upgrades.
+- Publish immutable versioned artifacts and verify them before announcement.
 
-1. Every release includes migration notes when compatibility risk exists.
-2. Behavior changes affecting durability, routing, or auth require prominent documentation.
-3. Changes that affect stored data, wire behavior, or deployment configuration require rollback instructions.
-
-## Release Gates
-
-1. Core test suites pass.
-2. Target benchmark checks pass for non-regression.
-3. Required docs updates are merged.
-4. Breaking wire releases include matching supported-client changes and a mixed-version prohibition when no negotiation exists.
-
-Use [../operations/release-checklist.md](../operations/release-checklist.md) before final publish.
-
-## Stream error envelope generation 2 release gate
-
-For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK
-versions that decode status 2 before releasing the broker change. Verify legacy
-status-1 decoding, APPEND and COMMIT code `2001` over a real broker, unrelated
-wording with `2001`, misleading wording with another code, and backend `2012`.
-Requalify both linked Portia assertions using the exact broker and client
-artifacts, including original failure and pending-batch preservation through
-cleanup failures. Follow the client-first upgrade and broker-first rollback in
-[migration guidance](../operations/migration-guide.md).
+Use the [release checklist](../operations/release-checklist.md) for the release
+sequence and [migration guide](../operations/migration-guide.md) for upgrade
+details.

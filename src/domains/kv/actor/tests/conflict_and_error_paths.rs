@@ -505,12 +505,10 @@ fn should_reject_empty_resource_in_follow_up_scope() {
 }
 
 #[test]
-fn should_classify_storage_timeout_as_backend_unavailable() {
+fn should_classify_storage_timeout_as_timeout() {
     // Arrange
-    // Midge bounds its synchronous runtime waits, so a slow storage op now
-    // returns a typed timeout where it previously blocked. Classifying by
-    // message text alone drops it into the generic bucket and reports
-    // transient saturation as a permanent failure.
+    // Midge bounds its synchronous runtime waits, so a slow storage op returns
+    // a typed timeout that should retain its protocol error class.
     let error = cntryl_midge::MidgeError::Timeout(
         "runtime request Put request_id=42 exceeded response timeout 60s".to_string(),
     );
@@ -520,7 +518,7 @@ fn should_classify_storage_timeout_as_backend_unavailable() {
 
     // Assert
     assert!(
-        matches!(classification, KvError::BackendUnavailable(_)),
+        matches!(classification, KvError::Timeout(_)),
         "a storage timeout is transient, got {classification:?}"
     );
 }

@@ -13,6 +13,7 @@ impl RuntimeIngress {
             session_actors: Arc::new(DashMap::new()),
             session_inbox_routes: Arc::new(DashMap::new()),
             closing_sessions: Arc::new(DashMap::new()),
+            connecting_sessions: Arc::new(dashmap::DashSet::new()),
             event_handler: None,
             admin_read_model: None,
             auth_required,
@@ -25,6 +26,7 @@ impl RuntimeIngress {
             auth_claims_config: crate::auth::AuthClaimsConfig::default(),
             route_family_resolver: crate::auth::RouteFamilyResolverConfig::default(),
             connect_diagnostics_budget: Arc::default(),
+            router: None,
         };
         let cleanup = super::session_cleanup_coordinator::SessionCleanupCoordinator {
             pending_session_cleanups: Arc::new(DashMap::new()),
@@ -46,7 +48,17 @@ impl RuntimeIngress {
             queue_dispatch_permits: Arc::new(tokio::sync::Semaphore::new(
                 super::domain_frame_dispatcher::BLOCKING_DOMAIN_DISPATCH_CONCURRENCY,
             )),
+            rpc_dispatch_permits: Arc::new(tokio::sync::Semaphore::new(
+                super::domain_frame_dispatcher::BLOCKING_DOMAIN_DISPATCH_CONCURRENCY,
+            )),
+            notice_dispatch_permits: Arc::new(tokio::sync::Semaphore::new(
+                super::domain_frame_dispatcher::BLOCKING_DOMAIN_DISPATCH_CONCURRENCY,
+            )),
             queue_family_dispatch: Arc::new(DashMap::new()),
+            max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES,
+            drain_announcements: Arc::new(parking_lot::Mutex::new(
+                super::domain_frame_dispatcher::DrainAnnouncements::default(),
+            )),
         };
         Self {
             registry,
@@ -75,7 +87,16 @@ impl RuntimeIngress {
     #[must_use]
     pub fn with_router(mut self, router: Arc<crate::runtime::Router>) -> Self {
         self.cleanup.router = Some(router.clone());
+        self.authenticator.router = Some(router.clone());
         self.dispatcher.router = Some(router);
+        self
+    }
+
+    /// Advertise `max_message_bytes` in HELLO. Must match the transport's
+    /// frame limit, or clients would be told a size the broker then refuses.
+    #[must_use]
+    pub fn with_max_message_bytes(mut self, max_message_bytes: u32) -> Self {
+        self.dispatcher.max_message_bytes = max_message_bytes;
         self
     }
 
@@ -153,7 +174,30 @@ impl RuntimeIngress {
         self.session_registry().active_sessions()
     }
 
+    pub(crate) fn active_sessions_bounded(&self, limit: usize) -> (Vec<SessionInfo>, bool) {
+        self.session_registry().active_sessions_bounded(limit)
+    }
+
+    pub(crate) fn active_sessions_bounded_for_family(
+        &self,
+        family: u64,
+        limit: usize,
+        max_examined: usize,
+    ) -> (Vec<SessionInfo>, bool) {
+        self.session_registry().active_sessions_bounded_for_family(
+            Some(family),
+            limit,
+            max_examined,
+        )
+    }
+
     /// Get session count
+    /// Send GOAWAY to every live session: the planned drain, a forced close,
+    /// or a changed limit, with the grace the client has to reconnect.
+    pub fn announce_goaway(&self, code: u16, grace_ms: u32, reason: &str) {
+        self.dispatcher.announce_goaway(code, grace_ms, reason);
+    }
+
     #[must_use]
     pub fn session_count(&self) -> usize {
         self.session_registry().session_count()

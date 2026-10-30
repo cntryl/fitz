@@ -43,7 +43,6 @@ impl SessionScoped for QueueFamilyState {
             );
         }
         families.retain(|_, state| !state.is_empty());
-        let _ = families;
 
         if released_any {
             self.mark_admin_snapshot_dirty();

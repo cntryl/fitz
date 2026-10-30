@@ -1,14 +1,12 @@
 # Environment Variables Reference
 
 This is the canonical reference for environment variables read by Fitz runtime
-code and repository-owned deployment or benchmark surfaces. Use it instead of
-inferring settings from Compose files, tests, or source code.
+code and repository-owned deployment files.
 
 ## Reading the Tables
 
 - **Unset** means Fitz does not supply a value.
-- Settings marked as local-development or benchmark-only are scoped to those
-  repository workflows.
+- Settings marked as local-development are scoped to those repository examples.
 - Provider-specific storage settings are read only when
   `FITZ_STORAGE_MODE=cloud`.
 - Never put passwords, JWT secrets, or provider credentials directly in
@@ -22,6 +20,7 @@ inferring settings from Compose files, tests, or source code.
 | FITZ_HTTP_PORT | u16 port | 4090 | HTTP and WebSocket listener port. |
 | FITZ_TCP_ENABLED | true or false | true | Enables the raw TCP listener. HTTP, admin routes, and WebSocket remain enabled regardless. |
 | FITZ_TCP_PORT | u16 port | 4091 | Raw TCP listener port. |
+| FITZ_MAX_MESSAGE_BYTES | bytes, 524288 to 4294967295 | 1048576 | Largest wire message (15-byte header included) the broker accepts and frames. Advertised to every client in HELLO as `max_message_bytes`. The 512 KiB minimum leaves room to replay a 400 KiB Stream event with route and response metadata. |
 | FITZ_BIND_ADDR | IP or hostname | 0.0.0.0 | Bind address for listeners. |
 | FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Confirms that a trusted external edge terminates TLS and enables TLS-dependent browser behavior such as HSTS. Fitz refuses to start with runtime auth or protected admin on a non-loopback bind unless this is true. Loopback development can leave it unset. |
 | FITZ_ASSUME_LOCAL_LOOPBACK_EDGE | true or false | false | Confirms that a trusted local container edge publishes Fitz listeners only on host loopback. This allows authenticated local Compose without asserting TLS or enabling HSTS, and requires loopback WebSocket and admin origins. Never enable it outside local development. |
@@ -31,6 +30,7 @@ inferring settings from Compose files, tests, or source code.
 | FITZ_ROUTE_FAMILIES | Comma-separated u32 list, contiguous from 1 (example: 1,2,3) | 1 | Provisioned route-family allowlist accepted after identity resolution. |
 | FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when auth is enabled. |
 | FITZ_ROUTE_FAMILY_CLAIM | JWT claim key | tid | Default identity claim key used for route-family resolution. |
+| FITZ_RPC_CANCELLATION_GRACE_MS | Integer milliseconds, 0 through 86400000 | 5000 | Grace an RPC worker gets to acknowledge cancellation cleanup after a request times out or is cancelled. Invalid values log a warning and keep the default. See [rpc-cancellation-lifecycle.md](../development/rpc-cancellation-lifecycle.md). |
 
 Use 90 seconds as the external process-termination-grace baseline with the
 default drain grace, then increase it for peak session cleanup, domain teardown,
@@ -206,17 +206,32 @@ These keys are read in cloud provider builders when FITZ_STORAGE_MODE=cloud.
 | Provider-native credential variables | Credential fallback when credentials are supplied through the process environment. |
 | Provider-native project or account variables | Optional provider metadata when the selected backend requires it. |
 
+## MCP Control Plane
+
+These keys configure the optional MCP admin endpoint under `src/api/mcp`. Their
+semantics, defaults, and security requirements are documented in
+[mcp-control-plane.md](../admin/mcp-control-plane.md) and the pages under
+`docs/admin/mcp/`; this table only makes the names discoverable.
+
+| Key | Documented in |
+| --- | --- |
+| FITZ_MCP_HTTP_ENABLED, FITZ_MCP_HTTP_URL, FITZ_MCP_PUBLIC_URL, FITZ_MCP_ALLOWED_ORIGINS, FITZ_MCP_DOCUMENTATION_URL | [mcp-control-plane.md](../admin/mcp-control-plane.md) |
+| FITZ_MCP_OAUTH_ISSUER, FITZ_MCP_OAUTH_AUDIENCE, FITZ_MCP_OAUTH_PUBLIC_KEY_FILE, FITZ_MCP_BEARER_TOKEN_FILE | [mcp-control-plane.md](../admin/mcp-control-plane.md), [oauth-provider.md](../admin/mcp/oauth-provider.md) |
+| FITZ_MCP_PROVIDER_PUBLIC_KEY_FILE, FITZ_MCP_PROVIDER_TOKEN_FILE | [oauth-provider.md](../admin/mcp/oauth-provider.md) |
+| FITZ_MCP_MUTATIONS_ENABLED, FITZ_MCP_ACTION_TARGET, FITZ_MCP_ACTION_AUDIT_FILE | [mcp-control-plane.md](../admin/mcp-control-plane.md) |
+| FITZ_MCP_STDIO_BIN | [client-workflows.md](../admin/mcp/client-workflows.md) |
+
+## Fault Injection
+
+| Key | Allowed Values / Format | Default | Description |
+| --- | --- | --- | --- |
+| FITZ_DESTROYER_FAILPOINTS | `enabled` or unset | Unset | Enables the `POST /destroyer/failpoints/...` routes that panic a live domain actor to rehearse fail-closed behavior. They require a wildcard admin session and a same-origin request. Test-only; never set it on a broker that serves traffic. See [sessions-status-safety.md](../admin/api/sessions-status-safety.md#fault-injection-routes). |
+
 ## Compose-Only Convenience Key
 
 | Key | Scope | Description |
 | --- | --- | --- |
 | FITZ_SQRZL_PROVIDER | compose.cloud.yml only | Chooses the local emulator front door in the compose flow. Not read directly by runtime code. |
-
-## Benchmark-Only Variables
-
-| Key | Allowed Values / Format | Default | Description |
-| --- | --- | --- | --- |
-| FITZ_BENCH_ALLOW_LOGS | `true` or `false` | `false` | Enables Fitz transport and startup logs in Tier 4 benchmark binaries. The broker runtime does not read it. |
 
 ## Removed or Unsupported Keys
 
