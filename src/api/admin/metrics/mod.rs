@@ -11,6 +11,7 @@ use hyper::StatusCode;
 use num_traits::ToPrimitive;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Handle /metrics endpoint (Prometheus format)
@@ -99,8 +100,19 @@ fn generate_prometheus_metrics(runtime: &Runtime) -> String {
     collector::append_observability_metrics(&mut output);
     domains::append_domain_metrics(&mut output, runtime);
     crate::api::mcp::telemetry::append_prometheus_metrics(&mut output);
+    append_admin_observation_metrics(&mut output);
 
     output
+}
+
+fn append_admin_observation_metrics(output: &mut String) {
+    output.push_str("# HELP fitz_admin_observation_overload_rejections_total Admin observations rejected because shared worker capacity was full\n");
+    output.push_str("# TYPE fitz_admin_observation_overload_rejections_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_admin_observation_overload_rejections_total {}",
+        super::observation_metrics::overload_rejections()
+    );
 }
 
 fn structured_samples(metrics: &str, family: Option<u64>) -> Vec<StructuredMetricSample> {
@@ -163,9 +175,10 @@ fn structured_samples(metrics: &str, family: Option<u64>) -> Vec<StructuredMetri
 
 #[allow(clippy::too_many_lines)]
 fn family_attributable_samples(runtime: &Runtime, family: u64) -> Vec<StructuredMetricSample> {
-    let snapshot = runtime
-        .admin_read_model()
-        .bounded_snapshot(Some(family), usize::MAX);
+    let snapshot = runtime.admin_read_model().bounded_snapshot(
+        Some(family),
+        crate::api::admin::list::MAX_ADMIN_RECORD_LIMIT,
+    );
     projection_samples(&snapshot, Some(family))
 }
 

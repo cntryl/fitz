@@ -15,6 +15,7 @@ fn should_acknowledge_cloud_wal_before_sync_stream_commit_returns_in_background_
         StreamStorageLayout::PromotionFrontier,
         WritePolicy::CloudAsync,
         WritePolicy::CloudAsync,
+        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
     );
     store
         .ensure_layout_activation_for_existing_families()

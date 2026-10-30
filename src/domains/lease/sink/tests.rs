@@ -40,8 +40,8 @@ fn should_confirm_lease_session_cleanup_before_reporting_delivery() {
 }
 use crate::dispatch::protocol::frame::ChannelId;
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::message::MessageType;
 use crate::dispatch::protocol::payload_codec::PayloadEncoder;
-use crate::dispatch::protocol::tlv::MessageType;
 use crate::domains::lease::protocol::{LeaseKey, LeaseResponse};
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

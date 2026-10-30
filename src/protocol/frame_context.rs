@@ -1,8 +1,8 @@
-//! Frame context: Associates TLV frame metadata with router `Envelope`
+//! Frame context: Associates Wire2 message metadata with router `Envelope`
 //!
 //! # Purpose
 //!
-//! The transport layer extracts `session_id`, `channel_id`, and `msg_type` from the TLV frame,
+//! The transport layer extracts `session_id`, `channel_id`, and `msg_type` from a Wire2 message,
 //! but the `Envelope` struct doesn't carry this metadata. This module defines `FrameContext`
 //! which combines the transport metadata needed by domain handlers.
 //!
@@ -14,7 +14,7 @@
 //! - Domain sinks receive `Envelope`, extract `FrameContext`, and can access all needed info
 
 use crate::protocol::frame::ChannelId;
-use crate::protocol::tlv::MessageType;
+use crate::protocol::message::MessageType;
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use std::num::NonZeroU64;
@@ -24,16 +24,16 @@ use std::num::NonZeroU64;
 /// Created at the ingress boundary when a transport frame arrives.
 /// Stored as the payload of an `Envelope` for routing.
 /// This allows domain sinks to access the original frame metadata
-/// needed for TLV parsing and session correlation.
+/// needed for payload parsing and session correlation.
 #[derive(Clone)]
 pub struct FrameContext {
     /// Session ID from transport.
     pub session_id: u64,
     /// Channel ID from transport (for example, `Data`, `Control`, `Priority`).
     pub channel_id: ChannelId,
-    /// Message type from TLV header.
+    /// Message type from the Wire2 header.
     pub msg_type: MessageType,
-    /// Raw TLV payload bytes.
+    /// Raw message value bytes after the Wire2 header.
     pub payload: Bytes,
     /// `RouteFamily` assigned to this session.
     pub route_family: RouteFamily,
@@ -41,6 +41,9 @@ pub struct FrameContext {
     /// opted in. Zero is reserved as the absent value on the wire, so the
     /// non-zero type carries that invariant instead of a runtime check.
     pub correlation: Option<NonZeroU64>,
+    /// Whether this is the terminal response frame for the correlation.
+    /// Server notifications and uncorrelated traffic ignore this field.
+    pub response_final: bool,
 }
 
 impl FrameContext {
@@ -63,6 +66,7 @@ impl FrameContext {
             payload,
             route_family,
             correlation: None,
+            response_final: true,
         }
     }
 
@@ -70,6 +74,13 @@ impl FrameContext {
     #[must_use]
     pub fn with_correlation(mut self, correlation: Option<NonZeroU64>) -> Self {
         self.correlation = correlation;
+        self
+    }
+
+    /// Mark an intermediate phase in a multi-frame response sequence.
+    #[must_use]
+    pub fn with_response_final(mut self, response_final: bool) -> Self {
+        self.response_final = response_final;
         self
     }
 }
@@ -82,6 +93,7 @@ impl std::fmt::Debug for FrameContext {
             .field("msg_type", &self.msg_type)
             .field("route_family", &self.route_family)
             .field("correlation", &self.correlation)
+            .field("response_final", &self.response_final)
             .field("payload_len", &self.payload.len())
             .finish()
     }

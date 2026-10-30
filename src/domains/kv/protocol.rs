@@ -239,8 +239,7 @@ pub struct ScanQuery {
     /// hold a single pair, and resuming from an inclusive `start` then returns
     /// that same pair forever - the scan never advances and later keys are
     /// unreachable. Resuming exclusively guarantees progress in both
-    /// directions. Absent on the wire from older clients, where it defaults to
-    /// `false` and the inclusive behaviour is unchanged.
+    /// directions. Bit 1 of the SCAN options byte on the wire.
     pub start_exclusive: bool,
 }
 
@@ -342,6 +341,9 @@ pub enum KvError {
     /// Backend storage unavailable
     BackendUnavailable(String),
 
+    /// An accepted storage operation exceeded its deadline.
+    Timeout(String),
+
     /// Backend storage error
     BackendError(String),
 }
@@ -374,6 +376,7 @@ impl std::fmt::Display for KvError {
             KvError::ReadOnlyWrite => write!(f, "Cannot write in read-only transaction"),
             KvError::Conflict(msg) => write!(f, "Transaction conflict: {msg}"),
             KvError::BackendUnavailable(msg) => write!(f, "Backend unavailable: {msg}"),
+            KvError::Timeout(msg) => write!(f, "Backend operation timed out: {msg}"),
             KvError::BackendError(msg) => write!(f, "Backend error: {msg}"),
         }
     }

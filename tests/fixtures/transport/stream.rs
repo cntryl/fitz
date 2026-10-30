@@ -60,7 +60,7 @@ pub fn build_stream_begin(route: &str) -> Vec<u8> {
     // Optional ingest metadata (flag = 0 for none)
     buf.put_u8(0);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(600, &buf);
     builder.build()
 }
@@ -101,7 +101,7 @@ pub fn build_stream_append_with_metadata(
         None => buf.put_u8(0),
     }
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(601, &buf);
     builder.build()
 }
@@ -114,7 +114,7 @@ pub fn build_stream_commit(session_id: u64) -> Vec<u8> {
     buf.put_u64(session_id);
     buf.put_u8(0);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(602, &buf);
     builder.build()
 }
@@ -127,7 +127,7 @@ pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(607, &buf);
     builder.build()
 }
@@ -140,7 +140,7 @@ pub fn build_stream_unsubscribe(route_pattern: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(608, &buf);
     builder.build()
 }
@@ -171,7 +171,7 @@ pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
     // Optional max_bytes (flag = 0 for none)
     buf.put_u8(0);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(604, &buf);
     builder.build()
 }
@@ -184,7 +184,7 @@ pub fn build_stream_last(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(605, &buf);
     builder.build()
 }
@@ -197,14 +197,14 @@ pub fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(606, &buf);
     builder.build()
 }
 
 /// Parse `STREAM` response
 pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][optional u64 session_id][...response data...]
@@ -266,7 +266,7 @@ pub struct StreamDelivery {
 pub fn parse_stream_delivery(frame: &[u8]) -> Result<StreamDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field()
         .ok_or_else(|| "Missing stream delivery frame".to_string())?;

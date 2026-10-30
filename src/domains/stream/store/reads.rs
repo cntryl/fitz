@@ -8,8 +8,8 @@ use super::{
     encode_compact_global_page_key, encode_compressed_compact_realm_page_key,
     encode_global_area_posting_key, encode_global_area_resource_posting_key,
     encode_global_resource_posting_key, encode_realm_resource_posting_key, read_limit_to_usize,
-    record_is_expired, stream_read_item_wire_bytes, stream_route_len, Bytes,
-    CompactGlobalPageValue, CompressedCompactRealmPageValue, PostingPageValue,
+    record_is_expired, stream_read_item_wire_bytes, stream_response_byte_ceiling, stream_route_len,
+    Bytes, CompactGlobalPageValue, CompressedCompactRealmPageValue, PostingPageValue,
     ReadGlobalPostingParams, ReadRealmPostingParams, StreamFilterSet, StreamFilteredReason,
     StreamReadItem, StreamRecord, StreamStore, WireBudgetDecision, GLOBAL_PAGE_RECORD_LIMIT,
 };
@@ -199,7 +199,7 @@ impl StreamStore {
         let (rows, fragments_exhausted) =
             bounded_posting_rows(&txn, start_key, prefix, "realm-resource")?;
         let item_limit = read_limit_to_usize(limit);
-        let byte_limit = bounded_max_bytes(max_bytes);
+        let byte_limit = bounded_max_bytes(max_bytes, self.response_payload_limit);
         let mut items = Vec::with_capacity(item_limit.min(1_000));
         let mut bytes_read = 0usize;
         let mut covered_through: Option<u64> = None;
@@ -252,7 +252,13 @@ impl StreamStore {
                     record.body.len(),
                     record.metadata.as_ref().map_or(0, Bytes::len),
                 );
-                match charge_wire_budget(offset, record_bytes, bytes_read, byte_limit)? {
+                match charge_wire_budget(
+                    offset,
+                    record_bytes,
+                    bytes_read,
+                    byte_limit,
+                    stream_response_byte_ceiling(self.response_payload_limit),
+                )? {
                     WireBudgetDecision::Stop => {
                         has_more = true;
                         break 'pages;
@@ -330,7 +336,7 @@ impl StreamStore {
         let txn = begin_read_tx(self, family, "global posting")?;
         let (rows, fragments_exhausted) = bounded_posting_rows(&txn, start_key, prefix, "global")?;
         let item_limit = read_limit_to_usize(limit);
-        let byte_limit = bounded_max_bytes(max_bytes);
+        let byte_limit = bounded_max_bytes(max_bytes, self.response_payload_limit);
         let mut items = Vec::with_capacity(item_limit.min(1_000));
         let mut bytes_read = 0usize;
         let mut last_examined = from_offset;
@@ -375,7 +381,13 @@ impl StreamStore {
                     record.body.len(),
                     record.metadata.as_ref().map_or(0, Bytes::len),
                 );
-                match charge_wire_budget(offset, record_bytes, bytes_read, byte_limit)? {
+                match charge_wire_budget(
+                    offset,
+                    record_bytes,
+                    bytes_read,
+                    byte_limit,
+                    stream_response_byte_ceiling(self.response_payload_limit),
+                )? {
                     WireBudgetDecision::Stop => {
                         has_more = true;
                         break 'pages;
@@ -437,7 +449,7 @@ impl StreamStore {
             broad_scope_fragment_rows(from_offset, limit),
         )?;
         let item_limit = read_limit_to_usize(limit);
-        let byte_limit = bounded_max_bytes(max_bytes);
+        let byte_limit = bounded_max_bytes(max_bytes, self.response_payload_limit);
         let mut items = Vec::with_capacity(item_limit.min(1_000));
         let mut bytes_read = 0usize;
         let mut last_examined = from_offset;
@@ -484,7 +496,13 @@ impl StreamStore {
                     record.body.len(),
                     record.metadata.as_ref().map_or(0, Bytes::len),
                 );
-                match charge_wire_budget(offset, record_bytes, bytes_read, byte_limit)? {
+                match charge_wire_budget(
+                    offset,
+                    record_bytes,
+                    bytes_read,
+                    byte_limit,
+                    stream_response_byte_ceiling(self.response_payload_limit),
+                )? {
                     WireBudgetDecision::Stop => {
                         has_more = true;
                         break 'pages;

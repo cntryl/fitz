@@ -1,6 +1,4 @@
-# Wire Route Shapes
-
-Route acceptance rules, global route rules, per-domain route shapes, and the lock-in rule, moved from [wire-routing.md](wire-routing.md).
+# Route Shapes
 
 ## Route Acceptance Criteria (Authoritative)
 
@@ -80,7 +78,6 @@ A request is valid **only if**:
   | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*/*` |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
   | `CREATE_BATCH` | broker extension; repeated canonical CREATE entries |
-  | `LIST_V2` | broker extension; cursor pagination, not a replacement for LIST 702 |
   | `COMMIT` | `{realm}/{area}/{resource}` |
   | `ROLLBACK` | `{realm}/{area}/{resource}` |
   **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on data operations: BEGIN, GET, PUT, INSERT, DELETE, DELETE_RANGE, SCAN, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK.
@@ -152,11 +149,11 @@ it sent.
   | -------- | ----------------------------------------------- |
   | `CREATE` | `{realm}/{area}/{resource}/{operation}` |
   | `CANCEL` | `{realm}/{area}/{resource}/{operation}` |
-  | `LIST` | no route payload; optional `[offset][limit]` pagination fields only |
+  | `LIST` | no route payload; optional `[cursor][limit]` pagination fields only |
   | `SUBSCRIBE` | exact route or whole-segment pattern capable of matching four segments |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
-  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Portable clients should use CREATE, CANCEL, LIST, SUBSCRIBE, and UNSUBSCRIBE as documented in the wire format section. The broker additionally advertises CREATE_BATCH 706 and LIST_V2 707; LIST 702 remains the canonical cross-client operation and returns a single response payload containing `total_count` plus zero or more schedule entries.
+  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Portable clients use CREATE, CANCEL, LIST, SUBSCRIBE, and UNSUBSCRIBE. CREATE_BATCH is 706. LIST 702 returns one route-ordered page with `has_more`, an optional continuation cursor, and entry sentinels. Identifier 707 is retired and never reused.
 
 ### Lease Domain
 
@@ -182,7 +179,7 @@ generic, non-adjacent `**` compositions capable of matching depth three (for
 example `lease://{realm}/**`, `lease://**`, and
 `lease://**/renderers/**`). A partial wildcard token, adjacent `**` segments,
 wrong scheme, empty segment, or pattern incapable of matching three segments
-is rejected with 5010 (5012 for `LIST` specifically). Accepting a wildcard
+is rejected with 5003. Accepting a wildcard
 here never grants, renews, or releases the matched lease — only the exact-route
 mutation operations change ownership.
 

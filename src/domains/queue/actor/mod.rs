@@ -456,6 +456,17 @@ impl RollingRateWindow {
 }
 
 impl QueueActor {
+    pub(crate) fn storage_outcome_is_unknown(&self) -> bool {
+        self.persistence.store.has_unknown_commit_outcome()
+    }
+
+    pub(crate) fn unknown_outcome_response() -> QueueResponse {
+        QueueResponse::Error {
+            message: "queue actor requires reconstruction after an unknown storage commit outcome"
+                .to_string(),
+        }
+    }
+
     fn ready_shards_u64() -> u64 {
         u64::try_from(Self::READY_SHARDS).unwrap_or(u64::MAX)
     }
@@ -555,6 +566,7 @@ struct IndexMetaSnapshot {
 /// - Persist deletes on successful completion
 /// - Never persist inflight state
 pub struct QueueActor {
+    pub(crate) response_payload_limit: usize,
     /// Queue identity
     queue_key: QueueKey,
 

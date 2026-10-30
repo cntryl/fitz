@@ -1,7 +1,5 @@
 # Lease Domain Spec
 
-Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.md](schedule.md).
-
 ### Lease Domain (Ephemeral Exclusive Coordination with Queueing)
 
 **Purpose:** In-memory exclusive leases for single-broker coordination with optional FIFO queue-based acquisition, process-local fencing tokens, and configurable wait timeouts.
@@ -47,7 +45,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 - `ttl_secs`: Server-enforced expiration duration (e.g., `60`)
 - `wait_seconds`: Max time to wait if lease held by other owner
   - `0` (or omitted): Immediate fail if unavailable → response `HeldByOther`
-  - `1-30`: Queue and wait up to N seconds → response `Queued` or `Timeout`
+  - `1-30`: Queue and wait up to N seconds → `Queued` intermediate response, then a grant, timeout, or error
   - Server enforces max 30 seconds per request
 
 **Response (status=0, success):**
@@ -60,7 +58,9 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -91,7 +91,9 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -119,7 +121,9 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -151,7 +155,9 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -170,7 +176,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
   complete literal-or-`*` matrix over the three segments plus every valid
   non-adjacent `**` composition capable of matching three segments
 - Partial wildcard tokens (`lock*`), wrong scheme, empty segments, and the
-  wrong segment count are rejected with 5010 before any subscription state
+  wrong segment count are rejected with 5003 before any subscription state
   is retained; this applies identically to SUBSCRIBE and UNSUBSCRIBE
 - Duplicate subscribe calls for the same `(session, original selector string)` return the existing `subscription_id`
 - Subscriptions are session-scoped and are removed automatically on disconnect
@@ -197,7 +203,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
 - Unsubscribe is idempotent; removing a missing watch still returns success
 - `route` must be the original selector string used to subscribe (exact route
   or wildcard pattern); the same grammar validation applies and invalid
-  selectors return 5010
+  selectors return 5003
 
 **Response (status=0, success):**
 ```
@@ -253,7 +259,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
   cursor; replay it verbatim (same `pattern`, its `snapshot_id`/`offset`) to
   fetch the next page. `offset` is the exact position the server issued —
   presenting a valid `snapshot_id` with any other offset (lower to replay
-  items, higher to skip ahead) fails with error 5011, the same as an unknown
+  items, higher to skip ahead) fails with error 5057, the same as an unknown
   cursor
 - A wildcard scan is a true point-in-time snapshot, taken in full on the
   first call before any page is ever returned: concurrent acquire/release/
@@ -268,7 +274,7 @@ Split from the former `lease-schedule.md`; the Schedule domain is in [schedule.m
   rather than retaining an unbounded inventory copy
 - A cursor reused with a different `pattern`, a different `RouteFamily`, an
   unknown or already-exhausted `snapshot_id`, or after a broker restart
-  (snapshot IDs do not survive restart) fails explicitly with error 5011
+  (snapshot IDs do not survive restart) fails explicitly with error 5057
   rather than silently restarting or narrowing the read
 - Pending waiters are never included; only currently held, non-expired
   leases are returned
@@ -300,15 +306,17 @@ repeated item_count times:
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
-[u32 BE] error_code
+[u16 BE] code
+[u8]     class
+[u8]     effect
 [u32 BE] error_len
 [bytes]  error_msg
 ```
 
-Error code 5011 (Invalid List Cursor) covers a cursor that does not match the
-selector, family, or broker lifetime it was issued from; 5012 (Invalid List
+Error code 5057 (Invalid List Cursor) covers a cursor that does not match the
+selector, family, or broker lifetime it was issued from; 5003 (Invalid List
 Pattern) covers a pattern that fails the shared grammar on `LIST`. The related
-SUBSCRIBE/UNSUBSCRIBE operations use 5010 for that validation failure.
+SUBSCRIBE/UNSUBSCRIBE operations use 5003 for that validation failure.
 
 #### High-level Inventory Observer
 
@@ -368,7 +376,7 @@ event log.
 | `Acquired { token }` | Lease granted immediately | Proceed with work; renew before TTL expiry |
 | `AlreadyHeld { token }` | Already own this lease (idempotent) | No-op; renew/release as needed |
 | `Queued { token }` | Waiting for lease in FIFO queue | Watch for async `Acquired` message from server |
-| `AlreadyQueued { token }` | Already waiting for same lease | No-op; continue waiting |
+| `AlreadyQueued { token }` | This request duplicates an existing queued acquisition | Terminal result for this request; it does not join the existing waiter |
 | `Renewed { token }` | Lease TTL extended; token unchanged | Continue using the same token for future renew/release |
 | `Released` | Lease released successfully | Lease available; next waiter (if any) receives async `Acquired` |
 | `Status { owner, token, ttl_secs, pending }` | Lease holder & queue info | Read-only; useful for debugging |
@@ -385,9 +393,8 @@ event log.
 | `Fenced` | Token mismatch | `fencing_token` doesn't match server | Acquire fresh lease; old lease was released |
 | `Expired` | Lease expired | Query on released lease (no holder) | Lease available; acquire fresh |
 | `NotFound` | Lease doesn't exist | Route never acquired before | New lease; acquire automatically creates |
-| `InvalidSubscriptionRoute` (5010) | Malformed SUBSCRIBE/UNSUBSCRIBE selector | Partial wildcard, wrong scheme, wrong depth, empty segment | Fix the selector; no state was retained |
-| `InvalidListCursor` (5011) | LIST cursor rejected | Cursor's selector/family/snapshot doesn't match this call, or broker restarted | Start a fresh LIST (omit the cursor) |
-| `InvalidListPattern` (5012) | Malformed LIST selector | Partial wildcard, wrong scheme, wrong depth, empty segment | Fix the selector; no inventory was scanned |
+| `InvalidPattern` (5003) | Malformed SUBSCRIBE, UNSUBSCRIBE, or LIST selector | Partial wildcard, wrong scheme, wrong depth, empty segment | Fix the selector; no state was retained and no inventory was scanned |
+| `InvalidListCursor` (5057) | LIST cursor rejected | Cursor's selector/family/snapshot doesn't match this call, or broker restarted | Start a fresh LIST (omit the cursor) |
 
 #### Queueing Semantics
 
@@ -408,9 +415,12 @@ event log.
 - Auto-expiry: Pending waiters discarded after their timeout expires
 
 **Deferred Response Behavior:**
-- ACQUIRE with `wait_seconds > 0` returns `Queued` immediately
-- Later, server sends async `Acquired` or `Timeout` when state changes
-- Client must listen for these out-of-band responses on connection
+- A contended ACQUIRE returns `Queued` on its original correlation with
+  `RESPONSE_FINAL` clear.
+- The later grant, timeout, or error uses that same correlation and sets
+  `RESPONSE_FINAL`. The client retains the pending request through that frame.
+- `AlreadyQueued` is a terminal response for the duplicate correlation. It does
+  not join or replace the original waiter.
 
 **Grant on Release/Expiry:**
 - When current holder releases or lease expires, next FIFO waiter automatically gets `Acquired` response
@@ -438,7 +448,7 @@ event log.
 
 #### Usage Scenarios (with Pseudocode)
 
-**Scenario 1: Immediate Acquire (Fast Path)**
+**Scenario 1: Immediate Acquire**
 
 ```python
 # Try to acquire with no wait
@@ -602,12 +612,6 @@ elif response.type == "Fenced":
 - Holders with newer tokens always supersede older tokens
 - Safe for strong consistency coordination
 
-**Timeout Tuning:**
-- **Short waits (1-2s):** Fast-fail scenarios; high throughput, less fairness
-- **Medium waits (5-10s):** Balanced; allows real contention, bounded latency
-- **Long waits (20-30s):** High fairness; higher latency for unavailable resources
-- **No wait (wait_seconds=0):** Pessimistic locking; immediate fail-fast
-
 **Queue Monitoring:**
 - Use QUERY to inspect `pending_waiters` count
 - High count → high contention; consider resource partitioning or load shedding
@@ -646,16 +650,16 @@ elif response.type == "Fenced":
 
 #### Error Codes (5xxx)
 
-- 5001 = ERR_LEASE_HELD (immediate rejection with `wait_seconds=0`)
-- 5002 = ERR_INVALID_FENCE (fencing token invalid or out of order)
-- 5003 = ERR_LEASE_EXPIRED (lease no longer valid)
-- 5004 = ERR_LEASE_NOT_FOUND (route never acquired)
-- 5005 = ERR_INVALID_TOKEN (lease token invalid or wrong)
-- 5006 = ERR_TIMEOUT (pending acquire timed out)
-- 5007 = ERR_QUEUE_FULL (retryable; too many pending waiters, or the lease mailbox was full and the request was never accepted)
+- 5050 = ERR_LEASE_HELD (immediate rejection with `wait_seconds=0`)
+- 5051 = ERR_INVALID_FENCE (fencing token invalid or out of order)
+- 5052 = ERR_LEASE_EXPIRED (lease no longer valid)
+- 5053 = ERR_LEASE_NOT_FOUND (route never acquired)
+- 5054 = ERR_INVALID_TOKEN (lease token invalid or wrong)
+- 5055 = ERR_ACQUIRE_WAIT_EXPIRED (pending acquire timed out)
+- 5056 = ERR_WAITERS_LIMIT (retryable; too many pending waiters, or the lease mailbox was full and the request was never accepted)
 - 5008 = ERR_BAD_REQUEST (malformed Lease operation request)
-- 5009 = ERR_UNAUTHORIZED
-- 5010 = ERR_INVALID_SUBSCRIPTION_ROUTE
+- 5001 = ERR_UNAUTHORIZED
+- 5003 = ERR_INVALID_PATTERN
 
 #### Acceptance Tests
 

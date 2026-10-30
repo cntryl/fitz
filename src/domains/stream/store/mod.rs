@@ -7,8 +7,7 @@ use std::sync::Arc;
 
 use super::protocol::{
     IngestMetadata, StreamDiscriminator, StreamFilterSet, StreamFilteredReason, StreamReadItem,
-    StreamRecord, StreamWriteMode, STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES,
-    STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES,
+    StreamRecord, StreamWriteMode,
 };
 use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
@@ -69,124 +68,12 @@ type ResourceMetaStateHandle = Arc<Mutex<ResourceMetaState>>;
 #[cfg(test)]
 const ERR_SESSION_ROUTE_FAMILY_MISMATCH: &str = "ERR_SESSION_ROUTE_FAMILY_MISMATCH";
 
-/// Hard ceiling on the bytes a single stream read response may accumulate.
-///
-/// Every domain response is framed on the wire as one length-prefixed TLV
-/// value with a `u16` length (see `encode_single_tlv_frame` in
-/// `api/outbound.rs`), so a response assembled past this size can never be
-/// sent — it panics at encode time instead. Clients may optionally request a
-/// smaller `max_bytes`, but the ceiling applies unconditionally, since
-/// `max_bytes` is optional on the wire and commonly omitted.
-pub(crate) const MAX_STREAM_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
-
-/// The largest a read response's summed item bytes may be while still
-/// guaranteeing the fully encoded wire frame fits `u16::MAX`.
-fn stream_response_byte_ceiling() -> usize {
-    MAX_STREAM_RESPONSE_PAYLOAD_BYTES.saturating_sub(STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES)
-}
-
-/// Resolve a client-requested `max_bytes` against the hard wire ceiling.
-pub(super) fn bounded_max_bytes(max_bytes: Option<usize>) -> usize {
-    let ceiling = stream_response_byte_ceiling();
-    max_bytes.map_or(ceiling, |requested| requested.min(ceiling))
-}
-
-/// Conservative worst-case wire bytes for one record encoded as an `Event`
-/// item. `route_len` is the record's actual encoded route length in bytes.
-pub(super) fn stream_record_wire_bytes(
-    route_len: usize,
-    body_len: usize,
-    metadata_len: usize,
-) -> usize {
-    STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES
-        .saturating_add(route_len)
-        .saturating_add(body_len)
-        .saturating_add(metadata_len)
-}
-
-/// Conservative worst-case wire bytes for one record encoded as a `Filtered`
-/// marker: the route plus the same generous fixed overhead, with no body or
-/// metadata. Charging a filter-excluded record its (far larger) `Event` cost
-/// would let a body the client never receives stop - or reject - the read.
-pub(super) fn stream_filtered_marker_wire_bytes(route_len: usize) -> usize {
-    stream_record_wire_bytes(route_len, 0, 0)
-}
-
-/// Wire bytes for the item this record will actually become: the full `Event`
-/// encoding when it passes the read filter, a cheap `Filtered` marker when it
-/// does not. Charging a filter-excluded record its `Event` cost would let a
-/// body the client never receives stop - or fail - the page.
-pub(super) fn stream_read_item_wire_bytes(
-    matches_filter: bool,
-    route_len: usize,
-    body_len: usize,
-    metadata_len: usize,
-) -> usize {
-    if matches_filter {
-        stream_record_wire_bytes(route_len, body_len, metadata_len)
-    } else {
-        stream_filtered_marker_wire_bytes(route_len)
-    }
-}
-
-/// Byte length of `stream://{realm}/{area}/{resource}` without allocating.
-pub(super) fn stream_route_len(realm: &str, area: &str, resource: &str) -> usize {
-    "stream://".len() + realm.len() + 1 + area.len() + 1 + resource.len()
-}
-
-pub(super) enum WireBudgetDecision {
-    /// The record fits; include it and continue.
-    Include,
-    /// The response is full; stop before this record and paginate.
-    Stop,
-}
-
-/// Charge one item's wire bytes against a read response's running budget.
-///
-/// Shared by every posting-based read loop (realm-resource, global,
-/// global-posting) so the "stop once full, but always make progress with a
-/// lone oversized-for-`max_bytes` record" policy - and the hard-ceiling
-/// handling for a record that can never fit *any* response - lives in one
-/// place instead of being copy-pasted per loop.
-///
-/// `item_bytes` must be the cost of the item the caller will actually push:
-/// `stream_record_wire_bytes` for an `Event`, `stream_filtered_marker_wire_bytes`
-/// for a `Filtered` marker. Charging a filter-excluded record its full `Event`
-/// cost would fail a read that only ever needed to send a cheap marker.
-///
-/// # Errors
-///
-/// Returns `Err` when `item_bytes` alone exceeds
-/// `stream_response_byte_ceiling()`, meaning no response could ever encode
-/// this item even alone. Stream guarantees exact replay of committed history
-/// (see `docs/development/domain-boundaries-spec.md`), so an event the client
-/// asked for that cannot be sent must surface as an explicit, classifiable
-/// error naming its offset - never as a marker that silently drops the
-/// committed body from a rebuilt aggregate.
-pub(super) fn charge_wire_budget(
-    offset: u64,
-    item_bytes: usize,
-    bytes_read: usize,
-    byte_limit: usize,
-) -> Result<WireBudgetDecision, String> {
-    if bytes_read.saturating_add(item_bytes) > byte_limit {
-        if bytes_read > 0 {
-            return Ok(WireBudgetDecision::Stop);
-        }
-        // A tight client-requested `max_bytes` still forces this lone item
-        // through so pagination makes progress, as long as it fits in a wire
-        // frame at all. Only an item that itself exceeds the hard wire
-        // ceiling is rejected outright.
-        if item_bytes > stream_response_byte_ceiling() {
-            return Err(format!(
-                "ERR_READ_RESPONSE_TOO_LARGE: record at offset {offset} is {item_bytes} \
-                 bytes, exceeding the {}-byte read response limit",
-                stream_response_byte_ceiling()
-            ));
-        }
-    }
-    Ok(WireBudgetDecision::Include)
-}
+mod wire_budget;
+use wire_budget::{
+    bounded_max_bytes, charge_wire_budget, stream_read_item_wire_bytes,
+    stream_response_byte_ceiling, stream_route_len, WireBudgetDecision,
+    MAX_STREAM_RESPONSE_PAYLOAD_BYTES,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StreamStoreError {
@@ -265,6 +152,7 @@ struct PendingGlobalReservation {
 enum PromotionCommitFailure {
     ScopeConflict,
     Retryable(String),
+    Ambiguous(String),
     Resolved(String),
 }
 
@@ -282,7 +170,9 @@ impl PromotionCommitFailure {
             Self::ScopeConflict => StreamStoreError::ConcurrencyConflict
                 .store_code()
                 .to_string(),
-            Self::Retryable(message) | Self::Resolved(message) => message,
+            Self::Retryable(message) | Self::Ambiguous(message) | Self::Resolved(message) => {
+                message
+            }
         }
     }
 }
@@ -302,6 +192,7 @@ impl From<String> for PromotionWriteFailure {
 enum PromotionTransactionFailure {
     AdmissionRejected,
     WriteConflict,
+    Ambiguous(String),
     Other(String),
 }
 
@@ -510,6 +401,7 @@ pub struct StreamAdminRecord {
 }
 
 pub struct StreamStore {
+    response_payload_limit: usize,
     db: crate::storage::FitzStorageEngine,
     sync_write_options: cntryl_midge::WriteOptions,
     buffered_write_options: cntryl_midge::WriteOptions,
@@ -559,17 +451,20 @@ impl StreamDomainStorage {
         layout: StreamStorageLayout,
         sync: crate::domains::WritePolicy,
         buffered: crate::domains::WritePolicy,
+        max_message_bytes: usize,
     ) -> Arc<StreamStore> {
         let cloud = sync.is_cloud() || buffered.is_cloud();
         Arc::new(
-            StreamStore::with_storage_layout(self.engine, layout).with_write_options(
-                crate::domains::CommitPersistence::Sync
-                    .storage_policy(cloud)
-                    .into(),
-                crate::domains::CommitPersistence::Buffered
-                    .storage_policy(cloud)
-                    .into(),
-            ),
+            StreamStore::with_storage_layout(self.engine, layout)
+                .with_write_options(
+                    crate::domains::CommitPersistence::Sync
+                        .storage_policy(cloud)
+                        .into(),
+                    crate::domains::CommitPersistence::Buffered
+                        .storage_policy(cloud)
+                        .into(),
+                )
+                .with_max_message_bytes(max_message_bytes),
         )
     }
 }
@@ -608,6 +503,7 @@ struct ReadPageState<'a> {
     from_offset: u64,
     limit: usize,
     max_bytes_limit: usize,
+    response_payload_limit: usize,
     watermark: Option<u64>,
     filter: Option<&'a StreamFilterSet>,
     cursor: &'a mut ReadCursorState,
@@ -874,6 +770,7 @@ where
             item_bytes,
             *state.total_bytes,
             state.max_bytes_limit,
+            stream_response_byte_ceiling(state.response_payload_limit),
         )? {
             WireBudgetDecision::Stop => {
                 *state.has_more = true;

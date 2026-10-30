@@ -65,6 +65,13 @@ impl ScheduleDomainRuntime<'_> {
         let pending_ack_retries = &mut self.core.pending_ack_retries;
 
         if let Some(actor) = actor.as_mut() {
+            if actor.reconcile_unknown_commit().is_err() {
+                return DueScanPlan {
+                    live_publish_candidates,
+                    ack_retry_candidates,
+                    snapshot_dirty,
+                };
+            }
             if !actor.claim_due_fires().is_empty() {
                 snapshot_dirty = true;
             }
@@ -271,7 +278,7 @@ impl ScheduleDomainRuntime<'_> {
         let notify_ctx = FrameContext::new(
             session_id,
             crate::dispatch::protocol::frame::ChannelId::Sub,
-            crate::dispatch::protocol::tlv::MessageType::new(705),
+            crate::dispatch::protocol::message::MessageType::new(705),
             bytes::Bytes::from(notify_payload),
             *subscriber.family(),
         );
@@ -411,6 +418,12 @@ impl ScheduleDomainRuntime<'_> {
 
     #[allow(clippy::question_mark)]
     pub(super) fn run_now(&mut self, route: &str) -> Option<ScheduleRunNowResult> {
+        let Some(actor) = self.core.actor.as_mut() else {
+            return None;
+        };
+        if actor.reconcile_unknown_commit().is_err() {
+            return None;
+        }
         let Some((delivery_mode, payload)) = self
             .core
             .actor

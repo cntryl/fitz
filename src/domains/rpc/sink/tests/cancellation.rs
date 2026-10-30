@@ -1,6 +1,6 @@
 use super::*;
 use crate::domains::rpc::protocol::RpcLifecycleControlDelivery;
-use crate::protocol::rpc_codec::encode_cancel_ack_tlv_frame;
+use crate::protocol::rpc_codec::encode_cancel_ack_frame;
 use bytes::Bytes;
 
 mod frame_loop_grace;
@@ -42,7 +42,7 @@ fn rpc_frame(
     FrameContext::new(
         session_id,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(message_type),
+        crate::dispatch::protocol::message::MessageType::new(message_type),
         payload,
         family,
     )
@@ -100,7 +100,7 @@ fn deliver_worker_ack(
     correlation_id: uuid::Uuid,
 ) {
     let worker_id = sink.worker_correlation_for_tests(family, correlation_id);
-    let frame = encode_cancel_ack_tlv_frame(&worker_id);
+    let frame = encode_cancel_ack_frame(&worker_id);
     let (message_type, payload) = crate::benchkit::extract_single_tlv_field(&frame);
     sink.deliver(Envelope::from_route(
         worker_source,
@@ -342,7 +342,7 @@ fn should_close_worker_only_after_deadline_cancellation_grace_expires() {
     assert_rpc_terminal_code_error(
         &caller_frames[0],
         correlation_id,
-        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
         RPC_TIMEOUT_ERROR,
     );
     assert_eq!(close_reasons, ["RPC cancellation grace period expired"]);

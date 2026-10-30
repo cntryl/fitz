@@ -144,6 +144,85 @@ fn should_commit_disjoint_writes_without_inventory_conflict() {
 }
 
 #[test]
+fn should_mark_concurrent_insert_estimate_incomplete_without_conflicting() {
+    // Arrange
+    let mut actor = test_actor();
+    let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "counted");
+    let mut seed = actor
+        .store
+        .begin(scope.route_family.id(), TxMode::ReadWrite)
+        .expect("begin inventory seed transaction");
+    seed.put(
+        KvActor::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource),
+        crate::domains::kv::inventory::encode_estimate(
+            crate::domains::kv::inventory::KvInventoryEstimate {
+                estimated_record_count: 0,
+                estimated_storage_bytes: 0,
+                estimate_complete: true,
+            },
+        ),
+    )
+    .expect("seed complete inventory estimate");
+    seed.commit(crate::domains::WritePolicy::Sync)
+        .expect("commit inventory seed");
+
+    let begin = |actor: &mut KvActor| {
+        let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
+            scope: scope.clone(),
+            mode: TxMode::ReadWrite,
+        }) else {
+            panic!("transaction should begin");
+        };
+        tx_id
+    };
+    let first = begin(&mut actor);
+    let second = begin(&mut actor);
+    for (tx_id, key) in [(first, "first"), (second, "second")] {
+        assert!(matches!(
+            actor.handle(KvMessage::Insert {
+                tx_id,
+                scope: scope.clone(),
+                key: Bytes::from(key),
+                value: Bytes::from_static(b"value"),
+            }),
+            KvResponse::InsertOk
+        ));
+    }
+
+    // Act
+    let first_commit = actor.handle(KvMessage::Commit {
+        tx_id: first,
+        scope: scope.clone(),
+        persistence: crate::domains::CommitPersistence::Buffered,
+    });
+    let second_commit = actor.handle(KvMessage::Commit {
+        tx_id: second,
+        scope: scope.clone(),
+        persistence: crate::domains::CommitPersistence::Buffered,
+    });
+    let read = actor
+        .store
+        .begin(scope.route_family.id(), TxMode::ReadOnly)
+        .expect("begin inventory read transaction");
+    let stored = read
+        .get(&KvActor::inventory_metadata_key(
+            &scope.realm,
+            &scope.area,
+            &scope.resource,
+        ))
+        .expect("read inventory metadata");
+    let estimate = crate::domains::kv::inventory::decode_estimate(
+        stored.as_deref().expect("inventory estimate exists"),
+    )
+    .expect("decode inventory estimate");
+
+    // Assert
+    assert!(matches!(first_commit, KvResponse::CommitOk));
+    assert!(matches!(second_commit, KvResponse::CommitOk));
+    assert!(!estimate.estimate_complete);
+}
+
+#[test]
 fn should_mark_inventory_incomplete_for_put_without_adding_a_hot_path_read() {
     // Arrange
     let mut actor = test_actor();

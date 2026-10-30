@@ -69,6 +69,9 @@ impl QueueActor {
         response_bytes_remaining: &mut usize,
         message_wire_overhead_bytes: usize,
     ) -> (QueueResponse, bool) {
+        if self.storage_outcome_is_unknown() {
+            return (Self::unknown_outcome_response(), false);
+        }
         self.handle_receive_internal(
             Some(session_id),
             inflight_seconds,
@@ -238,9 +241,8 @@ impl QueueActor {
         if message_wire_bytes <= response_bytes_remaining {
             return ReserveWireBudgetDecision::Reserve(message_wire_bytes);
         }
-        let empty_response_message_budget =
-            crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
-                - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+        let empty_response_message_budget = self.response_payload_limit
+            - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
         // Dead-lettering is permanent, so it must only fire when *no* reserve
         // shape could ever carry this body. A wildcard reserve pays extra
         // per-message overhead (routing envelope + route string) that a
@@ -363,6 +365,9 @@ impl QueueActor {
         token: u64,
         inflight_seconds: u64,
     ) -> QueueResponse {
+        if self.storage_outcome_is_unknown() {
+            return Self::unknown_outcome_response();
+        }
         match self.inflight.get(&id) {
             Some(inflight) if inflight.owner_session_id == Some(session_id) => {
                 self.handle_extend_authorized(id, token, inflight_seconds)
@@ -451,6 +456,9 @@ impl QueueActor {
         id: MessageId,
         token: u64,
     ) -> QueueResponse {
+        if self.storage_outcome_is_unknown() {
+            return Self::unknown_outcome_response();
+        }
         match self.inflight.get(&id) {
             Some(inflight) if inflight.owner_session_id == Some(session_id) => {
                 self.handle_ack_authorized(session_id, id, token)
@@ -467,6 +475,9 @@ impl QueueActor {
         session_id: u64,
         acknowledgements: &[(MessageId, u64)],
     ) -> Vec<QueueResponse> {
+        if self.storage_outcome_is_unknown() {
+            return vec![Self::unknown_outcome_response(); acknowledgements.len()];
+        }
         if acknowledgements.is_empty() {
             return Vec::new();
         }
@@ -484,8 +495,8 @@ impl QueueActor {
                 .collect();
         };
 
-        if let Err(message) = self.commit_ack_batch_delete(&deletes) {
-            return vec![QueueResponse::Error { message }; acknowledgements.len()];
+        if let Err(error) = self.commit_ack_batch_delete(&deletes) {
+            return vec![error.into_response(); acknowledgements.len()];
         }
 
         for delete in deletes {
@@ -546,8 +557,8 @@ impl QueueActor {
         }
 
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
-        if let Err(message) = self.commit_ack_delete(id, index_plan) {
-            return QueueResponse::Error { message };
+        if let Err(error) = self.commit_ack_delete(id, index_plan) {
+            return error.into_response();
         }
 
         self.finish_ack_success(id, dedup_key)
@@ -687,7 +698,7 @@ impl QueueActor {
         &mut self,
         id: MessageId,
         index_plan: PersistedIndexMutationPlan,
-    ) -> Result<(), String> {
+    ) -> Result<(), super::mutation_storage::QueueMutationError> {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
 
@@ -704,13 +715,16 @@ impl QueueActor {
                 error_reason = %error,
                 "Failed to commit queue delete transaction"
             );
-            format!("Failed to commit delete txn for message {id}: {error}")
+            error.with_context(&format!("Failed to commit delete txn for message {id}"))
         })?;
         self.apply_index_mutation_plan(id, index_plan, None);
         Ok(())
     }
 
-    fn commit_ack_batch_delete(&self, deletes: &[AckBatchDelete]) -> Result<(), String> {
+    fn commit_ack_batch_delete(
+        &self,
+        deletes: &[AckBatchDelete],
+    ) -> Result<(), super::mutation_storage::QueueMutationError> {
         self.commit_ack_with_admission_retry(|txn| {
             for delete in deletes {
                 Self::delete_record(txn, delete.header_key.clone(), delete.body_key.clone())
@@ -732,7 +746,7 @@ impl QueueActor {
                 ack_count = deletes.len(),
                 "Failed to commit queue ack batch transaction"
             );
-            format!("Failed to commit queue ack batch transaction: {error}")
+            error.with_context("Failed to commit queue ack batch transaction")
         })
     }
 

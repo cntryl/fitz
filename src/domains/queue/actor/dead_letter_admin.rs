@@ -264,6 +264,9 @@ impl QueueActor {
     ///
     /// Panics only if the delayed heap is internally inconsistent after a successful `peek`.
     pub fn process_delayed_messages(&mut self) -> bool {
+        if self.storage_outcome_is_unknown() {
+            return false;
+        }
         let now = self.clock.now_instant();
         let was_empty = self.ready_count == 0;
         let mut mutated = false;
@@ -304,6 +307,9 @@ impl QueueActor {
 
     /// Process only the timer and delayed-message work that is actually due.
     pub fn process_due_work(&mut self) -> bool {
+        if self.storage_outcome_is_unknown() {
+            return false;
+        }
         let now = self.clock.now_instant();
         let mut mutated = false;
 

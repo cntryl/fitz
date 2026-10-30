@@ -1,5 +1,6 @@
 use super::*;
-use crate::domains::schedule::protocol::{parse_concrete_schedule_route, ScheduleDeliveryMode};
+use crate::domains::schedule::protocol::ScheduleDeliveryMode;
+use crate::domains::schedule::route_grammar::parse_concrete_schedule_route;
 use crate::domains::WritePolicy;
 use crate::testkit::create_test_engine_with_cfs;
 use crate::utils::storage_key::{self, DomainKeyspace};

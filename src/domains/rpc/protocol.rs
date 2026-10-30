@@ -274,14 +274,8 @@ pub struct RpcWorkerRequestDelivery {
     pub session_id: u64,
     pub route_family: RouteFamily,
     pub request: RpcRequest,
-}
-
-/// Worker request delivery carrying a negotiated remaining-budget extension.
-#[derive(Debug, Clone)]
-pub(crate) struct RpcWorkerRequestWithBudgetDelivery {
-    pub(crate) session_id: u64,
-    pub(crate) request: RpcRequest,
-    pub(crate) remaining_budget_ms: u32,
+    /// The broker's remaining budget for the call, forwarded on every delivery.
+    pub remaining_budget_ms: u32,
 }
 
 /// Pre-encoded RPC lifecycle control frame delivered to one session.
@@ -292,11 +286,17 @@ pub(crate) struct RpcLifecycleControlDelivery {
 }
 
 impl RpcWorkerRequestDelivery {
-    pub fn new(session_id: u64, route_family: RouteFamily, request: RpcRequest) -> Self {
+    pub fn new(
+        session_id: u64,
+        route_family: RouteFamily,
+        request: RpcRequest,
+        remaining_budget_ms: u32,
+    ) -> Self {
         Self {
             session_id,
             route_family,
             request,
+            remaining_budget_ms,
         }
     }
 }

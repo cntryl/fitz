@@ -4,6 +4,7 @@ use crate::runtime::routing::{Route, RouteAddress};
 use crate::runtime::Envelope;
 use bytes::{BufMut, Bytes};
 
+mod contracts;
 mod health;
 
 fn usize_to_u32_saturating(value: usize) -> u32 {
@@ -12,6 +13,7 @@ fn usize_to_u32_saturating(value: usize) -> u32 {
 
 fn domain_setup_options() -> DomainSetupOptions {
     DomainSetupOptions {
+        max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
         route_families: vec![1, 2, 3, 4, 5, 6, 7],
         schedule_write_policy: crate::domains::WritePolicy::BestEffort,
 
@@ -30,6 +32,7 @@ fn cloud_domain_setup_options(
     durable_write_policy: crate::domains::WritePolicy,
 ) -> DomainSetupOptions {
     DomainSetupOptions {
+        max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
         route_families: vec![1],
         schedule_write_policy: durable_write_policy,
 
@@ -258,7 +261,7 @@ fn should_reject_new_work_after_domain_actor_panic() {
             FrameContext::new(
                 warmup_session,
                 crate::protocol::frame::ChannelId::Pub,
-                crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+                crate::protocol::message::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
                 encode_kv_begin(warmup_route),
                 family,
             ),
@@ -276,7 +279,7 @@ fn should_reject_new_work_after_domain_actor_panic() {
         FrameContext::new(
             recovery_session,
             crate::protocol::frame::ChannelId::Pub,
-            crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            crate::protocol::message::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(recovery_route),
             family,
         ),

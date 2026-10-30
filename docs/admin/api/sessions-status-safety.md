@@ -57,7 +57,7 @@ Operator tooling should not call `/admin/sessions/{id}/close` or
 ### Runtime And Observability Routes
 - `GET /api/v1/{family}/metrics` - Structured metrics for one authorized family.
 - `GET /api/v1/all/metrics` - Broker-wide structured metrics; wildcard authority required.
-- `POST /api/v1/runtime/drain` - Begin the planned runtime drain and continue automatically through session, listener, domain, and storage shutdown after the configured grace.
+- `POST /api/v1/runtime/drain` - Begin the planned runtime drain and continue automatically through session, listener, domain, and storage shutdown after the configured grace. Every live session receives a `GOAWAY` control message (code 0054 `DRAINING`, the remaining grace in milliseconds, and the configured close reason) the moment the drain begins.
 - `GET /api/v1/stats` - Global broker and domain statistics.
 - `GET /api/v1/{family}/stats` - Family-scoped broker and domain statistics.
 - `GET /api/v1/topology` - Messaging topology.

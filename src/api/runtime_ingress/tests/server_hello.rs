@@ -1,4 +1,4 @@
-//! Capability advertisement on session establishment.
+//! HELLO answers CONNECT on session establishment.
 
 use super::*;
 
@@ -18,11 +18,10 @@ impl MailboxSink for CapturingEncodedFrameSink {
 }
 
 #[test]
-fn should_announce_capabilities_as_the_first_frame_on_a_new_session() {
+fn should_answer_connect_with_hello_as_the_first_frame() {
     // Arrange
-    // The advertisement must reach the client before any domain response, or a
-    // client cannot know whether the response it is about to read can carry a
-    // correlation record.
+    // HELLO must reach the client before any domain response, so the client
+    // learns the version and limits in force before it reads an answer.
     let rt = tokio::runtime::Runtime::new().unwrap();
     let router = Arc::new(crate::runtime::Router::new());
     let session_id = 9_100;
@@ -38,19 +37,18 @@ fn should_announce_capabilities_as_the_first_frame_on_a_new_session() {
         Arc::new(CapturingEncodedFrameSink(captured)) as Arc<dyn MailboxSink>,
     );
     let ingress = RuntimeIngress::new(false).with_router(router);
+    let mut session = make_session_info(session_id, TransportKind::Tcp);
+    session.route_family = crate::runtime::routing::RouteFamily::new(1);
 
     // Act
     let decision = rt.block_on(async {
-        ingress
-            .on_open(make_session_info(session_id, TransportKind::Tcp))
-            .await
-            .unwrap();
+        ingress.on_open(session).await.unwrap();
         ingress
             .on_frame(
                 session_id,
                 ChannelId::Control,
-                crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::new(),
+                crate::protocol::message::MessageType::CONNECT,
+                connect_payload(""),
                 None,
             )
             .await
@@ -59,20 +57,25 @@ fn should_announce_capabilities_as_the_first_frame_on_a_new_session() {
     // Assert
     assert_eq!(decision, IngressDecision::Accept);
     let frames = frames.lock().unwrap();
-    assert_eq!(frames.len(), 1, "exactly one advertisement per session");
+    assert_eq!(frames.len(), 1, "exactly one HELLO per session");
     assert_eq!(
         frames[0].meta.message_type,
-        crate::protocol::tlv::MessageType::SERVER_HELLO.as_u16()
+        crate::protocol::wire2::control::HELLO
+    );
+    let hello =
+        crate::protocol::wire2::handshake::Hello::decode(&frames[0].payload).expect("HELLO body");
+    assert_eq!(hello.version, crate::protocol::wire2::WIRE_VERSION);
+    assert_eq!(
+        hello.broker_caps,
+        crate::protocol::wire2::BROKER_CAPABILITIES
     );
     assert_eq!(
-        crate::protocol::correlation::decode_server_hello(&frames[0].payload),
-        Some((
-            crate::protocol::correlation::PROTOCOL_VERSION,
-            crate::protocol::correlation::SUPPORTED_CAPABILITIES
-        ))
+        hello.max_message_bytes,
+        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES
     );
+    assert_eq!(hello.session_id, session_id);
     assert!(
         frames[0].meta.correlation.is_none(),
-        "an unsolicited advertisement answers no request"
+        "HELLO answers the connection, not a correlated request"
     );
 }

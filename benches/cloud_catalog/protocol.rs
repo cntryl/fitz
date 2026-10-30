@@ -4,7 +4,7 @@ use fitz::benchkit::{
     build_kv_begin, build_kv_commit, build_kv_put, build_kv_rollback, extract_single_tlv_field,
     parse_kv_tx_id,
 };
-use fitz::testkit::{TestClient, TlvFrameBuilder};
+use fitz::testkit::{FrameBuilder, TestClient};
 use std::net::SocketAddr;
 
 pub(super) async fn request(client: &mut TestClient, frame: &[u8], expected: u16) -> Vec<u8> {
@@ -37,7 +37,7 @@ async fn read(client: &mut TestClient, tx: u64, key: &[u8]) -> Vec<u8> {
     payload.extend_from_slice(ROUTE.as_bytes());
     payload.extend_from_slice(&u32::try_from(key.len()).unwrap().to_be_bytes());
     payload.extend_from_slice(key);
-    let mut frame = TlvFrameBuilder::new();
+    let mut frame = FrameBuilder::new();
     frame.encode_field(103, &payload);
     let reply = request(client, &frame.build(), 103).await;
     assert_eq!(reply[1], 1, "historical value must exist");

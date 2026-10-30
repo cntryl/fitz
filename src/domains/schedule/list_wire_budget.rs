@@ -1,13 +1,13 @@
 //! Wire-size budget for schedule LIST responses.
 //!
-//! A LIST response is carried as a single TLV value with a `u16` length, so
-//! the page must be bounded by bytes and not only by entry count. Every entry
-//! can be individually small and legal while the aggregate is unencodable.
+//! Schedule LIST responses have a domain-specific 65,535-byte payload ceiling,
+//! separate from the larger Wire2 message limit. Pages must respect both this
+//! byte ceiling and their entry count.
 
 use super::protocol::ScheduleListEntry;
 
-/// A schedule response is carried as one TLV value, whose length prefix is a
-/// `u16`. Anything past this can never be framed.
+/// Maximum encoded Schedule response payload size, independent of the Wire2
+/// message limit.
 pub(crate) const MAX_SCHEDULE_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
 
 /// Generous allowance for a list response's non-entry bytes: the success flag,
@@ -29,8 +29,8 @@ pub(crate) fn schedule_list_response_byte_ceiling() -> usize {
 
 /// Reject a definition that could never appear in a LIST response.
 ///
-/// A CREATE arrives as a single TLV value, so its payload may be larger than
-/// the same definition costs as a list entry. Storing one leaves a schedule
+/// A CREATE request payload may be larger than the same definition costs as a
+/// list entry. Storing one leaves a schedule
 /// that fires normally but can never be listed: the page cannot be framed, so
 /// the response is dropped rather than answered. Refusing it at write time is
 /// the only point where the client can still do something about it.

@@ -72,7 +72,7 @@ async fn connect(address: SocketAddr) -> TestClient {
 }
 
 fn field(response: &[u8]) -> (u16, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
     let result = parser.next_field().expect("response field");
     assert!(parser.next_field().is_none(), "one response field");
     result
@@ -184,7 +184,7 @@ async fn ack(client: &mut TestClient, route: &str, reserved: &[u8]) {
     payload.extend_from_slice(&u32::try_from(route.len()).unwrap().to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&reserved[5..21]); // message ID and reservation token
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(204, &payload);
     request(client, &builder.build(), 204).await;
 }

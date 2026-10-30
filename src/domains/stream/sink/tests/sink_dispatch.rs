@@ -20,6 +20,7 @@ fn should_confirm_stream_family_cleanup_before_reporting_delivery() {
         StreamStorageLayout::PromotionFrontier,
         Some(&[family]),
         StreamStorageWriteOptions::local(),
+        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
     )
     .expect("create family Stream sink");
     let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
@@ -482,7 +483,7 @@ fn should_preserve_append_session_without_notify_given_commit_failure() {
     let (retry_commit_type, retry_commit_payload) = extract_single_tlv_field(&retry_commit_frame);
     let retry_commit_response = request(&context, route, retry_commit_type, retry_commit_payload);
     let read_after_retry = stream_read_response(&context, route, 0, 10);
-    let durable_metrics = context.sink.durable_metrics_snapshot();
+    let durable_metrics = context.sink.durable_metrics_snapshot(usize::MAX);
     context.sink.sync_admin_snapshot();
     let stream = context
         .admin_read_model

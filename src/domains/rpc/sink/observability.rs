@@ -15,14 +15,24 @@ impl RpcFamilyRuntime<'_> {
     }
 
     pub(super) fn release_global_pending(&mut self, count: usize) {
+        let count = count.min(self.core.state.global_capacity_reservations);
         if count == 0 {
             return;
         }
+        self.core.state.global_capacity_reservations -= count;
         let _ = self.core.global_pending_count.try_update(
             Ordering::AcqRel,
             Ordering::Acquire,
             |current| Some(current.saturating_sub(count)),
         );
+    }
+
+    pub(super) fn reclaim_failed_family_state(&mut self) {
+        let reserved = self.core.state.global_capacity_reservations;
+        self.release_global_pending(reserved);
+        self.core.state = RpcState::new();
+        self.refresh_metrics_gauges();
+        self.sync_admin_snapshot();
     }
 
     pub(crate) fn timeout_sweep_interval(&mut self) -> Duration {
@@ -177,7 +187,7 @@ impl RpcFamilyRuntime<'_> {
 
         self.forward_pending_error_deliveries(
             timeout_result.timeout_deliveries,
-            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            crate::dispatch::protocol::error_codes::rpc::ERR_TIMEOUT,
             RPC_TIMEOUT_ERROR,
             "rpc_timeout_errors_forwarded_total",
             "rpc_timeout_errors_dropped_total",

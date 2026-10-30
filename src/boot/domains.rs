@@ -272,8 +272,6 @@ impl DomainAdminPorts {
         self.stream.refresh_admin_snapshot_if_dirty();
     }
 
-    /// Refresh every lazily projected domain; KV, Lease and session projections
-    /// have no deferred refresh.
     pub(crate) fn refresh_admin_snapshots(&self) {
         self.refresh_queue_admin_snapshot();
         self.refresh_rpc_admin_snapshot();
@@ -284,8 +282,9 @@ impl DomainAdminPorts {
 
     pub(crate) fn stream_durable_metrics_snapshot(
         &self,
+        limit: usize,
     ) -> crate::domains::stream::metrics::StreamDurableMetricsSnapshot {
-        self.stream.durable_metrics_snapshot()
+        self.stream.durable_metrics_snapshot(limit)
     }
 
     pub(crate) fn kv_active_transaction_count(&self) -> usize {
@@ -540,6 +539,7 @@ impl DomainAdminPorts {
 }
 
 pub(crate) struct DomainSetupOptions {
+    pub(crate) max_message_bytes: usize,
     pub(crate) route_families: Vec<u32>,
     pub(crate) schedule_write_policy: crate::domains::WritePolicy,
 
@@ -580,6 +580,7 @@ fn create_stream_sink(
                 options.request_sync_write_policy,
                 options.request_buffered_write_policy,
             ),
+            options.max_message_bytes,
         )?
         .with_metrics(metrics.clone()),
     ))
@@ -642,6 +643,7 @@ pub(crate) fn setup(
             admin_read_model.clone(),
             crate::utils::idempotency::default_dedup_store(),
         )?
+        .with_max_message_bytes(options.max_message_bytes)
         .with_fast_flush_interval(options.queue_fast_flush_interval)
         .with_metrics(metrics.clone()),
     );

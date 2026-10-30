@@ -1,8 +1,9 @@
-use super::{list, route_quad, AdminSearchResult, Candidate, Runtime, SearchOptions};
+use super::model_and_sessions::SearchSnapshot;
+use super::{list, route_quad, AdminSearchResult, Candidate, SearchOptions};
 use std::collections::{BTreeMap, HashMap};
 
 pub(crate) fn collect_rpc_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -10,16 +11,16 @@ pub(crate) fn collect_rpc_candidates(
         return;
     }
 
-    collect_rpc_worker_candidates(runtime, options, candidates);
-    collect_rpc_pending_candidates(runtime, options, candidates);
+    collect_rpc_worker_candidates(snapshot, options, candidates);
+    collect_rpc_pending_candidates(snapshot, options, candidates);
 }
 
 fn collect_rpc_worker_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for worker in runtime.rpc_list_workers(options.realm.as_deref()) {
+    for worker in snapshot.rows.rpc_workers.iter().cloned() {
         let route_family = worker.route_family.to_string();
         let parsed = route_quad(&worker.route);
         if !options.matches_scope(
@@ -82,11 +83,11 @@ fn collect_rpc_worker_candidates(
 }
 
 fn collect_rpc_pending_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for request in runtime.rpc_list_pending(options.realm.as_deref()) {
+    for request in snapshot.rows.rpc_pending.iter().cloned() {
         let route_family = request.route_family.to_string();
         let parsed = route_quad(&request.route);
         if !options.matches_scope(

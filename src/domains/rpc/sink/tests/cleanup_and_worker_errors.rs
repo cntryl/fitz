@@ -153,7 +153,7 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -186,7 +186,7 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(301),
+            crate::dispatch::protocol::message::MessageType::new(301),
             bytes::Bytes::from(unsubscribe_payload),
             family,
         ),
@@ -261,7 +261,7 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -289,7 +289,7 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(301),
+            crate::dispatch::protocol::message::MessageType::new(301),
             bytes::Bytes::from(unsubscribe_payload),
             family,
         ),
@@ -307,7 +307,7 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),
@@ -362,7 +362,7 @@ fn should_forward_worker_disconnect_error_given_rpc_session_cleanup() {
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -445,7 +445,7 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload,
         family,
     );
@@ -470,7 +470,7 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(orphan_response_payload),
             family,
         ),
@@ -552,7 +552,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload,
         family,
     );
@@ -591,7 +591,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
         FrameContext::new(
             43,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(wrong_response_payload),
             family,
         ),
@@ -656,7 +656,7 @@ fn should_drop_late_worker_response_after_requester_cleanup_without_forward_erro
     let request_ctx = FrameContext::new(
         1,
         crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::message::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
@@ -696,7 +696,7 @@ fn should_drop_late_worker_response_after_requester_cleanup_without_forward_erro
         FrameContext::new(
             42,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::message::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),

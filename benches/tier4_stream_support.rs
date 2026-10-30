@@ -6,7 +6,7 @@ use cntryl_stress::StressContext;
 use fitz::benchkit::{build_stream_append, build_stream_commit};
 use fitz::domains::stream::protocol::{StreamFilterClause, StreamFilterSet};
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::{TlvFrameBuilder, TlvFrameParser};
+use fitz::testkit::{FrameBuilder, FrameParser};
 
 pub(crate) const CANONICAL_HISTORY_DEPTH: usize = 100;
 pub(crate) const CANONICAL_PAYLOAD_SIZE: usize = 1024;
@@ -181,7 +181,7 @@ pub(crate) fn build_stream_read_with_filter(
         payload.put_slice(&encoded);
     }
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(STREAM_READ_MSG_TYPE, &payload);
     builder.build()
 }
@@ -193,7 +193,7 @@ pub(crate) fn equality_filter(value: &str) -> StreamFilterSet {
 }
 
 pub(crate) fn assert_stream_notify(frame: &[u8], expected_route: &str) {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser.next_field_ref().expect("stream notify frame");
     assert_eq!(msg_type, STREAM_NOTIFY_MSG_TYPE, "expected stream notify");
 
@@ -222,24 +222,21 @@ pub(crate) fn build_stream_append_with_discriminator(
     encoder.put_u8(0);
     encoder.put_optional_string(Some(discriminator));
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(STREAM_APPEND_MSG_TYPE, &encoder.finish());
     builder.build()
 }
 
 pub(crate) fn tlv_field(frame: &[u8]) -> (u16, Bytes) {
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser.next_field_ref().expect("one TLV field");
     assert!(parser.next_field_ref().is_none(), "expected one TLV field");
     (msg_type, Bytes::copy_from_slice(payload))
 }
 
 fn tlv_payload_offset(frame: &[u8]) -> usize {
-    match frame.first().copied() {
-        Some(0xFF) => 5,
-        Some(_) => 3,
-        None => panic!("TLV frame should not be empty"),
-    }
+    assert!(!frame.is_empty(), "frame must not be empty");
+    fitz::protocol::wire2::header::HEADER_LEN
 }
 
 fn usize_to_u32(value: usize) -> u32 {

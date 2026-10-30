@@ -66,7 +66,7 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
     buf.put_u32(u32_len(payload.len()));
     buf.put_slice(payload);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(700, &buf);
     builder.build()
 }
@@ -90,7 +90,7 @@ pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
         buf.put_slice(payload);
     }
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(706, &buf);
     builder.build()
 }
@@ -106,7 +106,7 @@ pub fn build_schedule_cancel(route: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(701, &buf);
     builder.build()
 }
@@ -114,7 +114,7 @@ pub fn build_schedule_cancel(route: &str) -> Vec<u8> {
 /// Build SCHEDULE LIST frame (`msg_type` 702)
 pub fn build_schedule_list() -> Vec<u8> {
     // Wire format: empty payload
-    let builder = TlvFrameBuilder::new();
+    let builder = FrameBuilder::new();
     let mut frame_builder = builder;
     frame_builder.encode_field(702, &[]);
     frame_builder.build()
@@ -128,7 +128,7 @@ pub fn build_schedule_subscribe(route_pattern: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(703, &buf);
     builder.build()
 }
@@ -141,14 +141,14 @@ pub fn build_schedule_unsubscribe(route_pattern: &str) -> Vec<u8> {
     buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(704, &buf);
     builder.build()
 }
 
 /// Parse SCHEDULE response
 pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
@@ -172,7 +172,7 @@ pub struct ScheduleDelivery {
 pub fn parse_schedule_delivery(frame: &[u8]) -> Result<ScheduleDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field()
         .ok_or_else(|| "Missing schedule delivery frame".to_string())?;

@@ -123,7 +123,7 @@ where
                 .expect("Lease subscription error envelope");
             assert_eq!(
                 code,
-                fitz::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE
+                fitz::protocol::error_codes::lease::ERR_INVALID_PATTERN
             );
         }
     }

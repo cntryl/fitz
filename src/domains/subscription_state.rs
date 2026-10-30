@@ -38,6 +38,12 @@ pub(crate) fn registration_limit_for_counts(
     }
 }
 
+/// Stable registration identity used by the shared subscription indexes.
+///
+/// Pattern, session and subscription IDs remain unchanged while the record is
+/// registered. Identity changes require removal and reinsertion so the indexes
+/// remain consistent. The metric label describes the owner; it grants no
+/// routing or authorization authority.
 pub(crate) trait RoutedSubscription {
     fn metric_domain() -> &'static str;
     fn pattern(&self) -> &Pattern;

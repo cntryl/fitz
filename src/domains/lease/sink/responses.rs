@@ -24,7 +24,7 @@ impl LeaseFamilyRuntime<'_> {
             FrameContext::new(
                 waiter.owner_session_id,
                 crate::protocol::test_support::channel_id_from_client(waiter.channel),
-                crate::dispatch::protocol::tlv::MessageType::new(
+                crate::dispatch::protocol::message::MessageType::new(
                     crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
                 ),
                 bytes::Bytes::from(response_bytes),
@@ -79,15 +79,25 @@ impl LeaseFamilyRuntime<'_> {
             FrameContext::new(
                 meta.session_id,
                 crate::protocol::test_support::channel_id_from_client(meta.channel),
-                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::message::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
             .with_correlation(meta.correlation)
+            .with_response_final(!matches!(
+                response,
+                crate::domains::lease::protocol::LeaseResponse::Queued { .. }
+            ))
         };
 
         #[cfg(not(test))]
-        let response_ctx = crate::domains::lease::LeaseClientResponse::new(meta, response.clone());
+        let response_ctx = crate::domains::lease::LeaseClientResponse::new(
+            meta.with_response_final(!matches!(
+                response,
+                crate::domains::lease::protocol::LeaseResponse::Queued { .. }
+            )),
+            response.clone(),
+        );
 
         let mut delivered = false;
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx.clone()) {

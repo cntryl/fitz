@@ -179,10 +179,8 @@ impl RpcFamilyRuntime<'_> {
             },
             busy_time,
         );
-        let bytes = crate::protocol::rpc_codec::encode_worker_cancel_tlv_frame(
-            &worker_id,
-            cancellation.reason,
-        );
+        let bytes =
+            crate::protocol::rpc_codec::encode_worker_cancel_frame(&worker_id, cancellation.reason);
         let destination =
             session_inbox_address(cancellation.family, cancellation.worker_session_id);
         let delivery = crate::domains::rpc::protocol::RpcLifecycleControlDelivery {
@@ -254,8 +252,7 @@ impl RpcFamilyRuntime<'_> {
         correlation_id: Uuid,
         result: RpcCancellationResult,
     ) {
-        let frame =
-            crate::protocol::rpc_codec::encode_cancel_result_tlv_frame(&correlation_id, result);
+        let frame = crate::protocol::rpc_codec::encode_cancel_result_frame(&correlation_id, result);
         let destination = session_inbox_address(family, session_id);
         let delivery =
             crate::domains::rpc::protocol::RpcLifecycleControlDelivery { session_id, frame };

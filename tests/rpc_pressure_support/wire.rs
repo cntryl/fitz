@@ -1,11 +1,11 @@
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::transport::{TlvFrameBuilder, TlvFrameParser};
+use fitz::testkit::transport::{FrameBuilder, FrameParser};
 use uuid::Uuid;
 
 pub const ROUTE: &str = "rpc://pressure/service/work";
 
 pub fn frame(kind: u16, payload: &[u8]) -> Vec<u8> {
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(kind, payload);
     builder.build()
 }
@@ -14,8 +14,7 @@ pub fn subscribe() -> Vec<u8> {
     let mut payload = PayloadEncoder::new();
     payload.put_string(ROUTE);
     payload.put_u32(1);
-    payload.put_u8(1);
-    payload.put_u8(1);
+    payload.put_u8(1); // accepts cancellation controls
     frame(300, &payload.finish())
 }
 
@@ -30,8 +29,7 @@ pub fn request(id: Uuid, sequence: u64, budget: u32) -> Vec<u8> {
     payload.put_raw(id.as_bytes());
     payload.put_string(ROUTE);
     payload.put_bytes(&body(sequence));
-    payload.put_u8(1);
-    payload.put_u8(1);
+    payload.put_u8(1); // budget present
     payload.put_u32(budget);
     frame(302, &payload.finish())
 }
@@ -46,7 +44,7 @@ pub fn control(kind: u8, id: Uuid, reason: Option<u8>) -> Vec<u8> {
 }
 
 pub fn lifecycle(bytes: &[u8], kind: u8, id: Uuid, reason: u8) -> Result<(), String> {
-    let mut parser = TlvFrameParser::new(bytes);
+    let mut parser = FrameParser::new(bytes);
     let (message, payload) = parser.next_field().ok_or("missing lifecycle")?;
     let mut expected = vec![kind];
     expected.extend_from_slice(id.as_bytes());
@@ -58,7 +56,7 @@ pub fn lifecycle(bytes: &[u8], kind: u8, id: Uuid, reason: u8) -> Result<(), Str
 }
 
 pub fn registration(bytes: &[u8]) -> Result<(), String> {
-    let mut parser = TlvFrameParser::new(bytes);
+    let mut parser = FrameParser::new(bytes);
     let (message, payload) = parser.next_field().ok_or("missing registration")?;
     let mut decoder = PayloadDecoder::new(&payload);
     if message != 300
@@ -84,14 +82,14 @@ pub fn terminal(
         return Ok(true);
     }
     let (code, message) = fitz::protocol::error_codes::decode_error_body(&response)?;
-    if code != fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE {
+    if code != fitz::protocol::error_codes::rpc::ERR_BUSY {
         return Err(format!("unexpected terminal {code}: {message}"));
     }
     Ok(false)
 }
 
 fn terminal_envelope(bytes: &[u8]) -> Result<(Uuid, bytes::Bytes), String> {
-    let mut parser = TlvFrameParser::new(bytes);
+    let mut parser = FrameParser::new(bytes);
     let (kind, payload) = parser.next_field().ok_or("missing terminal reply")?;
     if kind != 303 || parser.next_field().is_some() {
         return Err("invalid terminal frame".into());

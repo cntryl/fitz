@@ -26,6 +26,7 @@ pub struct QueueCounts {
 impl QueueFamilyState {
     fn new(config: &QueueDomainConfig, family: crate::runtime::routing::RouteFamily) -> Self {
         Self {
+            response_payload_limit: config.response_payload_limit,
             route_family: family,
             delivery_service_us: config.delivery_service_us[&family.id()].clone(),
             store: config.store.clone(),
@@ -180,6 +181,8 @@ impl QueueDomain {
                 .collect(),
         );
         let config = QueueDomainConfig {
+            response_payload_limit:
+                crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES,
             store,
 
             dedup_store,
@@ -237,6 +240,15 @@ impl QueueDomain {
         }
         self.family_runtime =
             Self::spawn_family_runtime(&self.config, self.active.clone(), &self.route_families);
+    }
+
+    /// Configure the complete message limit before serving Queue traffic.
+    #[must_use]
+    pub(crate) fn with_max_message_bytes(mut self, max_message_bytes: usize) -> Self {
+        self.config.response_payload_limit =
+            max_message_bytes.saturating_sub(crate::protocol::wire2::header::HEADER_LEN);
+        self.rebuild_actor();
+        self
     }
 
     #[must_use]

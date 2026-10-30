@@ -55,13 +55,14 @@ pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
 pub fn build_rpc_subscribe_with_max_concurrent(worker_addr: &str, max_concurrent: u32) -> Vec<u8> {
     use bytes::BufMut;
 
-    // Wire format: [string worker_addr][u32 max_concurrent]
+    // Wire format: [string worker_addr][u32 max_concurrent][u8 flags]
     let mut buf = Vec::new();
     buf.put_u32(u32_len(worker_addr.len()));
     buf.put_slice(worker_addr.as_bytes());
     buf.put_u32(max_concurrent);
+    buf.put_u8(0); // no cancellation support
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(300, &buf);
     builder.build()
 }
@@ -74,7 +75,7 @@ pub fn build_rpc_unsubscribe(worker_addr: &str) -> Vec<u8> {
     buf.put_u32(u32_len(worker_addr.len()));
     buf.put_slice(worker_addr.as_bytes());
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(301, &buf);
     builder.build()
 }
@@ -97,8 +98,9 @@ pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> 
     // Body (length-prefixed bytes)
     buf.put_u32(u32_len(payload.len()));
     buf.put_slice(payload);
+    buf.put_u8(0); // no caller budget
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(302, &buf);
     builder.build()
 }
@@ -120,14 +122,14 @@ pub fn build_rpc_response_delivery(
     enc.put_u8(u8::from(stream_end));
     enc.put_bytes(body);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(303, &enc.finish());
     builder.build()
 }
 
 /// Parse RPC response
 pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response);
+    let mut parser = FrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
@@ -161,7 +163,7 @@ pub struct RpcResponseDelivery {
 pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field()
         .ok_or_else(|| "Missing RPC request delivery frame".to_string())?;
@@ -177,16 +179,16 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
 
     let route = dec.get_string()?;
     let body = dec.get_bytes()?.to_vec();
-    let remaining_budget_ms = if dec.is_complete() {
-        None
-    } else {
-        let version = dec.get_u8()?;
-        let flags = dec.get_u8()?;
-        let budget_ms = dec.get_u32()?;
-        if version != 1 || flags != 1 || budget_ms > 86_400_000 {
-            return Err("Invalid RPC request budget extension".to_string());
+    let remaining_budget_ms = match dec.get_u8()? {
+        0 => None,
+        1 => {
+            let budget_ms = dec.get_u32()?;
+            if budget_ms > 86_400_000 {
+                return Err("Invalid RPC request budget".to_string());
+            }
+            Some(budget_ms)
         }
-        Some(budget_ms)
+        other => return Err(format!("Invalid RPC budget presence byte: {other}")),
     };
     if !dec.is_complete() {
         return Err("Trailing data in RPC request delivery".to_string());
@@ -205,7 +207,7 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
 pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame);
+    let mut parser = FrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field()
         .ok_or_else(|| "Missing RPC response delivery frame".to_string())?;

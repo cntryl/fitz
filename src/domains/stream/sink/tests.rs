@@ -44,6 +44,7 @@ fn setup_test_context_with_metrics(
         StreamStorageLayout::default(),
         Some(&[family, RouteFamily::new(2)]),
         StreamStorageWriteOptions::local(),
+        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
     )
     .expect("create Stream test sink");
     if let Some(metrics) = metrics {

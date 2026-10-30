@@ -24,6 +24,11 @@ struct PreparedSessionReservation {
 }
 
 impl StreamStore {
+    fn recover_global_ordering_after_unknown_commit(&self, family: u64) -> Result<(), String> {
+        self.recovered_global_families.lock().remove(&family);
+        self.recover_global_ordering_once(family)
+    }
+
     fn preserve_retryable_global_reservation(
         &self,
         key: SequenceGuardKey,
@@ -186,7 +191,7 @@ impl StreamStore {
         batch_size: usize,
     ) -> Result<GlobalReservation, String> {
         let guard = self.family_sequence_guard(family);
-        let _lock = guard.lock();
+        let sequence_lock = guard.lock();
         let admission = super::write_admission::StreamWriteAdmission::new(family);
         loop {
             let mut txn = self
@@ -232,7 +237,28 @@ impl StreamStore {
                     admission.rejected();
                     admission.wait(&self.db)?;
                 }
-                Err(error) => return Err(format!("commit global reservation failed: {error:?}")),
+                Err(error) => {
+                    let prefix = if matches!(&error, cntryl_midge::MidgeError::Timeout(_)) {
+                        crate::domains::stream::protocol::ERR_STREAM_TIMEOUT
+                    } else {
+                        ""
+                    };
+                    if matches!(
+                        &error,
+                        cntryl_midge::MidgeError::OutcomeUnknown(_)
+                            | cntryl_midge::MidgeError::Timeout(_)
+                    ) {
+                        drop(sequence_lock);
+                        self.recover_global_ordering_after_unknown_commit(family).map_err(|recovery_error| {
+                            format!(
+                                "{prefix}commit global reservation failed with unknown outcome: {error:?}; recovery failed: {recovery_error}"
+                            )
+                        })?;
+                    }
+                    return Err(format!(
+                        "{prefix}commit global reservation failed: {error:?}"
+                    ));
+                }
             }
         }
     }
@@ -339,6 +365,16 @@ impl StreamStore {
             });
         let (response, resource_meta_after) = match commit_result {
             Ok(result) => result,
+            Err(PromotionCommitFailure::Ambiguous(error)) => {
+                if let Err(recovery_error) =
+                    self.recover_global_ordering_after_unknown_commit(family)
+                {
+                    return Err(format!(
+                        "{error}; global ordering recovery failed: {recovery_error}"
+                    ));
+                }
+                return Err(error);
+            }
             Err(error) => {
                 self.preserve_retryable_global_reservation(
                     reservation_key,

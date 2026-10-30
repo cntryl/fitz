@@ -134,7 +134,7 @@ fn should_reserve_multiple_messages_in_batch() {
 }
 
 #[test]
-fn should_bound_reserve_batch_to_tlv_payload_capacity() {
+fn should_bound_reserve_batch_to_the_configured_payload_capacity() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(
@@ -152,14 +152,14 @@ fn should_bound_reserve_batch_to_tlv_payload_capacity() {
         None,
         crate::utils::idempotency::default_dedup_store(),
     );
+    actor.response_payload_limit = 65_535;
     for _ in 0..100 {
         actor.handle_send(Bytes::from(vec![0x5a; 1024]), None);
     }
 
     // Act
-    let mut response_bytes_remaining =
-        crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
-            - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+    let mut response_bytes_remaining = actor.response_payload_limit
+        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
     let (response, wire_budget_exhausted) = actor.handle_receive_for_session_with_wire_budget(
         TEST_SESSION_ID,
         30,
@@ -170,7 +170,7 @@ fn should_bound_reserve_batch_to_tlv_payload_capacity() {
     let payload = crate::dispatch::protocol::queue_codec::encode_response(202, &response);
 
     // Assert
-    assert!(u16::try_from(payload.len()).is_ok());
+    assert!(payload.len() <= actor.response_payload_limit);
     let QueueResponse::Received { messages } = response else {
         panic!("Expected Received response");
     };

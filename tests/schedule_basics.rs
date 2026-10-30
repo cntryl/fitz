@@ -232,13 +232,13 @@ fn should_treat_delivery_mode_change_as_schedule_upsert() {
         payload,
     });
     let list = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
 
     // Assert
     assert!(matches!(response, ScheduleResponse::Ok));
-    let ScheduleResponse::ListDefs { entries, .. } = list else {
+    let ScheduleResponse::ListPage { entries, .. } = list else {
         panic!("expected schedule list");
     };
     assert_eq!(
@@ -326,17 +326,17 @@ fn should_upsert_schedule_by_route() {
 
     // Verify only one schedule exists
     let list_response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
     match list_response {
-        ScheduleResponse::ListDefs { entries, .. } => {
+        ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].route, route);
             assert_eq!(entries[0].cron, "0 3 * * *");
             assert_eq!(entries[0].payload, Bytes::from("config-v2"));
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 
@@ -367,17 +367,17 @@ fn should_keep_single_schedule_given_identical_create_upsert() {
     assert!(matches!(response, ScheduleResponse::Ok));
 
     let list_response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
     match list_response {
-        ScheduleResponse::ListDefs { entries, .. } => {
+        ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].route, route);
             assert_eq!(entries[0].cron, "0 2 * * *");
             assert_eq!(entries[0].payload, payload);
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 
@@ -409,17 +409,17 @@ fn should_create_multiple_schedules_in_single_batch() {
     // Act
     let response = actor.handle(ScheduleMessage::CreateBatch { entries });
     let list_response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
 
     // Assert
     assert!(matches!(response, ScheduleResponse::Ok));
     match list_response {
-        ScheduleResponse::ListDefs { entries, .. } => {
+        ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 3);
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 
@@ -445,8 +445,8 @@ fn should_reject_schedule_batch_given_duplicate_routes() {
     // Act
     let response = actor.handle(ScheduleMessage::CreateBatch { entries });
     let list_response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
 
     // Assert
@@ -458,10 +458,10 @@ fn should_reject_schedule_batch_given_duplicate_routes() {
         _ => panic!("Expected Error response for duplicate routes"),
     }
     match list_response {
-        ScheduleResponse::ListDefs { entries, .. } => {
+        ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 0);
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 
@@ -490,14 +490,14 @@ fn should_cancel_schedule_by_route() {
 
     // Verify schedule is gone
     let list_response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
     match list_response {
-        ScheduleResponse::ListDefs { entries, .. } => {
+        ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 0);
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 
@@ -567,13 +567,13 @@ fn should_list_all_schedules() {
 
     // Act
     let response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
 
     // Assert
     match response {
-        ScheduleResponse::ListDefs { entries, .. } => {
+        ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 3);
 
             // Verify all routes present
@@ -582,7 +582,7 @@ fn should_list_all_schedules() {
             assert!(routes.contains(&"schedule://acme/jobs/cleanup/run".to_string()));
             assert!(routes.contains(&"schedule://acme/jobs/report/run".to_string()));
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 
@@ -593,16 +593,16 @@ fn should_list_empty_when_no_schedules() {
 
     // Act
     let response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
 
     // Assert
     match response {
-        ScheduleResponse::ListDefs { entries, .. } => {
+        ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 0);
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 
@@ -624,17 +624,17 @@ fn should_preserve_payload_in_schedule() {
 
     // Act
     let response = actor.handle(ScheduleMessage::List {
-        offset: 0,
-        limit: 0,
+        cursor: None,
+        limit: 1_000,
     });
 
     // Assert
     match response {
-        ScheduleResponse::ListDefs { entries, .. } => {
+        ScheduleResponse::ListPage { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].payload, payload);
         }
-        _ => panic!("Expected ListDefs response"),
+        _ => panic!("Expected ListPage response"),
     }
 }
 

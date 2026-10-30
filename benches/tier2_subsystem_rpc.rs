@@ -244,6 +244,77 @@ fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usiz
     );
 }
 
+fn dispatch_response_cleanup_new_routes(ctx: &mut StressContext, worker_count: usize) {
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
+    let registration_destination = route_address(family, "rpc://bench/subsystem/*");
+    let workers = (0..worker_count)
+        .map(|index| {
+            register_worker_for_destination(
+                &router,
+                family,
+                60_000_u64.saturating_add(usize_to_u64_saturating(index)),
+                &registration_destination,
+            )
+        })
+        .collect::<Vec<_>>();
+    let worker = workers.first().expect("at least one RPC worker");
+    let destinations = (0..256)
+        .map(|index| route_address(family, &format!("rpc://bench/subsystem/route-{index}")))
+        .collect::<Vec<_>>();
+    let requests = destinations
+        .iter()
+        .map(|destination| {
+            let frame = build_rpc_request(destination.route().as_str(), b"new route lookup");
+            extract_single_tlv_field(&frame)
+        })
+        .collect::<Vec<_>>();
+    let mut next_request = 0;
+
+    configure_cleanup_measurement(ctx);
+    ctx.parameter("scenario", "new_route_registration_match");
+    ctx.parameter("worker_count", worker_count.to_string());
+    ctx.parameter("concrete_route_count", destinations.len().to_string());
+
+    tier2_stress::measure_iterations(
+        ctx,
+        "dispatch_response_cleanup_new_routes",
+        usize_to_u64_saturating(DISPATCH_BATCH_SIZE),
+        || {
+            for _ in 0..DISPATCH_BATCH_SIZE {
+                let index = next_request;
+                let (msg_type, payload) = &requests[index];
+                dispatch_request_to_destination(
+                    &router,
+                    family,
+                    &requester_source,
+                    &destinations[index],
+                    *msg_type,
+                    black_box(payload.clone()),
+                );
+                cleanup_worker_request_on_destination(
+                    &router,
+                    family,
+                    &destinations[index],
+                    worker,
+                );
+                requester_inbox.clear();
+                next_request = (next_request + 1) % destinations.len();
+            }
+            black_box(&workers);
+        },
+    );
+}
+
+#[stress(tier = 2, name = "new_route_match_32768_ops_1_worker")]
+fn should_dispatch_response_cleanup_new_routes_1_worker(ctx: &mut StressContext) {
+    dispatch_response_cleanup_new_routes(ctx, 1);
+}
+
+#[stress(tier = 2, name = "new_route_match_32768_ops_256_workers")]
+fn should_dispatch_response_cleanup_new_routes_256_workers(ctx: &mut StressContext) {
+    dispatch_response_cleanup_new_routes(ctx, 256);
+}
+
 #[stress(
     tier = 2,
     name = "dispatch_response_cleanup_32768_ops_256_workers_primary"

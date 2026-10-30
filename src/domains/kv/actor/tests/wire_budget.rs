@@ -3,11 +3,9 @@ use super::*;
 #[test]
 fn should_bound_scan_response_to_one_wire_frame() {
     // Arrange
-    // A scan response is carried as one TLV value with a u16 length. The item
-    // cap alone does not bound it: 1 KiB values overflow the frame at roughly
-    // 63 items, far below the 1,024-item ceiling, and a client that omits
-    // `limit` takes that default. Every pair here is individually legal; only
-    // the aggregate is unencodable.
+    // KV scan responses have a domain payload limit in addition to their item
+    // cap. Every pair here is individually legal; only the aggregate exceeds
+    // the response limit.
     let mut actor = test_actor();
     let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "wire-bounded-scan");
     let tx_id = begin_with_scope(&mut actor, scope.clone());
@@ -47,7 +45,7 @@ fn should_bound_scan_response_to_one_wire_frame() {
     });
     assert!(
         u16::try_from(encoded.len()).is_ok(),
-        "scan response is {} bytes, past the {}-byte TLV value limit",
+        "scan response is {} bytes, past the {}-byte domain payload limit",
         encoded.len(),
         u16::MAX
     );
@@ -127,7 +125,7 @@ fn should_return_frame_valid_terminal_key_larger_than_continuation_limit() {
     // A key only needs to fit a continuation request when another matching row
     // remains. This key is deliberately one byte beyond that conservative
     // boundary, but its PUT and the terminal SCAN response both remain valid
-    // u16-sized TLV payloads.
+    // KV response payload limit.
     let mut actor = test_actor();
     let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "terminal-large-key");
     let tx_id = begin_with_scope(&mut actor, scope.clone());
@@ -198,7 +196,7 @@ fn should_keep_oversized_scan_pair_error_inside_one_wire_frame() {
     //
     // The value then pushes the pair past the exact budget (8 + key + value >
     // 65_529). Note the pair is unreachable over the wire - a PUT is itself one
-    // TLV value - so this branch guards in-process writers and data stored
+    // KV response payload - so this branch guards in-process writers and data stored
     // before the budget existed.
     let hostile_key = Bytes::from(vec![0xffu8; 30_000]);
     let value = Bytes::from(vec![b'v'; 40_000]);
@@ -229,7 +227,7 @@ fn should_keep_oversized_scan_pair_error_inside_one_wire_frame() {
     let encoded = crate::dispatch::protocol::kv::encode_response(&response);
     assert!(
         u16::try_from(encoded.len()).is_ok(),
-        "the oversized-pair error is itself {} bytes, past the {}-byte TLV limit",
+        "the oversized-pair error is itself {} bytes, past the {}-byte payload limit",
         encoded.len(),
         u16::MAX
     );

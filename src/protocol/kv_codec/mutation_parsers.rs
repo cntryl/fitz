@@ -30,14 +30,6 @@ fn read_optional_limit(decoder: &mut PayloadDecoder<'_>) -> Result<Option<usize>
     }
 }
 
-fn read_bool(decoder: &mut PayloadDecoder<'_>, field: &str) -> Result<bool, String> {
-    match decoder.get_u8()? {
-        0 => Ok(false),
-        1 => Ok(true),
-        value => Err(format!("Invalid {field} flag: {value}")),
-    }
-}
-
 fn ensure_complete(decoder: &PayloadDecoder<'_>, op_name: &str) -> Result<(), String> {
     if decoder.is_complete() {
         Ok(())
@@ -131,14 +123,12 @@ pub(super) fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<Kv
     let start = read_optional_bytes(&mut decoder)?;
     let end = read_optional_bytes(&mut decoder)?;
     let limit = read_optional_limit(&mut decoder)?;
-    let reverse = read_bool(&mut decoder, "SCAN reverse")?;
-    // Trailing and optional: clients predating exclusive resume send nothing
-    // here and keep the inclusive behaviour.
-    let start_exclusive = if decoder.is_complete() {
-        false
-    } else {
-        read_bool(&mut decoder, "SCAN start_exclusive")?
-    };
+    let options = decoder.get_u8()?;
+    if options & !(SCAN_OPTION_REVERSE | SCAN_OPTION_START_EXCLUSIVE) != 0 {
+        return Err(format!(
+            "SCAN options has reserved bits set: {options:#04x}"
+        ));
+    }
     ensure_complete(&decoder, "SCAN")?;
     Ok(KvMessage::Scan {
         tx_id,
@@ -147,8 +137,13 @@ pub(super) fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<Kv
             start,
             end,
             limit,
-            reverse,
-            start_exclusive,
+            reverse: options & SCAN_OPTION_REVERSE != 0,
+            start_exclusive: options & SCAN_OPTION_START_EXCLUSIVE != 0,
         },
     })
 }
+
+/// SCAN options bit 0: descending key order.
+pub const SCAN_OPTION_REVERSE: u8 = 0b01;
+/// SCAN options bit 1: `start_key` is exclusive, which continuation needs.
+pub const SCAN_OPTION_START_EXCLUSIVE: u8 = 0b10;

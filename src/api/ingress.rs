@@ -35,6 +35,7 @@ pub struct IngressConfig {
     /// Timeout for backpressure retry
     pub backpressure_timeout: Duration,
     connection_limiter: Arc<tokio::sync::Semaphore>,
+    buffer_bytes: Arc<tokio::sync::Semaphore>,
 }
 
 impl Default for IngressConfig {
@@ -45,6 +46,9 @@ impl Default for IngressConfig {
             channel_capacity: 10_000,
             backpressure_timeout: Duration::from_millis(1),
             connection_limiter: Arc::new(tokio::sync::Semaphore::new(10_000)),
+            buffer_bytes: Arc::new(tokio::sync::Semaphore::new(
+                super::buffer_budget::TRANSPORT_BUFFER_BYTES,
+            )),
         }
     }
 }
@@ -54,7 +58,17 @@ impl IngressConfig {
     #[must_use]
     pub fn with_frame_size(mut self, size: usize) -> Self {
         self.max_frame_size = size;
+        self.buffer_bytes = Arc::new(tokio::sync::Semaphore::new(
+            super::buffer_budget::TRANSPORT_BUFFER_BYTES.max(size.saturating_mul(2)),
+        ));
         self
+    }
+
+    pub(crate) fn session_buffer_budget(&self) -> super::buffer_budget::BufferBudget {
+        super::buffer_budget::BufferBudget::new(
+            self.buffer_bytes.clone(),
+            super::buffer_budget::SESSION_BUFFER_BYTES.max(self.max_frame_size.saturating_mul(2)),
+        )
     }
 
     /// Create a config with custom connection limit

@@ -76,6 +76,7 @@ pub fn create_bench_stream_admin_sink(
         crate::domains::stream::StreamStorageLayout::default(),
         Some(families),
         StreamStorageWriteOptions::local(),
+        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
     )
     .expect("create multi-family Stream bench sink");
     Arc::new(StreamAdminBench { sink, read_model })

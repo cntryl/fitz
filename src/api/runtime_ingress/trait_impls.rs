@@ -46,7 +46,7 @@ impl Ingress for RuntimeIngress {
         &self,
         session_id: u64,
         channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         message_payload: Bytes,
         correlation: Option<std::num::NonZeroU64>,
     ) -> IngressDecision {
@@ -55,7 +55,7 @@ impl Ingress for RuntimeIngress {
             channel_id,
             msg_type,
             message_payload,
-            correlation,
+            crate::protocol::wire2::header::HeaderLabels::correlated(correlation),
             std::time::Instant::now(),
         )
         .await
@@ -65,11 +65,12 @@ impl Ingress for RuntimeIngress {
         &self,
         session_id: u64,
         channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         message_payload: Bytes,
-        correlation: Option<std::num::NonZeroU64>,
+        labels: crate::protocol::wire2::header::HeaderLabels,
         received_at: std::time::Instant,
     ) -> IngressDecision {
+        let crate::protocol::wire2::header::HeaderLabels { correlation, flags } = labels;
         let _ingress_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_INGRESS_FRAME_TOTAL_LATENCY);
         // Record frame received counter
@@ -106,20 +107,15 @@ impl Ingress for RuntimeIngress {
 
         // First frame on the session, before any domain response can be queued
         // behind it on the single outbound channel, so the client always sees
-        // the capability advertisement ahead of any answer.
+        // HELLO ahead of any answer.
         if authenticated.session_established {
             self.domain_frame_dispatcher()
-                .announce_server_hello(session_id, route_family);
+                .announce_hello(session_id, authenticated.control_reply_family);
         }
-
-        if msg_type == crate::protocol::tlv::MessageType::SESSION_METADATA {
-            return self.domain_frame_dispatcher().update_session_metadata(
-                session_id,
-                channel_id,
-                &message_payload,
-            );
+        if let Some(service_name) = &authenticated.service_name {
+            self.domain_frame_dispatcher()
+                .apply_service_name(session_id, service_name);
         }
-
         if let Some(frame) = &notify_frame {
             debug!(
                 session_id = session_id,
@@ -130,6 +126,11 @@ impl Ingress for RuntimeIngress {
             }
             // We've performed auth as a side-effect (anonymous or JWT on any frame)
             // and should continue processing the current message.
+        }
+
+        // CONNECT is fully answered by HELLO; it carries nothing for a domain.
+        if msg_type == crate::protocol::message::MessageType::CONNECT {
+            return IngressDecision::Accept;
         }
 
         let should_notify_handler_late = should_notify_handler && notify_frame.is_none();
@@ -143,6 +144,7 @@ impl Ingress for RuntimeIngress {
                     msg_type,
                     DomainDispatchPayload::Shared(&message_payload),
                     correlation,
+                    flags,
                     received_at,
                 )
                 .await
@@ -166,6 +168,7 @@ impl Ingress for RuntimeIngress {
                 msg_type,
                 DomainDispatchPayload::Owned(message_payload),
                 correlation,
+                flags,
                 received_at,
             )
             .await
@@ -227,6 +230,8 @@ impl Ingress for RuntimeIngress {
             .await;
 
         self.session_registry().finalize_close(session_id);
+        self.domain_frame_dispatcher()
+            .forget_session_announcement(session_id);
 
         // Notify handler if present
         if let Some(handler) = &self.registry.event_handler {
@@ -242,7 +247,7 @@ impl RuntimeIngress {
     pub(super) fn derive_route_for_frame(
         &self,
         _session_info: &SessionInfo,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         payload: &Bytes,
     ) -> Result<Option<crate::runtime::routing::Route>, String> {
         let Some(spec) =

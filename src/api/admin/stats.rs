@@ -534,7 +534,10 @@ pub fn handle_global_stats(runtime: &Runtime) -> Response {
 /// family. Broker-wide counters and diagnostics are intentionally omitted
 /// rather than copied into a narrower authorization scope.
 pub(crate) fn build_family_stats(runtime: &Runtime, family: u64) -> GlobalStats {
-    let snapshot = runtime.refreshed_admin_snapshot(Some(family), usize::MAX);
+    let snapshot = runtime.refreshed_admin_snapshot(
+        Some(family),
+        crate::api::admin::list::MAX_ADMIN_RECORD_LIMIT,
+    );
     build_snapshot_stats(&snapshot)
 }
 

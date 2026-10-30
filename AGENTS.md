@@ -12,9 +12,6 @@
 - [docs/development/routing-design.md](docs/development/routing-design.md)
 - [docs/development/architecture.md](docs/development/architecture.md)
 - [docs/development/testing.md](docs/development/testing.md)
-- [docs/development/benchmarks.md](docs/development/benchmarks.md)
-- [docs/development/stress-bench-contract.md](docs/development/stress-bench-contract.md)
-- [docs/development/perf-loop.md](docs/development/perf-loop.md) for performance work
 - [CONTRIBUTING.md](CONTRIBUTING.md) for local setup and validation
 
 ## Hard Constraints
@@ -77,8 +74,6 @@ Right:
 - Test structure and module sizes: `cntryl-tools validate-tests`, `cntryl-tools check-module-sizes`. Keep these checks in the shared tooling; do not duplicate them in repository tests.
 - Rust: `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic`.
 - UI: run from `ui/` with `npm run test`, `npm run lint`, `npm run type-check`, and `npm run build`.
-- Benchmarks: use direct `cargo bench` commands for the relevant tier or target, then run `cntryl-tools summarize-benchmarks` when a report is needed.
-- Model performance, saturation, and soak workloads in the benchmark tiers with `cntryl-stress`. Do not wrap benchmark campaigns in ignored integration tests or repository-owned orchestration scripts.
 
 ## Test Rules
 - Use `should_*` names for Rust tests.

@@ -13,7 +13,8 @@ pub(super) fn append_metrics_with_collector(
     runtime: &Runtime,
     metrics: &crate::observability::metrics::MetricsCollector,
 ) {
-    let durable = runtime.stream_durable_metrics_snapshot();
+    let durable =
+        runtime.stream_durable_metrics_snapshot(crate::api::admin::list::MAX_ADMIN_RECORD_LIMIT);
     let gauges = crate::domains::stream::metrics::StreamLiveGauges::read(metrics);
     append_core_metrics(output, runtime, durable.as_ref(), gauges);
     append_lag_bucket_metrics(output, runtime, durable.as_ref());
@@ -165,6 +166,22 @@ fn append_watermark_metrics(
     runtime: &Runtime,
     durable: Option<&crate::domains::stream::metrics::StreamDurableMetricsSnapshot>,
 ) {
+    let cached_watermarks = durable.is_none().then(|| {
+        let model = runtime.admin_read_model();
+        let (realms, realms_truncated) =
+            model.bounded_stream_realm_watermarks(crate::api::admin::list::MAX_ADMIN_RECORD_LIMIT);
+        let (areas, areas_truncated) =
+            model.bounded_stream_area_watermarks(crate::api::admin::list::MAX_ADMIN_RECORD_LIMIT);
+        (realms, areas, realms_truncated || areas_truncated)
+    });
+    let truncated = durable.map_or_else(
+        || {
+            cached_watermarks
+                .as_ref()
+                .is_some_and(|(_, _, truncated)| *truncated)
+        },
+        |snapshot| snapshot.truncated,
+    );
     output.push_str(
         "# HELP fitz_stream_realm_watermark Highest committed realm watermark per Stream route family and realm\n",
     );
@@ -179,8 +196,8 @@ fn append_watermark_metrics(
                 metric.watermark
             );
         }
-    } else {
-        append_cached_realm_watermarks(output, runtime);
+    } else if let Some((realms, _, _)) = &cached_watermarks {
+        append_cached_realm_watermarks(output, realms);
     }
     output.push('\n');
 
@@ -199,16 +216,28 @@ fn append_watermark_metrics(
                 metric.watermark
             );
         }
-    } else {
-        append_cached_area_watermarks(output, runtime);
+    } else if let Some((_, areas, _)) = &cached_watermarks {
+        append_cached_area_watermarks(output, areas);
     }
+    output.push_str(
+        "# HELP fitz_stream_watermarks_truncated Whether watermark metric series were capped\n",
+    );
+    output.push_str("# TYPE fitz_stream_watermarks_truncated gauge\n");
+    let _ = writeln!(
+        output,
+        "fitz_stream_watermarks_truncated {}",
+        u8::from(truncated)
+    );
     output.push('\n');
 }
 
-fn append_cached_realm_watermarks(output: &mut String, runtime: &Runtime) {
-    for detail in runtime.admin_read_model().stream_realm_watermarks() {
+fn append_cached_realm_watermarks(
+    output: &mut String,
+    watermarks: &[crate::control::admin::StreamRealmWatermarkDetail],
+) {
+    for detail in watermarks {
         let realm = encode_prometheus_label_value(&detail.realm);
-        for watermark in detail.family_watermarks {
+        for watermark in &detail.family_watermarks {
             let _ = writeln!(
                 output,
                 "fitz_stream_realm_watermark{{realm=\"{}\",family=\"{}\"}} {}",
@@ -218,11 +247,14 @@ fn append_cached_realm_watermarks(output: &mut String, runtime: &Runtime) {
     }
 }
 
-fn append_cached_area_watermarks(output: &mut String, runtime: &Runtime) {
-    for detail in runtime.admin_read_model().stream_area_watermarks() {
+fn append_cached_area_watermarks(
+    output: &mut String,
+    watermarks: &[crate::control::admin::StreamAreaWatermarkDetail],
+) {
+    for detail in watermarks {
         let realm = encode_prometheus_label_value(&detail.realm);
         let area = encode_prometheus_label_value(&detail.area);
-        for watermark in detail.family_watermarks {
+        for watermark in &detail.family_watermarks {
             let _ = writeln!(
                 output,
                 "fitz_stream_area_watermark{{realm=\"{}\",area=\"{}\",family=\"{}\"}} {}",

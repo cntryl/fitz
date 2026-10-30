@@ -6,7 +6,7 @@
 
 use crate::benchkit::transport as frames;
 use crate::testkit::transport::{
-    build_connect_frame, generate_test_jwt, TestClient, TestServer, TlvFrameBuilder,
+    build_connect_frame, generate_test_jwt, FrameBuilder, TestClient, TestServer,
 };
 use bytes::BufMut;
 
@@ -411,7 +411,7 @@ fn build_lease_acquire_with_wait(
     buf.put_u64(i32_to_u64_nonnegative(ttl_secs));
     buf.put_u32(wait_seconds);
 
-    let mut builder = TlvFrameBuilder::new();
+    let mut builder = FrameBuilder::new();
     builder.encode_field(400, &buf);
     builder.build()
 }

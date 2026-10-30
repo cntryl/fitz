@@ -4,7 +4,7 @@
 //! bucketing, but they must never decide whether a message is supported or
 //! which domain is authorized to receive it.
 
-use super::tlv::MessageType;
+use super::message::MessageType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestDirection {
@@ -37,10 +37,20 @@ pub enum ManifestDecoder {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CorrelationPolicy {
+    Required,
+    NoResponse,
+    AckOptional,
+    RpcCancelOrAck,
+    Handshake,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MessageManifestEntry {
     pub message_id: u16,
     pub domain: &'static str,
     pub direction: ManifestDirection,
+    pub correlation: CorrelationPolicy,
     pub route_scheme: Option<&'static str>,
     pub authorization: ManifestAuthorization,
     pub decoder: ManifestDecoder,
@@ -53,10 +63,18 @@ const fn client(
     authorization: ManifestAuthorization,
     decoder: ManifestDecoder,
 ) -> MessageManifestEntry {
+    let correlation = match message_id {
+        1 => CorrelationPolicy::Handshake,
+        303 => CorrelationPolicy::NoResponse,
+        304 => CorrelationPolicy::RpcCancelOrAck,
+        500 => CorrelationPolicy::AckOptional,
+        _ => CorrelationPolicy::Required,
+    };
     MessageManifestEntry {
         message_id,
         domain,
         direction: ManifestDirection::ClientToServer,
+        correlation,
         route_scheme,
         authorization,
         decoder,
@@ -73,6 +91,7 @@ const fn server(
         message_id,
         domain,
         direction: ManifestDirection::ServerToClient,
+        correlation: CorrelationPolicy::NoResponse,
         route_scheme,
         authorization: ManifestAuthorization::None,
         decoder,
@@ -88,32 +107,11 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestAuthorization::None,
         ManifestDecoder::Control,
     ),
-    // Frame-level request correlation. CORRELATE labels the record that
-    // follows it and is absorbed by the session decoder before mux routing,
-    // so it never reaches a domain and never consumes a channel slot. It is
-    // listed here because the manifest - not a numeric range - is what makes
-    // a message id legal.
-    client(
-        2,
-        "control",
-        None,
-        ManifestAuthorization::None,
-        ManifestDecoder::Control,
-    ),
+    // Broker control answers. HELLO and CONNECT_REJECTED answer CONNECT;
+    // GOAWAY announces drain, a forced close, or a limit change.
+    server(2, "control", None, ManifestDecoder::Control),
     server(3, "control", None, ManifestDecoder::Control),
-    // Unsolicited capability advertisement, emitted once on CONNECT success.
-    // Clients that predate it drop unknown inbound message types, so sending
-    // it unconditionally is safe; a client that never sees it stays
-    // uncorrelated.
     server(4, "control", None, ManifestDecoder::Control),
-    // Sent only when the broker advertises `CAP_SESSION_METADATA`.
-    client(
-        5,
-        "control",
-        None,
-        ManifestAuthorization::None,
-        ManifestDecoder::Control,
-    ),
     client(
         100,
         "kv",
@@ -457,20 +455,27 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestAuthorization::MultiRouteWrite,
         ManifestDecoder::Schedule,
     ),
-    client(
-        707,
-        "schedule",
-        Some("schedule"),
-        ManifestAuthorization::WildcardRead,
-        ManifestDecoder::Schedule,
-    ),
 ];
+
+// The static lookup intentionally builds a 128 KiB table at compile time.
+#[allow(clippy::large_stack_arrays, clippy::cast_possible_truncation)]
+const fn build_message_index() -> [u16; 65_536] {
+    let mut index = [u16::MAX; 65_536];
+    let mut entry_index = 0;
+    while entry_index < MESSAGE_MANIFEST.len() {
+        let id = MESSAGE_MANIFEST[entry_index].message_id as usize;
+        index[id] = entry_index as u16;
+        entry_index += 1;
+    }
+    index
+}
+
+static MESSAGE_INDEX: [u16; 65_536] = build_message_index();
 
 #[must_use]
 pub fn entry(message_type: MessageType) -> Option<&'static MessageManifestEntry> {
-    MESSAGE_MANIFEST
-        .iter()
-        .find(|entry| entry.message_id == message_type.as_u16())
+    let entry_index = MESSAGE_INDEX[usize::from(message_type.as_u16())];
+    (entry_index != u16::MAX).then(|| &MESSAGE_MANIFEST[usize::from(entry_index)])
 }
 
 /// Returns the exact client-to-server entry or a rejection reason.
@@ -511,6 +516,30 @@ mod tests {
         for entry in MESSAGE_MANIFEST {
             assert!(ids.insert(entry.message_id));
         }
+    }
+
+    #[test]
+    fn should_lookup_assigned_id() {
+        // Arrange
+        let assigned = MessageType::new(100);
+
+        // Act
+        let assigned_entry = entry(assigned);
+
+        // Assert
+        assert_eq!(assigned_entry.map(|item| item.message_id), Some(100));
+    }
+
+    #[test]
+    fn should_return_none_for_manifest_hole() {
+        // Arrange
+        let unassigned = MessageType::new(150);
+
+        // Act
+        let hole_entry = entry(unassigned);
+
+        // Assert
+        assert!(hole_entry.is_none());
     }
 
     #[test]
@@ -556,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_reserved_message_id_given_valid_numeric_range() {
+    fn should_treat_an_unassigned_id_inside_a_domain_range_as_unknown() {
         assert!(is_reserved_or_unassigned(MessageType::new(201)));
         assert!(client_entry(MessageType::new(201)).is_err());
     }
@@ -638,11 +667,8 @@ mod tests {
         // Assert
         assert_eq!(connects.len(), 1);
         assert!(
-            other_client_control.iter().all(|entry| {
-                entry.message_id == MessageType::CORRELATE.as_u16()
-                    || entry.message_id == MessageType::SESSION_METADATA.as_u16()
-            }),
-            "client-to-server control messages must be CONNECT or negotiated controls"
+            other_client_control.is_empty(),
+            "CONNECT is the only client-to-server control message"
         );
     }
 

@@ -12,8 +12,10 @@ use hyper_tungstenite::tungstenite::protocol::WebSocketConfig;
 use hyper_tungstenite::tungstenite::Error as WsError;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tracing::info;
+
+mod reader;
 
 const MAX_WEBSOCKET_WRITE_BATCH_FRAMES: usize = 64;
 
@@ -29,13 +31,13 @@ fn websocket_close_reason(result: &Result<(), String>) -> CloseReason {
     }
 }
 
-fn epoch_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
+fn monotonic_elapsed_millis(origin: Instant) -> u64 {
+    origin.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+fn websocket_pong_timed_out(last_pong_ms: u64, now_ms: u64, timeout: Duration) -> bool {
+    let timeout_ms = timeout.as_millis().try_into().unwrap_or(u64::MAX);
+    now_ms.saturating_sub(last_pong_ms) >= timeout_ms
 }
 
 fn is_normal_websocket_disconnect(error: &WsError) -> bool {
@@ -169,6 +171,7 @@ async fn send_websocket_batch<S>(
     ws_sender: &mut S,
     first_frame: Bytes,
     outbound_rx: &mut tokio::sync::mpsc::Receiver<Bytes>,
+    outbound_sink: Option<&crate::api::outbound::SessionOutboundSink>,
 ) -> Result<usize, String>
 where
     S: Sink<hyper_tungstenite::tungstenite::Message> + Unpin,
@@ -176,6 +179,7 @@ where
 {
     use hyper_tungstenite::tungstenite::Message;
 
+    let mut rejected = super::is_connect_rejected_frame(&first_frame);
     ws_sender
         .feed(Message::Binary(first_frame))
         .await
@@ -185,6 +189,7 @@ where
         let Ok(frame) = outbound_rx.try_recv() else {
             break;
         };
+        rejected |= super::is_connect_rejected_frame(&frame);
         ws_sender
             .feed(Message::Binary(frame))
             .await
@@ -195,9 +200,13 @@ where
         .flush()
         .await
         .map_err(|error| format!("WebSocket writer error: {error}"))?;
+    if let Some(sink) = outbound_sink.filter(|_| rejected) {
+        sink.connection.mark_rejection_flushed();
+    }
     Ok(frame_count)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_websocket_writer<S>(
     mut ws_sender: futures_util::stream::SplitSink<
         hyper_tungstenite::WebSocketStream<S>,
@@ -209,6 +218,8 @@ async fn run_websocket_writer<S>(
     ingress_for_writes: Arc<dyn Ingress>,
     mut control_rx: tokio::sync::mpsc::Receiver<hyper_tungstenite::tungstenite::Message>,
     last_pong: Arc<AtomicU64>,
+    monotonic_origin: Arc<Instant>,
+    outbound_sink: Arc<crate::api::outbound::SessionOutboundSink>,
 ) -> Result<(), String>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -235,6 +246,7 @@ where
                             &mut ws_sender,
                             frame,
                             &mut outbound_rx,
+                            Some(&outbound_sink),
                         ).await?;
                         for _ in 0..frame_count {
                             runtime_for_writes.increment_messages_sent();
@@ -251,14 +263,12 @@ where
                 }
             }
             _ = ping_interval.tick() => {
-                let elapsed_ms = epoch_millis().saturating_sub(last_pong.load(Ordering::Acquire));
-                if ping_sent
-                    && elapsed_ms
-                        >= crate::api::ingress::WEBSOCKET_PONG_TIMEOUT
-                            .as_millis()
-                            .try_into()
-                            .unwrap_or(u64::MAX)
-                {
+                let now_ms = monotonic_elapsed_millis(*monotonic_origin);
+                if ping_sent && websocket_pong_timed_out(
+                    last_pong.load(Ordering::Acquire),
+                    now_ms,
+                    crate::api::ingress::WEBSOCKET_PONG_TIMEOUT,
+                ) {
                     return Err("websocket pong timeout".to_string());
                 }
                 ws_sender.send(Message::Ping(bytes::Bytes::new())).await.map_err(|error| format!("WebSocket ping error: {error}"))?;
@@ -340,11 +350,17 @@ where
     let (ws_sender, mut ws_receiver) = ws_stream.split();
     let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(8);
-    let last_pong = Arc::new(AtomicU64::new(epoch_millis()));
+    let monotonic_origin = Arc::new(Instant::now());
+    let last_pong = Arc::new(AtomicU64::new(0));
 
+    let buffer_budget = config.session_buffer_budget();
+    let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
     let (sink, mut close_signal) =
         crate::api::outbound::SessionOutboundSink::with_close_signal(outbound_tx.clone());
-    let sink = Arc::new(sink);
+    let sink = Arc::new(
+        sink.with_max_message_bytes(config.max_frame_size)
+            .with_buffer_budget(buffer_budget.clone()),
+    );
     let mut inbox_route =
         crate::runtime::routing::session_inbox_address(session.info().route_family, session_id);
     tracing::debug!(
@@ -368,6 +384,8 @@ where
     let ingress_for_writes = ingress.clone();
     // Capture the handle so we can await graceful drain when the session closes.
     let writer_last_pong = last_pong.clone();
+    let writer_monotonic_origin = monotonic_origin.clone();
+    let writer_sink = sink.clone();
     let writer_handle = tokio::spawn(async move {
         run_websocket_writer(
             ws_sender,
@@ -377,6 +395,8 @@ where
             ingress_for_writes,
             control_rx,
             writer_last_pong,
+            writer_monotonic_origin,
+            writer_sink,
         )
         .await
     });
@@ -389,11 +409,26 @@ where
             writer_handle.abort();
             Err(close_signal.borrow().unwrap_or("session close control ended").to_string())
         }
-        result = process_websocket_frames(
+        result = reader::read_frames(
             &mut ws_receiver,
+            reader::ReaderContext {
+                config: &config,
+                budget: buffer_budget,
+                frames: frame_tx,
+                control: &control_tx,
+                last_pong: &last_pong,
+                monotonic_origin: &monotonic_origin,
+                session_id,
+                sink: &sink,
+            },
+        ) => {
+            writer_handle.abort();
+            result
+        }
+        result = process_websocket_frames(
+            frame_rx,
             WebSocketFrameContext {
                 session: &mut session,
-                config: &config,
                 ingress: ingress.as_ref(),
                 runtime: &runtime,
                 router: &router,
@@ -401,8 +436,6 @@ where
                 sink: &sink,
                 inbox_route: &mut inbox_route,
                 finalizer: &finalizer,
-                control_tx: &control_tx,
-                last_pong: &last_pong,
                 connect_deadline: accepted_at + crate::api::ingress::CONNECT_DEADLINE,
             },
         ) => {
@@ -445,7 +478,6 @@ where
 
 struct WebSocketFrameContext<'a> {
     session: &'a mut Session,
-    config: &'a IngressConfig,
     ingress: &'a dyn Ingress,
     runtime: &'a Arc<crate::boot::Runtime>,
     router: &'a Arc<crate::runtime::Router>,
@@ -453,21 +485,13 @@ struct WebSocketFrameContext<'a> {
     sink: &'a Arc<crate::api::outbound::SessionOutboundSink>,
     inbox_route: &'a mut crate::runtime::routing::RouteAddress,
     finalizer: &'a Arc<SessionCloseFinalizer>,
-    control_tx: &'a tokio::sync::mpsc::Sender<hyper_tungstenite::tungstenite::Message>,
-    last_pong: &'a AtomicU64,
     connect_deadline: tokio::time::Instant,
 }
 
-#[allow(clippy::too_many_lines)]
-async fn process_websocket_frames<S>(
-    ws_receiver: &mut futures_util::stream::SplitStream<hyper_tungstenite::WebSocketStream<S>>,
+async fn process_websocket_frames(
+    mut frames: tokio::sync::mpsc::Receiver<reader::ReceivedFrame>,
     context: WebSocketFrameContext<'_>,
-) -> Result<(), String>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    use futures_util::StreamExt;
-    use hyper_tungstenite::tungstenite::Message;
+) -> Result<(), String> {
     let mut authenticated = false;
     loop {
         let authentication_complete = cache_websocket_authentication(&mut authenticated, || {
@@ -476,128 +500,79 @@ where
                 .get_session_info(context.session_id)
                 .is_some_and(|session| session.authenticated)
         });
-        let next_message = if authentication_complete {
-            ws_receiver.next().await
+        let next = if authentication_complete {
+            frames.recv().await
         } else {
-            let remaining = context
-                .connect_deadline
-                .saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                break Err("CONNECT deadline exceeded".to_string());
-            }
-            match tokio::time::timeout(remaining, ws_receiver.next()).await {
-                Ok(message) => message,
-                Err(_) => break Err("CONNECT deadline exceeded".to_string()),
-            }
+            tokio::time::timeout_at(context.connect_deadline, frames.recv())
+                .await
+                .map_err(|_| "CONNECT deadline exceeded".to_owned())?
         };
-
-        let Some(msg_result) = next_message else {
-            break Ok(());
+        let Some(reader::ReceivedFrame { frame, received_at }) = next else {
+            return Ok(());
         };
-
-        match msg_result {
-            Ok(Message::Binary(data)) => {
-                let received_at = std::time::Instant::now();
-                let frame = data;
-                context.runtime.increment_messages_received();
-                context.ingress.record_frame_received(context.session_id);
+        context.runtime.increment_messages_received();
+        context.ingress.record_frame_received(context.session_id);
+        let frame_result = {
+            let _busy = context.sink.begin_frame();
+            crate::api::session::process_bounded_session_frame_at(
+                context.session,
+                frame,
+                context.ingress,
+                received_at,
+                context.sink,
+            )
+            .await
+        };
+        if let Err(crate::session::SessionError::Unsupported {
+            message_type,
+            correlation,
+            reason,
+        }) = &frame_result
+        {
+            if let Err(reason) = super::answer_unsupported_frame(
+                context.sink,
+                context.session_id,
+                *message_type,
+                *correlation,
+                reason,
+            ) {
+                break Err(reason);
+            }
+            continue;
+        }
+        if let Err(error) = frame_result {
+            context.sink.connection.flush_rejection().await;
+            if crate::api::session::is_stale_session_frame_error(&error) {
                 tracing::debug!(
                     session_id = context.session_id,
-                    frame_len = frame.len(),
-                    "WS inbound: received binary frame"
+                    error = %error,
+                    "WS frame processing encountered a stale frame for an already-closed session"
                 );
-
-                if frame.len() > context.config.max_frame_size {
-                    let reason = format!(
-                        "frame too large: {} > {}",
-                        frame.len(),
-                        context.config.max_frame_size
-                    );
-                    tracing::warn!(
-                        session_id = context.session_id,
-                        frame_len = frame.len(),
-                        max = context.config.max_frame_size,
-                        "WS frame too large"
-                    );
-                    break Err(reason);
-                }
-
-                let frame_result = {
-                    let _busy = context.sink.begin_frame();
-                    crate::api::session::process_session_frame_at(
-                        context.session,
-                        frame,
-                        context.ingress,
-                        received_at,
-                    )
-                    .await
-                };
-                if let Err(error) = frame_result {
-                    if crate::api::session::is_stale_session_frame_error(&error) {
-                        tracing::debug!(
-                            session_id = context.session_id,
-                            error = %error,
-                            "WS frame processing encountered a stale frame for an already-closed session"
-                        );
-                        break Ok(());
-                    }
-                    let reason = websocket_session_frame_error_reason(&error);
-                    tracing::error!(session_id = context.session_id, error = %reason, "WS session frame processing error");
-                    break Err(reason);
-                }
-
-                if let Some(updated_route_family) =
-                    context.ingress.get_route_family(context.session_id)
-                {
-                    if updated_route_family != *context.inbox_route.family() {
-                        context.router.unregister(context.inbox_route);
-                        *context.inbox_route = crate::runtime::routing::session_inbox_address(
-                            updated_route_family,
-                            context.session_id,
-                        );
-                        context.router.register(
-                            context.inbox_route.clone(),
-                            context.sink.clone()
-                                as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
-                        );
-                        context.finalizer.add_route(context.inbox_route.clone());
-                    }
-                }
-                tracing::trace!(
-                    session_id = context.session_id,
-                    "WS inbound frame processed successfully"
-                );
-            }
-            Ok(Message::Close(_)) => {
-                tracing::debug!(session_id = context.session_id, "WS received Close frame");
                 break Ok(());
             }
-            Ok(Message::Ping(payload)) => {
-                context
-                    .control_tx
-                    .send(Message::Pong(payload))
-                    .await
-                    .map_err(|_| "WebSocket control channel closed".to_string())?;
-            }
-            Ok(Message::Pong(_)) => {
-                context.last_pong.store(epoch_millis(), Ordering::Release);
-            }
-            Ok(Message::Text(_)) => {
-                tracing::trace!(
-                    session_id = context.session_id,
-                    "WS received non-binary frame (ignored)"
+            let reason = websocket_session_frame_error_reason(&error);
+            tracing::error!(session_id = context.session_id, error = %reason, "WS session frame processing error");
+            break Err(reason);
+        }
+
+        if let Some(updated_route_family) = context.ingress.get_route_family(context.session_id) {
+            if updated_route_family != *context.inbox_route.family() {
+                context.router.unregister(context.inbox_route);
+                *context.inbox_route = crate::runtime::routing::session_inbox_address(
+                    updated_route_family,
+                    context.session_id,
                 );
-            }
-            Ok(_) => {}
-            Err(e) => {
-                if is_normal_websocket_disconnect(&e) {
-                    tracing::info!(session_id = context.session_id, error = %e, "WS connection terminated by client without a close handshake");
-                    break Ok(());
-                }
-                tracing::error!(session_id = context.session_id, error = %e, "WS session error");
-                break Err(format!("WebSocket error: {e}"));
+                context.router.register(
+                    context.inbox_route.clone(),
+                    context.sink.clone() as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+                );
+                context.finalizer.add_route(context.inbox_route.clone());
             }
         }
+        tracing::trace!(
+            session_id = context.session_id,
+            "WS inbound frame processed successfully"
+        );
     }
 }
 
@@ -606,7 +581,7 @@ mod tests {
     use super::{
         bounded_websocket_config, cache_websocket_authentication, finish_websocket_writer,
         is_normal_websocket_disconnect, send_websocket_batch, websocket_close_reason,
-        websocket_origin_allowed, websocket_session_frame_error_reason,
+        websocket_origin_allowed, websocket_pong_timed_out, websocket_session_frame_error_reason,
     };
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError};
@@ -617,6 +592,30 @@ mod tests {
     use hyper_tungstenite::tungstenite::Message;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn should_expire_pong_only_after_monotonic_timeout_boundary() {
+        // Arrange
+        let last_pong_ms = 250;
+
+        // Act
+        let timeout_ms = u64::try_from(crate::api::ingress::WEBSOCKET_PONG_TIMEOUT.as_millis())
+            .expect("timeout fits");
+        let before_deadline = websocket_pong_timed_out(
+            last_pong_ms,
+            last_pong_ms + timeout_ms - 1,
+            crate::api::ingress::WEBSOCKET_PONG_TIMEOUT,
+        );
+        let at_deadline = websocket_pong_timed_out(
+            last_pong_ms,
+            last_pong_ms + timeout_ms,
+            crate::api::ingress::WEBSOCKET_PONG_TIMEOUT,
+        );
+
+        // Assert
+        assert!(!before_deadline);
+        assert!(at_deadline);
+    }
 
     struct DropSignal(Arc<AtomicBool>);
 
@@ -755,7 +754,7 @@ mod tests {
                 messages.push(message);
                 std::future::ready(Ok::<_, std::convert::Infallible>(messages))
             });
-            send_websocket_batch(&mut sink, Bytes::from_static(b"first"), &mut rx)
+            send_websocket_batch(&mut sink, Bytes::from_static(b"first"), &mut rx, None)
                 .await
                 .expect("send WebSocket frame batch")
         };

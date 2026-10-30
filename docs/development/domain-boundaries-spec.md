@@ -51,7 +51,7 @@ These rules apply to every domain in this document:
 
 ### Notice
 
-Notice provides low-latency ephemeral fanout of live events to connected subscribers. It is optimized for live awareness, lightweight change signaling, and current-process delivery, and it does not attempt durability, replay, or recovery.
+Notice provides ephemeral fanout of live events to connected subscribers. It supports current-process awareness and does not attempt durability, replay, or recovery.
 
 ### Stream
 
@@ -68,7 +68,7 @@ Queue provides competing-consumer work delivery with best-effort persistence, re
 
 ### RPC
 
-RPC provides live request and response dispatch to currently registered workers. It is optimized for interactive execution with explicit correlation, bounded pending state, and immediate worker participation, not for restart-safe buffering or replay.
+RPC provides live request and response dispatch to currently registered workers. It uses explicit correlation and bounded pending state; it does not provide restart-safe buffering or replay.
 
 ### Lease
 
@@ -83,6 +83,10 @@ mode, and in cloud mode after the configured local cloud commit barrier or
 provider acknowledgement,
 definitions and pending fire claims are recovered before schedule traffic is
 accepted.
+
+Five-field cron expressions are evaluated in UTC. A definition has no
+per-schedule timezone, and daylight-saving transitions do not change its
+cadence.
 
 Each definition persists one delivery mode. `broadcast` attempts all live
 matching registrations. `single` selects at most one accepted live handoff by
@@ -302,7 +306,7 @@ Notice guarantees:
 
 - live delivery attempts to subscriptions that are active when fanout is computed
 - subscription isolation by RouteFamily and live subscription identity
-- low-latency current-process fanout
+- current-process fanout
 - duplicate subscribe registration does not create duplicate logical deliveries
 
 Notice does NOT guarantee:

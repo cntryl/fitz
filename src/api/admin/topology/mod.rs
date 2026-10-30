@@ -15,51 +15,11 @@ use chrono::Utc;
 use types::TopologyConnectionBuilder;
 
 const CONNECTION_LIMIT: usize = 250;
+const SNAPSHOT_COLLECTION_LIMIT: usize = 512;
 
 fn build_messaging_topology(runtime: &Runtime) -> MessagingTopology {
-    let global_stats = super::stats::build_global_stats(runtime);
-    let sessions = runtime.list_sessions();
-    let queues = runtime.queue_list_queues(None);
-    let queue_inflight = runtime.queue_list_inflight(None);
-    let kv_transactions = runtime.kv_list_transactions(None);
-    let streams = runtime.stream_list_streams(None);
-    let notice_subscriptions = runtime.notice_list_subscriptions(None, None);
-    let rpc_workers = runtime.rpc_list_workers(None);
-    let rpc_pending = runtime.rpc_list_pending(None);
-    let leases = runtime.lease_list_leases(None);
-    let schedules = runtime.schedule_list_schedules(None);
-
-    let mut connections = TopologyConnectionBuilder::new(CONNECTION_LIMIT);
-    let domains = &global_stats.domains;
-    let lanes = vec![
-        lanes::queue_lane(&domains.queue, &queues, &queue_inflight, &mut connections),
-        lanes::rpc_lane(
-            &domains.rpc,
-            &rpc_workers,
-            &rpc_pending,
-            false,
-            &mut connections,
-        ),
-        lanes::notice_lane(
-            &domains.notice,
-            &notice_subscriptions,
-            false,
-            &mut connections,
-        ),
-        lanes::schedule_lane(&domains.schedule, &schedules, &mut connections),
-        lanes::stream_lane(&domains.stream, &streams, &mut connections),
-        lanes::lease_lane(&domains.lease, &leases, &mut connections),
-        lanes::kv_lane(&domains.kv, &kv_transactions, &mut connections),
-    ];
-
-    MessagingTopology {
-        generated_at: Utc::now().to_rfc3339(),
-        broker: global_stats.broker,
-        diagnostics: global_stats.diagnostics,
-        session_groups: sessions::session_groups(sessions),
-        lanes,
-        connections: connections.finish(),
-    }
+    let snapshot = runtime.refreshed_admin_snapshot(None, SNAPSHOT_COLLECTION_LIMIT);
+    build_snapshot_topology(runtime, &snapshot, None, false)
 }
 
 pub fn handle_topology(runtime: &Runtime) -> Response {
@@ -73,7 +33,7 @@ pub fn handle_family_topology(runtime: &Runtime, family: u64) -> Response {
 
 pub(crate) fn mcp_topology_value(runtime: &Runtime, family: Option<u64>) -> serde_json::Value {
     let snapshot = runtime.admin_read_model().bounded_snapshot(family, 128);
-    let topology = build_snapshot_topology(&snapshot, family);
+    let topology = build_snapshot_topology(runtime, &snapshot, family, true);
     let mut value = serde_json::to_value(topology).expect("topology DTO serializes");
     value["_meta"] = serde_json::json!({
         "observed_at": Utc::now().to_rfc3339(),
@@ -85,15 +45,24 @@ pub(crate) fn mcp_topology_value(runtime: &Runtime, family: Option<u64>) -> serd
 }
 
 fn build_family_topology(runtime: &Runtime, family: u64) -> MessagingTopology {
-    let snapshot = runtime.refreshed_admin_snapshot(Some(family), usize::MAX);
-    build_snapshot_topology(&snapshot, Some(family))
+    let snapshot = family_topology_snapshot(runtime, family);
+    build_snapshot_topology(runtime, &snapshot, Some(family), true)
+}
+
+fn family_topology_snapshot(
+    runtime: &Runtime,
+    family: u64,
+) -> crate::control::admin::read_model::AdminSnapshot {
+    runtime.refreshed_admin_snapshot(Some(family), SNAPSHOT_COLLECTION_LIMIT)
 }
 
 fn build_snapshot_topology(
+    runtime: &Runtime,
     snapshot: &crate::control::admin::read_model::AdminSnapshot,
     family: Option<u64>,
+    include_route_family: bool,
 ) -> MessagingTopology {
-    let stats = super::stats::build_snapshot_stats(snapshot);
+    let stats = super::stats::build_bounded_global_stats(runtime, snapshot);
     let domains = &stats.domains;
     let mut connections = TopologyConnectionBuilder::new(CONNECTION_LIMIT);
     let lanes = vec![
@@ -107,13 +76,13 @@ fn build_snapshot_topology(
             &domains.rpc,
             &snapshot.rpc_workers,
             &snapshot.rpc_pending,
-            true,
+            include_route_family,
             &mut connections,
         ),
         lanes::notice_lane(
             &domains.notice,
             &snapshot.notice_subscriptions,
-            true,
+            include_route_family,
             &mut connections,
         ),
         lanes::schedule_lane(&domains.schedule, &snapshot.schedules, &mut connections),
@@ -132,11 +101,18 @@ fn build_snapshot_topology(
         }
     }
     connections.truncated |= snapshot.truncated;
+    let sessions = if family.is_none() {
+        let (sessions, truncated) = runtime.list_sessions_bounded(SNAPSHOT_COLLECTION_LIMIT);
+        connections.truncated |= truncated;
+        sessions
+    } else {
+        snapshot.sessions.clone()
+    };
     MessagingTopology {
         generated_at: Utc::now().to_rfc3339(),
         broker: stats.broker,
         diagnostics: stats.diagnostics,
-        session_groups: sessions::session_groups(snapshot.sessions.clone()),
+        session_groups: sessions::session_groups(sessions),
         lanes,
         connections,
     }

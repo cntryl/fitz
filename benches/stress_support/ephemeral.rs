@@ -62,28 +62,9 @@ impl EphemeralDriver {
 }
 
 pub(super) fn single_field(frame: &[u8]) -> Result<(u16, &[u8]), BenchFailure> {
-    let first = *frame
-        .first()
-        .ok_or_else(|| BenchFailure::validation("empty TCP TLV frame"))?;
-    let (message_type, length_offset) = if first == 0xFF {
-        let bytes = frame
-            .get(1..3)
-            .ok_or_else(|| BenchFailure::validation("truncated extended TLV type"))?;
-        (u16::from_be_bytes([bytes[0], bytes[1]]), 3)
-    } else {
-        (u16::from(first), 1)
-    };
-    let bytes = frame
-        .get(length_offset..length_offset + 2)
-        .ok_or_else(|| BenchFailure::validation("truncated TLV length"))?;
-    let length = usize::from(u16::from_be_bytes([bytes[0], bytes[1]]));
-    let payload_offset = length_offset + 2;
-    if frame.len() != payload_offset + length {
-        return Err(BenchFailure::validation(
-            "TCP frame must contain exactly one complete TLV field",
-        ));
-    }
-    Ok((message_type, &frame[payload_offset..]))
+    let (header, value) = fitz::protocol::wire2::header::decode_message(frame, u32::MAX)
+        .map_err(|error| BenchFailure::validation(format!("malformed TCP frame: {error}")))?;
+    Ok((header.message_type, value))
 }
 
 pub(super) fn body_for(frame: &[u8], expected_type: u16) -> Result<&[u8], BenchFailure> {

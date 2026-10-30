@@ -37,11 +37,12 @@ fn decode_notice_subscription_id(data: &[u8]) -> Option<u64> {
 }
 
 fn decode_notice_error_message(data: &[u8]) -> String {
-    let mut decoder = PayloadDecoder::new(data);
-    let _error_code = decoder.get_u32().expect("notice error code");
-    let error = decoder.get_string().expect("notice error message");
-    assert!(decoder.is_complete());
-    error
+    // `data` is the body after the status byte; put the byte back so the
+    // common envelope decoder can read it.
+    let body = [&[1_u8][..], data].concat();
+    fitz::protocol::error_codes::decode_error_body(&body)
+        .expect("notice error envelope")
+        .1
 }
 
 async fn subscribe_notice_pattern_expect_ok<C>(client: &mut C, pattern: &str) -> Option<u64>
@@ -81,6 +82,40 @@ where
     assert_eq!(delivery.msg_type, 504);
     assert_eq!(delivery.route, "notice://test/events");
     assert_eq!(delivery.body.as_slice(), b"hello");
+}
+
+async fn should_answer_publish_with_the_envelope_when_ack_is_requested<C>(server: &TestServer)
+where
+    C: NoticeConnector,
+{
+    // Arrange
+    // No subscriber exists: the acknowledgement means accepted for fan-out,
+    // never delivered, so it must arrive for a publish nobody receives.
+    let mut client = C::connect(server).await.expect("connect");
+    let mut payload = fitz::protocol::payload_codec::PayloadEncoder::new();
+    payload.put_string("notice://test/acked");
+    payload.put_bytes(b"hello");
+    let mut builder = fitz::testkit::transport::FrameBuilder::new()
+        .with_correlation(77)
+        .with_flags(fitz::protocol::wire2::header::HeaderFlags::ack_requested());
+    builder.encode_field(500, &payload.finish());
+
+    // Act
+    let response = client
+        .send_and_receive(&builder.build(), 2000)
+        .await
+        .expect("acknowledged publish");
+
+    // Assert
+    let (header, value) =
+        fitz::protocol::wire2::header::decode_message(&response, u32::MAX).expect("ack frame");
+    assert_eq!(header.message_type, 500);
+    assert_eq!(header.correlation, std::num::NonZeroU64::new(77));
+    assert_eq!(
+        value,
+        [0],
+        "accepted for fan-out is a plain success envelope"
+    );
 }
 
 async fn should_reject_invalid_pattern<C>(server: &TestServer)
@@ -553,6 +588,7 @@ define_transport_tests!(
     TcpNoticeConnector,
     WsNoticeConnector;
     should_publish_to_subscribers_tcp / should_publish_to_subscribers_ws => should_publish_to_subscribers,
+    should_answer_publish_with_the_envelope_when_ack_is_requested_tcp / should_answer_publish_with_the_envelope_when_ack_is_requested_ws => should_answer_publish_with_the_envelope_when_ack_is_requested,
     should_reject_invalid_pattern_tcp / should_reject_invalid_pattern_ws => should_reject_invalid_pattern,
     should_match_single_wildcard_pattern_tcp / should_match_single_wildcard_pattern_ws => should_match_single_wildcard_pattern,
     should_match_double_wildcard_pattern_tcp / should_match_double_wildcard_pattern_ws => should_match_double_wildcard_pattern,

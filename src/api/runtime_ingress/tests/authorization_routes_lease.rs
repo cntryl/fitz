@@ -192,7 +192,7 @@ async fn should_return_typed_error_for_authenticated_malformed_lease_operations(
 #[tokio::test]
 async fn should_return_typed_error_for_authenticated_malformed_lease_subscribe() {
     // Arrange
-    let expected = crate::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE;
+    let expected = crate::protocol::error_codes::lease::ERR_INVALID_PATTERN;
 
     // Act
     let (decision, code) = malformed_authenticated_lease_observation(407).await;
@@ -205,7 +205,7 @@ async fn should_return_typed_error_for_authenticated_malformed_lease_subscribe()
 #[tokio::test]
 async fn should_return_typed_error_for_authenticated_malformed_lease_unsubscribe() {
     // Arrange
-    let expected = crate::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE;
+    let expected = crate::protocol::error_codes::lease::ERR_INVALID_PATTERN;
 
     // Act
     let (decision, code) = malformed_authenticated_lease_observation(408).await;
@@ -218,7 +218,7 @@ async fn should_return_typed_error_for_authenticated_malformed_lease_unsubscribe
 #[tokio::test]
 async fn should_return_typed_error_for_authenticated_malformed_lease_list() {
     // Arrange
-    let expected = crate::protocol::error_codes::lease::ERR_INVALID_LIST_PATTERN;
+    let expected = crate::protocol::error_codes::lease::ERR_INVALID_PATTERN;
 
     // Act
     let (decision, code) = malformed_authenticated_lease_observation(410).await;

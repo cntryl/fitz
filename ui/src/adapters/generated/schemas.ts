@@ -949,6 +949,8 @@ export type SessionResponse = {
 
 export type SessionsList = {
   "sessions": Array<SessionInfo>;
+  "truncated": boolean;
+  "limit": number;
 };
 
 export type StreamAdminRecord = {

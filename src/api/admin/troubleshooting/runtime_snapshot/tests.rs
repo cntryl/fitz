@@ -6,6 +6,7 @@ use super::{
 use crate::boot::Runtime;
 use crate::control::admin::read_model::AdminSnapshot;
 use crate::control::admin::ScheduleInfo;
+use crate::control::admin::{read_model::AdminReadModel, RpcWorker};
 use crate::runtime::Router;
 use std::sync::Arc;
 
@@ -78,4 +79,40 @@ fn should_use_explicit_live_schedule_inputs_without_attributing_cached_totals() 
     };
     assert_eq!(schedule_pressure(&live), Some(7));
     assert_eq!(schedule_pressure(&bounded), Some(0));
+}
+
+#[test]
+fn should_not_report_full_health_when_global_projection_is_truncated() {
+    // Arrange
+    let model = AdminReadModel::new();
+    model.replace_rpc_workers(
+        (0..300)
+            .map(|id| {
+                RpcWorker::snapshot(
+                    1,
+                    id,
+                    "acme",
+                    &format!("rpc://acme/app/work-{id}/run"),
+                    "2026-10-04T00:00:00Z",
+                    0,
+                    0.0,
+                )
+            })
+            .collect(),
+    );
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), model);
+
+    // Act
+    let diagnostics = super::build_runtime_diagnostics(&runtime);
+
+    // Assert
+    assert_eq!(
+        diagnostics.global.incident_summary.status,
+        IncidentStatus::Unknown
+    );
+    assert!(diagnostics
+        .global
+        .incident_summary
+        .explanation
+        .contains("bounded cached projection"));
 }

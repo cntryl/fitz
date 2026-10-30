@@ -1,8 +1,10 @@
 # Stream Commit, Concurrency, and Global Order
 
-Section 10 moved from [routing-design.md](routing-design.md) unchanged. Sections 8, 9 and 11-13 of the stream design remain there.
+This document specifies the ordering and commit contract for concurrent Stream
+appends. The broader routing and delivery rules are in
+[routing-design.md](routing-design.md).
 
-## 10. Stream commit, concurrency, and global order
+## Stream commit, concurrency, and global order
 
 ### 10.1 Watermarks do not serialize resources
 

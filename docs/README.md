@@ -1,16 +1,8 @@
 # Fitz Documentation
 
-Fitz is a container-friendly application broker with one active writer per
-storage namespace and seven primitives: Stream, Queue, Notice, RPC, KV, Lease,
-and Schedule. Cloud-backed durable state can be recovered by a replacement
-process, while scale-out uses explicit sharding across independent deployments.
-Each domain's persistence and session semantics are documented separately.
-
-Fitz is pre-GA and is already used in production deployments. The support matrix
-describes validated targets; it is not a blanket certification or service-level
-commitment.
-
-This index is the public reading path. It keeps product usage, operations, client implementation, and contributor internals separate.
+Fitz is a broker for Stream, Queue, Notice, RPC, KV, Lease, and Schedule. It
+uses one active writer per storage namespace. This index links to user guides,
+protocol contracts, operations, and contributor references.
 
 ## Learn Fitz
 
@@ -32,14 +24,13 @@ This index is the public reading path. It keeps product usage, operations, clien
 
 ## Operate Fitz
 
+- [Operator guide](operations/operator-guide.md)
 - [Storage setup](operations/cloud-setup.md)
 - [Auth and browser deployment](operations/auth-browser-deployment.md)
 - [Probes and observability](operations/observability.md)
 - [Operations runbook](operations/operations-runbook.md)
 - [Resource limits](operations/resource-limits.md)
-- [Performance tuning](operations/performance-tuning.md)
 - [Release checklist](operations/release-checklist.md)
-- [v0.2.0 qualification record](operations/v0.2.0-qualification.md)
 - [Migration guide](operations/migration-guide.md)
 - [Admin API](admin/admin-api.md)
 - [MCP control-plane safety](admin/mcp-control-plane.md)
@@ -47,9 +38,6 @@ This index is the public reading path. It keeps product usage, operations, clien
 ## Implement Clients
 
 - [Client specification](clients/client-spec.md)
-- [Connection flow](clients/connection-flow.md)
-- [Client requirements](clients/client-requirements.md)
-- [Client acceptance criteria](clients/client-acceptance-criteria.md)
 - [Client implementation guide](clients/client-implementation-guide.md)
 - [Cross-language conformance runner](clients/cross-language-conformance-runner.md)
 
@@ -62,10 +50,7 @@ This index is the public reading path. It keeps product usage, operations, clien
 - [Storage invariants](development/storage-invariants.md)
 - [Recovery internals](development/recovery-internals.md)
 - [Format compatibility](development/format-compatibility.md)
+- [Wire format 1.0 design (0.3.0)](development/wire-format-1.0-design.md)
 - [Release policy](development/release-policy.md)
 - [Support and validation matrix](development/support-matrix.md)
 - [Testing](development/testing.md)
-- [Benchmark guidelines](development/benchmarks.md)
-- [Stress benchmark contract](development/stress-bench-contract.md)
-- [Performance loop](development/perf-loop.md)
-- [Benchmark targets](development/bench-targets.md)

@@ -7,11 +7,21 @@ use tracing::error;
 /// Outcome of running a frame through session authentication.
 pub(super) struct AuthenticatedFrame {
     pub(super) route_family: crate::runtime::routing::RouteFamily,
+    /// The transport's inbox stays here until this frame completes.
+    pub(super) control_reply_family: crate::runtime::routing::RouteFamily,
     pub(super) notify_frame: Option<SessionFrame>,
     /// True only on the frame that established the session. Distinct from
     /// `notify_frame`, which is populated only when an event handler is
-    /// registered - the capability announcement must not depend on that.
+    /// registered - the HELLO answer must not depend on that.
     pub(super) session_established: bool,
+    /// The service name the client reported in CONNECT, when non-empty.
+    pub(super) service_name: Option<String>,
+}
+
+/// Why a CONNECT was refused, as the client will see it.
+pub(super) struct ConnectRefusal {
+    pub(super) code: u16,
+    pub(super) message: String,
 }
 
 pub(super) struct SessionAuthenticator {
@@ -22,6 +32,34 @@ pub(super) struct SessionAuthenticator {
     pub(super) auth_claims_config: crate::auth::AuthClaimsConfig,
     pub(super) route_family_resolver: crate::auth::RouteFamilyResolverConfig,
     pub(super) connect_diagnostics_budget: Arc<ConnectDiagnosticsBudget>,
+    /// Routes `CONNECT_REJECTED` to the session inbox before the close.
+    pub(super) router: Option<Arc<crate::runtime::Router>>,
+}
+
+struct ConnectAttemptGuard {
+    session_id: u64,
+    connecting_sessions: Arc<dashmap::DashSet<u64>>,
+}
+
+impl ConnectAttemptGuard {
+    fn try_acquire(
+        registry: &super::session_registry::SessionRegistry,
+        session_id: u64,
+    ) -> Option<Self> {
+        registry
+            .connecting_sessions
+            .insert(session_id)
+            .then(|| Self {
+                session_id,
+                connecting_sessions: registry.connecting_sessions.clone(),
+            })
+    }
+}
+
+impl Drop for ConnectAttemptGuard {
+    fn drop(&mut self) {
+        self.connecting_sessions.remove(&self.session_id);
+    }
 }
 
 impl RuntimeIngress {
@@ -121,6 +159,31 @@ impl ConnectDiagnosticsBudget {
 }
 
 impl SessionAuthenticator {
+    fn reserve_connect_attempt(
+        &self,
+        session_id: u64,
+    ) -> Result<ConnectAttemptGuard, IngressDecision> {
+        ConnectAttemptGuard::try_acquire(&self.registry, session_id).ok_or_else(|| {
+            self.reject_connect(
+                session_id,
+                &ConnectRefusal {
+                    code: crate::protocol::error_codes::protocol::ERR_BAD_REQUEST,
+                    message: "CONNECT already in progress for this session".to_owned(),
+                },
+            )
+        })
+    }
+
+    fn reject_completed_connect(&self, session_id: u64) -> IngressDecision {
+        self.reject_connect(
+            session_id,
+            &ConnectRefusal {
+                code: crate::protocol::error_codes::protocol::ERR_BAD_REQUEST,
+                message: "CONNECT already completed for this session".to_owned(),
+            },
+        )
+    }
+
     fn log_connect_failure(&self, session_id: u64, compact: &str, stage: &str, error: &str) {
         const MAX_LOGGED_ERROR_CHARS: usize = 512;
 
@@ -170,7 +233,7 @@ impl SessionAuthenticator {
         &self,
         session_id: u64,
         channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
+        msg_type: crate::protocol::message::MessageType,
         payload: &Bytes,
         should_notify_handler: bool,
     ) -> Result<AuthenticatedFrame, IngressDecision> {
@@ -178,14 +241,40 @@ impl SessionAuthenticator {
         // whether JWT verification must run. The mutable lookup below still
         // validates that the session exists and initializes it atomically.
         let needs_authentication = self.auth_required && self.needs_authentication(session_id)?;
-        let verified_auth = if needs_authentication && self.auth_required {
-            Some(
-                self.verify_connect_frame(session_id, channel_id, msg_type, payload)
-                    .await?,
-            )
+        let connect = if msg_type == crate::protocol::message::MessageType::CONNECT {
+            Some(self.decode_connect(session_id, channel_id, payload)?)
         } else {
             None
         };
+        let _connect_attempt = if connect.is_some() {
+            Some(self.reserve_connect_attempt(session_id)?)
+        } else {
+            None
+        };
+        if connect.is_some()
+            && self
+                .registry
+                .sessions
+                .get(&session_id)
+                .is_some_and(|entry| entry.authenticated)
+        {
+            return Err(self.reject_completed_connect(session_id));
+        }
+        let verified_auth = if needs_authentication && self.auth_required {
+            let Some(connect) = connect.as_ref() else {
+                warn!(session_id = session_id, channel = ?channel_id, msg_type = msg_type.as_u16(), "Ingress: unauthenticated, CONNECT required");
+                return Err(IngressDecision::Close(
+                    "unauthenticated: connect required".to_string(),
+                ));
+            };
+            Some(self.verify_connect(session_id, connect).await?)
+        } else {
+            None
+        };
+        let service_name = connect
+            .as_ref()
+            .map(|connect| connect.service_name.clone())
+            .filter(|name| !name.is_empty());
 
         let Some(mut entry) = self.registry.sessions.get_mut(&session_id) else {
             warn!(
@@ -197,6 +286,12 @@ impl SessionAuthenticator {
             )));
         };
 
+        if connect.is_some() && entry.authenticated {
+            drop(entry);
+            return Err(self.reject_completed_connect(session_id));
+        }
+
+        let control_reply_family = entry.route_family;
         let mut notify_frame = None;
         let session_established = !entry.authenticated;
         if !entry.authenticated {
@@ -228,9 +323,90 @@ impl SessionAuthenticator {
 
         Ok(AuthenticatedFrame {
             route_family: entry.route_family,
+            control_reply_family,
             notify_frame,
             session_established,
+            service_name,
         })
+    }
+
+    /// Parse a CONNECT body and settle the wire version. Any failure is
+    /// answered with `CONNECT_REJECTED` before the session closes.
+    fn decode_connect(
+        &self,
+        session_id: u64,
+        channel_id: ChannelId,
+        payload: &Bytes,
+    ) -> Result<crate::protocol::wire2::handshake::Connect, IngressDecision> {
+        use crate::protocol::wire2::catalog::block;
+        use crate::protocol::wire2::envelope::ErrorClass;
+
+        if channel_id != ChannelId::Control {
+            return Err(self.reject_connect(
+                session_id,
+                &ConnectRefusal {
+                    code: crate::protocol::wire2::catalog::shared(
+                        block::PROTOCOL,
+                        ErrorClass::BadRequest,
+                    )
+                    .unwrap_or_default(),
+                    message: "CONNECT must use the control channel".to_string(),
+                },
+            ));
+        }
+        let connect = match crate::protocol::wire2::handshake::Connect::decode(payload) {
+            Ok(connect) => connect,
+            Err(error) => {
+                return Err(self.reject_connect(
+                    session_id,
+                    &ConnectRefusal {
+                        code: crate::protocol::wire2::catalog::shared(
+                            block::PROTOCOL,
+                            ErrorClass::BadRequest,
+                        )
+                        .unwrap_or_default(),
+                        message: format!("malformed CONNECT: {error}"),
+                    },
+                ));
+            }
+        };
+        let version = crate::protocol::wire2::handshake::negotiate_version(
+            connect.min_version,
+            connect.max_version,
+            crate::protocol::wire2::WIRE_VERSION,
+            crate::protocol::wire2::WIRE_VERSION,
+        );
+        if version.is_none() {
+            return Err(self.reject_connect(
+                session_id,
+                &ConnectRefusal {
+                    code: crate::protocol::wire2::catalog::VERSION_MISMATCH,
+                    message: format!(
+                        "client speaks wire {}..{}, broker speaks {}",
+                        connect.min_version,
+                        connect.max_version,
+                        crate::protocol::wire2::WIRE_VERSION
+                    ),
+                },
+            ));
+        }
+        Ok(connect)
+    }
+
+    /// Send `CONNECT_REJECTED` to the session's inbox and produce the close
+    /// decision that follows it.
+    fn reject_connect(&self, session_id: u64, refusal: &ConnectRefusal) -> IngressDecision {
+        if let (Some(router), Some(entry)) = (&self.router, self.registry.sessions.get(&session_id))
+        {
+            super::domain_frame_dispatcher::announce_connect_rejected(
+                router,
+                session_id,
+                entry.route_family,
+                refusal.code,
+                &refusal.message,
+            );
+        }
+        IngressDecision::Close(format!("connect rejected: {}", refusal.message))
     }
 
     fn needs_authentication(&self, session_id: u64) -> Result<bool, IngressDecision> {
@@ -247,12 +423,10 @@ impl SessionAuthenticator {
         }
     }
 
-    async fn verify_connect_frame(
+    async fn verify_connect(
         &self,
         session_id: u64,
-        channel_id: ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
-        payload: &Bytes,
+        connect: &crate::protocol::wire2::handshake::Connect,
     ) -> Result<
         (
             SessionPermissions,
@@ -261,18 +435,10 @@ impl SessionAuthenticator {
         ),
         IngressDecision,
     > {
-        if channel_id != ChannelId::Control
-            || msg_type != crate::protocol::tlv::MessageType::CONNECT
-        {
-            warn!(session_id = session_id, channel = ?channel_id, msg_type = msg_type.as_u16(), "Ingress: unauthenticated, CONNECT required");
-            return Err(IngressDecision::Close(
-                "unauthenticated: connect required".to_string(),
-            ));
-        }
+        use crate::protocol::wire2::catalog::block;
+        use crate::protocol::wire2::envelope::ErrorClass;
 
-        let compact = std::str::from_utf8(payload.as_ref())
-            .unwrap_or("")
-            .to_string();
+        let compact = connect.jwt.as_str();
         debug!(
             session_id = session_id,
             jwt_len = compact.len(),
@@ -285,7 +451,7 @@ impl SessionAuthenticator {
             .unwrap_or_else(|| crate::auth::AuthConfig::from_env(true));
 
         match crate::api::authentication::verified_jwt_with_claims_config(
-            &compact,
+            compact,
             &auth_config,
             &self.auth_claims_config,
         )
@@ -298,18 +464,34 @@ impl SessionAuthenticator {
                         Err(error) => {
                             self.log_connect_failure(
                                 session_id,
-                                &compact,
+                                compact,
                                 "route_family_resolution",
                                 &error,
                             );
-                            return Err(IngressDecision::Close(format!("connect failed: {error}")));
+                            return Err(self.reject_connect(
+                                session_id,
+                                &ConnectRefusal {
+                                    code: crate::protocol::wire2::catalog::FAMILY_NOT_PROVISIONED,
+                                    message: format!("connect failed: {error}"),
+                                },
+                            ));
                         }
                     };
                 Ok((verified.permissions, verified.claims, route_family))
             }
             Err(error) => {
-                self.log_connect_failure(session_id, &compact, "jwt_verification", &error);
-                Err(IngressDecision::Close(format!("connect failed: {error}")))
+                self.log_connect_failure(session_id, compact, "jwt_verification", &error);
+                Err(self.reject_connect(
+                    session_id,
+                    &ConnectRefusal {
+                        code: crate::protocol::wire2::catalog::shared(
+                            block::PROTOCOL,
+                            ErrorClass::Unauthorized,
+                        )
+                        .unwrap_or_default(),
+                        message: format!("connect failed: {error}"),
+                    },
+                ))
             }
         }
     }

@@ -77,7 +77,7 @@ where
     assert_eq!(parse_kv_response(&commit).1, 0);
 }
 
-pub(crate) async fn should_require_connect_message_when_auth_enabled<C>(server: &TestServer)
+pub(crate) async fn should_reject_anonymous_connect_when_auth_enabled<C>(server: &TestServer)
 where
     C: KvConnector,
 {
@@ -89,9 +89,14 @@ where
     let result = client.request(&begin_frame, 1000).await;
 
     // Assert
-    assert!(
-        result.is_err(),
-        "Expected connection close or timeout when unauthenticated"
+    let response = result.expect("structured CONNECT_REJECTED");
+    let (header, value) =
+        fitz::protocol::wire2::header::decode_message(&response, u32::MAX).unwrap();
+    assert_eq!(header.message_type, 3);
+    let refusal = fitz::protocol::wire2::handshake::ConnectRejected::decode(value).unwrap();
+    assert_eq!(
+        refusal.code,
+        fitz::protocol::error_codes::protocol::ERR_UNAUTHORIZED
     );
 }
 
@@ -132,19 +137,48 @@ pub(crate) async fn should_reject_expired_jwt<C>(server: &TestServer)
 where
     C: KvConnector,
 {
-    let mut client = C::connect(server).await.expect("failed to connect");
-
     // Arrange
+    let mut client = C::connect(server).await.expect("failed to connect");
     let connect_frame = fitz::testkit::transport::build_connect_frame(
         "test-realm",
         &fitz::testkit::transport::generate_expired_jwt("test-realm"),
     );
-    let result = client.request(&connect_frame, 1000).await;
+
+    // Act
+    let rejection = client.request(&connect_frame, 1000).await;
 
     // Assert
+    assert_connect_rejected_unauthorized(&rejection);
     assert!(
-        result.is_err(),
-        "Expected connection close for expired token"
+        client
+            .request(&build_kv_begin("kv://test/app/users", 1), 500)
+            .await
+            .is_err(),
+        "the connection must close after CONNECT_REJECTED"
+    );
+}
+
+/// The broker answers a refused CONNECT with `CONNECT_REJECTED` carrying the
+/// protocol-block UNAUTHORIZED code, then closes.
+fn assert_connect_rejected_unauthorized(rejection: &Result<Vec<u8>, String>) {
+    let frame = rejection
+        .as_ref()
+        .expect("CONNECT_REJECTED frame before close");
+    let (header, value) = fitz::protocol::wire2::header::decode_message(frame, u32::MAX)
+        .expect("one well-formed message");
+    assert_eq!(
+        header.message_type,
+        fitz::protocol::wire2::control::CONNECT_REJECTED
+    );
+    let rejected = fitz::protocol::wire2::handshake::ConnectRejected::decode(value)
+        .expect("CONNECT_REJECTED body");
+    assert_eq!(
+        rejected.code,
+        fitz::protocol::wire2::catalog::shared(
+            fitz::protocol::wire2::catalog::block::PROTOCOL,
+            fitz::protocol::wire2::envelope::ErrorClass::Unauthorized,
+        )
+        .unwrap()
     );
 }
 
@@ -152,18 +186,18 @@ pub(crate) async fn should_reject_invalid_jwt_signature<C>(server: &TestServer)
 where
     C: KvConnector,
 {
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
-
     let connect_frame = fitz::testkit::transport::build_connect_frame(
         "test-realm",
         &fitz::testkit::transport::generate_invalid_signature_jwt("test-realm"),
     );
-    let result = client.request(&connect_frame, 1000).await;
 
-    assert!(
-        result.is_err(),
-        "Expected connection close for invalid signature"
-    );
+    // Act
+    let rejection = client.request(&connect_frame, 1000).await;
+
+    // Assert
+    assert_connect_rejected_unauthorized(&rejection);
 }
 
 pub(crate) async fn should_reject_jwt_for_wrong_realm<C>(server: &TestServer)

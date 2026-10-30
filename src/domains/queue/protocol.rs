@@ -44,7 +44,9 @@ pub use super::core::{MessageId, QueueKey, ReservedMessage, RoutedReservedMessag
 /// Maximum number of messages a client may reserve in one request.
 pub const MAX_RESERVE_BATCH_SIZE: usize = 1024;
 
-pub(crate) const MAX_QUEUE_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
+pub(crate) const MAX_QUEUE_RESPONSE_PAYLOAD_BYTES: usize =
+    crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize
+        - crate::protocol::wire2::header::HEADER_LEN;
 pub(crate) const RECEIVED_RESPONSE_HEADER_BYTES: usize = 1 + 4;
 pub(crate) const RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES: usize = 8 + 8 + 4;
 pub(crate) const ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES: usize = 4;
@@ -62,8 +64,8 @@ pub(crate) const ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES: usize = 4;
 /// The strictest (wildcard) shape is used so that whether a message is
 /// deliverable never depends on which reserve form a consumer happens to use.
 #[must_use]
-pub(crate) fn max_deliverable_body_bytes(route_len: usize) -> usize {
-    MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+pub(crate) fn max_deliverable_body_bytes(route_len: usize, response_payload_limit: usize) -> usize {
+    response_payload_limit
         .saturating_sub(RECEIVED_RESPONSE_HEADER_BYTES)
         .saturating_sub(RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES)
         .saturating_sub(ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES)
@@ -233,26 +235,6 @@ pub struct QueueNotification {
     pub inflight_messages: u64,
 }
 
-/// Queue errors
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueueError {
-    /// Invalid realm format (3010)
-    InvalidRealm,
-
-    /// Realm mismatch - operation targets different realm than active subscription (3011)
-    RealmMismatch,
-}
-
-impl QueueError {
-    #[must_use]
-    pub fn code(&self) -> u16 {
-        match self {
-            QueueError::InvalidRealm => 3010,
-            QueueError::RealmMismatch => 3011,
-        }
-    }
-}
-
 /// Queue operation responses
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueueResponse {
@@ -302,6 +284,12 @@ pub enum QueueResponse {
 
     /// Queue does not exist
     QueueNotFound,
+
+    /// Capacity was exhausted before this request could be retained.
+    Busy,
+
+    /// An accepted queue operation exceeded its deadline.
+    Timeout { message: String },
 
     /// Internal error
     Error { message: String },

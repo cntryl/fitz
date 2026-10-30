@@ -555,6 +555,9 @@ impl StreamStore {
                         }
                     }
                 }
+                Err(PromotionTransactionFailure::Ambiguous(error)) => {
+                    return Err(PromotionCommitFailure::Ambiguous(error));
+                }
                 Err(PromotionTransactionFailure::Other(error)) => {
                     return Err(PromotionCommitFailure::Retryable(error));
                 }

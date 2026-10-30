@@ -464,15 +464,95 @@ fn should_not_remove_schedule_given_cancel_persistence_failure() {
 }
 
 #[test]
-fn should_page_a_byte_bounded_list_to_completion_via_offset() {
+#[serial]
+fn should_reconcile_schedule_after_cancel_commit_outcome_is_unknown() {
     // Arrange
-    // `limit=0` means "all remaining", but the response is still bounded by
-    // the wire frame and can therefore return fewer entries than exist. The
-    // wire format carries no `has_more` flag for canonical LIST, only
-    // `total_count` - so a client must detect truncation by comparing the
-    // returned entry count to `total_count` and continue with
-    // `offset += entries.len()`. This proves that procedure actually
-    // recovers every entry rather than stopping at the first partial page.
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/cancel-unknown/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.store.report_unknown_after_next_applied_commit_for_tests();
+
+    // Act
+    let result = actor.delete_schedule(route);
+    let persisted = actor
+        .store
+        .load_all(actor.family.as_u64(), actor.write_policy)
+        .expect("read persisted schedules");
+
+    // Assert
+    assert!(result.is_err(), "cancel should report the ambiguous outcome");
+    assert!(persisted.is_empty(), "the injected cancel should have applied");
+    assert!(
+        !actor.schedules.contains_key(route),
+        "actor must reconcile its cache before serving more schedule work"
+    );
+}
+
+#[test]
+#[serial]
+fn should_recover_claimed_occurrence_after_claim_commit_outcome_is_unknown() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/claim-unknown/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    actor.store.report_unknown_after_next_applied_commit_for_tests();
+
+    // Act
+    let returned_claims = actor.bench_claim_due_fires();
+
+    // Assert
+    assert!(returned_claims.is_empty(), "unknown claims are not delivered inline");
+    assert_eq!(actor.pending_fire_count(), 1);
+    assert_eq!(actor.pending_claimed_occurrences_for_publish()[0].route, route);
+}
+
+#[test]
+#[serial]
+fn should_reconcile_acknowledged_occurrence_after_ack_commit_outcome_is_unknown() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/ack-unknown/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    let claimed = actor.bench_claim_due_fires();
+    assert_eq!(claimed.len(), 1);
+    actor.store.report_unknown_after_next_applied_commit_for_tests();
+
+    // Act
+    let result = actor.ack_pending_fire_claims(&[(claimed[0].fire_ms, route.to_string())]);
+
+    // Assert
+    assert!(result.is_err(), "ACK should report the ambiguous outcome");
+    assert_eq!(actor.pending_fire_count(), 0);
+    assert_eq!(actor.schedules[route].executions_total, 1);
+}
+
+#[test]
+fn should_page_a_byte_bounded_list_to_completion_via_cursor() {
+    // Arrange
+    // A page is bounded by the wire budget and can therefore hold fewer
+    // entries than `limit` asks for. `has_more` and the continuation cursor
+    // are the only signal, so following them must recover every entry
+    // rather than stopping at the first short page.
     let mut actor = make_actor();
     let payload = Bytes::from(vec![b'p'; 1024]);
     let total = 300;
@@ -488,20 +568,22 @@ fn should_page_a_byte_bounded_list_to_completion_via_offset() {
 
     // Act
     let mut seen = std::collections::HashSet::new();
-    let mut offset = 0u64;
+    let mut cursor: Option<String> = None;
     let mut pages = 0;
     loop {
-        let (entries, total_count) = actor.list_entries(offset, 0).expect("list entries");
+        let (entries, has_more, continuation) = actor
+            .list_entries(cursor.as_deref(), 1_000)
+            .expect("list entries");
         pages += 1;
         assert!(pages < 50, "pagination must converge");
         assert!(!entries.is_empty(), "each page must make forward progress");
         for entry in entries.iter() {
             seen.insert(entry.route.clone());
         }
-        offset += u64::try_from(entries.len()).unwrap();
-        if offset >= total_count {
+        if !has_more {
             break;
         }
+        cursor = Some(continuation.expect("a continuation accompanies has_more"));
     }
 
     // Assert
@@ -509,7 +591,7 @@ fn should_page_a_byte_bounded_list_to_completion_via_offset() {
     assert_eq!(
         seen.len(),
         total,
-        "offset continuation must recover every entry"
+        "cursor continuation must recover every entry"
     );
 }
 
@@ -527,7 +609,7 @@ fn should_continue_after_deleted_schedule_list_cursor_anchor() {
             .create_schedule(route.to_string(), "* * * * *".to_string(), Bytes::new())
             .expect("create schedule");
     }
-    let (first_page, has_more, cursor) = actor.list_entries_v2(None, 2).expect("first page");
+    let (first_page, has_more, cursor) = actor.list_entries(None, 2).expect("first page");
     assert!(has_more);
     assert_eq!(first_page[1].route, routes[1]);
     let cursor = cursor.expect("continuation cursor");
@@ -535,7 +617,7 @@ fn should_continue_after_deleted_schedule_list_cursor_anchor() {
 
     // Act
     let (next_page, has_more, _) = actor
-        .list_entries_v2(Some(&cursor), 2)
+        .list_entries(Some(&cursor), 2)
         .expect("continue after deleted cursor route");
 
     // Assert
@@ -567,7 +649,7 @@ fn should_return_first_schedule_list_page_given_unusable_cursor() {
         .iter()
         .map(|cursor| {
             let (entries, has_more, continuation) = actor
-                .list_entries_v2(Some(cursor), 1)
+                .list_entries(Some(cursor), 1)
                 .expect("unusable cursor lists from the first page");
             (entries[0].route.clone(), has_more, continuation)
         })
@@ -628,12 +710,9 @@ fn should_keep_route_order_index_in_sync_with_schedule_mutations() {
 #[test]
 fn should_bound_list_response_to_one_wire_frame() {
     // Arrange
-    // A schedule LIST response is encoded into a single TLV value, whose
-    // length prefix is a u16. `limit = 0` means "all remaining", so a few
-    // hundred ordinary schedules with 1 KiB payloads produce a response far
-    // past 65_535 bytes - which panicked the outbound sink rather than
-    // paginating. Every entry here is individually small and legal; only the
-    // aggregate is oversized.
+    // Schedule LIST has a domain payload limit. `limit = 0` means "all remaining";
+    // this fixture verifies that multiple valid entries are paginated when
+    // their combined payload exceeds the page ceiling.
     let mut actor = make_actor();
     let payload = Bytes::from(vec![b'p'; 1024]);
     for index in 0..250 {
@@ -647,20 +726,22 @@ fn should_bound_list_response_to_one_wire_frame() {
     }
 
     // Act
-    let (entries, total_count) = actor.list_entries(0, 0).expect("list entries");
+    let (entries, has_more, continuation) =
+        actor.list_entries(None, 1_000).expect("list entries");
     let payload_bytes = crate::dispatch::protocol::schedule_codec::encode_response(
-        701,
-        &crate::domains::schedule::ScheduleResponse::ListDefs {
+        702,
+        &crate::domains::schedule::ScheduleResponse::ListPage {
             entries: entries.clone(),
-            total_count,
+            has_more,
+            continuation,
         },
     );
 
     // Assert
-    assert_eq!(total_count, 250, "every schedule must still be counted");
+    assert!(has_more, "a short page must say more remains");
     assert!(
         u16::try_from(payload_bytes.len()).is_ok(),
-        "list response is {} bytes, past the {}-byte TLV value limit",
+        "list response is {} bytes, past the {}-byte page ceiling",
         payload_bytes.len(),
         u16::MAX
     );
@@ -675,7 +756,7 @@ fn should_bound_list_response_to_one_wire_frame() {
 }
 
 #[test]
-fn should_keep_list_v2_continuation_inside_one_wire_frame() {
+fn should_keep_list_continuation_inside_one_wire_frame() {
     // Arrange
     // ListPage's continuation cursor duplicates the last returned route as a
     // separate wire field (`family_prefix + route`), on top of that same
@@ -716,8 +797,8 @@ fn should_keep_list_v2_continuation_inside_one_wire_frame() {
 
     // Act
     let (entries, has_more, continuation) = actor
-        .list_entries_v2(None, u64::try_from(entries_per_page * 2).unwrap())
-        .expect("list entries v2");
+        .list_entries(None, u64::try_from(entries_per_page * 2).unwrap())
+        .expect("list entries");
 
     // Assert
     let response_bytes = crate::dispatch::protocol::schedule_codec::encode_response(
@@ -730,7 +811,7 @@ fn should_keep_list_v2_continuation_inside_one_wire_frame() {
     );
     assert!(
         u16::try_from(response_bytes.len()).is_ok(),
-        "list_v2 page is {} bytes, past the {}-byte TLV value limit",
+        "list page is {} bytes, past the {}-byte page ceiling",
         response_bytes.len(),
         u16::MAX
     );
@@ -739,10 +820,9 @@ fn should_keep_list_v2_continuation_inside_one_wire_frame() {
 #[test]
 fn should_reject_schedule_whose_definition_could_never_be_listed() {
     // Arrange
-    // A CREATE arrives as one TLV value, so a payload can be ~140 bytes larger
-    // than a LIST entry for the same route can encode. Accepting one leaves a
-    // definition that is stored but permanently unlistable: the page cannot be
-    // framed, so the response is dropped rather than answered.
+    // A CREATE request can be larger than a LIST entry for the same route
+    // because it carries fields that the returned entry does not. Accepting an
+    // oversized definition would make it impossible to return in a LIST page.
     let mut actor = make_actor();
     let route = "schedule://acme/jobs/unlistable/run";
     let cron = "* * * * *";

@@ -13,7 +13,7 @@
 - [README.md](README.md)
 - [src/shared/config.ts](src/shared/config.ts)
 - [src/main.tsx](src/main.tsx) when present
-- [src/router.tsx](src/router.tsx) or [src/pages/\_routes.tsx](src/pages/_routes.tsx) when present
+- [src/pages/\_routes.tsx](src/pages/_routes.tsx) for route definitions
 - The nearest route and layout owners under `src/`
 - Existing tests under `tests/`
 - [../AGENTS.md](../AGENTS.md) when the task touches shared repo boundaries

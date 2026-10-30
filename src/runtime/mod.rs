@@ -9,7 +9,7 @@
 //! - `envelope`: Message metadata and routing
 //! - `router`: Message delivery infrastructure
 //! - `matcher`: Wildcard pattern matching
-//! - `subscriptions`: High-performance subscription indexing
+//! - `subscriptions`: Subscription indexing by route pattern
 //!
 //! **CRITICAL INVARIANTS:**
 //! - 100% synchronous (no async, no Tokio)

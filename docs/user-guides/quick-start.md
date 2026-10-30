@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide provides the fastest path to a successful first Fitz request.
+This guide starts a local broker and connects a client.
 
 ## 1. Start Fitz
 
@@ -80,7 +80,7 @@ For a concrete Auth0 Dashboard setup and Fitz environment, see
    realm is your own namespace label; KV, Queue, and Lease routes need exactly
    three segments. See [routing-design.md](../development/routing-design.md).
 2. Send a single operation, such as KV get or put.
-3. Confirm both the response and latency metrics.
+3. Confirm the response.
 
 ## 5. Continue
 

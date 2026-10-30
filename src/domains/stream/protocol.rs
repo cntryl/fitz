@@ -19,13 +19,10 @@ pub(crate) const STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES: usize = 64;
 
 /// Maximum combined body and metadata size for one event.
 ///
-/// Stream READ responses use a `u16` TLV payload. This limit reserves the
-/// conservative response/item overhead plus the maximum valid route length,
-/// so every accepted event can be replayed on every valid Stream route.
-pub const MAX_EVENT_SIZE: usize = (u16::MAX as usize)
-    - STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES
-    - STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES
-    - crate::utils::route_shape::MAX_ROUTE_BYTES;
+/// The 400 KiB payload ceiling is independent of the configured message
+/// budget. The broker's minimum message size reserves enough additional room
+/// for the largest valid route, record fields, and replay cursor.
+pub const MAX_EVENT_SIZE: usize = 400 * 1024;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CORE DATA TYPES
@@ -577,11 +574,14 @@ pub struct GetMetadataResponse {
 pub const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: &str = "ERR_STREAM_FILTER_UNSUPPORTED_VERSION";
 pub const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLOAD";
 pub const ERR_READ_RESPONSE_TOO_LARGE: &str = "ERR_READ_RESPONSE_TOO_LARGE";
+pub const ERR_STREAM_TIMEOUT: &str = "ERR_STREAM_TIMEOUT:";
 
 /// The client-visible condition behind a Stream error. The wire codec maps
 /// each kind to its numeric code; the domain never deals in numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamClientErrorKind {
+    /// Route shape, scheme, or route family mismatch.
+    InvalidRoute,
     ConcurrencyConflict,
     SessionAlreadyActive,
     SessionNotFound,
@@ -591,9 +591,12 @@ pub enum StreamClientErrorKind {
     FilterInvalidPayload,
     InvalidSubscriptionPattern,
     ReadResponseTooLarge,
+    BadRequest,
     /// Any failure the domain cannot attribute to a client condition. It is
     /// fatal for the request and says nothing about whether it took effect.
     Backend,
+    /// Accepted storage operation reached its deadline with an indeterminate effect.
+    Timeout,
 }
 
 /// A Stream error as the client will see it: a typed kind plus the message.
@@ -639,13 +642,18 @@ fn classify_stream_error_message(message: &str) -> StreamClientErrorKind {
     if message.starts_with(ERR_READ_RESPONSE_TOO_LARGE) {
         return Kind::ReadResponseTooLarge;
     }
+    if message.starts_with(ERR_STREAM_TIMEOUT) {
+        return Kind::Timeout;
+    }
 
     match message {
         "session already active" => Kind::SessionAlreadyActive,
         "session not found" => Kind::SessionNotFound,
         "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => Kind::ConcurrencyConflict,
         "resource not found" => Kind::ResourceNotFound,
+        "route family mismatch" => Kind::InvalidRoute,
         "empty pattern" => Kind::InvalidSubscriptionPattern,
+        "event too large" => Kind::BadRequest,
         message if message.starts_with("invalid read ") || message.starts_with("read bound ") => {
             Kind::InvalidReadBound
         }
@@ -779,6 +787,7 @@ mod tests {
             ("ERR_CONCURRENCY_CONFLICT", Kind::ConcurrencyConflict),
             ("resource not found", Kind::ResourceNotFound),
             ("empty pattern", Kind::InvalidSubscriptionPattern),
+            ("event too large", Kind::BadRequest),
             ("invalid read limit 0", Kind::InvalidReadBound),
             ("read bound exceeds watermark", Kind::InvalidReadBound),
             (
@@ -797,11 +806,12 @@ mod tests {
                 "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0",
                 Kind::ReadResponseTooLarge,
             ),
+            ("ERR_STREAM_TIMEOUT: midge commit timed out", Kind::Timeout),
             (
                 "backend concurrency conflict diagnostic unavailable",
                 Kind::Backend,
             ),
-            ("route family mismatch", Kind::Backend),
+            ("route family mismatch", Kind::InvalidRoute),
         ];
 
         // Act

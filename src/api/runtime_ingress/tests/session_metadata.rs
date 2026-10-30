@@ -20,45 +20,51 @@ fn should_include_client_reported_service_name_in_active_sessions() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     // Act
-    let (connect, service_name_was_omitted_before_report, metadata) = rt.block_on(async {
+    let connect = rt.block_on(async {
         ingress
             .on_open(make_session_info(session_id, TransportKind::Tcp))
             .await
             .unwrap();
-        let connect = ingress
+        ingress
             .on_frame(
                 session_id,
                 ChannelId::Control,
-                crate::protocol::tlv::MessageType::CONNECT,
-                Bytes::from(jwt),
-                None,
-            )
-            .await;
-        let service_name_was_omitted_before_report =
-            serde_json::to_value(&admin_read_model.sessions()[0])
-                .expect("serialize session without a reported name")
-                .get("service_name")
-                .is_none();
-        let metadata = ingress
-            .on_frame(
-                session_id,
-                ChannelId::Control,
-                crate::protocol::tlv::MessageType::SESSION_METADATA,
-                Bytes::from(crate::protocol::session_metadata::encode_service_name(
+                crate::protocol::message::MessageType::CONNECT,
+                Bytes::from(crate::testkit::transport::connect_body(
+                    &jwt,
                     "orders-worker",
                 )),
                 None,
             )
-            .await;
-        (connect, service_name_was_omitted_before_report, metadata)
+            .await
     });
 
     // Assert
     assert_eq!(connect, IngressDecision::Accept);
-    assert!(service_name_was_omitted_before_report);
-    assert_eq!(metadata, IngressDecision::Accept);
     assert_eq!(
         admin_read_model.sessions()[0].service_name.as_deref(),
         Some("orders-worker")
     );
+}
+
+#[test]
+fn should_bound_active_session_snapshots() {
+    // Arrange
+    let ingress = RuntimeIngress::new(false);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        for session_id in 1..=3 {
+            ingress
+                .on_open(make_session_info(session_id, TransportKind::Tcp))
+                .await
+                .unwrap();
+        }
+    });
+
+    // Act
+    let (sessions, truncated) = ingress.active_sessions_bounded(2);
+
+    // Assert
+    assert_eq!(sessions.len(), 2);
+    assert!(truncated);
 }

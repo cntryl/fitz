@@ -129,6 +129,58 @@ fn should_filter_search_given_domain_realm_filters() {
 }
 
 #[test]
+fn should_mark_search_partial_given_more_source_rows_than_limit() {
+    // Arrange
+    let read_model = AdminReadModel::new();
+    read_model.replace_queues(
+        (0..150)
+            .map(|index| queue_snapshot(1, "billing", &format!("settlement-{index}")))
+            .collect(),
+    );
+    let runtime = runtime_with_read_model(read_model);
+    let options = SearchOptions {
+        query: String::new(),
+        route_family: None,
+        domain: Some("queue".to_string()),
+        realm: None,
+        area: None,
+        resource: None,
+        operation: None,
+        limit: 100,
+    };
+
+    // Act
+    let response = search_runtime(runtime.as_ref(), &options, &wildcard_access());
+
+    // Assert
+    assert_eq!(response.results.len(), 100);
+    assert_eq!(response.total, 100);
+    assert!(response.truncated);
+}
+
+#[test]
+fn should_mark_kv_search_partial_when_persisted_inventory_is_not_enumerated() {
+    // Arrange
+    let runtime = runtime_with_read_model(AdminReadModel::new());
+    let options = SearchOptions {
+        query: String::new(),
+        route_family: None,
+        domain: Some("kv".to_string()),
+        realm: None,
+        area: None,
+        resource: None,
+        operation: None,
+        limit: 50,
+    };
+
+    // Act
+    let response = search_runtime(runtime.as_ref(), &options, &wildcard_access());
+
+    // Assert
+    assert!(response.truncated);
+}
+
+#[test]
 fn should_search_rpc_pending_by_correlation_id() {
     // Arrange
     let read_model = AdminReadModel::new();

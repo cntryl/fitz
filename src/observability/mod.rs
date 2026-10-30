@@ -1,26 +1,7 @@
 /// Centralized observability configuration, constants, and helpers.
 ///
-/// This module defines:
-/// - Span names and sampling rules
-/// - Metric names and types
-/// - Common attribute keys
-/// - Helpers for safe span/metric operations
-///
-/// ## Sampling Strategy
-///
-/// **Hot paths (0.1% sampling):**
-/// - routing (route matching)
-/// - `tlv_codec` (TLV encode/decode)
-/// - `frame_processing` (TCP/WS frame I/O)
-///
-/// **`AlwaysSample` (100%):**
-/// - request (top-level request boundaries)
-/// - session (session lifecycle)
-/// - `domain_operation` (`domain::Actor::receive`)
-/// - `permission_check` (authorization)
-///
-/// **Debug level (typically filtered):**
-/// - family actor workers and internal operations
+/// This module defines span and metric names, attributes, and instrumentation
+/// helpers.
 pub mod global;
 pub mod metrics;
 pub mod tracing;
@@ -44,14 +25,14 @@ pub const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const SERVICE_INSTANCE_ID_ENV: &str = "FITZ_SERVICE_INSTANCE_ID";
 pub const DEPLOYMENT_ENVIRONMENT_ENV: &str = "FITZ_DEPLOYMENT_ENVIRONMENT";
 
-/// TLV codec span (hot path, 0.1% sample)
+/// Legacy span names retained for observability compatibility.
 pub const SPAN_TLV_ENCODE: &str = "tlv::encode";
 pub const SPAN_TLV_DECODE: &str = "tlv::decode";
 
-/// Route matching span (hot path, 0.1% sample)
+/// Route matching span name.
 pub const SPAN_ROUTE_MATCH: &str = "routing::match";
 
-/// Frame I/O span (hot path, 0.1% sample)
+/// Frame I/O span names.
 pub const SPAN_FRAME_READ: &str = "frame::read";
 pub const SPAN_FRAME_WRITE: &str = "frame::write";
 
@@ -225,7 +206,7 @@ pub const ATTR_DEPLOYMENT_ENVIRONMENT: &str = "deployment.environment";
 // SAMPLING CONFIGURATION
 // ============================================================================
 
-/// Sampling ratio for hot paths (0.1% = sample 1 out of 1000)
+/// Sampling ratio used for selected instrumentation.
 pub const SAMPLING_RATIO_HOT_PATH: f64 = 0.001;
 
 /// Always sample critical paths (100%)

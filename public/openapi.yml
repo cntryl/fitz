@@ -352,7 +352,7 @@ paths:
     get:
       tags: [Search]
       summary: Search admin-visible broker state
-      description: Returns read-only, domain-aware search results built from existing admin snapshots. Results may mix durable committed state and live broker-local state; each result kind follows the durability semantics of its source endpoint.
+      description: Returns read-only, domain-aware search results from bounded cached admin projections and live session snapshots. Results may mix durable committed state and live broker-local state; each result kind follows the durability semantics of its source endpoint. Bounded search does not enumerate persisted KV resource inventory, so searches across all domains or the KV domain are marked truncated. When truncated is true, additional source rows or matches were omitted and total is the count among observed rows.
       operationId: searchAdminState
       security:
         - sessionCookie: []
@@ -3571,6 +3571,7 @@ components:
           format: int64
         truncated:
           type: boolean
+          description: True when source rows or matching results were omitted by a bounded observation, including unenumerated persisted KV resource inventory.
         results:
           type: array
           items:
@@ -6325,12 +6326,18 @@ components:
         remote_addr: { type: string }
     SessionsList:
       type: object
-      required: [sessions]
+      required: [sessions, truncated, limit]
       properties:
         sessions:
           type: array
           items:
             $ref: "#/components/schemas/SessionInfo"
+        truncated:
+          type: boolean
+          description: Whether additional active sessions were omitted by the response limit.
+        limit:
+          type: integer
+          description: Maximum number of sessions returned.
 
     Error:
       type: object

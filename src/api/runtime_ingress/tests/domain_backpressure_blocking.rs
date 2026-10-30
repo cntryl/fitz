@@ -46,7 +46,7 @@ fn dispatch_while_sink_blocks(domain: &'static str) -> (bool, IngressDecision) {
             .on_frame(
                 session_id,
                 case.channel_id,
-                crate::protocol::tlv::MessageType::new(case.msg_type),
+                crate::protocol::message::MessageType::new(case.msg_type),
                 case.payload,
                 None,
             )
@@ -202,7 +202,7 @@ fn assert_rejected_before_enqueue_when_handoff_full(domain: &'static str) {
             .on_frame(
                 session_id,
                 case.channel_id,
-                crate::protocol::tlv::MessageType::new(case.msg_type),
+                crate::protocol::message::MessageType::new(case.msg_type),
                 case.payload.clone(),
                 None,
             )
@@ -214,7 +214,9 @@ fn assert_rejected_before_enqueue_when_handoff_full(domain: &'static str) {
     assert_eq!(sink.accepted.load(Ordering::SeqCst), 0);
     let frames = client_frames.lock().expect("captured frames");
     assert_eq!(frames.len(), 1);
-    assert!(DOCUMENTED_RETRYABLE_CODES.contains(&synthesized_error_code(&case, &frames[0])));
+    assert!(documented_retryable(synthesized_error_code(
+        &case, &frames[0]
+    )));
 }
 
 #[test]

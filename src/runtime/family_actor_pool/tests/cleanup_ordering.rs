@@ -67,10 +67,14 @@ fn should_reject_stale_session_work_after_cleanup_marker_capacity_is_exceeded() 
         .expect("queue cleanup");
 
     // Act
+    let mut stale_work = None;
     for session_id in 2..100 {
-        let work = shard.try_next().expect("control work");
-        assert_eq!(work.lane, FamilyActorLane::Control);
-        assert!(state.handle_cleanup_envelope(&work.message));
+        let work = shard.try_next().expect("queued work");
+        if work.lane == FamilyActorLane::Normal {
+            assert!(stale_work.replace(work).is_none());
+        } else {
+            assert!(state.handle_cleanup_envelope(&work.message));
+        }
         router
             .route_high_priority(Envelope::new(
                 destination.clone(),
@@ -79,7 +83,7 @@ fn should_reject_stale_session_work_after_cleanup_marker_capacity_is_exceeded() 
             .expect("replenish control work");
     }
     assert!(state.handle_cleanup_envelope(&shard.try_next().expect("last cleanup").message));
-    let work = shard.try_next().expect("normal work");
+    let work = stale_work.unwrap_or_else(|| shard.try_next().expect("normal work"));
     let rejected = state.is_cleaned_up_request(1, &work.message);
 
     // Assert

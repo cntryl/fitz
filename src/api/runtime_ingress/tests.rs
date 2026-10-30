@@ -9,6 +9,7 @@ mod cleanup_concurrency;
 mod connect_auth_claims;
 mod connect_diagnostics;
 mod domain_backpressure;
+mod goaway;
 mod golden_contract;
 mod payload_preservation;
 mod real_domain_cleanup;

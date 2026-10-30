@@ -18,11 +18,11 @@ impl AdmissionFailure {
                 "unauthorized: permission denied",
             ),
             Self::Backpressure => (
-                fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                fitz::protocol::error_codes::rpc::ERR_BUSY,
                 "domain at capacity: request was not accepted, retry with backoff",
             ),
             Self::Timeout => (
-                fitz::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                fitz::protocol::error_codes::rpc::ERR_TIMEOUT,
                 "domain timeout: request outcome unknown, do not blindly retry",
             ),
             Self::Unavailable => (
@@ -96,13 +96,12 @@ async fn exercise_failure<C: RpcConnector + FrameReceivingConnector>(failure: Ad
         "rpc://test/tasks/worker"
     };
     let uncorrelated_request = build_rpc_request(route, "run", b"body");
-    let (_, payload) = TlvFrameParser::new(&uncorrelated_request)
+    let (_, payload) = FrameParser::new(&uncorrelated_request)
         .next_field()
         .expect("RPC request field");
     let correlation_id =
         fitz::protocol::rpc_codec::extract_request_correlation_id(&payload).expect("request UUID");
-    let mut request_builder = TlvFrameBuilder::new();
-    request_builder.encode_field(2, &42_u64.to_be_bytes());
+    let mut request_builder = FrameBuilder::new().with_correlation(42);
     request_builder.encode_field(302, &payload);
     let request = request_builder.build();
 
@@ -112,11 +111,12 @@ async fn exercise_failure<C: RpcConnector + FrameReceivingConnector>(failure: Ad
         .await
         .expect("terminal RPC response");
 
-    let mut response_parser = TlvFrameParser::new(&terminal);
-    assert_eq!(response_parser.next_field().expect("response field").0, 303);
+    let response_parser = FrameParser::new(&terminal);
+    let header = response_parser.header().expect("response header");
+    assert_eq!(header.message_type, 303);
     assert!(
-        response_parser.next_field().is_none(),
-        "RPC terminal reply must not echo optional frame correlation"
+        header.correlation.is_none(),
+        "RPC terminal reply is matched by its UUID, not the frame correlation"
     );
     let response = parse_rpc_response_delivery(&terminal).expect("decode terminal 303 by UUID");
     assert_eq!(response.msg_type, 303);
@@ -198,7 +198,7 @@ async fn exercise_concurrent_failures<C: RpcConnector + FrameReceivingConnector>
     let mut pending = std::collections::HashSet::new();
     for _ in 0..3 {
         let request = build_rpc_request("rpc://test/tasks/worker", "run", b"body");
-        let (_, payload) = TlvFrameParser::new(&request)
+        let (_, payload) = FrameParser::new(&request)
             .next_field()
             .expect("RPC request field");
         let request_id = fitz::protocol::rpc_codec::extract_request_correlation_id(&payload)
@@ -215,7 +215,7 @@ async fn exercise_concurrent_failures<C: RpcConnector + FrameReceivingConnector>
         assert!(response.stream_end);
         let (code, _) = fitz::protocol::rpc_codec::decode_error_body(&response.body)
             .expect("decode error body");
-        assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE);
+        assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_BUSY);
     }
     assert!(pending.is_empty());
     assert!(

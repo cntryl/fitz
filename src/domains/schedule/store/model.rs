@@ -2,7 +2,8 @@ use bytes::Bytes;
 
 use crate::domains::WritePolicy;
 
-use crate::domains::schedule::protocol::{ConcreteScheduleRoute, ScheduleDeliveryMode};
+use crate::domains::schedule::protocol::ScheduleDeliveryMode;
+use crate::domains::schedule::route_grammar::ConcreteScheduleRoute;
 
 pub(super) const DEFINITION_VALUE_VERSION_V3: u8 = 3;
 pub(super) const BODY_VALUE_VERSION_V2: u8 = 2;
@@ -95,10 +96,13 @@ pub struct PersistedPendingFireClaim {
 #[derive(Clone)]
 pub struct ScheduleStore {
     pub(super) db: crate::storage::FitzStorageEngine,
+    pub(super) unknown_commit_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     #[cfg(test)]
     pub(super) fail_next_commit: std::sync::Arc<std::sync::atomic::AtomicBool>,
     #[cfg(test)]
     pub(super) stall_next_commit: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    pub(super) unknown_after_apply: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -120,6 +124,15 @@ impl SchedulePersistenceError {
     #[must_use]
     pub fn is_write_stall(&self) -> bool {
         matches!(self.source, Some(cntryl_midge::MidgeError::WriteStall(_)))
+    }
+
+    fn classified_message(&self) -> String {
+        let category = if matches!(&self.source, Some(cntryl_midge::MidgeError::Timeout(_))) {
+            "SCHEDULE_TIMEOUT:"
+        } else {
+            "SCHEDULE_BACKEND:"
+        };
+        format!("{category} {self}")
     }
 }
 
@@ -146,11 +159,15 @@ impl From<String> for SchedulePersistenceError {
 
 impl From<SchedulePersistenceError> for String {
     fn from(error: SchedulePersistenceError) -> Self {
-        error.to_string()
+        error.classified_message()
     }
 }
 
 /// Narrow persistence boundary used by schedule claim and acknowledgement policy.
+///
+/// Success follows the supplied write policy. An error does not generally prove
+/// that no durable effect occurred; callers retain recovery state and retry only
+/// the explicitly classified admission failure.
 pub trait SchedulePersistence {
     /// # Errors
     ///

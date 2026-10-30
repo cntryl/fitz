@@ -1,10 +1,10 @@
 //! Multiplexing layer for logical channels
 //!
-//! This module maps TLV message types to logical channels and enforces
-//! per-channel backpressure via simple counters.
+//! This module maps Wire2 message types to logical channels and enforces
+//! per-channel backpressure.
 
 use crate::protocol::frame::ChannelId;
-use crate::protocol::tlv::{MessageType, TlvRecord};
+use crate::protocol::message::{MessageType, WireMessage};
 use bytes::Bytes;
 use std::fmt;
 use std::sync::Arc;
@@ -26,9 +26,11 @@ pub struct ChannelMessage {
     pub channel: ChannelId,
     pub msg_type: MessageType,
     pub payload: Bytes,
-    /// Correlation from the `CORRELATE` record that immediately preceded this
-    /// one, if the client labelled the request.
+    /// Correlation from the message header, if the client labelled the request.
     pub correlation: Option<std::num::NonZeroU64>,
+    /// Header flags, including `ACK_REQUESTED` on requests and
+    /// `RESPONSE_FINAL` on terminal correlated responses.
+    pub flags: crate::protocol::wire2::header::HeaderFlags,
 }
 
 impl ChannelMessage {
@@ -39,13 +41,21 @@ impl ChannelMessage {
             msg_type,
             payload,
             correlation: None,
+            flags: crate::protocol::wire2::header::HeaderFlags::none(),
         }
     }
 
-    /// Attach the correlation decoded from the preceding record.
+    /// Attach the correlation decoded from the message header.
     #[must_use]
     pub fn with_correlation(mut self, correlation: Option<std::num::NonZeroU64>) -> Self {
         self.correlation = correlation;
+        self
+    }
+
+    /// Attach the flags decoded from the message header.
+    #[must_use]
+    pub fn with_flags(mut self, flags: crate::protocol::wire2::header::HeaderFlags) -> Self {
+        self.flags = flags;
         self
     }
 }
@@ -259,14 +269,14 @@ impl Mux {
         Ok((cref, grant))
     }
 
-    /// Convenience owning API: consumes a `TlvRecord` and returns an owned `ChannelMessage`.
+    /// Owning API: consumes a decoded message and returns an owned `ChannelMessage`.
     ///
     /// # Errors
     ///
     /// Returns [`MuxError::UnknownMessageType`] when no channel mapping exists
     /// for the record message type, or [`MuxError::ChannelFull`] when the
     /// target channel is already at capacity.
-    pub fn route(&mut self, record: TlvRecord) -> Result<ChannelMessage, MuxError> {
+    pub fn route(&mut self, record: WireMessage) -> Result<ChannelMessage, MuxError> {
         // extract msg_type first to avoid partial moves
         let mt = record.msg_type();
         let payload = record.value;
@@ -303,7 +313,6 @@ impl Mux {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::tlv::{TlvDecoder, TlvEncoder};
 
     #[test]
     fn should_map_manifest_message_ids() {
@@ -339,11 +348,7 @@ mod tests {
     fn should_route_to_channel() {
         // Arrange
         let mut mux = Mux::new(2);
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::new(100), b"payload");
-        let data = encoder.finish();
-        let decoder = TlvDecoder::new();
-        let (record, _) = decoder.decode_one(&data).unwrap();
+        let record = WireMessage::new(MessageType::new(100), Bytes::from_static(b"payload"));
 
         // Act
         let msg = mux.route(record).unwrap();
@@ -353,14 +358,14 @@ mod tests {
         mux.release(ChannelId::Pub);
         // Zero-copy path
         let mut mux2 = Mux::new(2);
-        let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
+        let (mt, slice) = (MessageType::new(100), &b"payload"[..]);
         let cref = mux2.route_ref(mt, slice).unwrap();
         assert_eq!(cref.channel, ChannelId::Pub);
         mux2.release(cref.channel);
 
         // RAII grant path
         let mut mux3 = Mux::new(1);
-        let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
+        let (mt, slice) = (MessageType::new(100), &b"payload"[..]);
         {
             let (_cref, _grant) = mux3.route_grant(mt, slice).unwrap();
             // grant held; cannot call other mux methods while borrowed
@@ -370,7 +375,7 @@ mod tests {
 
         // Explicit release
         let mut mux4 = Mux::new(1);
-        let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
+        let (mt, slice) = (MessageType::new(100), &b"payload"[..]);
         let (_cref, grant) = mux4.route_grant(mt, slice).unwrap();
         // Explicit release
         grant.release();
@@ -381,11 +386,7 @@ mod tests {
     fn should_track_backpressure() {
         // Arrange
         let mut mux = Mux::new(1);
-        let mut encoder = TlvEncoder::new();
-        encoder.encode(MessageType::new(100), b"value");
-        let data = encoder.finish();
-        let decoder = TlvDecoder::new();
-        let (record, _) = decoder.decode_one(&data).unwrap();
+        let record = WireMessage::new(MessageType::new(100), Bytes::from_static(b"value"));
 
         // Act
         let _ = mux.route(record.clone()).unwrap();

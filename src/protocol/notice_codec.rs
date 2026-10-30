@@ -1,6 +1,6 @@
 //! Notice domain codec - pub/sub notifications
 //!
-//! Encodes/decodes TLV messages for the notice domain.
+//! Encodes and decodes Notice payloads.
 //! Supports Publish, Subscribe, Unsubscribe operations.
 //!
 //! `route_family`, `session_id`, and `subscriber` are server-internal
@@ -22,7 +22,7 @@ fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-/// Parse incoming message from TLV-encoded bytes.
+/// Parse an incoming Notice payload.
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
 /// session layer — they are never read from the wire payload.
@@ -104,7 +104,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     }
 }
 
-/// Encode domain response to TLV-encoded bytes
+/// Encode a domain response payload.
 #[must_use]
 pub fn encode_response(response: &NoticeResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
@@ -335,13 +335,13 @@ mod tests {
                 b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i',
             ]
         );
+        let decoded = crate::protocol::error_codes::decode_wire_error(&error).expect("error");
         assert_eq!(
-            error,
-            [
-                1, 0, 0, 11, 189, 0, 0, 0, 31, b'b', b'a', b'c', b'k', b'e', b'n', b'd', b' ',
-                b'r', b'o', b'u', b't', b'e', b' ', b'c', b'a', b'c', b'h', b'e', b' ', b'u', b'n',
-                b'a', b'v', b'a', b'i', b'l', b'a', b'b', b'l', b'e',
-            ]
+            (decoded.code, decoded.message.as_str()),
+            (
+                crate::protocol::error_codes::notice::ERR_BACKEND_ERROR,
+                "backend route cache unavailable"
+            )
         );
     }
 

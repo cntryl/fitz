@@ -27,7 +27,7 @@ jobs:
       matrix:
         bench:
           - tier1_hotpath_matcher
-          - tier1_hotpath_tlv
+          - tier1_hotpath_message
           - tier1_hotpath_mux
           - tier1_hotpath_permissions
           - tier1_hotpath_context

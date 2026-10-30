@@ -7,7 +7,7 @@ use bytes::Bytes;
 use fitz::benchkit::{build_rpc_request, build_rpc_response_frame_bytes, build_rpc_subscribe};
 use fitz::protocol::error_codes::{decode_error_body, rpc};
 use fitz::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use fitz::testkit::transport::TlvFrameBuilder;
+use fitz::testkit::transport::FrameBuilder;
 use fitz::testkit::TestClient;
 use std::net::SocketAddr;
 use uuid::Uuid;
@@ -81,7 +81,7 @@ impl RpcDriver {
                 let response = parse_response(&frame, caller_uuid)?;
                 let (code, message) =
                     decode_error_body(&response.body).map_err(BenchFailure::validation)?;
-                return if code == rpc::ERR_RPC_BACKPRESSURE {
+                return if code == rpc::ERR_BUSY {
                     Ok(StepOutcome::CapacityRejected(u32::from(code)))
                 } else {
                     Err(BenchFailure::verification(format!(
@@ -127,7 +127,7 @@ impl RpcDriver {
         let unregister = async {
             let mut payload = PayloadEncoder::new();
             payload.put_string(&self.route);
-            let mut frame = TlvFrameBuilder::new();
+            let mut frame = FrameBuilder::new();
             frame.encode_field(301, &payload.finish());
             self.worker
                 .send_frame(&frame.build())

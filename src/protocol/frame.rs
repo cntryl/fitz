@@ -1,7 +1,6 @@
 //! Shared protocol frame definitions
 //!
-//! This module defines logical channels and low-level protocol helpers used by the
-//! TLV decoder and Mux layers.
+//! This module defines logical channel identifiers used by the protocol mux.
 
 use std::fmt;
 

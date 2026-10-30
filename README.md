@@ -4,14 +4,8 @@ Fitz is a container-friendly application broker that exposes seven communication
 and state primitives through one active broker process and one route model per
 storage namespace.
 
-The deployment model is intentionally simple: one active writer per storage
-namespace, replaceable broker compute, and explicit workload sharding when more
-capacity is needed.
-
-**Product stage:** Fitz is pre-GA and is already used in production deployments.
-Deployment status and release stage are distinct; current deployments do not
-imply general availability, certification across configurations, or a
-service-level commitment.
+Each storage namespace has one active writer. Independent workloads can use
+separate deployments and namespaces.
 
 ## What Fitz Provides
 
@@ -38,19 +32,16 @@ selected write policy determine which commits are durable.
 
 ## Deployment Tradeoffs
 
-Fitz keeps each storage namespace single-writer instead of coordinating a broker
-cluster. This reduces the coordination and operational surface for workloads that
-fit on one broker instance. Container orchestrators can replace a failed process;
-after the replacement acquires the storage lease and recovers persisted state, it
-can serve traffic again. On an ungraceful failure, lease expiry can delay that
-handoff. Clients reconnect and rebuild ephemeral session state.
+Each storage namespace has one active writer. A replacement process can recover
+persisted state after it acquires the storage lease. An ungraceful failure may
+delay that handoff while the lease expires. Clients reconnect and rebuild
+ephemeral session state.
 
-When a workload outgrows one broker, scale it explicitly: assign independent
-workloads or partitions to separate Fitz deployments, each with its own storage
-namespace and local cache. Application routing owns that assignment; Fitz does
-not automatically shard one logical broker across processes. RouteFamily remains
-an isolation boundary within a broker deployment, not a cross-process shard
-selector.
+Assign independent workloads or partitions to separate Fitz deployments, each
+with its own storage namespace and local cache. Application routing owns that
+assignment; Fitz does not automatically shard one logical broker across
+processes. RouteFamily remains an isolation boundary within a deployment, not a
+cross-process shard selector.
 
 Fitz does not form a multi-node consensus cluster or provide a clustered
 high-availability mode. Process replacement can interrupt traffic; it does not
@@ -82,11 +73,8 @@ docker run --rm \
   ghcr.io/cntryl/fitz:latest
 ```
 
-`latest` and `main` are rebuilt automatically from every push to `main`, and
-`develop` from every push to `develop`. For a
-reproducible deployment, use an immutable SemVer image such as
-`ghcr.io/cntryl/fitz:0.1.1`; publish one by dispatching the `Publish` workflow
-from `main` after the release checks pass.
+For a reproducible deployment, use an immutable SemVer image published by the
+repository release process.
 
 Check readiness:
 
@@ -110,12 +98,8 @@ docker compose -f compose.azure.yml up --build    # Azure Blob emulator
 docker compose -f compose.gcs.yml up --build      # GCS emulator
 ```
 
-Each profile starts the same authenticated and anonymous brokers, provisions
-separate storage namespaces for them, and publishes the emulator on loopback
-port `9000` for local diagnostics. The S3 profile reaches readiness with the
-current emulator image. Its Azure and GCS front doors currently return HTTP 500
-for missing objects, so those two profiles cannot complete Midge's first-start
-recovery until that upstream emulator behavior is corrected.
+Each profile starts local brokers and a provider-compatible storage emulator.
+See the compose files for ports and credentials.
 
 ## Runtime Surfaces
 
@@ -131,6 +115,7 @@ recovery until that upstream emulator behavior is corrected.
 Use these references to configure and operate a Fitz process:
 
 - Storage: [docs/operations/cloud-setup.md](docs/operations/cloud-setup.md)
+- Operator guide: [docs/operations/operator-guide.md](docs/operations/operator-guide.md)
 - Auth and browser perimeter: [docs/operations/auth-browser-deployment.md](docs/operations/auth-browser-deployment.md)
 - Probes and metrics: [docs/operations/observability.md](docs/operations/observability.md)
 - Operations runbook: [docs/operations/operations-runbook.md](docs/operations/operations-runbook.md)
@@ -141,7 +126,9 @@ Important defaults:
 - `FITZ_AUTH_REQUIRED` defaults to `true`.
 - `FITZ_ROUTE_FAMILIES` defaults to `1`; configure a contiguous allowlist such as `1,2,3` before serving multiple isolated families.
 - `FITZ_STORAGE_MODE` accepts `memory`, `local`, or `cloud`.
-- Queue persistence is always best effort; accepted enqueues and ACKs can be lost before background persistence completes.
+- Queue is for regenerable or loss-tolerant work. Accepted enqueues and ACKs can
+  be lost before background persistence completes, so an enqueue response is
+  not a durable commit.
 - `FITZ_STORAGE_CLOUD_DURABILITY` accepts `background` or `strict` for broker-selected durable cloud writes.
 
 ## Documentation

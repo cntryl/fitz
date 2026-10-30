@@ -7,16 +7,16 @@ const ROUTE: &str = "stream://stress-bench/history/growing";
 #[test]
 fn should_preserve_coded_stream_read_failure_detail() {
     // Arrange
-    let mut body = PayloadEncoder::new();
-    body.put_u8(1);
-    body.put_u32(2012);
-    body.put_string("no free L0 slot");
+    let body = fitz::protocol::error_codes::encode_error_body(
+        fitz::protocol::error_codes::stream::ERR_BACKEND_ERROR,
+        "no free L0 slot",
+    );
     // Act
-    let result = readback::verify_page(&body.finish(), ROUTE, 0, 1, 1, 32);
+    let result = readback::verify_page(&body, ROUTE, 0, 1, 1, 32);
     // Assert
     assert_eq!(
         result,
-        Err("Stream READ error code 2012: no free L0 slot".into())
+        Err("Stream READ error code 2006: no free L0 slot".into())
     );
 }
 
@@ -33,7 +33,7 @@ fn should_reject_extended_stream_rollback_success() {
 #[test]
 fn should_classify_exact_actor_batch_limit_response() {
     // Arrange
-    let error = "Stream error code 2012: batch too large";
+    let error = "Stream error code 2006: batch too large";
     // Act
     let result = admission::batch_limit(error);
     // Assert
@@ -43,7 +43,7 @@ fn should_classify_exact_actor_batch_limit_response() {
 #[test]
 fn should_reject_incidental_batch_words_in_backend_failure() {
     // Arrange
-    let error = "Stream error code 2012: write stall while flushing batch too large";
+    let error = "Stream error code 2006: write stall while flushing batch too large";
     // Act
     let result = admission::batch_limit(error);
     // Assert

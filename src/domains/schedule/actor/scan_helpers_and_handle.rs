@@ -1,10 +1,12 @@
 use super::model::ScheduleActor;
-#[cfg(test)]
-use crate::domains::schedule::protocol::SystemClock;
 use crate::domains::schedule::protocol::{
-    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
-    parse_concrete_schedule_route, Clock, ScheduleFailure, ScheduleFailureCategory,
-    ScheduleMessage, ScheduleResponse,
+    ScheduleFailure, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
+};
+use crate::domains::schedule::route_grammar::parse_concrete_schedule_route;
+#[cfg(test)]
+use crate::runtime::clock::SystemClock;
+use crate::runtime::clock::{
+    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock,
 };
 use std::cmp::Reverse;
 use std::time::{Duration, Instant};
@@ -98,6 +100,9 @@ impl ScheduleActor {
     }
 
     pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
+        if let Err(error) = self.reconcile_unknown_commit() {
+            return ScheduleResponse::Error(ScheduleFailure::operation_error(error));
+        }
         match msg {
             ScheduleMessage::Create {
                 route,
@@ -114,7 +119,7 @@ impl ScheduleActor {
                 }
                 match self.create_schedule_with_mode(route, cron, delivery_mode, payload) {
                     Ok(_) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::operation_error(e)),
                 }
             }
             ScheduleMessage::CreateBatch { entries } => {
@@ -128,7 +133,7 @@ impl ScheduleActor {
                 }
                 match self.create_schedules(entries) {
                     Ok(_) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::operation_error(e)),
                 }
             }
             ScheduleMessage::Cancel { route } => {
@@ -140,21 +145,11 @@ impl ScheduleActor {
                 }
                 match self.delete_schedule(&route) {
                     Ok(_) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::operation_error(e)),
                 }
             }
-            ScheduleMessage::List { offset, limit } => match self.list_entries(offset, limit) {
-                Ok((entries, total_count)) => ScheduleResponse::ListDefs {
-                    entries,
-                    total_count,
-                },
-                Err(error) => ScheduleResponse::Error(ScheduleFailure::new(
-                    ScheduleFailureCategory::InvalidTarget,
-                    error,
-                )),
-            },
-            ScheduleMessage::ListV2 { cursor, limit } => {
-                match self.list_entries_v2(cursor.as_deref(), limit) {
+            ScheduleMessage::List { cursor, limit } => {
+                match self.list_entries(cursor.as_deref(), limit) {
                     Ok((entries, has_more, continuation)) => ScheduleResponse::ListPage {
                         entries,
                         has_more,

@@ -1,6 +1,6 @@
 use super::*;
 pub(super) use crate::dispatch::protocol::frame::ChannelId;
-pub(super) use crate::dispatch::protocol::tlv::MessageType;
+pub(super) use crate::dispatch::protocol::message::MessageType;
 pub(super) use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::Mailbox;
 pub(super) use bytes::{BufMut, Bytes};
@@ -98,12 +98,6 @@ pub(super) fn encode_queue_ack(route: &str, id: u64, token: u64) -> Bytes {
 }
 
 pub(super) fn bad_request_reason(frame: &FrameContext) -> String {
-    if !matches!(frame.msg_type.as_u16(), 200 | 202) {
-        let mut decoder =
-            crate::dispatch::protocol::payload_codec::PayloadDecoder::new(frame.payload.as_ref());
-        assert_eq!(decoder.get_u8().expect("error status"), 1);
-        return decoder.get_string().expect("plain queue error envelope");
-    }
     let (code, message) =
         crate::dispatch::protocol::error_codes::decode_error_body(frame.payload.as_ref())
             .expect("bad request error envelope");

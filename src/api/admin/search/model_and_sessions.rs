@@ -1,17 +1,65 @@
 use super::{
     candidate, collect_lease_candidates, collect_notice_candidates, collect_queue_candidates,
-    collect_rpc_candidates, collect_schedule_candidates, domain_href, list, match_candidate,
+    collect_rpc_candidates, collect_schedule_candidates, domain_href, match_candidate,
     matches_optional_filter, normalize_route_family_filter, parse_query_params,
     push_resource_candidate, resource_href, scope_filter_matches, Runtime,
 };
 use crate::api::admin::auth::{AdminPrincipal, AdminRouteFamilyAccess};
+use crate::api::admin::list::ResourceRef;
 use crate::api::http::Response;
+use crate::control::admin::read_model::{AdminSnapshot, InventoryScope};
+use crate::control::admin::{SessionInfo, StreamAreaWatermarkDetail};
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 const MAX_SEARCH_LIMIT: usize = 100;
+const MAX_SEARCH_SOURCE_ROWS: usize = 100;
+
+pub(crate) struct SearchSnapshot {
+    pub(crate) rows: AdminSnapshot,
+    pub(crate) sessions: Vec<SessionInfo>,
+    pub(crate) kv_resources: Vec<ResourceRef>,
+    pub(crate) stream_area_watermarks: Vec<StreamAreaWatermarkDetail>,
+    pub(crate) truncated: bool,
+}
+
+impl SearchSnapshot {
+    fn from_runtime(runtime: &Runtime) -> Self {
+        let model = runtime.admin_read_model();
+        let rows = model.bounded_snapshot(None, MAX_SEARCH_SOURCE_ROWS);
+        let (sessions, sessions_truncated) = runtime.list_sessions_bounded(MAX_SEARCH_SOURCE_ROWS);
+        let (inventory, inventory_truncated) = model.inventory_page(
+            InventoryScope {
+                scheme: Some("kv"),
+                ..InventoryScope::default()
+            },
+            None,
+            MAX_SEARCH_SOURCE_ROWS,
+        );
+        let (stream_area_watermarks, watermark_truncated) =
+            model.bounded_stream_area_watermarks(MAX_SEARCH_SOURCE_ROWS);
+        let kv_resources = inventory
+            .into_iter()
+            .map(|entry| ResourceRef {
+                realm: entry.realm,
+                area: entry.area,
+                resource: entry.resource,
+            })
+            .collect();
+        Self {
+            truncated: rows.truncated
+                || sessions_truncated
+                || inventory_truncated
+                || watermark_truncated,
+            rows,
+            sessions,
+            kv_resources,
+            stream_area_watermarks,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdminSearchResponse {
@@ -153,14 +201,15 @@ pub(crate) fn search_runtime(
 ) -> AdminSearchResponse {
     let mut candidates = Vec::new();
 
-    collect_session_candidates(runtime, options, &mut candidates);
-    collect_kv_candidates(runtime, options, &mut candidates);
-    collect_stream_candidates(runtime, options, &mut candidates);
-    collect_queue_candidates(runtime, options, &mut candidates);
-    collect_schedule_candidates(runtime, options, &mut candidates);
-    collect_lease_candidates(runtime, options, &mut candidates);
-    collect_notice_candidates(runtime, options, &mut candidates);
-    collect_rpc_candidates(runtime, options, &mut candidates);
+    let snapshot = SearchSnapshot::from_runtime(runtime);
+    collect_session_candidates(&snapshot, options, &mut candidates);
+    collect_kv_candidates(&snapshot, options, &mut candidates);
+    collect_stream_candidates(&snapshot, options, &mut candidates);
+    collect_queue_candidates(&snapshot, options, &mut candidates);
+    collect_schedule_candidates(&snapshot, options, &mut candidates);
+    collect_lease_candidates(&snapshot, options, &mut candidates);
+    collect_notice_candidates(&snapshot, options, &mut candidates);
+    collect_rpc_candidates(&snapshot, options, &mut candidates);
 
     let mut results = candidates
         .into_iter()
@@ -181,7 +230,12 @@ pub(crate) fn search_runtime(
     });
 
     let total = results.len();
-    let truncated = total > options.limit;
+    let committed_kv_inventory_unobserved = options
+        .domain
+        .as_deref()
+        .is_none_or(|domain| domain == "kv");
+    let truncated =
+        snapshot.truncated || total > options.limit || committed_kv_inventory_unobserved;
     results.truncate(options.limit);
 
     AdminSearchResponse {
@@ -212,7 +266,7 @@ pub(crate) fn route_family_is_visible(
 }
 
 pub(crate) fn collect_session_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -220,7 +274,7 @@ pub(crate) fn collect_session_candidates(
         return;
     }
 
-    for session in runtime.list_sessions() {
+    for session in &snapshot.sessions {
         let route_family = session.route_family.to_string();
         if !options.matches_scope(Some(route_family.as_str()), None, None, None, None) {
             continue;
@@ -263,20 +317,20 @@ pub(crate) fn collect_session_candidates(
                 metadata,
             },
             vec![
-                ("session_id", session.session_id),
+                ("session_id", session.session_id.clone()),
                 ("route_family", route_family),
-                ("subject", session.subject),
-                ("identity_claim", session.identity_claim),
-                ("identity_value", session.identity_value),
-                ("transport", session.transport),
-                ("remote_addr", session.remote_addr),
+                ("subject", session.subject.clone()),
+                ("identity_claim", session.identity_claim.clone()),
+                ("identity_value", session.identity_value.clone()),
+                ("transport", session.transport.clone()),
+                ("remote_addr", session.remote_addr.clone()),
             ],
         ));
     }
 }
 
 pub(crate) fn collect_kv_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -284,7 +338,7 @@ pub(crate) fn collect_kv_candidates(
         return;
     }
 
-    for resource in list::kv_resources(runtime, None) {
+    for resource in &snapshot.kv_resources {
         if !options.matches_scope(
             None,
             Some(&resource.realm),
@@ -294,10 +348,10 @@ pub(crate) fn collect_kv_candidates(
         ) {
             continue;
         }
-        push_resource_candidate("kv", "resource", resource, None, candidates);
+        push_resource_candidate("kv", "resource", resource.clone(), None, candidates);
     }
 
-    for tx in runtime.kv_list_transactions(options.realm.as_deref()) {
+    for tx in snapshot.rows.kv_transactions.iter().cloned() {
         let route_family = tx.route_family.to_string();
         if !options.matches_scope(
             Some(&route_family),
@@ -356,7 +410,7 @@ pub(crate) fn collect_kv_candidates(
 }
 
 pub(crate) fn collect_stream_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -364,16 +418,16 @@ pub(crate) fn collect_stream_candidates(
         return;
     }
 
-    collect_stream_resource_candidates(runtime, options, candidates);
-    collect_stream_area_watermark_candidates(runtime, options, candidates);
+    collect_stream_resource_candidates(snapshot, options, candidates);
+    collect_stream_area_watermark_candidates(snapshot, options, candidates);
 }
 
 fn collect_stream_resource_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for stream in runtime.stream_list_streams(options.realm.as_deref()) {
+    for stream in snapshot.rows.streams.iter().cloned() {
         let route_family = stream.route_family.to_string();
         if !options.matches_scope(
             Some(&route_family),
@@ -426,11 +480,11 @@ fn collect_stream_resource_candidates(
 }
 
 fn collect_stream_area_watermark_candidates(
-    runtime: &Runtime,
+    snapshot: &SearchSnapshot,
     options: &SearchOptions,
     candidates: &mut Vec<Candidate>,
 ) {
-    for detail in runtime.stream_list_area_watermark_details() {
+    for detail in snapshot.stream_area_watermarks.iter().cloned() {
         if !scope_filter_matches(options.realm.as_deref(), &detail.realm)
             || !scope_filter_matches(options.area.as_deref(), &detail.area)
         {

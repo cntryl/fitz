@@ -377,9 +377,10 @@ mod response_tests {
     }
 
     #[test]
-    fn should_classify_real_pattern_compiler_errors_as_the_spec_documents() {
-        // Arrange: the spec keeps 3005 for malformed wildcard shapes and 3002
-        // for grammar errors, so the real producer must keep that split.
+    fn should_classify_real_pattern_compiler_errors_as_invalid_patterns() {
+        // Arrange: every pattern the compiler rejects is an invalid pattern,
+        // whatever wording it uses; the subscribe path wraps the message in
+        // that kind directly, and the free-text classifier agrees.
         use super::{NoticeClientError, NoticeClientErrorKind as Kind};
         let compile = |pattern: &str| {
             crate::runtime::DomainKind::Notice
@@ -389,14 +390,16 @@ mod response_tests {
         };
 
         // Act
-        let partial_wildcard = NoticeClientError::from(compile("notice://r/ord*ers/x")).kind;
-        let adjacent_double_star = NoticeClientError::from(compile("notice://r/**/**")).kind;
+        let partial_wildcard =
+            NoticeClientError::invalid_pattern(compile("notice://r/ord*ers/x")).kind;
+        let adjacent_double_star =
+            NoticeClientError::invalid_pattern(compile("notice://r/**/**")).kind;
         let control_character = NoticeClientError::from(compile("notice://r/a/b\u{1}")).kind;
         let empty_segment = NoticeClientError::from(compile("notice://r//x")).kind;
 
         // Assert
-        assert_eq!(partial_wildcard, Kind::Backend);
-        assert_eq!(adjacent_double_star, Kind::Backend);
+        assert_eq!(partial_wildcard, Kind::InvalidPattern);
+        assert_eq!(adjacent_double_star, Kind::InvalidPattern);
         assert_eq!(control_character, Kind::InvalidPattern);
         assert_eq!(empty_segment, Kind::InvalidPattern);
     }

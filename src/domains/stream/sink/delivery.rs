@@ -74,7 +74,7 @@ impl StreamFamilyState {
         let notify_ctx = crate::dispatch::protocol::FrameContext::new(
             session_id,
             crate::dispatch::protocol::frame::ChannelId::Sub,
-            crate::dispatch::protocol::tlv::MessageType::new(609),
+            crate::dispatch::protocol::message::MessageType::new(609),
             bytes::Bytes::from(notify_payload),
             event.family_id,
         );

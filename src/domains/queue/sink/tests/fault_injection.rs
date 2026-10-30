@@ -35,6 +35,83 @@ fn pending_reserve_count(sink: &QueueDomain, family: RouteFamily) -> usize {
     sink.inspect_family_for_tests(family, |state| state.reservation_book.pending_count())
 }
 
+#[test]
+fn should_reconstruct_queue_actor_after_unknown_applied_enqueue() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sender_address = RouteAddress::new(family, Route::new("inbox://session/31"));
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let sender_mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(sender_address.clone(), sender_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        store,
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    sink.inspect_family_for_tests(family, |_| {
+        crate::domains::queue::actor::recovery_store::QueueStore::fail_next_commit_after_apply_for_tests(
+            cntryl_midge::MidgeError::OutcomeUnknown("enqueue applied; response lost".into()),
+        );
+    });
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        sender_address.clone(),
+        queue_address.clone(),
+        FrameContext::new(
+            31,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send("queue://acme/jobs/unknown", b"first"),
+            family,
+        ),
+    ))
+    .expect("deliver first enqueue");
+    let unknown_response = receive_queue_frame(&sender_mailbox, "unknown enqueue response");
+    let queue_key = queue_key(family, "acme", "jobs", "unknown");
+    let applied_message_was_recovered = sink.inspect_family_for_tests(family, move |state| {
+        state
+            .actor_registry
+            .get_mut(&queue_key)
+            .is_some_and(|warm_actor| warm_actor.actor.ready_len() == 1)
+    });
+    sink.deliver(Envelope::from_route(
+        sender_address,
+        queue_address,
+        FrameContext::new(
+            31,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send("queue://acme/jobs/unknown", b"second"),
+            family,
+        ),
+    ))
+    .expect("deliver enqueue after actor reconstruction");
+    let second_response = receive_queue_frame(&sender_mailbox, "reconstructed enqueue response");
+
+    // Assert
+    let (error_code, _) =
+        crate::protocol::error_codes::decode_error_body(&unknown_response.payload)
+            .expect("unknown enqueue should return an error envelope");
+    assert_eq!(
+        error_code,
+        crate::protocol::error_codes::queue::ERR_BACKEND_ERROR
+    );
+    assert!(applied_message_was_recovered);
+    assert_eq!(second_response.payload[0], 0);
+    let recovered_id = u64::from_be_bytes(
+        second_response.payload[1..9]
+            .try_into()
+            .expect("success response contains message ID"),
+    );
+    assert!(
+        recovered_id > 1,
+        "reconstructed actor must advance past the applied ID"
+    );
+}
+
 fn park_queue_reserve(
     sink: &QueueDomain,
     family: RouteFamily,
@@ -373,14 +450,10 @@ fn should_reject_stale_ack_after_visibility_expiry_already_released_inflight_to_
     // Assert
     // The stale ACK is rejected rather than silently succeeding or
     // deleting a message a live consumer now owns.
-    let mut decoder =
-        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(ack_frame.payload.as_ref());
-    assert_eq!(
-        decoder.get_u8().expect("ack status"),
-        1,
-        "stale ack must fail"
-    );
-    assert_eq!(decoder.get_string().expect("ack error"), "NotFound");
+    let (_, ack_error) =
+        crate::dispatch::protocol::error_codes::decode_error_body(ack_frame.payload.as_ref())
+            .expect("stale ack must fail with an error envelope");
+    assert_eq!(ack_error, "NotFound");
 
     // The message must still exist exactly once: a fresh reserve can pick it
     // up with a new token.

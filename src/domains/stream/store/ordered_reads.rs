@@ -89,7 +89,7 @@ impl StreamStore {
             last_realm_offset: None,
             last_global_offset: None,
         };
-        let max_bytes_limit = bounded_max_bytes(params.max_bytes);
+        let max_bytes_limit = bounded_max_bytes(params.max_bytes, self.response_payload_limit);
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let now_epoch_ms = self.now_epoch_ms();
@@ -134,6 +134,7 @@ impl StreamStore {
                 from_offset: params.from_offset,
                 limit,
                 max_bytes_limit,
+                response_payload_limit: self.response_payload_limit,
                 watermark: None,
                 filter,
                 cursor: &mut cursor,
@@ -266,7 +267,7 @@ impl StreamStore {
             last_realm_offset: None,
             last_global_offset: None,
         };
-        let max_bytes_limit = bounded_max_bytes(params.max_bytes);
+        let max_bytes_limit = bounded_max_bytes(params.max_bytes, self.response_payload_limit);
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let mut global_cache = GlobalFragmentCache::new();
@@ -306,6 +307,7 @@ impl StreamStore {
                 from_offset: params.from_offset,
                 limit,
                 max_bytes_limit,
+                response_payload_limit: self.response_payload_limit,
                 watermark: Some(watermark),
                 filter,
                 cursor: &mut cursor,
@@ -441,7 +443,7 @@ impl StreamStore {
             last_realm_offset: Some(from_offset),
             last_global_offset: None,
         };
-        let max_bytes_limit = bounded_max_bytes(max_bytes);
+        let max_bytes_limit = bounded_max_bytes(max_bytes, self.response_payload_limit);
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let mut global_cache = GlobalFragmentCache::new();
@@ -481,6 +483,7 @@ impl StreamStore {
                 from_offset,
                 limit,
                 max_bytes_limit,
+                response_payload_limit: self.response_payload_limit,
                 watermark: Some(realm_watermark),
                 filter,
                 cursor: &mut cursor,

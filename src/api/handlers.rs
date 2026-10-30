@@ -27,6 +27,12 @@ pub struct ListenerHandle {
 
 pub(super) type SessionTasks = Arc<Mutex<JoinSet<()>>>;
 
+fn is_connect_rejected_frame(frame: &[u8]) -> bool {
+    crate::protocol::wire2::header::MessageHeader::decode(frame).is_ok_and(|header| {
+        header.message_type == crate::protocol::wire2::control::CONNECT_REJECTED
+    })
+}
+
 /// Shared ownership for one accepted transport connection.
 ///
 /// HTTP owns the connection until a WebSocket upgrade is handed off. After
@@ -184,7 +190,45 @@ pub(super) async fn reap_session_tasks(label: &'static str, tasks: &SessionTasks
     }
 }
 
+/// Answer a frame the broker will not serve with `UNSUPPORTED` on its own
+/// message type and correlation, keeping the session open.
+pub(super) fn answer_unsupported_frame(
+    sink: &crate::api::outbound::SessionOutboundSink,
+    session_id: u64,
+    message_type: u16,
+    correlation: Option<std::num::NonZeroU64>,
+    reason: &'static str,
+) -> Result<(), String> {
+    tracing::warn!(
+        session_id,
+        message_type,
+        reason,
+        "answering an unsupported frame"
+    );
+    let payload = crate::protocol::error_codes::encode_error_body(
+        crate::protocol::error_codes::protocol::ERR_UNSUPPORTED,
+        reason,
+    );
+    sink.send_unadmitted_response(session_id, message_type, correlation, &payload)
+        .map_err(|error| format!("could not answer unsupported frame: {error}"))
+}
+
 pub(super) async fn drain_session_tasks(label: &'static str, task_sets: Vec<SessionTasks>) {
+    drain_session_tasks_with_timeouts(
+        label,
+        task_sets,
+        Duration::from_secs(5),
+        Duration::from_millis(100),
+    )
+    .await;
+}
+
+async fn drain_session_tasks_with_timeouts(
+    label: &'static str,
+    task_sets: Vec<SessionTasks>,
+    drain_timeout: Duration,
+    abort_join_timeout: Duration,
+) {
     let drain = async {
         for tasks in &task_sets {
             let mut tasks = tasks.lock().await;
@@ -196,10 +240,7 @@ pub(super) async fn drain_session_tasks(label: &'static str, task_sets: Vec<Sess
         }
     };
 
-    if tokio::time::timeout(Duration::from_secs(5), drain)
-        .await
-        .is_err()
-    {
+    if tokio::time::timeout(drain_timeout, drain).await.is_err() {
         tracing::warn!(
             listener = label,
             "Session drain timed out; aborting remaining tasks"
@@ -207,7 +248,17 @@ pub(super) async fn drain_session_tasks(label: &'static str, task_sets: Vec<Sess
         for tasks in task_sets {
             let mut tasks = tasks.lock().await;
             tasks.abort_all();
-            while tasks.join_next().await.is_some() {}
+            let join_aborted = async { while tasks.join_next().await.is_some() {} };
+            if tokio::time::timeout(abort_join_timeout, join_aborted)
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    listener = label,
+                    remaining_tasks = tasks.len(),
+                    "Aborted session tasks did not finish within the cleanup budget"
+                );
+            }
         }
     }
 }
@@ -227,6 +278,37 @@ fn record_connection_closed() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn should_bound_transport_task_join_after_abort() {
+        // Arrange
+        let tasks = session_tasks();
+        let (started_tx, started_rx) = crossbeam_channel::bounded(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+        tasks.lock().await.spawn(async move {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+        });
+        tokio::task::spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(1)))
+            .await
+            .expect("start wait worker")
+            .expect("blocking task started");
+
+        // Act
+        let drain = tokio::spawn(drain_session_tasks_with_timeouts(
+            "test",
+            vec![tasks],
+            Duration::from_millis(20),
+            Duration::from_millis(20),
+        ));
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let finished_before_release = drain.is_finished();
+        release_tx.send(()).expect("release blocked task");
+        drain.await.expect("drain task");
+
+        // Assert
+        assert!(finished_before_release);
+    }
 
     struct BlockingCleanupSink {
         entered: crossbeam_channel::Sender<()>,

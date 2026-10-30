@@ -5,8 +5,8 @@
 The connection is closed on:
 
 - frame size exceeded;
-- invalid TLV encoding (unrecoverable);
-- CONNECT missing or invalid; or
+- a truncated header or a declared length that disagrees with the frame;
+- CONNECT missing, or CONNECT_REJECTED flushed for an invalid CONNECT; or
 - another protocol violation.
 
 ```rust
@@ -18,33 +18,26 @@ if payload.len() > max_frame_size {
 
 ## Domain-Level Errors
 
-Errors are returned in response payloads using per-domain encoding:
-
-```rust
-pub enum DomainResponse {
-    Ok { /* result */ },
-    Error(String), // Encoded per domain
-}
-```
-
-KV example (error as string):
-
-```text
-Response (error):
-  [u32 BE error_len]
-  [bytes error_msg]
-```
-
-Notice example (error with status byte):
+Every domain uses the common response envelope. Error messages are diagnostic;
+clients decide from the code, class, and effect:
 
 ```text
 Response (error):
   [u8]     1 (error status)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
 ## Idempotency
+
+BUSY means the request was declined with NOT_APPLIED; backpressure preserves
+the connection. Reserved header flags receive protocol UNSUPPORTED on the
+request's type and correlation and also preserve the connection. BACKEND,
+TIMEOUT, and RPC WORKER_NOT_FOUND carry INDETERMINATE: worker disconnect
+does not prove the operation had no effect.
 
 - Idempotent operations (GET, READ, SCAN) are safe to retry.
 - Non-idempotent operations (PUT, PUBLISH, APPEND) must not be retried unless
@@ -52,8 +45,8 @@ Response (error):
 
 Fitz has two distinct live correlation mechanisms:
 
-- Frame-level `CORRELATE` / `CORRELATED` identifiers match any labelled client
-  request to the broker frame or frames that answer it.
+- Non-zero `u64` header correlations match requests to their response frames,
+  including deferred Queue and Lease answers.
 - RPC payload correlation IDs route one live call through caller, broker, and
   worker and remain part of the RPC domain contract.
 

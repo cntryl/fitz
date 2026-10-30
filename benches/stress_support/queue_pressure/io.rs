@@ -1,9 +1,9 @@
 use super::super::durable::{
-    complete, empty_legacy_success, error_code, payload, request, require_ok, response_payload,
+    complete, empty_success, error_code, payload, request, require_ok, response_payload,
 };
 use super::super::types::{BenchFailure, FailureKind};
 use fitz::benchkit::{build_queue_complete, build_queue_dequeue, build_queue_enqueue};
-use fitz::protocol::error_codes::queue::ERR_QUEUE_FULL;
+use fitz::protocol::error_codes::queue::ERR_BUSY;
 use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::testkit::TestClient;
 use std::future::Future;
@@ -36,7 +36,7 @@ pub(super) async fn enqueue(
     )
     .await?;
     if body.first().copied() != Some(0)
-        && error_code(&body, "Queue ENQUEUE")? == u32::from(ERR_QUEUE_FULL)
+        && error_code(&body, "Queue ENQUEUE")? == u32::from(ERR_BUSY)
     {
         return Ok(None);
     }
@@ -100,7 +100,7 @@ pub(super) enum Reservation {
 pub(super) async fn reserve(client: &mut TestClient) -> Result<Reservation, BenchFailure> {
     let body = request(client, &build_queue_dequeue(ROUTE), 202).await?;
     if body.first().copied() != Some(0)
-        && error_code(&body, "Queue RESERVE")? == u32::from(ERR_QUEUE_FULL)
+        && error_code(&body, "Queue RESERVE")? == u32::from(ERR_BUSY)
     {
         return Ok(Reservation::Rejected);
     }
@@ -144,7 +144,7 @@ pub(super) async fn acknowledge(
     token: u64,
 ) -> Result<(), BenchFailure> {
     let result = request(client, &build_queue_complete(ROUTE, id, token), 204).await?;
-    empty_legacy_success(&result, "Queue ACK")
+    empty_success(&result, "Queue ACK")
 }
 
 #[derive(Clone, Copy, serde::Serialize)]
@@ -189,7 +189,7 @@ pub(super) fn validate_ack_payload(
     payload: &[u8],
     mut observe: impl FnMut(AckProgress) -> Result<(), BenchFailure>,
 ) -> Result<(), BenchFailure> {
-    if let Err(error) = empty_legacy_success(payload, "Queue ACK") {
+    if let Err(error) = empty_success(payload, "Queue ACK") {
         if matches!(
             error.kind,
             crate::stress_support::types::FailureKind::DomainError

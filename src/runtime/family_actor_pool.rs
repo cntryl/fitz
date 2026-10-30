@@ -21,6 +21,9 @@ pub const FAMILY_ACTOR_NORMAL_LANE_CAPACITY: usize = 16_384;
 /// A separate bounded lane for control-plane work.
 pub const FAMILY_ACTOR_CONTROL_LANE_CAPACITY: usize = 256;
 
+/// Maximum consecutive control messages before ready normal work is preferred.
+const CONTROL_LANE_BURST_LIMIT: usize = 8;
+
 /// The lane used when enqueueing family work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FamilyActorLane {
@@ -283,6 +286,7 @@ pub struct FamilyActorShard<M> {
     receivers: Vec<FamilyActorReceivers<M>>,
     worker: Arc<OnceLock<thread::Thread>>,
     cursor: usize,
+    consecutive_control_messages: usize,
 }
 
 /// A running set of family-affine workers.
@@ -741,6 +745,7 @@ impl<M: Send + 'static> FamilyActorShard<M> {
             receivers,
             worker,
             cursor: 0,
+            consecutive_control_messages: 0,
         }
     }
 
@@ -756,7 +761,12 @@ impl<M: Send + 'static> FamilyActorShard<M> {
             return None;
         }
 
-        for control in [true, false] {
+        let lane_order = if self.consecutive_control_messages >= CONTROL_LANE_BURST_LIMIT {
+            [false, true]
+        } else {
+            [true, false]
+        };
+        for control in lane_order {
             for offset in 0..len {
                 let index = (self.cursor + offset) % len;
                 let receiver = &self.receivers[index];
@@ -773,8 +783,10 @@ impl<M: Send + 'static> FamilyActorShard<M> {
                 };
                 if let Ok((lane, message)) = result {
                     self.cursor = (index + 1) % len;
+                    let family = receiver.family;
+                    self.record_dequeued_lane(lane);
                     return Some(FamilyActorWork {
-                        family: receiver.family,
+                        family,
                         lane,
                         message,
                     });
@@ -782,6 +794,16 @@ impl<M: Send + 'static> FamilyActorShard<M> {
             }
         }
         None
+    }
+
+    fn record_dequeued_lane(&mut self, lane: FamilyActorLane) {
+        match lane {
+            FamilyActorLane::Control => {
+                self.consecutive_control_messages =
+                    self.consecutive_control_messages.saturating_add(1);
+            }
+            FamilyActorLane::Normal => self.consecutive_control_messages = 0,
+        }
     }
 
     /// Wait for one message while preserving the same fair drain order.
@@ -803,7 +825,7 @@ impl<M: Send + 'static> FamilyActorShard<M> {
         }
         if self.receivers.len() == 1 {
             let receiver = &self.receivers[0];
-            return crossbeam_channel::select_biased! {
+            let work = crossbeam_channel::select! {
                 recv(receiver.control) -> message => message
                     .map(|message| FamilyActorWork {
                         family: receiver.family,
@@ -819,7 +841,9 @@ impl<M: Send + 'static> FamilyActorShard<M> {
                     })
                     .map_err(|_| RecvTimeoutError::Disconnected),
                 default(timeout) => Err(RecvTimeoutError::Timeout),
-            };
+            }?;
+            self.record_dequeued_lane(work.lane);
+            return Ok(work);
         }
         thread::park_timeout(timeout);
         self.try_next().ok_or(RecvTimeoutError::Timeout)

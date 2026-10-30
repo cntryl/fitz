@@ -19,5 +19,4 @@ Routes describe logical target paths, while message types determine domain dispa
 ## Protocol References
 
 - [clients/client-spec.md](../clients/client-spec.md)
-- [clients/connection-flow.md](../clients/connection-flow.md)
 - [admin/admin-api.md](../admin/admin-api.md)

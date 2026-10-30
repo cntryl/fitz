@@ -1,5 +1,5 @@
 use crate::testkit::scaled_test_timeout;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::VecDeque;
 use std::convert::TryFrom;
@@ -25,15 +25,22 @@ use serde::{Deserialize, Serialize};
 
 /// True for a broker frame that answers no request.
 ///
-/// `SERVER_HELLO` is pushed unsolicited on every new session. Real clients drop
-/// inbound frames whose message type they do not recognise, so a request/response
-/// helper must skip it rather than mistake it for the response it is waiting on.
+/// `HELLO` answers CONNECT on every new session. A request/response helper
+/// must skip it rather than mistake it for the response it is waiting on.
 fn is_unsolicited_control_frame(frame: &[u8]) -> bool {
-    frame.first().copied()
-        == Some(
-            u8::try_from(crate::protocol::tlv::MessageType::SERVER_HELLO.as_u16())
-                .unwrap_or(u8::MAX),
-        )
+    crate::protocol::wire2::header::MessageHeader::decode(frame)
+        .is_ok_and(|header| header.message_type == crate::protocol::wire2::control::HELLO)
+}
+
+fn is_connect_frame(frame: &[u8]) -> bool {
+    crate::protocol::wire2::header::MessageHeader::decode(frame)
+        .is_ok_and(|header| header.message_type == 1)
+}
+
+fn next_correlation() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .max(1)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,6 +66,7 @@ fn unix_time_now_i64() -> i64 {
 /// Test client for sending raw protocol frames
 pub struct TestClient {
     pub(super) stream: TcpStream,
+    pub(super) started: bool,
 }
 
 impl TestClient {
@@ -71,7 +79,10 @@ impl TestClient {
     pub async fn new(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
-        Ok(Self { stream })
+        Ok(Self {
+            stream,
+            started: false,
+        })
     }
 
     /// Send a length-prefixed frame (TCP protocol)
@@ -94,6 +105,14 @@ impl TestClient {
         &mut self,
         frame: Bytes,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.started {
+            self.started = true;
+            if !is_connect_frame(&frame) {
+                let connect = build_connect_frame("", "");
+                self.stream.write_u32(u32::try_from(connect.len())?).await?;
+                self.stream.write_all(&connect).await?;
+            }
+        }
         // Write length prefix (u32 BE)
         let len = u32::try_from(frame.len())?;
         self.stream.write_all(&len.to_be_bytes()).await?;
@@ -206,6 +225,7 @@ impl TestClient {
 pub struct TestWebSocketClient {
     ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
     pending_frames: VecDeque<Message>,
+    started: bool,
 }
 
 impl TestWebSocketClient {
@@ -252,6 +272,7 @@ impl TestWebSocketClient {
         Ok(Self {
             ws: ws_stream,
             pending_frames: VecDeque::new(),
+            started: false,
         })
     }
 
@@ -274,6 +295,14 @@ impl TestWebSocketClient {
         &mut self,
         frame: Bytes,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.started {
+            self.started = true;
+            if !is_connect_frame(&frame) {
+                self.ws
+                    .send(Message::Binary(build_connect_frame("", "").into()))
+                    .await?;
+            }
+        }
         self.ws.send(Message::Binary(frame)).await?;
         Ok(())
     }
@@ -392,120 +421,110 @@ impl TestWebSocketClient {
     }
 }
 
-/// TLV encoder for building protocol frames
-pub struct TlvFrameBuilder {
-    buf: BytesMut,
+/// Wire2 message builder for protocol test frames.
+/// Builds one wire format 2 message: a 15-byte header followed by the value.
+/// One message per transport frame, so `encode_field` may be called once.
+pub struct FrameBuilder {
+    message: Option<Vec<u8>>,
+    correlation: Option<std::num::NonZeroU64>,
+    flags: crate::protocol::wire2::header::HeaderFlags,
 }
 
-impl TlvFrameBuilder {
+impl FrameBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            buf: BytesMut::new(),
+            message: None,
+            correlation: std::num::NonZeroU64::new(next_correlation()),
+            flags: crate::protocol::wire2::header::HeaderFlags::none(),
         }
     }
 
-    /// Encode a TLV field: [`message_type`: u8 or ESCAPE+u16 BE][length: u16 BE][value: bytes]
-    ///
+    /// Label the message with a client correlation; zero means none.
+    #[must_use]
+    pub fn with_correlation(mut self, correlation: u64) -> Self {
+        self.correlation = std::num::NonZeroU64::new(correlation);
+        self
+    }
+
+    /// Set the header flags on the message.
+    #[must_use]
+    pub fn with_flags(mut self, flags: crate::protocol::wire2::header::HeaderFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
     /// # Panics
     ///
-    /// Panics if the TLV value exceeds 65535 bytes.
+    /// Panics when called twice: a frame carries exactly one message.
     pub fn encode_field(&mut self, msg_type: u16, value: &[u8]) {
-        // MessageType encoding:
-        // - If msg_type <= 254: single byte
-        // - If msg_type > 254: [0xFF escape][msg_type as u16 BE]
-        const ESCAPE_MARKER: u8 = 0xFF;
-        const MAX_SINGLE_BYTE: u16 = 254;
-
-        if msg_type <= MAX_SINGLE_BYTE {
-            self.buf
-                .put_u8(u8::try_from(msg_type).expect("single-byte TLV type validated above"));
-        } else {
-            self.buf.put_u8(ESCAPE_MARKER);
-            self.buf.put_slice(&msg_type.to_be_bytes());
-        }
-
-        // Length is u16 BE (max 65535 bytes)
         assert!(
-            value.len() <= 65535,
-            "TLV value too large: {} bytes",
-            value.len()
+            self.message.is_none(),
+            "wire format 2 carries one message per frame"
         );
-        self.buf.put_slice(
-            &u16::try_from(value.len())
-                .expect("TLV value length checked above")
-                .to_be_bytes(),
-        );
-
-        // Value
-        self.buf.put_slice(value);
+        self.message = Some(crate::protocol::wire2::header::encode_message(
+            msg_type,
+            self.flags,
+            if crate::protocol::manifest::client_entry(crate::protocol::message::MessageType::new(
+                msg_type,
+            ))
+            .is_ok()
+                && msg_type != 1
+                && msg_type != 303
+            {
+                self.correlation
+            } else {
+                None
+            },
+            value,
+        ));
     }
 
-    /// Build the final frame
+    /// # Panics
+    ///
+    /// Panics when no message was encoded.
     #[must_use]
     pub fn build(self) -> Vec<u8> {
-        self.buf.to_vec()
+        self.message.expect("a frame needs exactly one message")
     }
 }
 
-/// TLV decoder for parsing protocol frames
-pub struct TlvFrameParser<'a> {
+/// Reads the one wire format 2 message in a frame.
+pub struct FrameParser<'a> {
     buf: &'a [u8],
-    offset: usize,
+    consumed: bool,
 }
 
-impl<'a> TlvFrameParser<'a> {
+impl<'a> FrameParser<'a> {
     #[must_use]
     pub fn new(buf: &'a [u8]) -> Self {
-        Self { buf, offset: 0 }
+        Self {
+            buf,
+            consumed: false,
+        }
     }
 
-    /// Parse next TLV field without copying the payload.
+    /// The message's header, when the frame is well formed.
+    #[must_use]
+    pub fn header(&self) -> Option<crate::protocol::wire2::header::MessageHeader> {
+        crate::protocol::wire2::header::MessageHeader::decode(self.buf).ok()
+    }
+
     pub fn next_field_ref(&mut self) -> Option<(u16, &'a [u8])> {
-        const ESCAPE_MARKER: u8 = 0xFF;
-
-        if self.offset >= self.buf.len() {
+        if self.consumed {
             return None;
         }
-
-        // Parse msg_type
-        let msg_type = if self.buf[self.offset] == ESCAPE_MARKER {
-            if self.offset + 3 > self.buf.len() {
-                return None;
-            }
-            let mt = u16::from_be_bytes([self.buf[self.offset + 1], self.buf[self.offset + 2]]);
-            self.offset += 3;
-            mt
-        } else {
-            let mt = u16::from(self.buf[self.offset]);
-            self.offset += 1;
-            mt
-        };
-
-        // Parse length (u16 BE)
-        if self.offset + 2 > self.buf.len() {
-            return None;
-        }
-        let len = u16::from_be_bytes([self.buf[self.offset], self.buf[self.offset + 1]]) as usize;
-        self.offset += 2;
-
-        // Parse value
-        if self.offset + len > self.buf.len() {
-            return None;
-        }
-        let value = &self.buf[self.offset..self.offset + len];
-        self.offset += len;
-
-        Some((msg_type, value))
+        self.consumed = true;
+        let (header, value) =
+            crate::protocol::wire2::header::decode_message(self.buf, u32::MAX).ok()?;
+        Some((header.message_type, value))
     }
 
-    /// Parse next TLV field into an owned buffer.
     pub fn next_field(&mut self) -> Option<(u16, Vec<u8>)> {
         self.next_field_ref()
             .map(|(msg_type, value)| (msg_type, value.to_vec()))
     }
 
-    /// Parse all fields
     pub fn parse_all(&mut self) -> Vec<(u16, Vec<u8>)> {
         let mut fields = Vec::new();
         while let Some(field) = self.next_field() {
@@ -515,21 +534,36 @@ impl<'a> TlvFrameParser<'a> {
     }
 }
 
-impl Default for TlvFrameBuilder {
+impl Default for FrameBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Build CONNECT message (`msg_type` 1).
-/// The legacy route argument is ignored; CONNECT carries only the JWT payload.
+/// Build the wire format 2 CONNECT message carrying `jwt_token`.
+/// The legacy realm argument is ignored.
 #[must_use]
 pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
-    // CONNECT frame: [msg_type: 1][length: u16 BE][JWT string bytes]
-    // Server expects JWT as plain UTF-8 string, no additional structure
-    let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(1, jwt_token.as_bytes()); // msg_type 1 = CONNECT
+    let mut builder = FrameBuilder::new();
+    builder.encode_field(
+        crate::protocol::wire2::control::CONNECT,
+        &connect_body(jwt_token, ""),
+    );
     builder.build()
+}
+
+/// Encode a wire format 2 CONNECT body for this broker's version.
+#[must_use]
+pub fn connect_body(jwt_token: &str, service_name: &str) -> Vec<u8> {
+    crate::protocol::wire2::handshake::Connect {
+        min_version: crate::protocol::wire2::WIRE_VERSION,
+        max_version: crate::protocol::wire2::WIRE_VERSION,
+        client_caps: 0,
+        jwt: jwt_token.to_owned(),
+        service_name: service_name.to_owned(),
+        client_build: "fitz-testkit".to_owned(),
+    }
+    .encode()
 }
 
 /// Generate a provider-shaped test JWT for a single partition string.

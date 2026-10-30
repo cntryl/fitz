@@ -154,6 +154,49 @@ fn should_schedule_ready_families_fairly_given_continuous_load() {
 }
 
 #[test]
+fn should_service_ready_normal_work_during_continuous_control_flood() {
+    // Arrange
+    let shard_count = shard_count_for_family_count(usize::MAX);
+    let family_count = shard_count.saturating_add(1);
+    let families = (1..=family_count)
+        .map(|id| family(u32::try_from(id).expect("test family fits")))
+        .collect::<Vec<_>>();
+    let mut pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+    let ingress = pool.ingress();
+    let busy_family = family(1);
+    let ready_family = family(u32::try_from(family_count).expect("test family fits"));
+    let shard = ingress.shard_for_family(busy_family).expect("busy shard");
+    assert_eq!(ingress.shard_for_family(ready_family), Some(shard));
+    let mut worker = pool.take_shard(shard).expect("shard");
+    ingress
+        .try_enqueue(ready_family, FamilyActorLane::Normal, 999)
+        .expect("ready normal enqueue");
+
+    // Act
+    for value in 0..CONTROL_LANE_BURST_LIMIT {
+        ingress
+            .try_enqueue(busy_family, FamilyActorLane::Control, value as u64)
+            .expect("control enqueue");
+        let work = worker.try_next().expect("control work");
+        assert_eq!(work.family, busy_family);
+        assert_eq!(work.lane, FamilyActorLane::Control);
+    }
+    ingress
+        .try_enqueue(
+            busy_family,
+            FamilyActorLane::Control,
+            u64::try_from(CONTROL_LANE_BURST_LIMIT).expect("burst fits"),
+        )
+        .expect("replenished control enqueue");
+    let next = worker.try_next().expect("normal work after bounded burst");
+
+    // Assert
+    assert_eq!(next.family, ready_family);
+    assert_eq!(next.lane, FamilyActorLane::Normal);
+    assert_eq!(next.message, 999);
+}
+
+#[test]
 fn should_reject_unknown_plus_duplicate_families() {
     // Arrange
     let duplicate = [family(1), family(1)];

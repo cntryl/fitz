@@ -1,12 +1,13 @@
-use super::model::{FastSet, PendingScheduleCreate, ScheduleActor};
+use super::model::{FastSet, PendingScheduleCreate, ScheduleActor, ScheduleDef};
+use crate::domains::schedule::cron::CronSchedule;
 use crate::domains::schedule::metrics::{
     METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
     METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
 };
 use crate::domains::schedule::protocol::{
-    parse_concrete_schedule_route, CronSchedule, ScheduleCreateEntry, ScheduleDef,
-    ScheduleDeliveryMode, ScheduleListEntry,
+    ScheduleCreateEntry, ScheduleDeliveryMode, ScheduleListEntry,
 };
+use crate::domains::schedule::route_grammar::parse_concrete_schedule_route;
 use crate::domains::schedule::store::ScheduleInsert;
 use bytes::Bytes;
 use rustc_hash::FxBuildHasher;
@@ -119,6 +120,7 @@ impl ScheduleActor {
             } else {
                 crate::observability::counter_inc(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
             }
+            self.reconcile_unknown_commit()?;
             return Err(error);
         }
 
@@ -280,6 +282,7 @@ impl ScheduleActor {
                 .insert_batch(self.family.as_u64(), &store_items, self.write_policy)
         }) {
             Self::record_batch_persistence_failures(&pending);
+            self.reconcile_unknown_commit()?;
             return Err(error);
         }
 
@@ -347,6 +350,7 @@ impl ScheduleActor {
             )
         }) {
             crate::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
+            self.reconcile_unknown_commit()?;
             return Err(error);
         }
 
@@ -472,32 +476,6 @@ impl ScheduleActor {
         index
     }
 
-    pub(super) fn sync_cached_upsert(
-        &mut self,
-        current_index: Option<usize>,
-        entry: Arc<ScheduleListEntry>,
-    ) {
-        let Some(cache) = self.list_cache.as_mut() else {
-            return;
-        };
-        let cache_entries = Arc::make_mut(cache);
-        if let Some(index) = current_index {
-            cache_entries[index] = entry;
-        } else {
-            cache_entries.push(entry);
-        }
-    }
-
-    pub(super) fn sync_cached_remove(&mut self, index: usize) {
-        let Some(cache) = self.list_cache.as_mut() else {
-            return;
-        };
-        let cache_entries = Arc::make_mut(cache);
-        if index < cache_entries.len() {
-            cache_entries.swap_remove(index);
-        }
-    }
-
     pub(super) fn upsert_list_entry(
         &mut self,
         current_index: Option<usize>,
@@ -515,13 +493,11 @@ impl ScheduleActor {
         self.list_entries_by_route
             .insert(route.to_string(), entry.clone());
         if let Some(index) = current_index {
-            self.list_entries[index] = entry.clone();
-            self.sync_cached_upsert(Some(index), entry);
+            self.list_entries[index] = entry;
             index
         } else {
             let index = self.list_entries.len();
-            self.list_entries.push(entry.clone());
-            self.sync_cached_upsert(None, entry);
+            self.list_entries.push(entry);
             index
         }
     }
@@ -534,7 +510,6 @@ impl ScheduleActor {
         self.list_entries_by_route
             .remove(&self.list_entries[index].route);
         self.list_entries.swap_remove(index);
-        self.sync_cached_remove(index);
         if let Some(swapped_entry) = self.list_entries.get(index) {
             if let Some(swapped_def) = self.schedules.get_mut(&swapped_entry.route) {
                 swapped_def.list_index = index;

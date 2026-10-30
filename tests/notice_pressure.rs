@@ -120,7 +120,7 @@ async fn subscribe(server: &TestServer) -> Result<(TestClient, u64), String> {
             .await
             .map_err(error)?;
         let response = client.recv_frame(2000).await.map_err(error)?;
-        let mut parser = fitz::testkit::transport::TlvFrameParser::new(&response);
+        let mut parser = fitz::testkit::transport::FrameParser::new(&response);
         let (kind, data) = parser.next_field().ok_or("missing subscription reply")?;
         if kind != 501 || data.first() != Some(&0) || parser.next_field().is_some() {
             return Err("subscription rejected".into());
@@ -162,7 +162,7 @@ fn validate(
     offered: usize,
     seen: &mut HashSet<u64>,
 ) -> Result<(), String> {
-    let mut parser = fitz::testkit::transport::TlvFrameParser::new(frame);
+    let mut parser = fitz::testkit::transport::FrameParser::new(frame);
     parser.next_field().ok_or("missing delivery")?;
     if parser.next_field().is_some() {
         return Err("multiple fields in Notice delivery".into());
@@ -378,7 +378,7 @@ fn should_detect_changed_notice_payload_bytes() {
     payload.put_u64(1);
     payload.put_string(ROUTE);
     payload.put_bytes(&changed);
-    let mut frame = fitz::testkit::transport::TlvFrameBuilder::new();
+    let mut frame = fitz::testkit::transport::FrameBuilder::new();
     frame.encode_field(504, &payload.finish());
     // Act
     let result = validate(&frame.build(), 1, 1, &mut HashSet::new());
@@ -391,7 +391,7 @@ fn delivery_frame(sequence: u64, subscription: u64) -> Vec<u8> {
     payload.put_u64(subscription);
     payload.put_string(ROUTE);
     payload.put_bytes(&body(sequence));
-    let mut frame = fitz::testkit::transport::TlvFrameBuilder::new();
+    let mut frame = fitz::testkit::transport::FrameBuilder::new();
     frame.encode_field(504, &payload.finish());
     frame.build()
 }

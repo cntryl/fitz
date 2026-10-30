@@ -64,7 +64,7 @@ fn assert_dispatch_after_cleanup_churn(known_domain: bool, close_caller: bool) {
         FrameContext::new(
             1,
             crate::dispatch::protocol::frame::ChannelId::Rpc,
-            crate::dispatch::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::message::MessageType::new(302),
             bytes::Bytes::from(payload),
             family,
         ),
