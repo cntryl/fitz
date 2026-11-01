@@ -24,7 +24,7 @@ jobs:
           SQRZL_SECRET_ACCESS_KEY: sqrzl-secret
           SQRZL_BUCKET_LIST: fitz-integration
     env:
-      RUSTUP_TOOLCHAIN: "1.99.0"
+      RUSTUP_TOOLCHAIN: "1.99.1"
       FITZ_STORAGE_MODE: cloud
       FITZ_STORAGE_PROVIDER: sqrzl-s3
       FITZ_STORAGE_ENDPOINT: http://127.0.0.1:9000

@@ -78,6 +78,14 @@ pub(crate) fn try_parse_rpc_request_payload_parts(payload: &Bytes) -> Option<(Uu
     let correlation_id = read_uuid_field(payload.as_ref(), &mut offset)?;
     read_len_prefixed_range(payload.as_ref(), &mut offset)?;
     let (body_start, body_end) = read_len_prefixed_range(payload.as_ref(), &mut offset)?;
+    match *payload.get(offset)? {
+        0 => offset += 1,
+        1 => {
+            offset += 1;
+            read_u32(payload.as_ref(), &mut offset)?;
+        }
+        _ => return None,
+    }
     if offset != payload.len() {
         return None;
     }

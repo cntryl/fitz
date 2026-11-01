@@ -21,6 +21,8 @@ their presence. Schedule LIST 702 is cursor-based; 707 is retired. KV SCAN
 ends in an options byte. The following wire-1 sections are historical and do
 not apply to 0.3.0 or its 1.0.0 format candidate.
 
+Fitz 0.3.1 keeps these Wire 2 layouts and compatibility rules unchanged.
+
 ## Historical wire 1: Stream error envelope generation 2
 
 Stream BEGIN, APPEND, COMMIT, ROLLBACK, LAST, GET_METADATA, SUBSCRIBE, and
@@ -145,6 +147,14 @@ requires the preserved old store and matching broker; writes after cutover need
 separate reconciliation. The dependency update itself does not change Fitz row
 encodings, but the separate domain-format changes on this page still apply.
 See the [migration guide](../operations/migration-guide.md#midge-050).
+
+Fitz 0.3.1 embeds `cntryl-midge` 0.5.2. Midge 0.5.2 retains the 0.5.0 and
+0.5.1 persisted formats: database FORMAT 9, SST V5, cloud metadata layout v2,
+lease v4, initialization sentinel v3, cloud WAL publication catalog v3, and
+segment v2. Midge 0.5.1 and 0.5.2 read each other's SSTs without conversion.
+This does not make FORMAT 8 or the earlier cloud metadata layout compatible.
+For rollback, preserve the verified pre-upgrade store or prefix and qualify the
+target engine against candidate-written data before switching binaries.
 
 ## Midge 0.4 storage formats
 

@@ -31,6 +31,7 @@ protocol contracts, operations, and contributor references.
 - [Operations runbook](operations/operations-runbook.md)
 - [Resource limits](operations/resource-limits.md)
 - [Release checklist](operations/release-checklist.md)
+- [Fitz 0.3.1 release notes](operations/release-0.3.1.md)
 - [Migration guide](operations/migration-guide.md)
 - [Admin API](admin/admin-api.md)
 - [MCP control-plane safety](admin/mcp-control-plane.md)

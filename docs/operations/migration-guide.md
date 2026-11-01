@@ -2,6 +2,18 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## 0.3.1: maintenance release
+
+Fitz 0.3.1 retains the 0.3.0 Wire 2 client contract and does not add a Fitz
+domain-data format change. It updates the embedded Midge engine from 0.5.0 to
+0.5.2; Midge 0.5.2 retains the 0.5.0 and 0.5.1 persisted formats. The existing
+Midge 0.5 migration from FORMAT 8 or earlier cloud metadata still applies.
+
+Before upgrading, preserve a verified copy of the database or cloud prefix.
+For rollback, restore that copy with the matching broker unless the exact
+target engine has been qualified against data written by the candidate. See
+[Midge 0.5 storage formats](../development/format-compatibility.md#midge-05-storage-formats).
+
 ## 0.3.0: wire format 2 (breaking, flag day)
 
 Fitz 0.3.0 speaks only wire format 2. There is no negotiation with wire format
