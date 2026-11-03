@@ -29,9 +29,9 @@ See the [Wire 3 client contract](../clients/spec/wire-routing-3.md),
 [release policy](../development/release-policy.md), and
 [release checklist](release-checklist.md).
 
-## 0.3.1: Wire 3 broker and Midge 0.5.2
+## 0.4.0: coordinated Wire 3 broker and SDK cutover
 
-The Fitz 0.3.1 source accepts only Wire 3 and cannot serve Wire 1 or Wire 2
+The Fitz 0.4.0 source accepts only Wire 3 and cannot serve Wire 1 or Wire 2
 clients. Use the coordinated [Wire 3 cutover](#wire-3-coordinated-cutover),
 including exact broker-and-SDK qualification and paired rollback. The package
 version alone does not certify a compatible release set.
