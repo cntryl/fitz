@@ -1,5 +1,6 @@
 use super::*;
 use crate::domains::stream::StreamReadItem;
+use crate::testkit::create_in_memory_test_engine_with_cfs;
 use proptest::prelude::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -64,7 +65,7 @@ proptest! {
     #[test]
     fn should_match_stream_reference_state_model(operations in prop::collection::vec(operation(), 1..=64)) {
         // Arrange
-        let store = Arc::new(StreamStore::new(create_test_engine_with_cfs(vec![1])));
+        let store = Arc::new(StreamStore::new(create_in_memory_test_engine_with_cfs(&[1])));
         let mut actor = new_actor(Arc::clone(&store));
         let mut committed = Vec::<u8>::new();
         let mut staged: Option<Vec<u8>> = None;

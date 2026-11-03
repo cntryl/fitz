@@ -84,7 +84,7 @@ proptest! {
     #[test]
     fn should_match_kv_reference_state_model(operations in prop::collection::vec(operation(), 1..=64)) {
         // Arrange
-        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let store = crate::testkit::create_in_memory_test_engine_with_cfs(&[1]);
         let mut actor = KvActor::new(Arc::clone(&store));
         let mut committed = BTreeMap::<u8, u8>::new();
         let mut staged: Option<BTreeMap<u8, u8>> = None;
