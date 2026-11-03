@@ -35,13 +35,18 @@ impl QueueActor {
     }
 
     pub(super) fn record_ttl_seconds(&self, record: &QueueRecord) -> Option<u64> {
-        record.retention_expires_at_ms.map(|deadline| {
+        Self::ttl_seconds_until(record.retention_expires_at_ms, self.clock.now_epoch_ms())
+    }
+
+    pub(super) fn index_expiry_value(deadline: Option<u64>) -> Vec<u8> {
+        deadline.map_or_else(Vec::new, |deadline| deadline.to_le_bytes().to_vec())
+    }
+
+    pub(super) fn ttl_seconds_until(deadline: Option<u64>, now_ms: u64) -> Option<u64> {
+        deadline.map(|deadline| {
             // Midge interprets zero as no expiry. Expired records must be removed,
             // never rewritten; one second keeps a late commit bounded as well.
-            deadline
-                .saturating_sub(self.clock.now_epoch_ms())
-                .div_ceil(1_000)
-                .max(1)
+            deadline.saturating_sub(now_ms).div_ceil(1_000).max(1)
         })
     }
 

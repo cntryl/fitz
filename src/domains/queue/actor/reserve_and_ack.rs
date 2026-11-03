@@ -319,12 +319,7 @@ impl QueueActor {
             )
             .map_err(|error| format!("Failed to begin ready diversion for {id}: {error:?}"))?;
         self.write_dead_letter_record(&mut txn, id, &record)?;
-        self.write_index_mutation_plan(
-            &mut txn,
-            id,
-            index_plan,
-            Some((dead_lettered_at_ms, self.record_ttl_seconds(&record))),
-        )?;
+        self.write_index_mutation_plan(&mut txn, id, index_plan, Some(&record))?;
         txn.commit()
             .map_err(|error| format!("Failed to commit ready diversion for {id}: {error:?}"))?;
 

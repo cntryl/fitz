@@ -39,12 +39,7 @@ impl QueueActor {
             return false;
         }
 
-        if let Err(error) = self.write_index_mutation_plan(
-            &mut txn,
-            id,
-            index_plan,
-            Some((now_epoch_ms, self.record_ttl_seconds(record))),
-        ) {
+        if let Err(error) = self.write_index_mutation_plan(&mut txn, id, index_plan, Some(record)) {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),

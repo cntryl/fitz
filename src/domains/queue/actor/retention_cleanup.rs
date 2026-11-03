@@ -8,7 +8,7 @@ use super::{FastMap, MessageId, QueueActor, QueueCommit, QueueRecord, MAX_DUE_IT
 
 #[derive(Default)]
 pub(super) struct RetentionSchedule {
-    deadlines: FastMap<u64, u64>,
+    pub(super) deadlines: FastMap<u64, u64>,
     events: BinaryHeap<Reverse<(u64, u64, u64)>>,
 }
 

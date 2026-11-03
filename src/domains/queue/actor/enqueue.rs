@@ -404,7 +404,7 @@ impl QueueActor {
         } else {
             txn.put(
                 self.delayed_index_key(visible_at_ms, id),
-                Vec::new(),
+                Self::index_expiry_value(record.retention_expires_at_ms),
                 self.record_ttl_seconds(record),
             )
             .map_err(|error| {

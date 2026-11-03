@@ -134,8 +134,12 @@ impl QueueActor {
             .map_err(|error| format!("Failed to write relinquished queue header: {error:?}"))?;
             if let Some(visible_ms) = visible_ms {
                 self.write_index_mutation_plan(txn, id, plan, None)?;
-                txn.put(self.delayed_index_key(visible_ms, id), Vec::new(), ttl)
-                    .map_err(|error| format!("Failed to delay relinquished message: {error:?}"))?;
+                txn.put(
+                    self.delayed_index_key(visible_ms, id),
+                    Self::index_expiry_value(record.retention_expires_at_ms),
+                    ttl,
+                )
+                .map_err(|error| format!("Failed to delay relinquished message: {error:?}"))?;
             }
             Ok(())
         };

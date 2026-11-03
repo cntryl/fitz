@@ -603,6 +603,13 @@ impl QueueFamilyState {
             self.reservation_book.insert_key(key.clone());
         }
         let notification = self.record_ready_state(key, counts);
+        if counts.ready > 0
+            && matches!(&response, crate::domains::queue::QueueResponse::Received { messages } if messages.is_empty())
+        {
+            // A bounded empty read can leave unverified recovered heads. Let
+            // the next sweep signal availability again for watch consumers.
+            self.ready_states.remove(key);
+        }
         self.observe_histogram_us(obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY, actor_exec_us);
 
         Some((response, notification.map(|event| (key.clone(), event))))

@@ -222,6 +222,10 @@ readable. Upgrading in place requires starting from a fresh storage path.
   recovery scan. The queue meta row holds a single little-endian `u64`
   reserved-id value; the wider 57-byte meta encoding is no longer read.
   Header/body and individual delayed/DLQ index rows receive Midge native TTL.
+  A delayed/DLQ index value is empty without retention, or an eight-byte
+  little-endian absolute effective deadline, allowing recovery to schedule
+  expiry without hydrating every header. Index rebuilds preserve the deadline
+  and remaining native TTL.
   Shared ready ranges and global metadata never receive a per-message TTL.
   Queue checks absolute deadlines before using cached records; rewrites pass
   the remaining lifetime rounded up to seconds. Midge expiry makes data

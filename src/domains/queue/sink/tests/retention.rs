@@ -2,6 +2,58 @@ use super::*;
 use crate::domains::queue::{retention::QueueRetention, QueueActor};
 use crate::testkit::clock::MockClock;
 
+#[test]
+fn should_notify_a_watcher_after_an_empty_reserve_leaves_recovered_ready_heads() {
+    // Arrange
+    let (sink, family, mailbox) = parked_reserve_with_expired_backlog(true);
+    let frames = mailbox.clone();
+    sink.inspect_family_for_tests(family, move |state| {
+        state.reservation_book.remove_session(17);
+        let source = RouteAddress::new(family, Route::new("inbox://session/17"));
+        let destination = RouteAddress::new(family, Route::new("queue://inbound"));
+        let watch = FrameContext::new(
+            17,
+            ChannelId::Sub,
+            MessageType::new(207),
+            encode_queue_watch("queue://acme/jobs/expiry"),
+            family,
+        );
+        state
+            .deliver_envelope(&Envelope::from_route(
+                source.clone(),
+                destination.clone(),
+                watch,
+            ))
+            .unwrap();
+        while frames.receiver().try_recv().is_ok() {}
+        let reserve = FrameContext::new(
+            17,
+            ChannelId::Sub,
+            MessageType::new(202),
+            encode_queue_reserve("queue://acme/jobs/expiry", 30, 1),
+            family,
+        );
+        state
+            .deliver_envelope(&Envelope::from_route(source, destination, reserve))
+            .unwrap();
+        let response = loop {
+            let frame = receive_queue_frame(&frames, "empty bounded reserve");
+            if frame.msg_type.as_u16() == 202 {
+                break frame;
+            }
+        };
+        assert_eq!(response.payload.as_ref(), &[0, 0, 0, 0, 0]);
+        while frames.receiver().try_recv().is_ok() {}
+    });
+
+    // Act
+    sink.inspect_family_for_tests(family, |state| state.sweep_idle_actors_at(Instant::now()));
+
+    // Assert
+    let notification = receive_queue_frame(&mailbox, "availability after bounded cleanup");
+    assert_eq!(notification.msg_type.as_u16(), 209);
+}
+
 fn parked_reserve_with_expired_backlog(cold: bool) -> (QueueDomain, RouteFamily, Arc<Mailbox>) {
     let family = RouteFamily::new(1);
     let route = "queue://acme/jobs/expiry";

@@ -78,6 +78,8 @@ is added to the RESERVE response core.
 
 Parked reserves are rechecked during bounded runtime sweeps while ready work
 is reported, so recovered expired heads cannot strand a waiting worker.
+An empty bounded read with unverified ready heads rearms availability hints
+for watchers, allowing them to continue draining after the next sweep.
 
 #### NACK (210)
 

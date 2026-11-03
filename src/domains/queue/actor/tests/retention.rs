@@ -1,5 +1,186 @@
 use super::*;
 
+fn recovered_delayed_actor(clock: &MockClock, rebuild: bool) -> QueueActor {
+    let mut actor = retained_actor(clock, Some(3_600), None);
+    actor.handle_send(Bytes::new(), Some(7_200));
+    let key = actor.queue_key.clone();
+    let store = actor.persistence.store.clone();
+    if rebuild {
+        let mut transaction = store
+            .begin(
+                1,
+                super::super::recovery_store::QueueTransactionMode::ReadWrite,
+            )
+            .unwrap();
+        transaction
+            .delete(actor.persistence.recovery.index_meta_key.clone())
+            .unwrap();
+        transaction.commit().unwrap();
+    }
+    drop(actor);
+    QueueActor::with_clock(
+        key.family,
+        key,
+        store,
+        Box::new(clock.clone()),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    )
+}
+
+#[test]
+fn should_expire_a_delayed_message_restored_from_the_index_before_visibility() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = recovered_delayed_actor(&clock, false);
+    clock.advance(Duration::from_secs(3_601));
+    // Act
+    actor.process_due_work();
+    // Assert
+    assert_eq!(actor.admin_snapshot().messages_total, 0);
+}
+
+#[test]
+fn should_expire_a_delayed_message_restored_from_headers_before_visibility() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = recovered_delayed_actor(&clock, true);
+    clock.advance(Duration::from_secs(3_601));
+    // Act
+    actor.process_due_work();
+    // Assert
+    assert_eq!(actor.admin_snapshot().messages_total, 0);
+}
+
+#[test]
+fn should_expire_a_dead_letter_restored_from_the_index_at_its_dlq_deadline() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock, Some(100), Some(10));
+    actor.max_attempts = Some(1);
+    send_and_reserve_single_message(&mut actor, "job");
+    clock.advance(Duration::from_secs(31));
+    actor.process_expired_timers();
+    let key = actor.queue_key.clone();
+    let store = actor.persistence.store.clone();
+    drop(actor);
+    let mut actor = QueueActor::with_clock(
+        key.family,
+        key,
+        store,
+        Box::new(clock.clone()),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    assert_eq!(actor.admin_snapshot().messages_total, 1);
+    clock.advance(Duration::from_secs(10));
+
+    // Act
+    actor.process_due_work();
+
+    // Assert
+    assert_eq!(actor.admin_snapshot().messages_total, 0);
+}
+
+#[test]
+fn should_exclude_already_expired_headers_when_rebuilding_the_index() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock, Some(1), None);
+    actor.handle_send(Bytes::new(), None);
+    let key = actor.queue_key.clone();
+    let store = actor.persistence.store.clone();
+    let mut transaction = store
+        .begin(
+            1,
+            super::super::recovery_store::QueueTransactionMode::ReadWrite,
+        )
+        .unwrap();
+    transaction
+        .delete(actor.persistence.recovery.index_meta_key.clone())
+        .unwrap();
+    transaction.commit().unwrap();
+    drop(actor);
+    clock.advance(Duration::from_secs(1));
+
+    // Act
+    let actor = QueueActor::with_clock(
+        key.family,
+        key,
+        store,
+        Box::new(clock),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+
+    // Assert
+    assert_eq!(actor.admin_snapshot().messages_total, 0);
+}
+
+#[test]
+fn should_preserve_native_dead_letter_index_expiry_after_index_rebuild() {
+    // Arrange
+    let store = create_test_engine_with_cfs(vec![1]);
+    let mut key = unique_queue_key("native-rebuild");
+    key.family = RouteFamily::new(1);
+    let mut actor = QueueActor::new(
+        key.family,
+        key.clone(),
+        store.clone(),
+        Some(1),
+        crate::utils::idempotency::default_dedup_store(),
+    )
+    .with_retention(QueueRetention {
+        message_seconds: Some(100),
+        dlq_seconds: Some(3),
+    });
+    let QueueResponse::Sent { id } = actor.handle_send(Bytes::new(), None) else {
+        panic!("enqueued");
+    };
+    actor.handle_receive_for_session(TEST_SESSION_ID, 0, Some(1));
+    actor.process_expired_timers();
+    let entered_at = actor
+        .load_record_metadata_from_store(id)
+        .unwrap()
+        .dead_lettered_at_ms
+        .unwrap();
+    let index_key = actor.dlq_index_key(entered_at, id);
+    let mut transaction = actor
+        .persistence
+        .store
+        .begin(
+            1,
+            super::super::recovery_store::QueueTransactionMode::ReadWrite,
+        )
+        .unwrap();
+    transaction
+        .delete(actor.persistence.recovery.index_meta_key.clone())
+        .unwrap();
+    transaction.commit().unwrap();
+    drop(actor);
+    let actor = QueueActor::new(
+        key.family,
+        key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    assert_eq!(actor.admin_dead_letters().len(), 1);
+    std::thread::sleep(Duration::from_millis(3_250));
+    // Act
+    let transaction = actor
+        .persistence
+        .store
+        .begin(
+            1,
+            super::super::recovery_store::QueueTransactionMode::ReadOnly,
+        )
+        .unwrap();
+    let index = transaction.get(&index_key).unwrap();
+    // Assert
+    assert!(index.is_none());
+}
+
 fn prepare_next_reservation(
     actor: &mut QueueActor,
     clock: &MockClock,

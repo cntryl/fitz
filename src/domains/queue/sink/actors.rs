@@ -339,9 +339,7 @@ impl QueueFamilyState {
             }
 
             let notification = self.record_ready_state(&key, counts);
-            if notification.is_some()
-                || (counts.ready > 0 && self.reservation_book.has_pending_reserves())
-            {
+            if notification.is_some() || (due_work_changed && counts.ready > 0) {
                 notifications.push((key.clone(), notification));
             }
 
