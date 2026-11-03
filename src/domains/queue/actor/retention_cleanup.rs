@@ -46,7 +46,27 @@ impl QueueActor {
         &mut self,
         id: MessageId,
     ) -> Result<(), QueueMutationError> {
+        self.remove_unavailable_message_inner(id, true)
+    }
+
+    pub(super) fn remove_expired_prepared_message(
+        &mut self,
+        id: MessageId,
+    ) -> Result<(), QueueMutationError> {
+        self.remove_unavailable_message_inner(id, false)
+    }
+
+    fn remove_unavailable_message_inner(
+        &mut self,
+        id: MessageId,
+        may_be_ready: bool,
+    ) -> Result<(), QueueMutationError> {
         let plan = self.plan_index_mutation_for_unavailable_message(id);
+        let was_ready = may_be_ready
+            && plan.ready_mutation.is_some()
+            && !self.inflight.contains_key(&id)
+            && !self.persisted_delayed.contains_key(&id)
+            && !self.persisted_dlq.contains_key(&id);
         let mut txn = self.persistence.store.begin(
             self.queue_key.family.id(),
             super::recovery_store::QueueTransactionMode::ReadWrite,
@@ -64,12 +84,10 @@ impl QueueActor {
         self.apply_index_mutation_plan(id, plan, None);
         self.remove_persisted_dlq(id);
         self.inflight.remove(&id);
-        if self.ready.front().is_some_and(|entry| entry.id == id) {
+        if may_be_ready && self.ready.front().is_some_and(|entry| entry.id == id) {
             self.pop_ready_entry();
-        } else if self.ready.iter().any(|entry| entry.id == id) {
-            self.ready.retain(|entry| entry.id != id);
-            self.ready_count = self.ready.len();
-            self.recompute_oldest_ready_enqueued_at_ms();
+        } else if was_ready {
+            self.expire_ready_entry(id);
         }
         self.evict_cached_record(id);
         self.evict_cached_body(id);

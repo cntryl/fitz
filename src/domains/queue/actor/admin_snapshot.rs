@@ -7,7 +7,7 @@ use crate::control::admin::QueueAgeBuckets;
 impl QueueActor {
     #[must_use]
     pub fn ready_len(&self) -> usize {
-        self.ready.len()
+        self.ready_count
     }
 
     #[must_use]
@@ -55,11 +55,11 @@ impl QueueActor {
             self.backlog_age_metrics(now_epoch_ms);
         let delay_age_buckets = self.delay_age_metrics(now_epoch_ms);
         QueueAdminSnapshot {
-            messages_ready: self.ready.len(),
+            messages_ready: self.ready_count,
             messages_delayed: self.persisted_delayed.len(),
             messages_inflight: self.inflight.len(),
             messages_dead_lettered: self.persisted_dlq.len(),
-            messages_total: self.ready.len()
+            messages_total: self.ready_count
                 + self.inflight.len()
                 + self.persisted_delayed.len()
                 + self.persisted_dlq.len(),
@@ -174,7 +174,7 @@ impl QueueActor {
 
     #[must_use]
     pub fn ready_contains(&self, id: MessageId) -> bool {
-        self.ready.iter().any(|entry| entry.id == id)
+        !self.expired_ready.contains(&id) && self.ready.iter().any(|entry| entry.id == id)
     }
 
     /// Returns true if queue-local waiters should be re-checked.

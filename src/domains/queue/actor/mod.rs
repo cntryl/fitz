@@ -581,6 +581,8 @@ pub struct QueueActor {
 
     /// Ready queue ordered by durable ready sequence.
     ready: VecDeque<ReadyEntry>,
+    /// Expired entries removed from storage but awaiting FIFO compaction.
+    expired_ready: HashSet<MessageId, FxBuildHasher>,
 
     /// In-memory ready ranges, sharded to keep append and pop O(1).
     ready_shards: Vec<VecDeque<ReadyRange>>,

@@ -1,8 +1,8 @@
 //! Queue actor construction and dependency initialization.
 
 use super::{
-    Arc, BinaryHeap, Clock, FxBuildHasher, HashMap, Instant, QueueActor, QueueKey, RecoveryPath,
-    RollingRateWindow, RouteFamily, SystemClock, VecDeque,
+    Arc, BinaryHeap, Clock, FxBuildHasher, HashMap, HashSet, Instant, QueueActor, QueueKey,
+    RecoveryPath, RollingRateWindow, RouteFamily, SystemClock, VecDeque,
 };
 
 #[allow(private_bounds)]
@@ -103,6 +103,7 @@ impl QueueActor {
             next_ready_seq: 1,
             next_id_limit: 1,
             ready: VecDeque::new(),
+            expired_ready: HashSet::with_hasher(FxBuildHasher),
             ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
             persisted_ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
             persisted_ready_count: 0,

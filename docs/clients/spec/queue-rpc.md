@@ -76,6 +76,9 @@ physical reclamation follows compaction. Shared index bookkeeping is cleaned
 in bounded passes or lazily during access. No TTL, attempt count, or timestamp
 is added to the RESERVE response core.
 
+Parked reserves are rechecked during bounded runtime sweeps while ready work
+is reported, so recovered expired heads cannot strand a waiting worker.
+
 #### NACK (210)
 
 Requires negotiated capability `2` (`queue_nack`). NACK means processing is not

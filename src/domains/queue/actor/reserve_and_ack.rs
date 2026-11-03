@@ -108,6 +108,10 @@ impl QueueActor {
             let Some(id) = self.ready.front().map(|entry| entry.id) else {
                 break;
             };
+            if self.expired_ready.contains(&id) {
+                self.pop_ready_entry();
+                continue;
+            }
             inspected += 1;
 
             // Skip hydration (real storage I/O) when this message's fixed
@@ -150,11 +154,7 @@ impl QueueActor {
                 }
                 break;
             };
-            let inflight_epoch = self
-                .records
-                .get(&id)
-                .map_or(Some(1), |record| record.inflight_epoch.checked_add(1));
-            let Some(inflight_epoch) = inflight_epoch else {
+            let Some(inflight_epoch) = self.next_reservation_epoch(id) else {
                 if self.divert_ready_or_log(id, DlqReason::InflightEpochExhausted, now_epoch_ms) {
                     continue;
                 }

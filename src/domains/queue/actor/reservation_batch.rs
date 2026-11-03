@@ -14,6 +14,12 @@ pub(super) struct PreparedReservation {
 }
 
 impl QueueActor {
+    pub(super) fn next_reservation_epoch(&self, id: super::MessageId) -> Option<u64> {
+        self.records
+            .get(&id)
+            .map_or(Some(1), |record| record.inflight_epoch.checked_add(1))
+    }
+
     pub(super) fn prepare_reservation(
         &self,
         ready: ReadyEntry,
@@ -59,20 +65,22 @@ impl QueueActor {
             return Err(Self::unknown_outcome_response());
         }
         if let Err(error) = self.persist_reservation_counters(&prepared) {
-            for item in prepared.into_iter().rev() {
-                self.ready.push_front(item.ready);
-            }
-            self.ready_count = self.ready.len();
-            self.recompute_oldest_ready_enqueued_at_ms();
+            self.restore_prepared_reservations(prepared.into_iter(), false);
             return Err(error.into_response());
         }
 
         let mut live = Vec::with_capacity(prepared.len());
-        for item in prepared {
+        let mut pending = prepared.into_iter();
+        while let Some(item) = pending.next() {
             let id = item.message.id;
             if self.record_has_expired(&item.record) {
-                self.remove_unavailable_message(id)
-                    .map_err(QueueMutationError::into_response)?;
+                if let Err(error) = self.remove_expired_prepared_message(id) {
+                    self.restore_prepared_reservations(
+                        live.into_iter().chain(std::iter::once(item)).chain(pending),
+                        true,
+                    );
+                    return Err(error.into_response());
+                }
             } else {
                 live.push(item);
             }
@@ -101,6 +109,21 @@ impl QueueActor {
             messages.push(item.message);
         }
         Ok(messages)
+    }
+
+    fn restore_prepared_reservations(
+        &mut self,
+        prepared: impl DoubleEndedIterator<Item = PreparedReservation>,
+        counters_committed: bool,
+    ) {
+        for item in prepared.rev() {
+            if counters_committed {
+                self.cache_record(item.message.id, item.record);
+            }
+            self.ready.push_front(item.ready);
+        }
+        self.refresh_ready_count();
+        self.recompute_oldest_ready_enqueued_at_ms();
     }
 
     fn persist_reservation_counters(

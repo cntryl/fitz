@@ -132,6 +132,10 @@ impl ReservationBook {
     pub(super) fn pending_count(&self) -> usize {
         self.pending_reserves.len()
     }
+
+    pub(super) fn has_pending_reserves(&self) -> bool {
+        !self.pending_reserves.is_empty()
+    }
 }
 
 #[cfg(test)]

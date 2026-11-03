@@ -1,10 +1,86 @@
 use super::{
     assert_queue_success_frames, black_box, prepare_ack_case, send_queue_request, stress,
-    tier2_stress, Bytes, Duration, Instant, StressContext, CLIENT_SESSION_ID,
+    tier2_stress, Arc, Bytes, Duration, Instant, RouteFamily, StressContext, CLIENT_SESSION_ID,
 };
 use fitz::domains::queue::{retention::QueueRetention, QueueResponse};
 
 const CONTROL_MESSAGES: usize = 256;
+
+#[derive(Clone)]
+struct ExpiryClock {
+    instant: Instant,
+    elapsed_seconds: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl fitz::domains::queue::Clock for ExpiryClock {
+    fn now_instant(&self) -> Instant {
+        self.instant
+            + Duration::from_secs(
+                self.elapsed_seconds
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )
+    }
+    fn now_epoch_ms(&self) -> u64 {
+        1_700_000_000_000
+            + self
+                .elapsed_seconds
+                .load(std::sync::atomic::Ordering::Relaxed)
+                * 1_000
+    }
+}
+
+fn measure_sparse_expiry(ctx: &mut StressContext, backlog: usize, name: &str) {
+    use fitz::domains::queue::QueueKey;
+    use fitz::testkit::domain_internals::queue::QueueActor;
+    let clock = ExpiryClock {
+        instant: Instant::now(),
+        elapsed_seconds: Arc::default(),
+    };
+    let family = RouteFamily::new(1);
+    let key = QueueKey {
+        family,
+        realm: "bench".into(),
+        area: "controls".into(),
+        resource: "expiry".into(),
+    };
+    let mut actor = QueueActor::with_clock(
+        family,
+        key,
+        fitz::benchkit::create_bench_store(),
+        Box::new(clock.clone()),
+        None,
+        fitz::utils::idempotency::default_dedup_store(),
+    )
+    .with_retention(QueueRetention {
+        message_seconds: Some(3_600),
+        dlq_seconds: None,
+    });
+    actor.handle_send_with_ttl(Bytes::new(), None, std::num::NonZeroU32::new(2));
+    let response = actor.handle_send_batch(&vec![(Bytes::new(), None); backlog]);
+    assert!(matches!(response, QueueResponse::SentBatch { ids } if ids.len() == backlog));
+    clock
+        .elapsed_seconds
+        .store(3_601, std::sync::atomic::Ordering::Relaxed);
+    let start = Instant::now();
+    let changed = actor.process_due_work();
+    let elapsed = start.elapsed();
+    assert!(changed);
+    assert_eq!(actor.admin_snapshot().messages_ready, backlog + 1 - 32);
+    ctx.parameter("backlog", backlog);
+    ctx.parameter("expired_non_head_messages_per_pass", 32);
+    tier2_stress::record_completed(ctx, 32);
+    tier2_stress::record_duration(ctx, name, elapsed, 32);
+}
+
+#[stress(tier = 2, name = "expiry_sparse_16k_completed")]
+fn should_expire_sparse_16k_completed(ctx: &mut StressContext) {
+    measure_sparse_expiry(ctx, 16_384, "expiry_sparse_16k_completed");
+}
+
+#[stress(tier = 2, name = "expiry_sparse_64k_completed")]
+fn should_expire_sparse_64k_completed(ctx: &mut StressContext) {
+    measure_sparse_expiry(ctx, 65_536, "expiry_sparse_64k_completed");
+}
 
 fn measure_nack(ctx: &mut StressContext, visibility_seconds: u64, name: &str) {
     let case = prepare_ack_case();

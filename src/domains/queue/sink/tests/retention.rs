@@ -2,9 +2,7 @@ use super::*;
 use crate::domains::queue::{retention::QueueRetention, QueueActor};
 use crate::testkit::clock::MockClock;
 
-#[test]
-fn should_wake_a_parked_reserve_after_expired_ready_heads_are_cleaned() {
-    // Arrange
+fn parked_reserve_with_expired_backlog(cold: bool) -> (QueueDomain, RouteFamily, Arc<Mailbox>) {
     let family = RouteFamily::new(1);
     let route = "queue://acme/jobs/expiry";
     let router = Arc::new(Router::new());
@@ -28,16 +26,27 @@ fn should_wake_a_parked_reserve_after_expired_ready_heads_are_cleaned() {
             state.dedup_store.clone(),
         )
         .with_retention(QueueRetention {
-            message_seconds: Some(1),
+            message_seconds: Some(3_600),
             dlq_seconds: None,
         });
         actor.handle_send_batch(&vec![(Bytes::new(), None); 128]);
         actor.handle_send_with_ttl(
             Bytes::from_static(b"live"),
             None,
-            std::num::NonZeroU32::new(1),
+            std::num::NonZeroU32::new(2),
         );
-        clock.advance(Duration::from_secs(1));
+        clock.advance(Duration::from_secs(3_601));
+        if cold {
+            drop(actor);
+            actor = QueueActor::with_clock(
+                family,
+                key.clone(),
+                state.store.clone(),
+                Box::new(clock),
+                None,
+                state.dedup_store.clone(),
+            );
+        }
         state.actor_registry.insert_for_tests(key.clone(), actor);
         state.ready_states.insert(key, true);
         let request = FrameContext::new(
@@ -56,6 +65,33 @@ fn should_wake_a_parked_reserve_after_expired_ready_heads_are_cleaned() {
             .unwrap();
         assert_eq!(state.reservation_book.pending_count(), 1);
     });
+
+    (sink, family, mailbox)
+}
+
+#[test]
+fn should_wake_a_parked_reserve_after_expired_ready_heads_are_cleaned() {
+    // Arrange
+    let (sink, family, mailbox) = parked_reserve_with_expired_backlog(false);
+
+    // Act
+    let pending = sink.inspect_family_for_tests(family, |state| {
+        for pass in 1..=4 {
+            state.sweep_idle_actors_at(Instant::now() + Duration::from_secs(pass));
+        }
+        state.reservation_book.pending_count()
+    });
+
+    // Assert
+    assert_eq!(pending, 0);
+    let response = receive_queue_frame(&mailbox, "woken reserve");
+    assert_eq!(receive_response_first_message(&response).0, 129);
+}
+
+#[test]
+fn should_wake_a_parked_reserve_behind_recovered_expired_heads() {
+    // Arrange
+    let (sink, family, mailbox) = parked_reserve_with_expired_backlog(true);
 
     // Act
     let pending = sink.inspect_family_for_tests(family, |state| {

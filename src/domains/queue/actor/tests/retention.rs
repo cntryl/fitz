@@ -1,5 +1,201 @@
 use super::*;
 
+fn prepare_next_reservation(
+    actor: &mut QueueActor,
+    clock: &MockClock,
+) -> super::super::reservation_batch::PreparedReservation {
+    let ready = actor.pop_ready_entry().unwrap();
+    let body = actor.load_body_from_store(ready.id).unwrap();
+    actor.prepare_reservation(
+        ready,
+        body,
+        Inflight {
+            token: ready.id.as_u64(),
+            expires_at: clock.now_instant() + Duration::from_secs(30),
+            expires_at_epoch_ms: clock.now_epoch_ms() + 30_000,
+            owner_session_id: Some(TEST_SESSION_ID),
+            attempts: 1,
+            inflight_epoch: 1,
+        },
+        30,
+        clock.now_epoch_ms(),
+    )
+}
+
+#[test]
+fn should_restore_ungranted_reservations_after_expired_cleanup_commit_is_rejected() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock, Some(1), None);
+    actor.handle_send(Bytes::from_static(b"short"), None);
+    actor.handle_send_with_ttl(
+        Bytes::from_static(b"long"),
+        None,
+        std::num::NonZeroU32::new(1),
+    );
+    let prepared = vec![
+        prepare_next_reservation(&mut actor, &clock),
+        prepare_next_reservation(&mut actor, &clock),
+    ];
+    clock.advance(Duration::from_secs(1));
+    QueueActor::fail_next_redelivery_commit_for_tests();
+
+    // Act
+    let response = actor.commit_reservation_batch(prepared);
+
+    // Assert
+    assert!(response.is_err());
+    assert_eq!(actor.ready_len(), 2);
+    assert_eq!(actor.inflight.len(), 0);
+    assert_eq!(
+        actor
+            .load_record_metadata_from_store(MessageId::new(2))
+            .unwrap()
+            .attempts,
+        1
+    );
+}
+
+#[test]
+fn should_use_committed_attempts_after_recovering_a_rejected_expiry_cleanup() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock, Some(1), None);
+    actor.max_attempts = Some(3);
+    actor.handle_send(Bytes::from_static(b"short"), None);
+    actor.handle_send_with_ttl(
+        Bytes::from_static(b"long"),
+        None,
+        std::num::NonZeroU32::new(1),
+    );
+    let prepared = vec![
+        prepare_next_reservation(&mut actor, &clock),
+        prepare_next_reservation(&mut actor, &clock),
+    ];
+    clock.advance(Duration::from_secs(1));
+    QueueActor::fail_next_redelivery_commit_for_tests();
+    assert!(actor.commit_reservation_batch(prepared).is_err());
+    actor.process_due_work();
+
+    // Act
+    let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+    // Assert
+    assert!(
+        matches!(response, QueueResponse::Received { messages } if messages.len() == 1 && messages[0].attempts == 2)
+    );
+}
+
+#[test]
+fn should_reserve_live_work_after_already_expired_non_head_entries() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock, Some(1), None);
+    actor.handle_send_with_ttl(Bytes::new(), None, std::num::NonZeroU32::new(1));
+    actor.handle_send_batch(&vec![(Bytes::new(), None); 64]);
+    actor.handle_send_with_ttl(
+        Bytes::from_static(b"tail"),
+        None,
+        std::num::NonZeroU32::new(1),
+    );
+    clock.advance(Duration::from_secs(1));
+    for _ in 0..2 {
+        actor.process_due_work();
+    }
+    actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+    // Act
+    let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+    // Assert
+    assert!(
+        matches!(response, QueueResponse::Received { messages } if messages.len() == 1 && messages[0].body.as_ref() == b"tail")
+    );
+}
+
+#[test]
+fn should_keep_ready_counts_after_a_rejected_reserve_with_non_head_expirations() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock, Some(1), None);
+    actor.handle_send_with_ttl(
+        Bytes::from_static(b"long"),
+        None,
+        std::num::NonZeroU32::new(1),
+    );
+    actor.handle_send_batch(&vec![(Bytes::new(), None); 100]);
+    clock.advance(Duration::from_secs(1));
+    actor.process_due_work();
+    super::super::recovery_store::QueueStore::fail_next_commit_for_tests(
+        cntryl_midge::MidgeError::WriteConflict("reserve rejected".into()),
+    );
+
+    // Act
+    let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+    // Assert
+    assert!(matches!(response, QueueResponse::Error { .. }));
+    assert_eq!(actor.ready_len(), 69);
+    assert!(actor.ready_contains(MessageId::new(1)));
+    assert!(!actor.ready_contains(MessageId::new(2)));
+}
+
+#[test]
+fn should_preserve_other_ready_messages_when_a_prepared_reservation_expires() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock, Some(1), None);
+    actor.handle_send(Bytes::from_static(b"short"), None);
+    actor.handle_send_with_ttl(
+        Bytes::from_static(b"long"),
+        None,
+        std::num::NonZeroU32::new(1),
+    );
+    let ready = actor.pop_ready_entry().unwrap();
+    let prepared = actor.prepare_reservation(
+        ready,
+        Bytes::from_static(b"short"),
+        Inflight {
+            token: 9,
+            expires_at: clock.now_instant() + Duration::from_secs(30),
+            expires_at_epoch_ms: clock.now_epoch_ms() + 30_000,
+            owner_session_id: Some(TEST_SESSION_ID),
+            attempts: 1,
+            inflight_epoch: 1,
+        },
+        30,
+        clock.now_epoch_ms(),
+    );
+    clock.advance(Duration::from_secs(1));
+
+    // Act
+    let response = actor.commit_reservation_batch(vec![prepared]).unwrap();
+
+    // Assert
+    assert_eq!(response.len(), 0);
+    assert_eq!(actor.ready_len(), 1);
+    assert!(actor.ready_contains(MessageId::new(2)));
+}
+
+#[test]
+fn should_bound_stale_ready_entries_after_non_head_expiry_cleanup() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock, Some(1), None);
+    actor.handle_send_with_ttl(Bytes::new(), None, std::num::NonZeroU32::new(1));
+    actor.handle_send_batch(&vec![(Bytes::new(), None); 256]);
+    clock.advance(Duration::from_secs(1));
+
+    // Act
+    for _ in 0..8 {
+        actor.process_due_work();
+    }
+
+    // Assert
+    assert_eq!(actor.ready_len(), 1);
+    assert!(actor.ready.len() <= actor.ready_len() * 2 + super::super::MAX_DUE_ITEMS_PER_PASS * 2);
+}
+
 #[test]
 fn should_report_a_cold_expired_dead_letter_as_absent_before_reading_its_body() {
     // Arrange
