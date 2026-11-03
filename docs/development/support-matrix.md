@@ -18,10 +18,12 @@ runtime, transport, storage provider, and client version.
 
 ## Wire Format
 
-- Fitz 0.3.x speaks wire format 2 only. Fitz 0.2.x speaks wire format 1 only.
-- No broker serves both. A 0.3.0 broker requires the 2.0 line of every SDK, and
-  a 0.2.x broker requires the 1.x lines; the migration guide states the
-  flag-day order.
+- Fitz 0.3.0 speaks wire format 2 only. Fitz 0.2.x speaks wire format 1 only.
+- The current broker source, including 0.3.1 and `release/rc-0.4.0`, accepts
+  Wire 3 only; it does not retain a Wire 1 or Wire 2 fallback codec.
+- No broker serves multiple generations. A 0.3.0 broker requires the 2.0 line
+  of every SDK, and a 0.2.x broker requires the 1.x lines; the migration guide
+  states the flag-day order.
 - Wire 3 is a broker draft for the coordinated cutover described in
   [issue #508](https://github.com/cntryl/fitz/issues/508); it is not a released
   or supported client/broker combination. Its planned release starts from the

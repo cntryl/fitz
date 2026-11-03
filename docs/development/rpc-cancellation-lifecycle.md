@@ -27,7 +27,8 @@ means the broker routed the signal. It does not mean the worker stopped.
 Removed or normally completed calls also return status 5: the broker retains
 no completion tombstones, so a late control cannot reveal another caller's
 completed state. Malformed control frames are discarded and counted without
-mutating pending calls; a caller receives no successful cancellation result.
+mutating pending calls or consuming connection in-flight capacity; a caller
+receives no successful cancellation result.
 
 The broker accepts budgets from 0 through 86,400,000 ms; larger values,
 reserved registration flag bits, an unknown presence byte, truncated fields,

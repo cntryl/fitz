@@ -108,6 +108,11 @@ fields close the connection before domain dispatch. They cannot partially
 apply a domain operation. An unknown field is optional and cannot be required
 for the meaning of an existing request.
 
+These envelope checks also apply when the transport buffer is full. A valid
+request refused with `BUSY` retains its core request identity, including the
+RPC UUID; malformed extensions close the connection instead of receiving a
+retryable refusal.
+
 New optional values MUST have a documented default. Additive fields do not
 change the wire version. A change that requires new client behavior uses a
 negotiated capability or a new message ID; it never changes an existing core

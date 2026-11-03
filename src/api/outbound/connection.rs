@@ -96,10 +96,16 @@ impl ConnectionState {
         let request = match message.msg_type.as_u16() {
             500 if !message.flags.is_ack_requested() => return true,
             302 => uuid(&message.payload).map(Request::Rpc),
-            304 if message.payload.first() == Some(&1) => {
-                uuid(&message.payload[1..]).map(Request::Cancel)
-            }
-            1 | 303 | 304 => return true,
+            // Malformed controls are discarded by the domain without a reply,
+            // so only valid caller cancellations may acquire a response slot.
+            304 => match crate::protocol::rpc_codec::parse_cancellation_message(&message.payload) {
+                Ok(crate::protocol::rpc_codec::RpcCancellationMessage::CallerCancel {
+                    correlation_id,
+                    ..
+                }) => Some(Request::Cancel(*correlation_id.as_bytes())),
+                _ => return true,
+            },
+            1 | 303 => return true,
             kind => Some(Request::Header(kind, message.correlation)),
         };
         let Some(request) = request else { return true };

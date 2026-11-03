@@ -1,6 +1,7 @@
 //! Refuse transport-buffer admission without dispatch or releasing a live slot.
 
 use super::SessionOutboundSink;
+use crate::protocol::wire3::extensions::{decode_core_payload, ExtensionDirection};
 use crate::protocol::wire3::header::{decode_message, MessageError};
 
 impl SessionOutboundSink {
@@ -14,12 +15,22 @@ impl SessionOutboundSink {
         }
         let limit = u32::try_from(self.max_message_bytes).unwrap_or(u32::MAX);
         let (kind, correlation, payload, code) = match decode_message(frame, limit) {
-            Ok((header, payload)) => (
-                header.message_type,
-                header.correlation,
-                payload,
-                crate::protocol::error_codes::protocol::ERR_BUSY,
-            ),
+            Ok((header, payload)) => {
+                let core = decode_core_payload(
+                    payload,
+                    header.message_type,
+                    ExtensionDirection::ClientToBroker,
+                    header.flags.is_extensions_present(),
+                )
+                .map_err(|error| error.to_string())?;
+                (
+                    header.message_type,
+                    header.correlation,
+                    core.get(payload)
+                        .expect("validated extension core fits payload"),
+                    crate::protocol::error_codes::protocol::ERR_BUSY,
+                )
+            }
             Err(MessageError::ReservedFlags {
                 message_type,
                 correlation,
