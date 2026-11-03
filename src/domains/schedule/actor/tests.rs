@@ -7,7 +7,7 @@ use crate::domains::schedule::protocol::ScheduleCreateEntry;
 use crate::domains::schedule::store::{ScheduleInsert, SchedulePersistenceError, ScheduleStore};
 use crate::runtime::clock::Clock;
 use crate::runtime::routing::RouteFamily;
-use crate::testkit::create_test_engine_with_cfs;
+use crate::testkit::{create_in_memory_test_engine_with_cfs, create_test_engine_with_cfs};
 use bytes::Bytes;
 use chrono::TimeZone;
 use serial_test::serial;
