@@ -167,6 +167,7 @@ async fn process_frame(
             crate::protocol::wire2::header::HeaderLabels {
                 correlation: message.correlation,
                 flags: message.flags,
+                extensions: message.extensions,
             },
             received_at,
         )

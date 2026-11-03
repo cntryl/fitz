@@ -1,7 +1,7 @@
 # Message Registry
 
-The assignments below were fixed by released wire format 2 and remain unchanged
-in Wire 3. Reserved identifiers are not valid operations. The broker manifest
+Released Wire 2 assignments remain unchanged in Wire 3. Wire 3 adds NACK (210),
+gated by capability 2. Reserved identifiers are not valid operations. The broker manifest
 in `src/protocol/manifest.rs` is the implementation source of truth. Wire 3
 extension fields are registered separately in
 [extension-registry.md](extension-registry.md).
@@ -30,7 +30,7 @@ extension fields are registered separately in
 | 109 | SUBSCRIBE |
 | 110 | UNSUBSCRIBE |
 | 111 | NOTIFY |
-**Queue Domain (200–209):**
+**Queue Domain (200–210):**
 | Value | Name |
 |---:|---|
 | 200 | ENQUEUE |
@@ -40,6 +40,7 @@ extension fields are registered separately in
 | 207 | SUBSCRIBE |
 | 208 | UNSUBSCRIBE |
 | 209 | NOTIFY |
+| 210 | NACK (Wire 3 capability 2) |
 **RPC Domain (300–303):**
 | Value | Name |
 |---:|---|

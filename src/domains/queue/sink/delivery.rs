@@ -36,11 +36,20 @@ pub(super) struct ExtendOperation {
 }
 
 #[derive(Clone, Copy)]
+struct NackOperation {
+    session_id: u64,
+    id: crate::domains::queue::MessageId,
+    token: u64,
+    visibility_seconds: u64,
+}
+
+#[derive(Clone, Copy)]
 pub(in crate::domains::queue::sink) enum QueueOpKind {
     Send,
     Receive,
     Extend,
     Ack,
+    Nack,
     InflightExpired,
 }
 
@@ -266,11 +275,13 @@ impl QueueFamilyState {
                 route,
                 body,
                 delay_seconds,
+                ttl_hours,
             } => self.handle_enqueue_operation(
                 family_id,
                 &route,
                 body,
                 delay_seconds,
+                ttl_hours,
                 request_context,
             )?,
             crate::domains::queue::protocol::QueueMessage::Receive {
@@ -317,6 +328,23 @@ impl QueueFamilyState {
                 token,
                 request_context,
             )?,
+            crate::domains::queue::protocol::QueueMessage::Nack {
+                family_id,
+                route,
+                id,
+                token,
+                visibility_seconds,
+            } => self.handle_nack_operation(
+                family_id,
+                &route,
+                NackOperation {
+                    session_id: meta.session_id,
+                    id,
+                    token,
+                    visibility_seconds,
+                },
+                request_context,
+            )?,
             crate::domains::queue::protocol::QueueMessage::InflightExpired { .. } => {
                 OperationOutcome {
                     response: crate::domains::queue::QueueResponse::Error {
@@ -331,12 +359,14 @@ impl QueueFamilyState {
         Some(outcome)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_enqueue_operation(
         &mut self,
         family_id: RouteFamily,
         route: &crate::runtime::routing::Route,
         body: bytes::Bytes,
         delay_seconds: Option<u64>,
+        ttl_hours: Option<std::num::NonZeroU32>,
         request_context: OperationRequestContext<'_>,
     ) -> Option<OperationOutcome> {
         let key = match Self::queue_key_for_route(family_id, route) {
@@ -351,7 +381,7 @@ impl QueueFamilyState {
         };
 
         self.with_actor_for_operation(&key, request_context, |actor| {
-            actor.handle_send(body, delay_seconds)
+            actor.handle_send_with_ttl(body, delay_seconds, ttl_hours)
         })
         .map(|(response, notification)| OperationOutcome {
             response,
@@ -464,6 +494,38 @@ impl QueueFamilyState {
         })
     }
 
+    fn handle_nack_operation(
+        &mut self,
+        family_id: RouteFamily,
+        route: &crate::runtime::routing::Route,
+        nack: NackOperation,
+        request_context: OperationRequestContext<'_>,
+    ) -> Option<OperationOutcome> {
+        let key = match Self::queue_key_for_route(family_id, route) {
+            Ok(key) => key,
+            Err(response) => {
+                return Some(OperationOutcome {
+                    response,
+                    ready_notifications: Vec::new(),
+                    mark_admin_snapshot_dirty: false,
+                })
+            }
+        };
+        self.with_actor_for_operation(&key, request_context, |actor| {
+            actor.handle_nack_for_session(
+                nack.session_id,
+                nack.id,
+                nack.token,
+                nack.visibility_seconds,
+            )
+        })
+        .map(|(response, notification)| OperationOutcome {
+            response,
+            ready_notifications: notification.into_iter().collect(),
+            mark_admin_snapshot_dirty: true,
+        })
+    }
+
     fn handle_ack_operation(
         &mut self,
         family_id: RouteFamily,
@@ -554,6 +616,7 @@ impl QueueFamilyState {
             crate::domains::queue::protocol::QueueMessage::Receive { .. } => QueueOpKind::Receive,
             crate::domains::queue::protocol::QueueMessage::Extend { .. } => QueueOpKind::Extend,
             crate::domains::queue::protocol::QueueMessage::Ack { .. } => QueueOpKind::Ack,
+            crate::domains::queue::protocol::QueueMessage::Nack { .. } => QueueOpKind::Nack,
             crate::domains::queue::protocol::QueueMessage::InflightExpired { .. } => {
                 QueueOpKind::InflightExpired
             }
@@ -577,6 +640,7 @@ impl QueueFamilyState {
                 QueueOpKind::Send => metrics.record_enqueue(started_at),
                 QueueOpKind::Receive => metrics.record_reserve(started_at),
                 QueueOpKind::Ack => metrics.record_complete(),
+                QueueOpKind::Nack => metrics.record_nack(),
                 QueueOpKind::Extend => metrics.record_extend(),
                 QueueOpKind::InflightExpired => {}
             }

@@ -15,6 +15,7 @@ const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
 const ENV_STORAGE_LEASE_TTL_SECS: &str = "FITZ_STORAGE_LEASE_TTL_SECS";
 const ENV_QUEUE_WRITE_POLICY: &str = "FITZ_QUEUE_WRITE_POLICY";
 const ENV_QUEUE_LOSS_WINDOW_MS: &str = "FITZ_QUEUE_LOSS_WINDOW_MS";
+const ENV_QUEUE_MAX_ATTEMPTS: &str = "FITZ_QUEUE_MAX_ATTEMPTS";
 const ENV_KV_IDLE_TRANSACTION_TTL_SECS: &str = "FITZ_KV_IDLE_TRANSACTION_TTL_SECS";
 const ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS: &str = "FITZ_SCHEDULE_PRELOAD_TIMEOUT_SECS";
 const ENV_DRAIN_GRACE_SECONDS: &str = "FITZ_DRAIN_GRACE_SECONDS";
@@ -261,8 +262,9 @@ use cloud_provider::build_cloud_provider_config;
 mod env;
 use env::{
     drain_close_reason_from_env, drain_grace_seconds_from_env, env_non_empty,
-    kv_idle_transaction_ttl_seconds_from_env, queue_loss_window_ms_from_env, required_env,
-    schedule_preload_timeout_seconds_from_env, storage_lease_ttl_seconds_from_env,
+    kv_idle_transaction_ttl_seconds_from_env, queue_loss_window_ms_from_env,
+    queue_max_attempts_from_env, required_env, schedule_preload_timeout_seconds_from_env,
+    storage_lease_ttl_seconds_from_env,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,6 +385,12 @@ impl<'a> StorageConfig<'a> {
         if let Some(error) = &config.queue_loss_window_error {
             return Err(error.clone().into());
         }
+        if let Some(error) = &config.queue_max_attempts_error {
+            return Err(error.clone().into());
+        }
+        if let Some(error) = &config.queue_retention_error {
+            return Err(error.clone().into());
+        }
         if config.queue_loss_window_ms == 0 {
             return Err(format!("{ENV_QUEUE_LOSS_WINDOW_MS} must be greater than 0").into());
         }
@@ -493,6 +501,11 @@ pub struct BootConfig {
     /// Target dirty-data window before best-effort queue writes are flushed.
     pub queue_loss_window_ms: u64,
     pub(crate) queue_loss_window_error: Option<String>,
+    /// Expired reservations before dead-lettering; absent means unlimited.
+    pub queue_max_attempts: Option<std::num::NonZeroU32>,
+    pub(crate) queue_max_attempts_error: Option<String>,
+    pub queue_retention: crate::domains::queue::retention::QueueRetention,
+    pub(crate) queue_retention_error: Option<String>,
     /// Maximum inactivity before an open KV transaction is force-rolled back.
     pub kv_idle_transaction_ttl_seconds: u64,
     pub(crate) kv_idle_transaction_ttl_error: Option<String>,
@@ -611,6 +624,8 @@ impl Default for BootConfig {
             parse_ws_allowed_origins_from_env().unwrap_or_else(default_local_ws_allowed_origins);
         let (drain_grace_seconds, drain_config_error) = drain_grace_seconds_from_env();
         let (queue_loss_window_ms, queue_loss_window_error) = queue_loss_window_ms_from_env();
+        let (queue_max_attempts, queue_max_attempts_error) = queue_max_attempts_from_env();
+        let (queue_retention, queue_retention_error) = env::queue_retention_from_env();
         let (kv_idle_transaction_ttl_seconds, kv_idle_transaction_ttl_error) =
             kv_idle_transaction_ttl_seconds_from_env();
         let (schedule_preload_timeout_seconds, schedule_preload_timeout_error) =
@@ -649,6 +664,10 @@ impl Default for BootConfig {
             queue_write_policy_error,
             queue_loss_window_ms,
             queue_loss_window_error,
+            queue_max_attempts,
+            queue_max_attempts_error,
+            queue_retention,
+            queue_retention_error,
             kv_idle_transaction_ttl_seconds,
             kv_idle_transaction_ttl_error,
             schedule_preload_timeout_seconds,

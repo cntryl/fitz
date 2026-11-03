@@ -99,6 +99,8 @@ impl HeaderFlags {
 pub struct HeaderLabels {
     pub correlation: Option<NonZeroU64>,
     pub flags: HeaderFlags,
+    /// Validated optional payload fields; these are not serialized in the fixed header.
+    pub extensions: crate::protocol::wire3::extensions::KnownFields,
 }
 
 impl HeaderLabels {
@@ -108,6 +110,7 @@ impl HeaderLabels {
         Self {
             correlation: None,
             flags: HeaderFlags::none(),
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
         }
     }
 
@@ -117,6 +120,7 @@ impl HeaderLabels {
         Self {
             correlation,
             flags: HeaderFlags::none(),
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
         }
     }
 }

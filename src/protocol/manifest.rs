@@ -54,6 +54,7 @@ pub struct MessageManifestEntry {
     pub route_scheme: Option<&'static str>,
     pub authorization: ManifestAuthorization,
     pub decoder: ManifestDecoder,
+    pub required_capability_id: Option<u32>,
 }
 
 const fn client(
@@ -78,6 +79,11 @@ const fn client(
         route_scheme,
         authorization,
         decoder,
+        required_capability_id: if message_id == 210 {
+            Some(super::wire3::QUEUE_NACK_CAPABILITY_ID)
+        } else {
+            None
+        },
     }
 }
 
@@ -95,6 +101,7 @@ const fn server(
         route_scheme,
         authorization: ManifestAuthorization::None,
         decoder,
+        required_capability_id: None,
     }
 }
 
@@ -233,6 +240,13 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestDecoder::Queue,
     ),
     server(209, "queue", Some("queue"), ManifestDecoder::Queue),
+    client(
+        210,
+        "queue",
+        Some("queue"),
+        ManifestAuthorization::RouteWrite,
+        ManifestDecoder::Queue,
+    ),
     client(
         300,
         "rpc",

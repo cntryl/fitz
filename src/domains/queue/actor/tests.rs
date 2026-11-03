@@ -15,4 +15,7 @@ mod fast_flush;
 
 mod invariants;
 
+mod max_attempts;
+mod nack;
+mod retention;
 mod state_model;

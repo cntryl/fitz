@@ -3,6 +3,8 @@ use super::*;
 mod base_auth_and_network;
 use base_auth_and_network::*;
 mod cloud_storage;
+mod queue_attempts;
+mod queue_retention;
 mod storage_local_and_stream;
 
 #[test]

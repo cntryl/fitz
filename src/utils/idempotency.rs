@@ -69,6 +69,15 @@ pub enum DedupIdentifier {
         message_id: u64,
         token: u64,
     },
+    /// Queue NACK: first successful relinquishment wins for this reservation.
+    QueueNack {
+        family: u64,
+        area: String,
+        resource: String,
+        owner_session_id: u64,
+        message_id: u64,
+        token: u64,
+    },
     /// RPC REQUEST: `correlation_id` (`Uuid`)
     RpcRequest(Uuid),
 }
@@ -192,8 +201,8 @@ fn classify_notice(msg_type: u16) -> Idempotency {
 
 fn classify_queue(msg_type: u16) -> Idempotency {
     match msg_type {
-        // COMPLETE is context-dependent
-        204 => Idempotency::ContextDependent {
+        // COMPLETE and NACK are scoped to a single reservation token.
+        204 | 210 => Idempotency::ContextDependent {
             dedup_key: "message_id+token",
         },
         // All other queue operations are non-idempotent.

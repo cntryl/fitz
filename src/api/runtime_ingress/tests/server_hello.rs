@@ -92,7 +92,7 @@ fn should_answer_connect_with_hello_as_the_first_frame() {
     let capability_field_offset = core.offset + core.length;
     assert_eq!(
         &frames[0].payload[capability_field_offset..],
-        &[0, 1, 0, 0, 0, 2, 0, 0],
-        "HELLO advertises an explicitly empty capability set"
+        &[0, 1, 0, 0, 0, 10, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2],
+        "HELLO advertises Queue TTL and NACK capabilities"
     );
 }

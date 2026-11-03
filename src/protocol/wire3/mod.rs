@@ -10,8 +10,12 @@ pub mod header;
 /// The only wire generation accepted by this broker build.
 pub const WIRE_VERSION: u16 = 3;
 
-/// No optional capabilities are assigned by the initial Wire 3 contract.
-pub const BROKER_CAPABILITY_IDS: &[u32] = &[];
+/// Per-publish queue TTL in hours, carried by the ENQUEUE extension.
+pub const QUEUE_MESSAGE_TTL_CAPABILITY_ID: u32 = 1;
+/// Relinquish a queue reservation, with an optional visibility delay.
+pub const QUEUE_NACK_CAPABILITY_ID: u32 = 2;
+pub const BROKER_CAPABILITY_IDS: &[u32] =
+    &[QUEUE_MESSAGE_TTL_CAPABILITY_ID, QUEUE_NACK_CAPABILITY_ID];
 
 /// Legacy capability bit fields remain zero; Wire 3 capabilities use stable
 /// numeric IDs in the CONNECT and HELLO extension field registry.

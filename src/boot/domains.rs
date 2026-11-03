@@ -544,6 +544,8 @@ pub(crate) struct DomainSetupOptions {
     pub(crate) schedule_write_policy: crate::domains::WritePolicy,
 
     pub(crate) queue_fast_flush_interval: Option<std::time::Duration>,
+    pub(crate) queue_max_attempts: Option<std::num::NonZeroU32>,
+    pub(crate) queue_retention: crate::domains::queue::retention::QueueRetention,
     pub(crate) request_sync_write_policy: crate::domains::WritePolicy,
     pub(crate) request_buffered_write_policy: crate::domains::WritePolicy,
     pub(crate) rpc_request_timeout: Option<std::time::Duration>,
@@ -644,6 +646,8 @@ pub(crate) fn setup(
             crate::utils::idempotency::default_dedup_store(),
         )?
         .with_max_message_bytes(options.max_message_bytes)
+        .with_max_attempts(options.queue_max_attempts)
+        .with_retention(options.queue_retention)
         .with_fast_flush_interval(options.queue_fast_flush_interval)
         .with_metrics(metrics.clone()),
     );

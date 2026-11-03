@@ -32,7 +32,7 @@ impl QueueFamilyState {
             store: config.store.clone(),
 
             dedup_store: config.dedup_store.clone(),
-            actor_registry: QueueActorRegistry::default(),
+            actor_registry: QueueActorRegistry::new(config.max_attempts, config.retention),
             reservation_book: ReservationBook::new(
                 config
                     .known_queue_keys
@@ -181,6 +181,8 @@ impl QueueDomain {
                 .collect(),
         );
         let config = QueueDomainConfig {
+            max_attempts: None,
+            retention: crate::domains::queue::retention::QueueRetention::default(),
             response_payload_limit:
                 crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES,
             store,
@@ -251,12 +253,30 @@ impl QueueDomain {
         self
     }
 
+    /// Configure the reservation-count dead-letter threshold before serving traffic.
     #[must_use]
+    pub(crate) fn with_max_attempts(mut self, max_attempts: Option<std::num::NonZeroU32>) -> Self {
+        self.config.max_attempts = max_attempts;
+        self.rebuild_actor();
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_retention(
+        mut self,
+        retention: crate::domains::queue::retention::QueueRetention,
+    ) -> Self {
+        self.config.retention = retention;
+        self.rebuild_actor();
+        self
+    }
+
     /// Adds Queue metrics to every configured family runtime.
     ///
     /// # Panics
     ///
     /// Panics if a family runtime retains its core after the runtime has stopped.
+    #[must_use]
     #[allow(clippy::needless_pass_by_value)]
     pub fn with_metrics(
         mut self,

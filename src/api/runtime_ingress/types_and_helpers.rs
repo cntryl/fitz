@@ -172,6 +172,7 @@ pub(super) struct DomainDispatchRequest<'a> {
     pub(super) correlation: Option<std::num::NonZeroU64>,
     /// Header flags the client set on this request.
     pub(super) flags: crate::protocol::wire2::header::HeaderFlags,
+    pub(super) extensions: crate::protocol::wire3::extensions::KnownFields,
     pub(super) received_at: std::time::Instant,
 }
 

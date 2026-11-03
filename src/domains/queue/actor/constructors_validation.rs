@@ -10,6 +10,7 @@ impl QueueActor {
     pub(in crate::domains::queue::actor) const READY_SHARDS: usize = 8;
     pub(in crate::domains::queue::actor) const ID_RESERVATION_BLOCK: u64 = 256;
     pub(in crate::domains::queue::actor) const HEADER_VERSION_V2: u8 = 2;
+    pub(in crate::domains::queue::actor) const HEADER_VERSION_V3: u8 = 3;
     pub(in crate::domains::queue::actor) const INDEX_VERSION_V2: u8 = 2;
     pub(in crate::domains::queue::actor) const INDEX_META_VALID_MARKER: u8 = 1;
     pub(in crate::domains::queue::actor) const INDEX_META_NEXT_DELAY_NONE: u64 = u64::MAX;
@@ -125,6 +126,8 @@ impl QueueActor {
             needs_wake_waiters: false,
             clock,
             max_attempts,
+            retention: super::super::retention::QueueRetention::default(),
+            retention_schedule: super::retention_cleanup::RetentionSchedule::default(),
             dedup_store,
             enqueue_success_window: RollingRateWindow::new(),
             complete_success_window: RollingRateWindow::new(),

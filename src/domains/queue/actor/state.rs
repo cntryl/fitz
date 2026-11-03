@@ -274,6 +274,8 @@ impl QueueActor {
     }
 
     pub(super) fn cache_record(&mut self, id: MessageId, record: QueueRecord) {
+        self.retention_schedule
+            .schedule(id, record.retention_expires_at_ms);
         if self.records.insert(id, record).is_none() {
             self.record_cache_fifo.push_back(id);
         }

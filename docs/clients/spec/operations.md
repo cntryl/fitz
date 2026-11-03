@@ -75,6 +75,7 @@ changes its ownership.
 | `Receive` | 202 | C→S | Lease messages for processing |
 | `Extend` | 203 | C→S | Extend message lease TTL |
 | `Ack` | 204 | C→S | Acknowledge and delete message |
+| `Nack` | 210 | C→S | Relinquish reservation with a visibility delay; requires Wire 3 capability 2 |
 | `Subscribe` | 207 | C→S | Watch queue for availability |
 | `Unsubscribe` | 208 | C→S | Stop watching |
 | `Notify` | 209 | S→C | Deliver queue availability |

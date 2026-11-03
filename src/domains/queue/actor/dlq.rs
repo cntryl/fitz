@@ -33,14 +33,18 @@ impl QueueActor {
     ) -> bool {
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
         Self::transition_record_to_dlq(record, now_epoch_ms);
+        self.cap_dead_letter_deadline(record, now_epoch_ms);
 
         if !self.persist_dlq_record(id, inflight, record, &mut txn) {
             return false;
         }
 
-        if let Err(error) =
-            self.write_index_mutation_plan(&mut txn, id, index_plan, Some(now_epoch_ms))
-        {
+        if let Err(error) = self.write_index_mutation_plan(
+            &mut txn,
+            id,
+            index_plan,
+            Some((now_epoch_ms, self.record_ttl_seconds(record))),
+        ) {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),
@@ -106,13 +110,7 @@ impl QueueActor {
         record: &QueueRecord,
         txn: &mut super::recovery_store::QueueTransaction,
     ) -> bool {
-        let write_result = txn
-            .put(
-                self.cached_header_key(id),
-                Self::encode_record_header(record),
-                None,
-            )
-            .map_err(|error| format!("Failed to write DLQ header: {error:?}"));
+        let write_result = self.write_dead_letter_record(txn, id, record);
 
         if let Err(error) = write_result {
             tracing::warn!(

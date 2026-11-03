@@ -1,5 +1,7 @@
 #![allow(deprecated)]
 use bytes::Bytes;
+#[path = "tier2_queue_delivery_controls.rs"]
+mod delivery_controls;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 

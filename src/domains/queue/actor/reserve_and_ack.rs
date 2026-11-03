@@ -4,7 +4,7 @@ use super::{
     decode_cached_response, encode_cached_response, obs, DlqReason, Duration, FxBuildHasher,
     HashMap, HashSet, Inflight, InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan,
     PersistedReadyMutation, QueueActor, QueueRecord, QueueResponse, QueueState, ReadyRange,
-    ReservedMessage, Reverse, VecDeque,
+    Reverse, VecDeque,
 };
 use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
 
@@ -97,12 +97,18 @@ impl QueueActor {
                 Err(response) => return (response, false),
             };
 
-        let mut messages = Vec::with_capacity(self.ready.len().min(batch_size));
+        let mut prepared = Vec::with_capacity(self.ready.len().min(batch_size));
+        let mut remaining = *response_bytes_remaining;
+        let mut budget_exhausted = false;
+        let mut inspected = 0usize;
 
-        while messages.len() < batch_size {
+        while prepared.len() < batch_size
+            && inspected < batch_size.saturating_add(super::MAX_DUE_ITEMS_PER_PASS)
+        {
             let Some(id) = self.ready.front().map(|entry| entry.id) else {
                 break;
             };
+            inspected += 1;
 
             // Skip hydration (real storage I/O) when this message's fixed
             // per-response overhead alone already exceeds what's left of the
@@ -112,8 +118,9 @@ impl QueueActor {
             // means the message may be fundamentally too large for any
             // response, which the divert check below can only decide once
             // it knows the body size.
-            if !messages.is_empty() && message_wire_overhead_bytes > *response_bytes_remaining {
-                return (QueueResponse::Received { messages }, true);
+            if !prepared.is_empty() && message_wire_overhead_bytes > remaining {
+                budget_exhausted = true;
+                break;
             }
 
             let (body, attempts) = match super::ack_timing::measure(
@@ -123,20 +130,19 @@ impl QueueActor {
             ) {
                 Ok(record) => record,
                 Err(e) => {
-                    tracing::warn!(
-                        queue = ?self.queue_key,
-                        route_family = self.queue_key.family.as_u64(),
-                        message_id = id.as_u64(),
-                        error_reason = %e,
-                        "Failed to hydrate queue record for receive"
-                    );
-                    if self.divert_ready_or_log(id, DlqReason::HydrationFailed, now_epoch_ms) {
+                    if self.recover_unhydratable_ready(id, &e, now_epoch_ms) {
                         continue;
                     }
                     break;
                 }
             };
 
+            if self.max_attempts.is_some_and(|limit| attempts >= limit) {
+                if self.divert_ready_or_log(id, DlqReason::MaxAttemptsExceeded, now_epoch_ms) {
+                    continue;
+                }
+                break;
+            }
             let Some(next_attempts) = attempts.checked_add(1) else {
                 if self.divert_ready_or_log(id, DlqReason::DeliveryAttemptsExhausted, now_epoch_ms)
                 {
@@ -159,59 +165,59 @@ impl QueueActor {
                 id,
                 body.len(),
                 message_wire_overhead_bytes,
-                *response_bytes_remaining,
+                remaining,
                 now_epoch_ms,
             ) {
                 ReserveWireBudgetDecision::Reserve(bytes) => bytes,
                 ReserveWireBudgetDecision::Skip => continue,
                 ReserveWireBudgetDecision::Stop => {
-                    return (QueueResponse::Received { messages }, true);
+                    budget_exhausted = true;
+                    break;
                 }
             };
 
-            let Some(id) = self.pop_ready() else {
+            let Some(ready) = self.pop_ready_entry() else {
                 break;
             };
-            *response_bytes_remaining -= message_wire_bytes;
-            self.evict_cached_body(id);
+            remaining -= message_wire_bytes;
 
-            let token = Self::generate_token();
-
-            self.inflight.insert(
-                id,
+            prepared.push(self.prepare_reservation(
+                ready,
+                body,
                 Inflight {
-                    token,
+                    token: Self::generate_token(),
                     expires_at,
                     expires_at_epoch_ms,
                     owner_session_id,
                     attempts: next_attempts,
                     inflight_epoch,
                 },
-            );
-            self.update_cached_inflight_metadata(
-                id,
-                inflight_epoch,
-                Some(token),
-                Some(expires_at_epoch_ms),
-                Some(now_epoch_ms),
-            );
-
-            self.schedule_inflight_expiration(id, inflight_epoch, expires_at, expires_at_epoch_ms);
-
-            // Build response message
-            messages.push(ReservedMessage {
-                id,
-                body,
-                token,
                 inflight_seconds,
-                attempts: next_attempts, // First attempt is 1 (not 0)
-            });
+                now_epoch_ms,
+            ));
         }
 
-        (QueueResponse::Received { messages }, false)
+        match self.commit_reservation_batch(prepared) {
+            Ok(messages) => {
+                *response_bytes_remaining = remaining;
+                (QueueResponse::Received { messages }, budget_exhausted)
+            }
+            Err(response) => (response, false),
+        }
     }
 
-    fn schedule_inflight_expiration(
+    fn recover_unhydratable_ready(&mut self, id: MessageId, error: &str, now_ms: u64) -> bool {
+        match self.current_record(id) {
+            Ok(Some(record)) if !self.record_has_expired(&record) => self.cache_record(id, record),
+            Ok(_) => return self.remove_unavailable_message(id).is_ok(),
+            Err(_) => return false,
+        }
+        tracing::warn!(queue = ?self.queue_key, message_id = id.as_u64(), error_reason = error,
+            "Failed to hydrate queue record for receive");
+        self.divert_ready_or_log(id, DlqReason::HydrationFailed, now_ms)
+    }
+
+    pub(super) fn schedule_inflight_expiration(
         &mut self,
         id: MessageId,
         inflight_epoch: u64,
@@ -301,6 +307,7 @@ impl QueueActor {
         record.inflight_expires_at_ms = None;
         record.dead_lettered_at_ms = Some(dead_lettered_at_ms);
         record.dlq_reason = Some(reason);
+        self.cap_dead_letter_deadline(&mut record, dead_lettered_at_ms);
 
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
         let mut txn = self
@@ -311,13 +318,13 @@ impl QueueActor {
                 super::recovery_store::QueueTransactionMode::ReadWrite,
             )
             .map_err(|error| format!("Failed to begin ready diversion for {id}: {error:?}"))?;
-        txn.put(
-            self.cached_header_key(id),
-            Self::encode_record_header(&record),
-            None,
-        )
-        .map_err(|error| format!("Failed to write diverted queue header for {id}: {error:?}"))?;
-        self.write_index_mutation_plan(&mut txn, id, index_plan, Some(dead_lettered_at_ms))?;
+        self.write_dead_letter_record(&mut txn, id, &record)?;
+        self.write_index_mutation_plan(
+            &mut txn,
+            id,
+            index_plan,
+            Some((dead_lettered_at_ms, self.record_ttl_seconds(&record))),
+        )?;
         txn.commit()
             .map_err(|error| format!("Failed to commit ready diversion for {id}: {error:?}"))?;
 
@@ -367,6 +374,17 @@ impl QueueActor {
     ) -> QueueResponse {
         if self.storage_outcome_is_unknown() {
             return Self::unknown_outcome_response();
+        }
+        if self
+            .inflight
+            .get(&id)
+            .is_some_and(|entry| entry.owner_session_id == Some(session_id))
+        {
+            match self.message_is_live(id) {
+                Ok(true) => {}
+                Ok(false) => return QueueResponse::NotFound,
+                Err(error) => return error.into_response(),
+            }
         }
         match self.inflight.get(&id) {
             Some(inflight) if inflight.owner_session_id == Some(session_id) => {
@@ -539,6 +557,13 @@ impl QueueActor {
             }
         }
 
+        if self.inflight.contains_key(&id) {
+            match self.message_is_live(id) {
+                Ok(true) => {}
+                Ok(false) => return QueueResponse::NotFound,
+                Err(error) => return error.into_response(),
+            }
+        }
         let now = self.clock.now_instant();
         let Some(inflight) = self.load_inflight_for_ack(id, &dedup_key) else {
             return QueueResponse::NotFound;
@@ -588,6 +613,9 @@ impl QueueActor {
             }
 
             let inflight = self.inflight.get(&id)?;
+            if self.record_has_expired(&self.current_record(id).ok()??) {
+                return None;
+            }
             if inflight.owner_session_id != Some(owner_session_id)
                 || inflight.token != token
                 || inflight.expires_at <= now
@@ -754,6 +782,7 @@ impl QueueActor {
         self.inflight.remove(&id);
         self.evict_cached_record(id);
         self.evict_cached_body(id);
+        self.retention_schedule.schedule(id, None);
         let now_epoch_ms = self.clock.now_epoch_ms();
         self.complete_success_window.record(now_epoch_ms, 1);
 

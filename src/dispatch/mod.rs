@@ -79,6 +79,7 @@ pub(crate) struct DomainEnvelopeBuildRequest {
     pub(crate) correlation: Option<std::num::NonZeroU64>,
     /// The client set `ACK_REQUESTED` in the message header.
     pub(crate) ack_requested: bool,
+    pub(crate) extensions: crate::protocol::wire3::extensions::KnownFields,
     /// Monotonic time the transport received the complete frame. Retries reuse it so
     /// redelivery never renews a request deadline.
     pub(crate) received_at: std::time::Instant,
@@ -93,6 +94,7 @@ fn frame_context(request: &DomainEnvelopeBuildRequest) -> crate::protocol::Frame
         request.route_family,
     )
     .with_correlation(request.correlation)
+    .with_extensions(request.extensions)
 }
 
 fn client_channel(channel: ChannelId) -> ClientChannel {
@@ -442,6 +444,7 @@ mod tests {
             ),
             correlation,
             ack_requested: false,
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
             received_at: std::time::Instant::now(),
         }
     }

@@ -35,6 +35,7 @@ pub struct FrameContext {
     pub msg_type: MessageType,
     /// Raw message core bytes after the Wire 3 header.
     pub payload: Bytes,
+    pub extensions: crate::protocol::wire3::extensions::KnownFields,
     /// `RouteFamily` assigned to this session.
     pub route_family: RouteFamily,
     /// Client-generated identifier labelling this request, when the client
@@ -64,6 +65,7 @@ impl FrameContext {
             channel_id,
             msg_type,
             payload,
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
             route_family,
             correlation: None,
             response_final: true,
@@ -74,6 +76,15 @@ impl FrameContext {
     #[must_use]
     pub fn with_correlation(mut self, correlation: Option<NonZeroU64>) -> Self {
         self.correlation = correlation;
+        self
+    }
+
+    #[must_use]
+    pub fn with_extensions(
+        mut self,
+        extensions: crate::protocol::wire3::extensions::KnownFields,
+    ) -> Self {
+        self.extensions = extensions;
         self
     }
 
@@ -95,6 +106,7 @@ impl std::fmt::Debug for FrameContext {
             .field("correlation", &self.correlation)
             .field("response_final", &self.response_final)
             .field("payload_len", &self.payload.len())
+            .field("extensions", &self.extensions)
             .finish()
     }
 }

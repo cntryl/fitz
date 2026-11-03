@@ -7,6 +7,101 @@ can be lost in a crash; lost ACKs can cause redelivery and lost reservations can
 permit ID reuse. Only persisted backlog can recover. Producers must regenerate
 missing work, and consumers must tolerate duplicates.
 
+#### Retry limit and dead letters
+
+Set `FITZ_QUEUE_MAX_ATTEMPTS` to a positive `u32` integer to limit reservation
+assignments for every broker-managed queue, across all realms and route
+families. Omission preserves unlimited retries. Zero, empty, malformed, and
+out-of-range values fail startup. The setting is read at startup.
+
+Only RESERVE increments attempts, once per assigned message. NACK and
+visibility timeout do not increment it. With a limit of `3`, the third
+reservation can complete successfully; if that reservation is NACKed or
+expires, its message enters the DLQ with count `3`. Ready backlog already at
+or above the current limit enters the DLQ before another grant, including
+after restart with a lower configured limit. EXTEND changes only the live
+visibility deadline. Disconnect and undelivered-response cleanup release the
+reservation; the next RESERVE increments attempts and checks the limit.
+Reservation counters are written in one best-effort transaction per RESERVE
+batch before live tokens are granted.
+
+Dead-letter records and their attempt counts have the same best-effort
+persistence as other Queue state. Only transitions that reached persistent
+storage can recover after restart; a crash may lose an attempt increment or
+dead-letter transition. Disabling the limit leaves existing dead letters in
+place. Other dead-letter reasons, such as a body too large for a RESERVE
+response, remain available independently of this setting.
+
+Use the existing admin endpoints with an explicit route family:
+
+- Inspect: `GET /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters`.
+- Replay: `POST /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}/replay`.
+- Purge: `DELETE /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}`.
+
+Replay returns the same message to ready state and resets its attempt count
+to zero. Its next reservation is attempt `1` and receives a fresh lease token.
+The RESERVE core payload stays unchanged; this setting does not require
+client-visible attempt metadata. Future optional metadata uses the Wire 3
+extension registry.
+
+#### Message and DLQ retention
+
+`FITZ_QUEUE_MESSAGE_TTL` configures the default message lifetime in **days**.
+`FITZ_QUEUE_DLQ_TTL` configures retention after entering the DLQ in **days**.
+Each accepts an integer from `1` through `4294967295`; absent means no limit.
+Zero, empty, negative, malformed, and overflowing values fail startup.
+
+A publisher can override the message lifetime in **hours** using Wire 3
+ENQUEUE extension field `1` (`ttl_hours`, positive `u32 BE`, exactly 4 bytes).
+This requires negotiated capability `1` (`queue_message_ttl`). The override
+replaces the configured message default. Absence uses that default, and a
+core-only ENQUEUE remains byte-for-byte unchanged.
+
+The original message expiry is fixed at publish time, including any initial
+delay. While in the DLQ, the effective expiry is the earlier of:
+
+- The original publish expiry, when present.
+- The DLQ entry time plus `FITZ_QUEUE_DLQ_TTL`, when configured.
+
+Use the sole deadline if only one exists. With neither, retention is unlimited.
+RESERVE, NACK, EXTEND, restart, and replay never restart the publish lifetime.
+Replay before expiry leaves the DLQ and restores the remaining original
+message lifetime; an already expired message cannot be replayed. TTL also
+applies to delayed and inflight messages. Token operations on an expired
+message return message-not-found.
+
+Fitz writes remaining TTL to Midge for headers, bodies, and individual delayed
+or DLQ index rows. Midge expires these independently of broker maintenance;
+physical reclamation follows compaction. Shared index bookkeeping is cleaned
+in bounded passes or lazily during access. No TTL, attempt count, or timestamp
+is added to the RESERVE response core.
+
+#### NACK (210)
+
+Requires negotiated capability `2` (`queue_nack`). NACK means processing is not
+complete and this worker relinquishes its current reservation. It preserves
+the body and attempt count. A zero visibility delay makes work ready now; a
+positive delay defers the next worker. Only a current session owner with the
+current live token may change the message. The first successful NACK for a
+reservation wins; duplicate retries return success without changing its delay
+or touching any newer reservation. This deduplication is ephemeral and does
+not survive a broker restart.
+
+```
+[u32 BE] route_len
+[bytes]  route
+[u64 BE] message_id
+[u64 BE] inflight_token
+[u64 BE] visibility_seconds (0 for immediate availability)
+Response (status=0):
+  [u8] 0
+```
+
+Errors use the common envelope. Stale tokens, wrong owners, expired
+reservations, and overflowing delays do not relinquish a newer reservation.
+At the configured attempt limit, NACK enters the DLQ instead of permitting
+another worker. Its deadline still uses the earlier applicable TTL.
+
 #### Message Types
 
 | Type | Name        |
@@ -18,6 +113,7 @@ missing work, and consumers must tolerate duplicates.
 |  207 | SUBSCRIBE   |
 |  208 | UNSUBSCRIBE |
 |  209 | NOTIFY      |
+|  210 | NACK        |
 
 #### ENQUEUE Request
 

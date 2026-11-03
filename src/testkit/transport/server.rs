@@ -11,6 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, timeout};
 
+mod queue_retention;
 #[cfg(test)]
 mod shutdown_tests;
 
@@ -133,6 +134,7 @@ impl TestServer {
             vec![1],
             default_test_route_family_mappings(),
             max_message_bytes,
+            crate::domains::queue::retention::QueueRetention::default(),
         )
         .await
     }
@@ -356,6 +358,7 @@ impl TestServer {
             route_families,
             route_family_mappings,
             16_777_216,
+            crate::domains::queue::retention::QueueRetention::default(),
         )
         .await
     }
@@ -371,6 +374,7 @@ impl TestServer {
         route_families: Vec<u32>,
         route_family_mappings: Vec<(String, u32)>,
         max_message_bytes: usize,
+        queue_retention: crate::domains::queue::retention::QueueRetention,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let permit = test_server_semaphore()
             .clone()
@@ -451,6 +455,10 @@ impl TestServer {
             queue_write_policy_error: None,
             queue_loss_window_ms: 100,
             queue_loss_window_error: None,
+            queue_max_attempts: None,
+            queue_max_attempts_error: None,
+            queue_retention,
+            queue_retention_error: None,
             kv_idle_transaction_ttl_seconds: 300,
             kv_idle_transaction_ttl_error: None,
             schedule_preload_timeout_seconds:
@@ -488,6 +496,8 @@ impl TestServer {
                 schedule_write_policy,
 
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
+                queue_max_attempts: boot_config.queue_max_attempts,
+                queue_retention: boot_config.queue_retention,
 
                 request_sync_write_policy: boot_config.request_sync_write_policy(),
                 request_buffered_write_policy: boot_config.request_buffered_write_policy(),

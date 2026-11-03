@@ -158,6 +158,8 @@ impl Runtime {
                 schedule_write_policy: crate::domains::WritePolicy::BestEffort,
 
                 queue_fast_flush_interval: Some(Duration::from_millis(100)),
+                queue_max_attempts: None,
+                queue_retention: crate::domains::queue::retention::QueueRetention::default(),
 
                 request_sync_write_policy: crate::domains::WritePolicy::Sync,
                 request_buffered_write_policy: crate::domains::WritePolicy::Buffered,

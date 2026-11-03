@@ -578,7 +578,7 @@ fn should_keep_successfully_acked_message_absent_after_restart() {
 }
 
 #[test]
-fn should_dead_letter_unhydratable_head_plus_deliver_next_message() {
+fn should_skip_a_missing_header_without_creating_a_phantom_dead_letter() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(
@@ -628,13 +628,10 @@ fn should_dead_letter_unhydratable_head_plus_deliver_next_message() {
         }
         other => panic!("Expected next Received response, found {other:?}"),
     }
-    let dead_letters = actor.admin_dead_letters();
-    assert_eq!(dead_letters.len(), 1);
-    assert_eq!(dead_letters[0].message_id, message_id.as_u64());
-    assert_eq!(dead_letters[0].reason, "hydration_failed");
-    assert!(actor
+    assert_eq!(actor.admin_dead_letters().len(), 0);
+    assert!(!actor
         .replay_dead_letter(message_id)
-        .expect("replay hydration dead letter"));
+        .expect("missing message is not replayable"));
 }
 
 #[test]

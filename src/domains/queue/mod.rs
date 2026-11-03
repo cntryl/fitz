@@ -57,7 +57,7 @@
 //!
 //! - **Single-node**: No distributed coordination (MVP)
 //! - **Ephemeral inflight state**: Inflight state lost on restart (automatic redelivery)
-//! - **Microsecond latency**: In-memory reserve/complete with persistent backing
+//! - **Batched counters**: RESERVE persists metadata before granting ephemeral tokens
 //! - **Token-based operations**: Random tokens prevent accidental duplicate operations
 //! - **Dead Letter Queue (DLQ)**: Optional `max_attempts` threshold for failed messages
 //! - **Recovery**: Persisted state restored after restart (messages + delayed visibility)
@@ -118,7 +118,7 @@
 //! # Dead Letter Queue (DLQ) Policy
 //!
 //! When creating a `QueueActor` with `max_attempts: Some(n)`:
-//! - Each inflight expiration increments `attempts`
+//! - Only RESERVE increments `attempts`; NACK and expiry preserve the count
 //! - When `attempts >= max_attempts`:
 //!   - Message transitions into best-effort persisted DLQ state
 //!   - Header and body remain in storage with DLQ metadata
@@ -156,6 +156,7 @@ pub mod events;
 pub mod metrics;
 pub mod projection;
 pub mod protocol;
+pub mod retention;
 pub(crate) mod sink;
 pub(crate) use sink::QueueDomain;
 

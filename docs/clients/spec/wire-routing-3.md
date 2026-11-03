@@ -78,8 +78,8 @@ layouts from the [released handshake contract](wire-routing.md).
 Both handshakes MUST set `EXTENSIONS_PRESENT` and carry exactly one field ID 1
 capability list, even when the list is empty. The field value is `[u16 BE
 count][count × u32 BE capability_id]`. IDs are nonzero and strictly ascending.
-An empty list is encoded as `[0x00 0x00]`. The capability registry currently
-assigns no IDs, so this broker advertises the empty set.
+An empty list is encoded as `[0x00 0x00]`. This broker advertises capability
+IDs `1` (per-publish Queue TTL) and `2` (Queue NACK).
 
 The active capability set is the intersection of the client and broker sets.
 Unknown numeric capability IDs are ignored. A request or server-initiated

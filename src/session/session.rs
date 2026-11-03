@@ -244,10 +244,18 @@ impl fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+#[cfg(test)]
+#[path = "queue_controls_tests.rs"]
+mod queue_controls_tests;
+
+#[path = "wire3_ingress.rs"]
+mod wire3_ingress;
+
 /// Session object owning the channel multiplexer.
 pub struct Session {
     info: SessionInfo,
     mux: Mux,
+    capability_ids: Vec<u32>,
 }
 
 /// Configuration used to create sessions. Grouped to avoid long parameter lists.
@@ -333,7 +341,11 @@ impl Session {
             route_family: cfg.route_family,
         };
 
-        Self { info, mux }
+        Self {
+            info,
+            mux,
+            capability_ids: Vec::new(),
+        }
     }
 
     /// Create a new unauthenticated session (pre-auth)
@@ -356,7 +368,11 @@ impl Session {
             route_family: config.route_family,
         };
 
-        Self { info, mux }
+        Self {
+            info,
+            mux,
+            capability_ids: Vec::new(),
+        }
     }
 
     /// Get session metadata for runtime ingress
@@ -409,50 +425,9 @@ impl Session {
             "Session decoded message"
         );
         let wire_payload = &frame[HEADER_LEN..];
-        let core = crate::protocol::wire3::extensions::decode_core_payload(
-            wire_payload,
-            header.message_type,
-            crate::protocol::wire3::extensions::ExtensionDirection::ClientToBroker,
-            header.flags.is_extensions_present(),
-        )
-        .map_err(|error| {
-            crate::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
-            crate::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
-            SessionError::Decode(MessageError::InvalidExtensions(error))
-        })?;
-        if header.message_type == crate::protocol::wire3::extensions::CONNECT_MESSAGE_TYPE
-            && !header.flags.is_extensions_present()
-            && wire_payload.get(..4).is_some_and(|version_range| {
-                let min_version = u16::from_be_bytes([version_range[0], version_range[1]]);
-                let max_version = u16::from_be_bytes([version_range[2], version_range[3]]);
-                crate::protocol::wire3::handshake::negotiate_version(
-                    min_version,
-                    max_version,
-                    crate::protocol::wire3::WIRE_VERSION,
-                    crate::protocol::wire3::WIRE_VERSION,
-                )
-                .is_some()
-            })
-        {
-            crate::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
-            crate::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
-            return Err(SessionError::Decode(MessageError::InvalidExtensions(
-                crate::protocol::wire3::extensions::ExtensionError::CapabilityListMissing,
-            )));
-        }
-        if crate::protocol::manifest::client_entry(crate::protocol::message::MessageType::new(
-            header.message_type,
-        ))
-        .is_err()
-        {
-            return Err(SessionError::Unsupported {
-                message_type: header.message_type,
-                correlation: header.correlation,
-                reason: "unsupported or server-to-client message type",
-            });
-        }
-        let core_start = HEADER_LEN + core.offset;
-        let core_end = core_start + core.length;
+        let decoded = self.validate_payload(wire_payload, &header)?;
+        let core_start = HEADER_LEN + decoded.core.offset;
+        let core_end = core_start + decoded.core.length;
         let payload = frame.slice(core_start..core_end);
         let record = crate::protocol::message::WireMessage::new(
             crate::protocol::message::MessageType::new(header.message_type),
@@ -469,6 +444,7 @@ impl Session {
                 message
                     .with_correlation(header.correlation)
                     .with_flags(header.flags)
+                    .with_extensions(decoded.fields)
             })
             .map_err(|error| {
                 warn!(session_id = self.info.session_id, error = ?error, "Mux routing error");

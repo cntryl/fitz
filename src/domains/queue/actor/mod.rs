@@ -29,7 +29,7 @@
 //!             | reserve
 //!           [INFLIGHT] --complete-> DELETED
 //!             | expire
-//!           [READY QUEUE] (redelivery with attempts++)
+//!           [READY QUEUE] (next reserve increments attempts)
 //! ```
 //!
 //! # Performance Model
@@ -89,6 +89,7 @@ type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 const CACHED_RESPONSE_VERSION: u8 = 1;
 const CACHED_RESPONSE_ACKED: u8 = 0;
 const CACHED_RESPONSE_NOT_FOUND: u8 = 1;
+const CACHED_RESPONSE_NACKED: u8 = 2;
 const QUEUE_KEY_FAMILY_META: u8 = 0x01;
 const QUEUE_KEY_FAMILY_INDEX_META: u8 = 0x02;
 const QUEUE_KEY_FAMILY_HEADER: u8 = 0x03;
@@ -101,6 +102,7 @@ const QUEUE_KEY_FAMILY_DLQ_INDEX: u8 = 0x13;
 fn encode_cached_response(response: &QueueResponse) -> Option<Vec<u8>> {
     match response {
         QueueResponse::Acked => Some(vec![CACHED_RESPONSE_VERSION, CACHED_RESPONSE_ACKED]),
+        QueueResponse::Nacked => Some(vec![CACHED_RESPONSE_VERSION, CACHED_RESPONSE_NACKED]),
         QueueResponse::NotFound => Some(vec![CACHED_RESPONSE_VERSION, CACHED_RESPONSE_NOT_FOUND]),
         _ => None,
     }
@@ -110,6 +112,7 @@ fn decode_cached_response(bytes: &[u8]) -> Result<QueueResponse, String> {
     match bytes {
         [version, tag] if *version == CACHED_RESPONSE_VERSION => match *tag {
             CACHED_RESPONSE_ACKED => Ok(QueueResponse::Acked),
+            CACHED_RESPONSE_NACKED => Ok(QueueResponse::Nacked),
             CACHED_RESPONSE_NOT_FOUND => Ok(QueueResponse::NotFound),
             other => Err(format!("Unknown cached response tag {other}")),
         },
@@ -132,7 +135,7 @@ struct QueueRecord {
     enqueue_seq: u64,
     /// Current ready ordering sequence when the message is in the ready state.
     ready_seq: Option<u64>,
-    /// Number of delivery attempts (starts at 0, increments on successful inflight assignment).
+    /// Successful reservation assignments, incremented only by RESERVE.
     attempts: u32,
     /// Visibility timestamp (milliseconds since UNIX epoch).
     ///
@@ -153,6 +156,10 @@ struct QueueRecord {
     dead_lettered_at_ms: Option<u64>,
     /// Durable DLQ reason code.
     dlq_reason: Option<DlqReason>,
+    /// Original publish deadline; never refreshed by delivery or replay.
+    expires_at_ms: Option<u64>,
+    /// Current retention deadline, additionally capped while in the DLQ.
+    retention_expires_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +183,7 @@ enum DlqReason {
 enum QueueCommit {
     Ack,
     Enqueue,
+    Reserve,
     Redelivery,
 }
 
@@ -227,6 +235,8 @@ impl QueueRecord {
             inflight_expires_at_ms: None,
             dead_lettered_at_ms: None,
             dlq_reason: None,
+            expires_at_ms: None,
+            retention_expires_at_ms: None,
         }
     }
 
@@ -256,25 +266,8 @@ impl QueueRecord {
             inflight_expires_at_ms: None,
             dead_lettered_at_ms: None,
             dlq_reason: None,
-        }
-    }
-
-    #[inline]
-    fn metadata_only(attempts: u32, visible_at_ms: u64) -> Self {
-        Self {
-            body: None,
-            state: QueueState::Ready,
-            enqueue_seq: 0,
-            ready_seq: None,
-            attempts,
-            visible_at_ms,
-            first_enqueued_at_ms: 0,
-            last_inflight_at_ms: None,
-            inflight_epoch: 0,
-            inflight_token: None,
-            inflight_expires_at_ms: None,
-            dead_lettered_at_ms: None,
-            dlq_reason: None,
+            expires_at_ms: None,
+            retention_expires_at_ms: None,
         }
     }
 
@@ -294,6 +287,8 @@ impl QueueRecord {
             inflight_expires_at_ms: self.inflight_expires_at_ms,
             dead_lettered_at_ms: self.dead_lettered_at_ms,
             dlq_reason: self.dlq_reason,
+            expires_at_ms: self.expires_at_ms,
+            retention_expires_at_ms: self.retention_expires_at_ms,
         }
     }
 }
@@ -562,7 +557,7 @@ struct IndexMetaSnapshot {
 /// - Maintain best-effort ordering via sharded ready queues
 /// - Track inflight entries with expiration
 /// - Re-enqueue expired messages
-/// - Increment attempts on redelivery
+/// - Increment attempts on reservation
 /// - Persist deletes on successful completion
 /// - Never persist inflight state
 pub struct QueueActor {
@@ -658,6 +653,8 @@ pub struct QueueActor {
 
     /// Maximum delivery attempts before DLQ (None = unlimited retries)
     max_attempts: Option<u32>,
+    retention: super::retention::QueueRetention,
+    retention_schedule: retention_cleanup::RetentionSchedule,
 
     /// Deduplication store for context-dependent operations (e.g., COMPLETE)
     dedup_store: Arc<crate::utils::idempotency::DedupStore>,
@@ -685,8 +682,12 @@ mod dlq;
 mod enqueue;
 mod inflight_release;
 mod mutation_storage;
+mod nack;
 mod recovery_state;
+mod reservation_batch;
 mod reserve_and_ack;
+mod retention;
+mod retention_cleanup;
 mod startup_reconciliation;
 mod storage_keys;
 

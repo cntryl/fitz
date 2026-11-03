@@ -116,7 +116,7 @@ impl QueueActor {
                 Err(error) => return Err(error),
             }
         };
-        if !matches!(record.state, QueueState::Dlq) {
+        if !matches!(record.state, QueueState::Dlq) || self.record_has_expired(&record) {
             return Ok(None);
         }
         Ok(Some(QueueDeadLetterSnapshot {
@@ -135,7 +135,7 @@ impl QueueActor {
         let mut dead_letters: Vec<_> = self
             .persisted_dlq
             .iter()
-            .map(|(id, &dead_lettered_at_epoch_ms)| {
+            .filter_map(|(id, &dead_lettered_at_epoch_ms)| {
                 let record = self
                     .records
                     .get(id)
@@ -145,27 +145,23 @@ impl QueueActor {
                         self.load_record_metadata_from_store(*id)
                             .ok()
                             .filter(|record| matches!(record.state, QueueState::Dlq))
-                    });
+                    })?;
+                if self.record_has_expired(&record) {
+                    return None;
+                }
 
-                let attempts = record
-                    .as_ref()
-                    .map(|record| record.attempts as usize)
-                    .unwrap_or_default();
+                let attempts = record.attempts as usize;
                 let dead_lettered_at_epoch_ms = record
-                    .as_ref()
-                    .and_then(|record| record.dead_lettered_at_ms)
+                    .dead_lettered_at_ms
                     .unwrap_or(dead_lettered_at_epoch_ms);
-                let reason = record
-                    .as_ref()
-                    .and_then(|record| record.dlq_reason)
-                    .map_or("unknown", DlqReason::as_str);
+                let reason = record.dlq_reason.map_or("unknown", DlqReason::as_str);
 
-                QueueDeadLetterSnapshot {
+                Some(QueueDeadLetterSnapshot {
                     message_id: id.as_u64(),
                     dead_lettered_at_epoch_ms,
                     attempts,
                     reason,
-                }
+                })
             })
             .collect();
 

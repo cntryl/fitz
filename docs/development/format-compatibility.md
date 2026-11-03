@@ -207,16 +207,28 @@ formats and all Fitz row encodings. Cloud reads now fail with
 
 ## Single-generation storage formats
 
-Every domain store now reads exactly the one on-disk generation it writes.
-All prior-generation readers have been removed, so a store written by an
+Domain stores read their documented current row encodings. Obsolete
+prior-generation readers have been removed, so a store written by an
 earlier broker is not upgraded, migrated, or detected — it is simply not
 readable. Upgrading in place requires starting from a fresh storage path.
 
-- **Queue records**: messages are written as a versioned split header (`0x02`,
-  79 bytes) plus a separate body row. The former embedded-header encoding and
+- **Queue records**: messages use split headers plus a separate body row.
+  Headers without retention remain `0x02` (79 bytes), byte-for-byte unchanged.
+  A TTL header is `0x03` (95 bytes): the existing fields retain their offsets,
+  followed by the original publish expiry and current effective retention
+  expiry, each a little-endian `u64` epoch-millisecond value (zero means absent).
+  Readers accept both split-header forms. The former embedded-header encoding and
   the separate legacy message-key family (`0x05`) are gone, along with their
   recovery scan. The queue meta row holds a single little-endian `u64`
   reserved-id value; the wider 57-byte meta encoding is no longer read.
+  Header/body and individual delayed/DLQ index rows receive Midge native TTL.
+  Shared ready ranges and global metadata never receive a per-message TTL.
+  Queue checks absolute deadlines before using cached records; rewrites pass
+  the remaining lifetime rounded up to seconds. Midge expiry makes data
+  unavailable independently of a warm actor; physical reclamation follows
+  Midge compaction. Stale shared index entries are reconciled lazily and warm
+  expiry bookkeeping runs in bounded batches. A missing authoritative header
+  is discarded instead of recreating a phantom DLQ record.
 - **Queue index meta**: only version `0x02` is accepted. Version `0x01` rows no
   longer decode to a recoverable state.
 - **Schedule definitions**: only the metadata-plus-body row pair is read

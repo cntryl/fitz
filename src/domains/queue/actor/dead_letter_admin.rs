@@ -12,17 +12,19 @@ impl QueueActor {
     pub fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
         self.process_due_work();
 
-        let mut record = match self.load_full_record_for_admin_mutation(id) {
-            Ok(value) => value,
-            Err(error) if error == format!("Message {id} disappeared from storage") => {
-                return Ok(false);
-            }
-            Err(error) => return Err(error),
+        let Some(record) = self.current_record(id)? else {
+            return Ok(false);
         };
-
         if !matches!(record.state, QueueState::Dlq) {
             return Ok(false);
         }
+        if self.record_has_expired(&record) {
+            self.remove_unavailable_message(id)
+                .map_err(|error| error.to_string())?;
+            return Ok(false);
+        }
+        self.cache_record(id, record);
+        let mut record = self.load_full_record_for_admin_mutation(id)?;
 
         let dead_lettered_at_ms = record
             .dead_lettered_at_ms
@@ -44,6 +46,7 @@ impl QueueActor {
         record.inflight_expires_at_ms = None;
         record.dead_lettered_at_ms = None;
         record.dlq_reason = None;
+        record.retention_expires_at_ms = record.expires_at_ms;
 
         let cf_id = self.queue_key.family.id();
         let mut txn = self
@@ -148,17 +151,26 @@ impl QueueActor {
         self.remove_persisted_dlq(id);
         self.evict_cached_record(id);
         self.evict_cached_body(id);
+        self.retention_schedule.schedule(id, None);
 
         Ok(true)
     }
 
     fn promote_delayed_message(&mut self, delayed: DelayedMessage) -> bool {
         let id = delayed.id;
-        let visible_at_ms = self
-            .persisted_delayed
-            .get(&id)
-            .copied()
-            .unwrap_or(delayed.visible_at_ms);
+        if self.persisted_delayed.get(&id) != Some(&delayed.visible_at_ms) {
+            return true;
+        }
+        match self.message_is_live(id) {
+            Ok(true) => self.persist_delayed_promotion(delayed),
+            Ok(false) => true,
+            Err(_) => false,
+        }
+    }
+
+    fn persist_delayed_promotion(&mut self, delayed: DelayedMessage) -> bool {
+        let id = delayed.id;
+        let visible_at_ms = delayed.visible_at_ms;
         let ready_seq = self.next_ready_seq;
         let (ready_shard, ready_range) = Self::prepare_persisted_ready_append(
             self.persisted_ready_shards[Self::shard_for_id(id)]
@@ -311,7 +323,7 @@ impl QueueActor {
             return false;
         }
         let now = self.clock.now_instant();
-        let mut mutated = false;
+        let mut mutated = self.process_retention_expirations();
 
         if now >= self.next_expiration_deadline {
             mutated |= self.process_expired_timers();
