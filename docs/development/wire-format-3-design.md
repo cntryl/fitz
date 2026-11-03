@@ -23,7 +23,8 @@ is not redefined by this design.
   copying their values. Validate the entire envelope before domain dispatch.
 - Use numeric capability IDs in the extensible CONNECT and HELLO payloads.
   The two legacy `u32` capability fields remain zero. An empty set is an
-  explicit two-byte zero count. The initial broker capability set is empty.
+  explicit two-byte zero count. The broker advertises capability IDs `1`
+  (per-publish Queue TTL) and `2` (Queue NACK).
 - Count the header, prefix, core, and extensions against `max_message_bytes`.
 - Keep storage formats and stored-data migrations outside the wire change.
 
