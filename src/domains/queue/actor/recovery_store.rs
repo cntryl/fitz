@@ -330,6 +330,15 @@ pub(super) struct QueueIndexRebuild<'a> {
     pub ready: &'a [VecDeque<ReadyRange>],
     pub delayed: &'a FastMap<MessageId, u64>,
     pub dlq: &'a FastMap<MessageId, u64>,
+    pub retention_deadlines: &'a FastMap<u64, u64>,
+    pub now_epoch_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TimedIndexEntry {
+    pub timestamp: u64,
+    pub id: MessageId,
+    pub expires_at_ms: Option<u64>,
 }
 
 impl QueueRecoveryStore {
@@ -386,7 +395,7 @@ impl QueueRecoveryStore {
     pub(super) fn delayed_entries<'a>(
         &'a self,
         snapshot: &'a QueueRecoverySnapshot,
-    ) -> Result<impl Iterator<Item = Result<(u64, MessageId), String>> + 'a, String> {
+    ) -> Result<impl Iterator<Item = Result<TimedIndexEntry, String>> + 'a, String> {
         let rows = snapshot
             .0
             .scan_prefix(self.delayed_index_prefix.clone())
@@ -399,7 +408,7 @@ impl QueueRecoveryStore {
     pub(super) fn dead_letters<'a>(
         &'a self,
         snapshot: &'a QueueRecoverySnapshot,
-    ) -> Result<impl Iterator<Item = Result<(u64, MessageId), String>> + 'a, String> {
+    ) -> Result<impl Iterator<Item = Result<TimedIndexEntry, String>> + 'a, String> {
         let rows = snapshot
             .0
             .scan_prefix(self.dlq_index_prefix.clone())
@@ -465,11 +474,12 @@ impl QueueRecoveryStore {
             (state.dlq, dlq_prefix, "DLQ"),
         ] {
             for (&id, &timestamp) in rows {
+                let deadline = state.retention_deadlines.get(&id.as_u64()).copied();
                 transaction
                     .put(
                         QueueActor::delayed_index_key_with_prefix(prefix, timestamp, id),
-                        Vec::new(),
-                        None,
+                        QueueActor::index_expiry_value(deadline),
+                        QueueActor::ttl_seconds_until(deadline, state.now_epoch_ms),
                     )
                     .map_err(|error| format!("Failed to write queue {label} index: {error:?}"))?;
             }
@@ -521,14 +531,37 @@ fn decode_ready(key: &[u8], value: &[u8], prefix: &[u8]) -> Result<ReadyRange, S
     Ok(range)
 }
 
-fn decode_delayed(key: &[u8], _: &[u8], prefix: &[u8]) -> Result<(u64, MessageId), String> {
-    QueueActor::parse_delayed_index_key(key, prefix)
-        .ok_or_else(|| "Malformed queue delayed index key".to_string())
+fn decode_delayed(key: &[u8], value: &[u8], prefix: &[u8]) -> Result<TimedIndexEntry, String> {
+    let (timestamp, id) = QueueActor::parse_delayed_index_key(key, prefix)
+        .ok_or_else(|| "Malformed queue delayed index key".to_string())?;
+    decode_timed_index(timestamp, id, value)
 }
 
-fn decode_dlq(key: &[u8], _: &[u8], prefix: &[u8]) -> Result<(u64, MessageId), String> {
-    QueueActor::parse_dlq_index_key(key, prefix)
-        .ok_or_else(|| "Malformed queue DLQ index key".to_string())
+fn decode_dlq(key: &[u8], value: &[u8], prefix: &[u8]) -> Result<TimedIndexEntry, String> {
+    let (timestamp, id) = QueueActor::parse_dlq_index_key(key, prefix)
+        .ok_or_else(|| "Malformed queue DLQ index key".to_string())?;
+    decode_timed_index(timestamp, id, value)
+}
+
+fn decode_timed_index(
+    timestamp: u64,
+    id: MessageId,
+    value: &[u8],
+) -> Result<TimedIndexEntry, String> {
+    let expires_at_ms = if value.is_empty() {
+        None
+    } else {
+        let bytes: [u8; 8] = value
+            .try_into()
+            .map_err(|_| "Malformed queue index expiry".to_string())?;
+        let deadline = u64::from_le_bytes(bytes);
+        (deadline != 0).then_some(deadline)
+    };
+    Ok(TimedIndexEntry {
+        timestamp,
+        id,
+        expires_at_ms,
+    })
 }
 
 fn decode_header(

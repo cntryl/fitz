@@ -135,12 +135,18 @@ impl SessionOutboundSink {
         let encode_start = Self::encode_latency_start();
         let payload = crate::protocol::lease_codec::encode_domain_response(&response.response);
         Self::observe_encode_latency(encode_start);
-        self.send_message(
-            response.meta.session_id,
+        let flags = if response.meta.correlation.is_some() && response.meta.response_final {
+            crate::protocol::wire2::header::HeaderFlags::response_final()
+        } else {
+            crate::protocol::wire2::header::HeaderFlags::none()
+        };
+        let bytes = self.encode_frame_with_flags(
             response.meta.message_type,
             response.meta.correlation,
+            flags,
             &payload,
-        )
+        )?;
+        self.send_encoded_frame(response.meta.session_id, &bytes)
     }
 
     pub(super) fn deliver_lease_notification(

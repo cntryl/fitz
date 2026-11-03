@@ -337,15 +337,15 @@ impl SessionAuthenticator {
         session_id: u64,
         channel_id: ChannelId,
         payload: &Bytes,
-    ) -> Result<crate::protocol::wire2::handshake::Connect, IngressDecision> {
-        use crate::protocol::wire2::catalog::block;
-        use crate::protocol::wire2::envelope::ErrorClass;
+    ) -> Result<crate::protocol::wire3::handshake::Connect, IngressDecision> {
+        use crate::protocol::wire3::catalog::block;
+        use crate::protocol::wire3::envelope::ErrorClass;
 
         if channel_id != ChannelId::Control {
             return Err(self.reject_connect(
                 session_id,
                 &ConnectRefusal {
-                    code: crate::protocol::wire2::catalog::shared(
+                    code: crate::protocol::wire3::catalog::shared(
                         block::PROTOCOL,
                         ErrorClass::BadRequest,
                     )
@@ -354,13 +354,13 @@ impl SessionAuthenticator {
                 },
             ));
         }
-        let connect = match crate::protocol::wire2::handshake::Connect::decode(payload) {
+        let connect = match crate::protocol::wire3::handshake::Connect::decode(payload) {
             Ok(connect) => connect,
             Err(error) => {
                 return Err(self.reject_connect(
                     session_id,
                     &ConnectRefusal {
-                        code: crate::protocol::wire2::catalog::shared(
+                        code: crate::protocol::wire3::catalog::shared(
                             block::PROTOCOL,
                             ErrorClass::BadRequest,
                         )
@@ -370,27 +370,56 @@ impl SessionAuthenticator {
                 ));
             }
         };
-        let version = crate::protocol::wire2::handshake::negotiate_version(
+        let version = crate::protocol::wire3::handshake::negotiate_version(
             connect.min_version,
             connect.max_version,
-            crate::protocol::wire2::WIRE_VERSION,
-            crate::protocol::wire2::WIRE_VERSION,
+            crate::protocol::wire3::WIRE_VERSION,
+            crate::protocol::wire3::WIRE_VERSION,
         );
         if version.is_none() {
             return Err(self.reject_connect(
                 session_id,
                 &ConnectRefusal {
-                    code: crate::protocol::wire2::catalog::VERSION_MISMATCH,
+                    code: crate::protocol::wire3::catalog::VERSION_MISMATCH,
                     message: format!(
                         "client speaks wire {}..{}, broker speaks {}",
                         connect.min_version,
                         connect.max_version,
-                        crate::protocol::wire2::WIRE_VERSION
+                        crate::protocol::wire3::WIRE_VERSION
                     ),
                 },
             ));
         }
+        if connect.client_caps != 0 {
+            return Err(self.reject_connect(
+                session_id,
+                &ConnectRefusal {
+                    code: crate::protocol::wire3::catalog::shared(
+                        block::PROTOCOL,
+                        ErrorClass::BadRequest,
+                    )
+                    .unwrap_or_default(),
+                    message: "Wire 3 CONNECT legacy capability bits must be zero".to_owned(),
+                },
+            ));
+        }
         Ok(connect)
+    }
+
+    /// Refuse a `CONNECT` whose header is malformed (reserved flag bits or a
+    /// non-zero correlation) before any session state is established.
+    pub(super) fn reject_malformed_connect(
+        &self,
+        session_id: u64,
+        reason: &str,
+    ) -> IngressDecision {
+        self.reject_connect(
+            session_id,
+            &ConnectRefusal {
+                code: crate::protocol::error_codes::protocol::ERR_BAD_REQUEST,
+                message: reason.to_owned(),
+            },
+        )
     }
 
     /// Send `CONNECT_REJECTED` to the session's inbox and produce the close
@@ -426,7 +455,7 @@ impl SessionAuthenticator {
     async fn verify_connect(
         &self,
         session_id: u64,
-        connect: &crate::protocol::wire2::handshake::Connect,
+        connect: &crate::protocol::wire3::handshake::Connect,
     ) -> Result<
         (
             SessionPermissions,

@@ -8,11 +8,24 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(super) struct QueueActorRegistry {
+    max_attempts: Option<std::num::NonZeroU32>,
+    retention: crate::domains::queue::retention::QueueRetention,
     actors: HashMap<QueueKey, WarmQueueActor>,
     idle_sweep_keys: VecDeque<QueueKey>,
 }
 
 impl QueueActorRegistry {
+    pub(super) fn new(
+        max_attempts: Option<std::num::NonZeroU32>,
+        retention: crate::domains::queue::retention::QueueRetention,
+    ) -> Self {
+        Self {
+            max_attempts,
+            retention,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn with_actor<R>(
         &mut self,
         key: &QueueKey,
@@ -31,9 +44,10 @@ impl QueueActorRegistry {
                     key.family,
                     key.clone(),
                     store.clone(),
-                    None,
+                    self.max_attempts.map(std::num::NonZeroU32::get),
                     dedup_store.clone(),
-                )?;
+                )?
+                .with_retention(self.retention);
                 let warm_actor = entry.insert(WarmQueueActor {
                     actor,
                     last_used: now,

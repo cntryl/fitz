@@ -7,6 +7,8 @@
 use std::time::Duration;
 
 pub mod body;
+#[cfg(test)]
+pub(crate) mod clock;
 #[cfg(feature = "recovery-qualification")]
 pub mod cloud_process;
 mod domains;

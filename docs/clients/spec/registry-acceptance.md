@@ -1,8 +1,10 @@
 # Message Registry
 
-Message identifiers are fixed by wire format 2. Reserved identifiers are not
-valid operations. The broker manifest in `src/protocol/manifest.rs` is the
-implementation source of truth.
+Released Wire 2 assignments remain unchanged in Wire 3. Wire 3 adds NACK (210),
+gated by capability 2. Reserved identifiers are not valid operations. The broker manifest
+in `src/protocol/manifest.rs` is the implementation source of truth. Wire 3
+extension fields are registered separately in
+[extension-registry.md](extension-registry.md).
 
 ## Message identifiers
 
@@ -28,7 +30,7 @@ implementation source of truth.
 | 109 | SUBSCRIBE |
 | 110 | UNSUBSCRIBE |
 | 111 | NOTIFY |
-**Queue Domain (200–209):**
+**Queue Domain (200–210):**
 | Value | Name |
 |---:|---|
 | 200 | ENQUEUE |
@@ -38,13 +40,16 @@ implementation source of truth.
 | 207 | SUBSCRIBE |
 | 208 | UNSUBSCRIBE |
 | 209 | NOTIFY |
-**RPC Domain (300–303):**
+| 210 | NACK (Wire 3 capability 2) |
+**RPC Domain (300–305):**
 | Value | Name |
 |---:|---|
 | 300 | SUBSCRIBE_WORKER |
 | 301 | UNSUBSCRIBE_WORKER |
 | 302 | REQUEST |
 | 303 | RESPONSE |
+| 304 | CANCEL (caller cancel; worker cleanup ACK) |
+| 305 | LIFECYCLE (Server→Client: cancellation signal or result) |
 **Lease messages:**
 | Value | Name |
 |---:|---|
@@ -116,6 +121,7 @@ Clients do NOT encode these; listed for reference:
 | Sub | 2 | Subscriptions/delivery |
 | Rpc | 3 | RPC request/response |
 | Lease | 4 | Lease domain |
+| Internal | 5 | Schedule domain |
 
 ### Type Encoding Rules
 

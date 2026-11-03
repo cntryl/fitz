@@ -61,6 +61,11 @@ impl Ingress for RuntimeIngress {
         .await
     }
 
+    fn reject_connect(&self, session_id: u64, reason: &str) -> IngressDecision {
+        self.session_authenticator()
+            .reject_malformed_connect(session_id, reason)
+    }
+
     async fn on_frame_received_at(
         &self,
         session_id: u64,
@@ -70,7 +75,6 @@ impl Ingress for RuntimeIngress {
         labels: crate::protocol::wire2::header::HeaderLabels,
         received_at: std::time::Instant,
     ) -> IngressDecision {
-        let crate::protocol::wire2::header::HeaderLabels { correlation, flags } = labels;
         let _ingress_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_INGRESS_FRAME_TOTAL_LATENCY);
         // Record frame received counter
@@ -143,8 +147,7 @@ impl Ingress for RuntimeIngress {
                     route_family,
                     msg_type,
                     DomainDispatchPayload::Shared(&message_payload),
-                    correlation,
-                    flags,
+                    labels,
                     received_at,
                 )
                 .await
@@ -167,8 +170,7 @@ impl Ingress for RuntimeIngress {
                 route_family,
                 msg_type,
                 DomainDispatchPayload::Owned(message_payload),
-                correlation,
-                flags,
+                labels,
                 received_at,
             )
             .await

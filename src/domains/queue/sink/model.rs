@@ -174,6 +174,8 @@ pub(crate) struct QueueDomain {
 #[derive(Clone)]
 pub(super) struct QueueDomainConfig {
     pub(super) response_payload_limit: usize,
+    pub(super) max_attempts: Option<std::num::NonZeroU32>,
+    pub(super) retention: crate::domains::queue::retention::QueueRetention,
     pub(super) store: crate::domains::queue::actor::recovery_store::QueueStore,
 
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,

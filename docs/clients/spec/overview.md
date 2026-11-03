@@ -2,7 +2,8 @@
 
 Fitz clients encode the documented messages and carry them over WebSocket or
 TCP. The broker owns authorization, routing, domain state, and domain behavior.
-The client specification is split into this overview, the [wire and routing
+The client specification is split into this overview, the [Wire 3
+contract](wire-routing-3.md), the released [Wire 2
 contract](wire-routing.md), and one specification per domain.
 
 ## Connection and session
@@ -42,4 +43,5 @@ without changing their meaning.
 
 WebSocket uses binary messages. TCP prefixes each message with a four-byte
 big-endian length. Both transports carry the same Fitz message format; see the
-[wire contract](wire-routing.md) for headers, handshake, limits, and routing.
+[Wire 3 contract](wire-routing-3.md) for headers, handshake, limits, and
+routing.

@@ -1,12 +1,12 @@
 //! Wire-size budget for schedule LIST responses.
 //!
 //! Schedule LIST responses have a domain-specific 65,535-byte payload ceiling,
-//! separate from the larger Wire2 message limit. Pages must respect both this
+//! separate from the larger Fitz message limit. Pages must respect both this
 //! byte ceiling and their entry count.
 
 use super::protocol::ScheduleListEntry;
 
-/// Maximum encoded Schedule response payload size, independent of the Wire2
+/// Maximum encoded Schedule response payload size, independent of the Fitz
 /// message limit.
 pub(crate) const MAX_SCHEDULE_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
 

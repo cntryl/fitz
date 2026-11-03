@@ -195,7 +195,7 @@ pub fn encode_response_into(
     enc.finish()
 }
 
-/// Encode a Stream error in the common wire format 2 envelope. Every verb,
+/// Encode a Stream error in the common Wire 2/3 error envelope. Every verb,
 /// READ included, uses the same layout; the message type is accepted so
 /// callers that key on it keep one signature.
 pub fn encode_error_response_into(

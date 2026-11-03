@@ -22,3 +22,10 @@ Tier 5 targets requiring explicit setup:
 
 Other targets are grouped by tier in `.github/workflows/bench-tier*.yml` and
 registered in `Cargo.toml`.
+
+The `tier1_hotpath_message` target also compares Wire 2 and Wire 3 core-only
+frame decoding, measures a small unknown extension, and scans a valid Wire 3
+payload filled with zero-length unknown entries at both the minimum configured
+frame limit and the 1 MiB default limit. It also measures validation of the
+maximum representable CONNECT capability list, plus construction and framing
+of a default-limit extension payload with an explicit allocation budget.

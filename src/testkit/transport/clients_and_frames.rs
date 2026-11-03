@@ -28,12 +28,12 @@ use serde::{Deserialize, Serialize};
 /// `HELLO` answers CONNECT on every new session. A request/response helper
 /// must skip it rather than mistake it for the response it is waiting on.
 fn is_unsolicited_control_frame(frame: &[u8]) -> bool {
-    crate::protocol::wire2::header::MessageHeader::decode(frame)
-        .is_ok_and(|header| header.message_type == crate::protocol::wire2::control::HELLO)
+    crate::protocol::wire3::header::MessageHeader::decode_wire3(frame)
+        .is_ok_and(|header| header.message_type == crate::protocol::wire3::control::HELLO)
 }
 
 fn is_connect_frame(frame: &[u8]) -> bool {
-    crate::protocol::wire2::header::MessageHeader::decode(frame)
+    crate::protocol::wire3::header::MessageHeader::decode_wire3(frame)
         .is_ok_and(|header| header.message_type == 1)
 }
 
@@ -421,8 +421,8 @@ impl TestWebSocketClient {
     }
 }
 
-/// Wire2 message builder for protocol test frames.
-/// Builds one wire format 2 message: a 15-byte header followed by the value.
+/// Wire 3 message builder for protocol test frames.
+/// Builds one message with a 15-byte header followed by the value.
 /// One message per transport frame, so `encode_field` may be called once.
 pub struct FrameBuilder {
     message: Option<Vec<u8>>,
@@ -460,7 +460,7 @@ impl FrameBuilder {
     pub fn encode_field(&mut self, msg_type: u16, value: &[u8]) {
         assert!(
             self.message.is_none(),
-            "wire format 2 carries one message per frame"
+            "Wire 3 carries one message per frame"
         );
         self.message = Some(crate::protocol::wire2::header::encode_message(
             msg_type,
@@ -489,7 +489,7 @@ impl FrameBuilder {
     }
 }
 
-/// Reads the one wire format 2 message in a frame.
+/// Reads the one Wire 3 message in a frame.
 pub struct FrameParser<'a> {
     buf: &'a [u8],
     consumed: bool,
@@ -507,7 +507,7 @@ impl<'a> FrameParser<'a> {
     /// The message's header, when the frame is well formed.
     #[must_use]
     pub fn header(&self) -> Option<crate::protocol::wire2::header::MessageHeader> {
-        crate::protocol::wire2::header::MessageHeader::decode(self.buf).ok()
+        crate::protocol::wire3::header::MessageHeader::decode_wire3(self.buf).ok()
     }
 
     pub fn next_field_ref(&mut self) -> Option<(u16, &'a [u8])> {
@@ -516,7 +516,7 @@ impl<'a> FrameParser<'a> {
         }
         self.consumed = true;
         let (header, value) =
-            crate::protocol::wire2::header::decode_message(self.buf, u32::MAX).ok()?;
+            crate::protocol::wire3::header::decode_message(self.buf, u32::MAX).ok()?;
         Some((header.message_type, value))
     }
 
@@ -540,24 +540,43 @@ impl Default for FrameBuilder {
     }
 }
 
-/// Build the wire format 2 CONNECT message carrying `jwt_token`.
+/// Build the Wire 3 CONNECT message carrying `jwt_token` and an empty capability set.
 /// The legacy realm argument is ignored.
+///
+/// # Panics
+///
+/// Panics only if the empty capability set or generated CONNECT extension violates
+/// the encoder's invariant.
 #[must_use]
 pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
-    let mut builder = FrameBuilder::new();
-    builder.encode_field(
-        crate::protocol::wire2::control::CONNECT,
-        &connect_body(jwt_token, ""),
-    );
-    builder.build()
+    let core = connect_body(jwt_token, "");
+    let capabilities = crate::protocol::wire3::extensions::encode_capability_ids(&[])
+        .expect("empty capability set is valid");
+    let fields = [crate::protocol::wire3::extensions::ExtensionField {
+        field_id: crate::protocol::wire3::extensions::CAPABILITY_IDS_FIELD_ID,
+        value: &capabilities,
+    }];
+    let payload = crate::protocol::wire3::extensions::encode_payload(
+        &core,
+        crate::protocol::wire3::extensions::CONNECT_MESSAGE_TYPE,
+        crate::protocol::wire3::extensions::ExtensionDirection::ClientToBroker,
+        &fields,
+    )
+    .expect("CONNECT capability extension is valid");
+    crate::protocol::wire3::header::encode_message(
+        crate::protocol::wire3::control::CONNECT,
+        crate::protocol::wire3::header::HeaderFlags::extensions_present(),
+        None,
+        payload.value.as_ref(),
+    )
 }
 
-/// Encode a wire format 2 CONNECT body for this broker's version.
+/// Encode the Wire 3 CONNECT core body for direct ingress tests.
 #[must_use]
 pub fn connect_body(jwt_token: &str, service_name: &str) -> Vec<u8> {
-    crate::protocol::wire2::handshake::Connect {
-        min_version: crate::protocol::wire2::WIRE_VERSION,
-        max_version: crate::protocol::wire2::WIRE_VERSION,
+    crate::protocol::wire3::handshake::Connect {
+        min_version: crate::protocol::wire3::WIRE_VERSION,
+        max_version: crate::protocol::wire3::WIRE_VERSION,
         client_caps: 0,
         jwt: jwt_token.to_owned(),
         service_name: service_name.to_owned(),

@@ -1,6 +1,6 @@
 //! Multiplexing layer for logical channels
 //!
-//! This module maps Wire2 message types to logical channels and enforces
+//! This module maps the shared Wire 2/3 message types to logical channels and enforces
 //! per-channel backpressure.
 
 use crate::protocol::frame::ChannelId;
@@ -26,6 +26,7 @@ pub struct ChannelMessage {
     pub channel: ChannelId,
     pub msg_type: MessageType,
     pub payload: Bytes,
+    pub extensions: crate::protocol::wire3::extensions::KnownFields,
     /// Correlation from the message header, if the client labelled the request.
     pub correlation: Option<std::num::NonZeroU64>,
     /// Header flags, including `ACK_REQUESTED` on requests and
@@ -40,6 +41,7 @@ impl ChannelMessage {
             channel,
             msg_type,
             payload,
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
             correlation: None,
             flags: crate::protocol::wire2::header::HeaderFlags::none(),
         }
@@ -56,6 +58,15 @@ impl ChannelMessage {
     #[must_use]
     pub fn with_flags(mut self, flags: crate::protocol::wire2::header::HeaderFlags) -> Self {
         self.flags = flags;
+        self
+    }
+
+    #[must_use]
+    pub fn with_extensions(
+        mut self,
+        extensions: crate::protocol::wire3::extensions::KnownFields,
+    ) -> Self {
+        self.extensions = extensions;
         self
     }
 }

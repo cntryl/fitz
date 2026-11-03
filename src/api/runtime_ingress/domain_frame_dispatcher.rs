@@ -135,8 +135,7 @@ impl DomainFrameDispatcher {
         route_family: crate::runtime::routing::RouteFamily,
         msg_type: crate::protocol::message::MessageType,
         payload: DomainDispatchPayload<'_>,
-        correlation: Option<std::num::NonZeroU64>,
-        flags: crate::protocol::wire2::header::HeaderFlags,
+        labels: crate::protocol::wire2::header::HeaderLabels,
         received_at: Instant,
     ) -> Result<(), IngressDecision> {
         let Some(router) = &self.router else {
@@ -170,8 +169,9 @@ impl DomainFrameDispatcher {
                     policy: spec.policy,
                     msg_type,
                     payload,
-                    correlation,
-                    flags,
+                    correlation: labels.correlation,
+                    flags: labels.flags,
+                    extensions: labels.extensions,
                     received_at,
                 };
                 self.authorize_and_dispatch_domain_frame(dispatch).await
@@ -314,20 +314,38 @@ impl DomainFrameDispatcher {
         let Some(router) = &self.router else {
             return;
         };
-        let hello = crate::protocol::wire2::handshake::Hello {
-            version: crate::protocol::wire2::WIRE_VERSION,
-            broker_caps: crate::protocol::wire2::BROKER_CAPABILITIES,
+        let hello = crate::protocol::wire3::handshake::Hello {
+            version: crate::protocol::wire3::WIRE_VERSION,
+            broker_caps: crate::protocol::wire3::BROKER_CAPABILITIES,
             max_message_bytes: self.max_message_bytes,
             max_in_flight: u32::try_from(crate::api::outbound::MAX_IN_FLIGHT).unwrap_or(u32::MAX),
             session_id,
         };
+        let capabilities = crate::protocol::wire3::extensions::encode_capability_ids(
+            crate::protocol::wire3::BROKER_CAPABILITY_IDS,
+        )
+        .expect("broker capability IDs are a valid registered set");
+        let fields = [crate::protocol::wire3::extensions::ExtensionField {
+            field_id: crate::protocol::wire3::extensions::CAPABILITY_IDS_FIELD_ID,
+            value: &capabilities,
+        }];
+        let payload = crate::protocol::wire3::extensions::encode_payload(
+            &hello.encode(),
+            crate::protocol::wire3::extensions::HELLO_MESSAGE_TYPE,
+            crate::protocol::wire3::extensions::ExtensionDirection::BrokerToClient,
+            &fields,
+        )
+        .expect("HELLO capability extension is valid")
+        .value
+        .into_owned();
         let mut announcements = self.drain_announcements.lock();
         announce_control_frame(
             router,
             session_id,
             route_family,
-            crate::protocol::wire2::control::HELLO,
-            Bytes::from(hello.encode()),
+            crate::protocol::wire3::control::HELLO,
+            Bytes::from(payload),
+            true,
             "HELLO",
         );
         announcements.hello_sessions.insert(session_id);
@@ -393,7 +411,7 @@ impl DomainFrameDispatcher {
             return;
         }
         let payload = Bytes::from(
-            crate::protocol::wire2::handshake::GoAway {
+            crate::protocol::wire3::handshake::GoAway {
                 code,
                 grace_ms,
                 reason: reason.to_owned(),
@@ -404,8 +422,9 @@ impl DomainFrameDispatcher {
             router,
             session_id,
             route_family,
-            crate::protocol::wire2::control::GOAWAY,
+            crate::protocol::wire3::control::GOAWAY,
             payload,
+            false,
             "GOAWAY",
         );
     }
@@ -652,6 +671,7 @@ impl DomainFrameDispatcher {
             payload,
             correlation,
             flags,
+            extensions,
             received_at,
         } = dispatch;
         let (addr, source, descriptor) = self.dispatch_addressing(session_id, route_family, domain);
@@ -676,6 +696,7 @@ impl DomainFrameDispatcher {
                     destination: addr.clone(),
                     correlation,
                     ack_requested: flags.is_ack_requested(),
+                    extensions,
                     received_at,
                 });
             let reply_claim = envelope.reply_claim();
@@ -773,7 +794,7 @@ impl DomainFrameDispatcher {
                 {
                     return self.send_domain_error_frame(
                         DomainErrorFrame::for_dispatch(&dispatch),
-                        crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                        crate::protocol::error_codes::rpc::ERR_BAD_REQUEST,
                         "RPC request parse failed",
                     );
                 }
@@ -909,7 +930,7 @@ pub(super) fn announce_connect_rejected(
     code: u16,
     message: &str,
 ) {
-    let body = crate::protocol::wire2::handshake::ConnectRejected {
+    let body = crate::protocol::wire3::handshake::ConnectRejected {
         code,
         message: message.to_owned(),
     };
@@ -917,8 +938,9 @@ pub(super) fn announce_connect_rejected(
         router,
         session_id,
         route_family,
-        crate::protocol::wire2::control::CONNECT_REJECTED,
+        crate::protocol::wire3::control::CONNECT_REJECTED,
         Bytes::from(body.encode()),
+        false,
         "CONNECT_REJECTED",
     );
 }
@@ -932,6 +954,7 @@ fn announce_control_frame(
     route_family: crate::runtime::routing::RouteFamily,
     message_type: u16,
     payload: Bytes,
+    extensions_present: bool,
     name: &'static str,
 ) {
     let frame = crate::runtime::EncodedClientFrame::new(
@@ -940,7 +963,8 @@ fn announce_control_frame(
             crate::runtime::ClientChannel::Control,
             message_type,
             route_family,
-        ),
+        )
+        .with_extensions_present(extensions_present),
         payload,
     );
     let inbox = crate::runtime::routing::RouteAddress::new(

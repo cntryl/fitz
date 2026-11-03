@@ -3,6 +3,7 @@ use super::{MessageId, QueueActor, QUEUE_IDLE_HORIZON};
 impl QueueActor {
     pub(in crate::domains::queue::actor) fn reset_recovery_state(&mut self) {
         self.reset_live_ready_state();
+        self.retention_schedule = super::retention_cleanup::RetentionSchedule::default();
         self.reset_persisted_index_state();
         self.delayed.clear();
         let now = self.clock.now_instant();

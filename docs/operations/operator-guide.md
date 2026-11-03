@@ -108,6 +108,11 @@ the release's storage notes, and the [support matrix](../development/support-mat
 before rollout. Keep a tested rollback path and validate probes and one
 authenticated client round trip after replacement.
 
+The planned Wire 3 cutover is a separate, unreleased candidate. It targets the
+deployed 0.1.0 / Wire 1 SDK cohort and requires the broker and all five SDKs to
+move together; use the Wire 3 section of the migration guide when that release
+is qualified.
+
 ## Operational References
 
 - [Operations runbook](operations-runbook.md): startup, steady-state signals,

@@ -91,6 +91,7 @@ pub enum QueueMessage {
         route: Route,
         body: Bytes,
         delay_seconds: Option<u64>,
+        ttl_hours: Option<std::num::NonZeroU32>,
     },
 
     /// Receive messages for processing
@@ -137,6 +138,15 @@ pub enum QueueMessage {
         route: Route,
         id: MessageId,
         token: u64,
+    },
+
+    /// Relinquish the current reservation, optionally delaying the next worker.
+    Nack {
+        family_id: RouteFamily,
+        route: Route,
+        id: MessageId,
+        token: u64,
+        visibility_seconds: u64,
     },
 
     /// Internal timer expiration event
@@ -239,19 +249,27 @@ pub struct QueueNotification {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueueResponse {
     /// Message successfully sent
-    Sent { id: MessageId },
+    Sent {
+        id: MessageId,
+    },
 
     /// Queue watch successfully registered.
-    WatchOk { subscription_id: u64 },
+    WatchOk {
+        subscription_id: u64,
+    },
 
     /// Queue watch successfully removed.
     UnwatchOk,
 
     /// Multiple messages successfully sent in one batch (same semantics as N×Sent)
-    SentBatch { ids: Vec<MessageId> },
+    SentBatch {
+        ids: Vec<MessageId>,
+    },
 
     /// Messages successfully received
-    Received { messages: Vec<ReservedMessage> },
+    Received {
+        messages: Vec<ReservedMessage>,
+    },
 
     /// Reserved messages paired with their concrete queue routes.
     ReceivedRouted {
@@ -263,6 +281,7 @@ pub enum QueueResponse {
 
     /// Message successfully acknowledged
     Acked,
+    Nacked,
 
     /// Invalid token (mismatch with expected value)
     InvalidToken,
@@ -274,10 +293,14 @@ pub enum QueueResponse {
     NotFound,
 
     /// Bad request (malformed parameters)
-    BadRequest { reason: String },
+    BadRequest {
+        reason: String,
+    },
 
     /// Invalid exact or wildcard Queue subscription pattern.
-    InvalidSubscriptionPattern { reason: String },
+    InvalidSubscriptionPattern {
+        reason: String,
+    },
 
     /// Per-session registration limit reached.
     SubscriptionLimit,
@@ -289,8 +312,12 @@ pub enum QueueResponse {
     Busy,
 
     /// An accepted queue operation exceeded its deadline.
-    Timeout { message: String },
+    Timeout {
+        message: String,
+    },
 
     /// Internal error
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }

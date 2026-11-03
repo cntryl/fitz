@@ -75,6 +75,7 @@ changes its ownership.
 | `Receive` | 202 | C→S | Lease messages for processing |
 | `Extend` | 203 | C→S | Extend message lease TTL |
 | `Ack` | 204 | C→S | Acknowledge and delete message |
+| `Nack` | 210 | C→S | Relinquish reservation with a visibility delay; requires Wire 3 capability 2 |
 | `Subscribe` | 207 | C→S | Watch queue for availability |
 | `Unsubscribe` | 208 | C→S | Stop watching |
 | `Notify` | 209 | S→C | Deliver queue availability |
@@ -542,7 +543,8 @@ Transport errors signal connection failure:
 ### Domain Errors
 
 Domain errors are returned in response payloads. Every domain uses the common
-envelope from `wire-routing.md` (Response Format Convention) and the codes in
+envelope from the released [wire-routing.md](wire-routing.md) Response Format
+Convention (unchanged in Wire 3) and the codes in
 `error-codes.md`.
 **Clients MUST:**
 

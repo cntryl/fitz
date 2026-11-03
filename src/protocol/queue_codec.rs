@@ -20,6 +20,7 @@ pub mod msg_type {
     pub const WATCH: u16 = 207;
     pub const UNWATCH: u16 = 208;
     pub const NOTIFY: u16 = 209;
+    pub const NACK: u16 = 210;
 }
 
 #[derive(Debug, Clone)]
@@ -40,10 +41,16 @@ pub fn parse_frame(
     subscriber: RouteAddress,
 ) -> Result<ParsedQueueFrame, String> {
     match ctx.msg_type.0 {
-        msg_type::ENQUEUE => parse_enqueue(route_family, payload).map(ParsedQueueFrame::Op),
+        msg_type::ENQUEUE => parse_enqueue(route_family, payload).map(|mut message| {
+            if let QueueMessage::Send { ttl_hours, .. } = &mut message {
+                *ttl_hours = ctx.extensions.queue_ttl_hours;
+            }
+            ParsedQueueFrame::Op(message)
+        }),
         msg_type::RESERVE => parse_reserve(route_family, payload).map(ParsedQueueFrame::Op),
         msg_type::EXTEND => parse_extend(route_family, payload).map(ParsedQueueFrame::Op),
         msg_type::COMPLETE => parse_complete(route_family, payload).map(ParsedQueueFrame::Op),
+        msg_type::NACK => parse_nack(route_family, payload).map(ParsedQueueFrame::Op),
         msg_type::WATCH => {
             parse_watch(route_family, session_id, subscriber, payload).map(ParsedQueueFrame::Sub)
         }
@@ -72,6 +79,7 @@ pub fn parse_request(
         msg_type::RESERVE => parse_reserve(route_family, payload),
         msg_type::EXTEND => parse_extend(route_family, payload),
         msg_type::COMPLETE => parse_complete(route_family, payload),
+        msg_type::NACK => parse_nack(route_family, payload),
         _ => Err(format!("Unknown Queue message type: {msg_type}")),
     }
 }
@@ -124,7 +132,7 @@ pub fn encode_response(_message_type: u16, response: &QueueResponse) -> Vec<u8> 
                 buf.put_slice(&routed.message.body);
             }
         }
-        QueueResponse::Extended | QueueResponse::Acked => {
+        QueueResponse::Extended | QueueResponse::Acked | QueueResponse::Nacked => {
             buf.put_u8(0); // status: success
                            // Empty response
         }
@@ -175,6 +183,24 @@ fn queue_error_code_and_message(response: &QueueResponse) -> (u16, String) {
 
 // ===== Parsers =====
 
+fn parse_nack(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
+    let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(payload);
+    let route = Route::from_ref(decoder.get_string_ref()?);
+    let id = MessageId::new(decoder.get_u64()?);
+    let token = decoder.get_u64()?;
+    let visibility_seconds = decoder.get_u64()?;
+    if !decoder.is_complete() {
+        return Err("Trailing data in NACK request".to_string());
+    }
+    Ok(QueueMessage::Nack {
+        family_id,
+        route,
+        id,
+        token,
+        visibility_seconds,
+    })
+}
+
 fn parse_route_str_ref<'a>(payload: &'a [u8], offset: &mut usize) -> Result<&'a str, String> {
     // Read route length (u32)
     if *offset + 4 > payload.len() {
@@ -211,6 +237,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         | msg_type::RESERVE
         | msg_type::EXTEND
         | msg_type::COMPLETE
+        | msg_type::NACK
         | msg_type::WATCH
         | msg_type::UNWATCH => {
             let mut offset = 0;
@@ -285,6 +312,7 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
         route: Route::from_ref(route_str),
         body,
         delay_seconds,
+        ttl_hours: None,
     })
 }
 

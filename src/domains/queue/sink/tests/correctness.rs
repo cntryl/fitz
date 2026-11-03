@@ -22,6 +22,7 @@ fn queue_send_frame(family: RouteFamily, route: &str) -> QueueClientFrame {
         route: Route::new(route),
         body: bytes::Bytes::from_static(b"body"),
         delay_seconds: None,
+        ttl_hours: None,
     })
 }
 

@@ -1,10 +1,10 @@
 //! Wire-size budget for KV scan responses.
 //!
 //! KV scan responses have a domain-specific 65,535-byte payload ceiling,
-//! separate from the larger Wire2 message limit. Pages must respect both this
+//! separate from the larger Fitz message limit. Pages must respect both this
 //! byte ceiling and their item limit.
 
-/// Maximum encoded KV response payload size, independent of the Wire2 limit.
+/// Maximum encoded KV response payload size, independent of the frame limit.
 pub(crate) const MAX_KV_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
 
 /// A scan response's non-item bytes, exactly as `encode_response` writes them:

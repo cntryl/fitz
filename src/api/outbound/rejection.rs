@@ -1,7 +1,7 @@
 //! Refuse transport-buffer admission without dispatch or releasing a live slot.
 
 use super::SessionOutboundSink;
-use crate::protocol::wire2::header::{decode_message, MessageError};
+use crate::protocol::wire3::header::{decode_message, MessageError};
 
 impl SessionOutboundSink {
     pub(crate) fn reject_unqueued_frame(

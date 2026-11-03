@@ -3,7 +3,7 @@ use super::*;
 mod cross_domain;
 use crate::domains::queue::actor::recovery_store::QueueStore;
 
-fn local_engine(path: &std::path::Path) -> Arc<cntryl_midge::Engine> {
+pub(super) fn local_engine(path: &std::path::Path) -> Arc<cntryl_midge::Engine> {
     local_engine_with_ttl(path, Duration::from_secs(1))
 }
 

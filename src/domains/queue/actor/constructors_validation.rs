@@ -1,8 +1,8 @@
 //! Queue actor construction and dependency initialization.
 
 use super::{
-    Arc, BinaryHeap, Clock, FxBuildHasher, HashMap, Instant, QueueActor, QueueKey, RecoveryPath,
-    RollingRateWindow, RouteFamily, SystemClock, VecDeque,
+    Arc, BinaryHeap, Clock, FxBuildHasher, HashMap, HashSet, Instant, QueueActor, QueueKey,
+    RecoveryPath, RollingRateWindow, RouteFamily, SystemClock, VecDeque,
 };
 
 #[allow(private_bounds)]
@@ -10,6 +10,7 @@ impl QueueActor {
     pub(in crate::domains::queue::actor) const READY_SHARDS: usize = 8;
     pub(in crate::domains::queue::actor) const ID_RESERVATION_BLOCK: u64 = 256;
     pub(in crate::domains::queue::actor) const HEADER_VERSION_V2: u8 = 2;
+    pub(in crate::domains::queue::actor) const HEADER_VERSION_V3: u8 = 3;
     pub(in crate::domains::queue::actor) const INDEX_VERSION_V2: u8 = 2;
     pub(in crate::domains::queue::actor) const INDEX_META_VALID_MARKER: u8 = 1;
     pub(in crate::domains::queue::actor) const INDEX_META_NEXT_DELAY_NONE: u64 = u64::MAX;
@@ -102,6 +103,7 @@ impl QueueActor {
             next_ready_seq: 1,
             next_id_limit: 1,
             ready: VecDeque::new(),
+            expired_ready: HashSet::with_hasher(FxBuildHasher),
             ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
             persisted_ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
             persisted_ready_count: 0,
@@ -118,6 +120,7 @@ impl QueueActor {
             timers: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
             persisted_delayed: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
+            persisted_delayed_visibilities: std::collections::BTreeMap::new(),
             persisted_dlq: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
             persisted_next_delayed_visibility_ms: None,
             index_meta_written: false,
@@ -125,6 +128,8 @@ impl QueueActor {
             needs_wake_waiters: false,
             clock,
             max_attempts,
+            retention: super::super::retention::QueueRetention::default(),
+            retention_schedule: super::retention_cleanup::RetentionSchedule::default(),
             dedup_store,
             enqueue_success_window: RollingRateWindow::new(),
             complete_success_window: RollingRateWindow::new(),

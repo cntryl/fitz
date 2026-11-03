@@ -223,7 +223,7 @@ impl RpcFamilyRuntime<'_> {
                         "Invalid RPC registration pattern",
                     ),
                     crate::domains::rpc::protocol::RpcDecodeError::StructurallyUndecodable(_) => (
-                        crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                        crate::dispatch::protocol::error_codes::rpc::ERR_BAD_REQUEST,
                         "RPC message parse failed",
                     ),
                 };

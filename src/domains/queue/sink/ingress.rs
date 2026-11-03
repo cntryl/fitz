@@ -190,7 +190,8 @@ impl QueueFamilyState {
             _ => None,
         };
         let wake_route = match &queue_msg {
-            crate::domains::queue::protocol::QueueMessage::Send { route, .. } => {
+            crate::domains::queue::protocol::QueueMessage::Send { route, .. }
+            | crate::domains::queue::protocol::QueueMessage::Nack { route, .. } => {
                 Some(route.clone())
             }
             _ => None,
@@ -279,6 +280,7 @@ impl QueueFamilyState {
             crate::domains::queue::protocol::QueueMessage::Send { family_id, .. }
             | crate::domains::queue::protocol::QueueMessage::Receive { family_id, .. }
             | crate::domains::queue::protocol::QueueMessage::Extend { family_id, .. }
+            | crate::domains::queue::protocol::QueueMessage::Nack { family_id, .. }
             | crate::domains::queue::protocol::QueueMessage::Ack { family_id, .. } => {
                 Some(*family_id)
             }

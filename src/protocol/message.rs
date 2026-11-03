@@ -1,4 +1,4 @@
-//! Message identifiers and the decoded message container for wire format 2.
+//! Message identifiers retained from Wire 2 and the decoded Wire 3 container.
 //!
 //! The 15-byte header codec lives in [`crate::protocol::wire2::header`]; domain
 //! payload fields are encoded with [`crate::protocol::payload_codec`].

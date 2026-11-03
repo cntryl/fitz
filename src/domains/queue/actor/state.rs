@@ -15,6 +15,7 @@ impl QueueActor {
 
     pub(super) fn reset_live_ready_state(&mut self) {
         self.ready.clear();
+        self.expired_ready.clear();
         for shard in &mut self.ready_shards {
             shard.clear();
         }
@@ -111,7 +112,7 @@ impl QueueActor {
             id,
             ready_enqueued_at_ms,
         });
-        self.ready_count = self.ready.len();
+        self.refresh_ready_count();
         self.oldest_ready_enqueued_at_ms = Some(
             self.oldest_ready_enqueued_at_ms
                 .map_or(ready_enqueued_at_ms, |current| {
@@ -145,13 +146,49 @@ impl QueueActor {
 
     pub(super) fn pop_ready_entry(&mut self) -> Option<ReadyEntry> {
         let entry = self.ready.pop_front()?;
-        self.ready_count = self.ready.len();
-        if self.ready.is_empty() {
+        self.expired_ready.remove(&entry.id);
+        self.refresh_ready_count();
+        if self.ready_count == 0 {
+            self.ready.clear();
+            self.expired_ready.clear();
             self.oldest_ready_enqueued_at_ms = None;
         } else {
             self.recompute_oldest_ready_enqueued_at_ms();
         }
         Some(entry)
+    }
+
+    pub(super) fn refresh_ready_count(&mut self) {
+        self.ready_count = self.ready.len().saturating_sub(self.expired_ready.len());
+    }
+
+    pub(super) fn expire_ready_entry(&mut self, id: MessageId) {
+        if self.ready.front().is_some_and(|entry| entry.id == id) {
+            self.pop_ready_entry();
+            return;
+        }
+        self.expired_ready.insert(id);
+        self.refresh_ready_count();
+        if self.ready_count == 0 {
+            self.ready.clear();
+            self.expired_ready.clear();
+            self.oldest_ready_enqueued_at_ms = None;
+            return;
+        }
+        // Amortized linear compaction avoids scanning the entire backlog for
+        // each non-head expiry, while bounding stale FIFO memory.
+        if self.ready.len()
+            > self
+                .ready_count
+                .saturating_mul(2)
+                .saturating_add(super::MAX_DUE_ITEMS_PER_PASS * 2)
+        {
+            self.ready
+                .retain(|entry| !self.expired_ready.contains(&entry.id));
+            self.expired_ready.clear();
+            self.refresh_ready_count();
+            self.recompute_oldest_ready_enqueued_at_ms();
+        }
     }
 
     pub(super) fn plan_ready_index_mutation(
@@ -274,6 +311,8 @@ impl QueueActor {
     }
 
     pub(super) fn cache_record(&mut self, id: MessageId, record: QueueRecord) {
+        self.retention_schedule
+            .schedule(id, record.retention_expires_at_ms);
         if self.records.insert(id, record).is_none() {
             self.record_cache_fifo.push_back(id);
         }

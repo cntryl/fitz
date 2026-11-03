@@ -203,6 +203,8 @@ fn register_domains_stage(
         schedule_write_policy: config.schedule_write_policy(),
 
         queue_fast_flush_interval: config.queue_fast_flush_interval(),
+        queue_max_attempts: config.queue_max_attempts,
+        queue_retention: config.queue_retention,
 
         request_sync_write_policy: config.request_sync_write_policy(),
         request_buffered_write_policy: config.request_buffered_write_policy(),

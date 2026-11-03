@@ -261,11 +261,14 @@ impl SessionOutboundSink {
             "Outbound sink: encoding runtime client frame"
         );
         let encode_start = Self::encode_latency_start();
-        let flags = if frame.meta.correlation.is_some() && frame.meta.response_final {
+        let mut flags = if frame.meta.correlation.is_some() && frame.meta.response_final {
             crate::protocol::wire2::header::HeaderFlags::response_final()
         } else {
             crate::protocol::wire2::header::HeaderFlags::none()
         };
+        if frame.meta.extensions_present {
+            flags = flags.with_extensions_present();
+        }
         let bytes = self.encode_frame_with_flags(
             frame.meta.message_type,
             frame.meta.correlation,
@@ -318,7 +321,7 @@ impl SessionOutboundSink {
         self.encode_frame_with_flags(msg_type, correlation, flags, payload)
     }
 
-    fn encode_frame_with_flags(
+    pub(super) fn encode_frame_with_flags(
         &self,
         msg_type: u16,
         correlation: Option<std::num::NonZeroU64>,
@@ -466,7 +469,7 @@ impl SessionOutboundSink {
 /// Live domain notifications may be lost. Replies, RPC lifecycle traffic and
 /// handshake/control messages must either reach the queue or end the session.
 fn required_delivery(frame: &[u8]) -> bool {
-    let Ok(header) = crate::protocol::wire2::header::MessageHeader::decode(frame) else {
+    let Ok(header) = crate::protocol::wire3::header::MessageHeader::decode_wire3(frame) else {
         return true;
     };
     required_message(header.message_type)
@@ -598,6 +601,38 @@ mod tests {
             frame.as_ref(),
             &[0, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, b'o', b'k']
         );
+    }
+
+    #[tokio::test]
+    async fn should_encode_the_extension_flag_for_extended_client_frames() {
+        // Arrange
+        let (tx, mut rx) = mpsc::channel(1);
+        let sink = SessionOutboundSink::new(tx);
+        let client_frame = EncodedClientFrame::new(
+            crate::runtime::ClientFrameMeta::new(
+                1,
+                crate::runtime::ClientChannel::Control,
+                crate::protocol::wire3::control::HELLO,
+                RouteFamily::new(1),
+            )
+            .with_extensions_present(true),
+            Bytes::from_static(&[0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0]),
+        );
+        let envelope = Envelope::new(
+            RouteAddress::new(RouteFamily::new(1), Route::new("inbox://session/1")),
+            client_frame,
+        );
+
+        // Act
+        let result = sink.deliver(envelope);
+        let frame = rx.recv().await.expect("encoded Wire 3 frame");
+
+        // Assert
+        assert_eq!(result, Ok(()));
+        let (header, _) =
+            crate::protocol::wire3::header::decode_message(&frame, u32::MAX).expect("Wire 3 frame");
+        assert_eq!(header.message_type, crate::protocol::wire3::control::HELLO);
+        assert!(header.flags.is_extensions_present());
     }
 
     #[test]

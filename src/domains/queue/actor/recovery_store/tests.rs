@@ -58,6 +58,7 @@ fn should_preserve_previous_index_when_replacement_commit_fails() {
     let (_actor, store) = seeded_queue();
     let delayed = FastMap::default();
     let dlq = FastMap::default();
+    let deadlines = FastMap::default();
     let replacement = QueueIndexRebuild {
         meta: IndexMetaSnapshot {
             next_id: 2,
@@ -68,6 +69,8 @@ fn should_preserve_previous_index_when_replacement_commit_fails() {
         ready: &[],
         delayed: &delayed,
         dlq: &dlq,
+        retention_deadlines: &deadlines,
+        now_epoch_ms: 0,
     };
 
     QueueStore::fail_next_commit_for_tests(cntryl_midge::MidgeError::Internal(

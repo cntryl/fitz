@@ -1,14 +1,14 @@
 // LAYER: SESSION
 //! Session lifecycle and multiplexed frame handling
 //!
-//! Each session decodes Wire2 messages and owns a mux and permission metadata. The session
+//! Each session decodes Wire3 messages and owns a mux and permission metadata. The session
 //! pipeline decodes frames, demuxes them into logical channels, and dispatches
 //! them through the runtime ingress boundary.
 
 use crate::observability as obs;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::mux::{Mux, MuxError, TypeMapping};
-use crate::protocol::wire2::header::{decode_message, MessageError, HEADER_LEN};
+use crate::protocol::wire3::header::{decode_message, MessageError, HEADER_LEN};
 use crate::runtime::routing::RouteFamily;
 use crate::session::permissions::SessionPermissions;
 use bytes::Bytes;
@@ -244,10 +244,18 @@ impl fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+#[cfg(test)]
+#[path = "queue_controls_tests.rs"]
+mod queue_controls_tests;
+
+#[path = "wire3_ingress.rs"]
+mod wire3_ingress;
+
 /// Session object owning the channel multiplexer.
 pub struct Session {
     info: SessionInfo,
     mux: Mux,
+    capability_ids: Vec<u32>,
 }
 
 /// Configuration used to create sessions. Grouped to avoid long parameter lists.
@@ -333,7 +341,11 @@ impl Session {
             route_family: cfg.route_family,
         };
 
-        Self { info, mux }
+        Self {
+            info,
+            mux,
+            capability_ids: Vec::new(),
+        }
     }
 
     /// Create a new unauthenticated session (pre-auth)
@@ -356,7 +368,11 @@ impl Session {
             route_family: config.route_family,
         };
 
-        Self { info, mux }
+        Self {
+            info,
+            mux,
+            capability_ids: Vec::new(),
+        }
     }
 
     /// Get session metadata for runtime ingress
@@ -366,7 +382,7 @@ impl Session {
     }
 
     /// Decode the one message a transport frame carries and admit it to its
-    /// channel. Wire format 2 puts exactly one message in every frame, so a
+    /// channel. Wire format 3 puts exactly one message in every frame, so a
     /// frame that is short, long, or carries reserved flags is malformed.
     ///
     /// # Errors
@@ -408,18 +424,11 @@ impl Session {
             payload_len = header.length,
             "Session decoded message"
         );
-        if crate::protocol::manifest::client_entry(crate::protocol::message::MessageType::new(
-            header.message_type,
-        ))
-        .is_err()
-        {
-            return Err(SessionError::Unsupported {
-                message_type: header.message_type,
-                correlation: header.correlation,
-                reason: "unsupported or server-to-client message type",
-            });
-        }
-        let payload = frame.slice(HEADER_LEN..);
+        let wire_payload = &frame[HEADER_LEN..];
+        let decoded = self.validate_payload(wire_payload, &header)?;
+        let core_start = HEADER_LEN + decoded.core.offset;
+        let core_end = core_start + decoded.core.length;
+        let payload = frame.slice(core_start..core_end);
         let record = crate::protocol::message::WireMessage::new(
             crate::protocol::message::MessageType::new(header.message_type),
             payload,
@@ -435,6 +444,7 @@ impl Session {
                 message
                     .with_correlation(header.correlation)
                     .with_flags(header.flags)
+                    .with_extensions(decoded.fields)
             })
             .map_err(|error| {
                 warn!(session_id = self.info.session_id, error = ?error, "Mux routing error");

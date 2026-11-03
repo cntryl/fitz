@@ -10,8 +10,12 @@ pub const HEADER_LEN: usize = 15;
 pub const FLAG_ACK_REQUESTED: u8 = 0b0000_0001;
 /// Bit 1 marks the terminal frame in a correlated response sequence.
 pub const FLAG_RESPONSE_FINAL: u8 = 0b0000_0010;
+/// Bit 2 marks a Wire 3 payload containing a length-delimited core and extensions.
+pub const FLAG_EXTENSIONS_PRESENT: u8 = 0b0000_0100;
 
 const RESERVED_FLAGS: u8 = !(FLAG_ACK_REQUESTED | FLAG_RESPONSE_FINAL);
+const WIRE3_RESERVED_FLAGS: u8 =
+    !(FLAG_ACK_REQUESTED | FLAG_RESPONSE_FINAL | FLAG_EXTENSIONS_PRESENT);
 
 /// Header flags. Reserved bits must be zero on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -34,6 +38,16 @@ impl HeaderFlags {
     }
 
     #[must_use]
+    pub const fn extensions_present() -> Self {
+        Self(FLAG_EXTENSIONS_PRESENT)
+    }
+
+    #[must_use]
+    pub const fn with_extensions_present(self) -> Self {
+        Self(self.0 | FLAG_EXTENSIONS_PRESENT)
+    }
+
+    #[must_use]
     pub const fn is_response_final(self) -> bool {
         self.0 & FLAG_RESPONSE_FINAL != 0
     }
@@ -41,6 +55,11 @@ impl HeaderFlags {
     #[must_use]
     pub const fn is_ack_requested(self) -> bool {
         self.0 & FLAG_ACK_REQUESTED != 0
+    }
+
+    #[must_use]
+    pub const fn is_extensions_present(self) -> bool {
+        self.0 & FLAG_EXTENSIONS_PRESENT != 0
     }
 
     #[must_use]
@@ -58,6 +77,20 @@ impl HeaderFlags {
             Err(bits & RESERVED_FLAGS)
         }
     }
+
+    /// Validate flags for Wire 3 while keeping [`Self::from_bits`] bound to
+    /// the released Wire 2 contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns the offending bits when any Wire 3 reserved bit is set.
+    pub const fn from_wire3_bits(bits: u8) -> Result<Self, u8> {
+        if bits & WIRE3_RESERVED_FLAGS == 0 {
+            Ok(Self(bits))
+        } else {
+            Err(bits & WIRE3_RESERVED_FLAGS)
+        }
+    }
 }
 
 /// The header fields a client chooses per message: the correlation that ties
@@ -66,6 +99,8 @@ impl HeaderFlags {
 pub struct HeaderLabels {
     pub correlation: Option<NonZeroU64>,
     pub flags: HeaderFlags,
+    /// Validated optional payload fields; these are not serialized in the fixed header.
+    pub extensions: crate::protocol::wire3::extensions::KnownFields,
 }
 
 impl HeaderLabels {
@@ -75,6 +110,7 @@ impl HeaderLabels {
         Self {
             correlation: None,
             flags: HeaderFlags::none(),
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
         }
     }
 
@@ -84,6 +120,7 @@ impl HeaderLabels {
         Self {
             correlation,
             flags: HeaderFlags::none(),
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
         }
     }
 }
@@ -116,6 +153,8 @@ pub enum MessageError {
     TooLarge { length: u32, max: u32 },
     /// The frame holds a different number of value bytes than the header declares.
     LengthMismatch { declared: u32, actual: usize },
+    /// A Wire 3 extension envelope is malformed and was rejected before dispatch.
+    InvalidExtensions(crate::protocol::wire3::extensions::ExtensionError),
 }
 
 impl std::fmt::Display for MessageError {
@@ -139,6 +178,7 @@ impl std::fmt::Display for MessageError {
                     "header declares {declared} value bytes, frame carries {actual}"
                 )
             }
+            Self::InvalidExtensions(reason) => write!(f, "invalid extension envelope: {reason}"),
         }
     }
 }
@@ -163,6 +203,23 @@ impl MessageHeader {
     ///
     /// Returns [`MessageError::HeaderTruncated`] or [`MessageError::ReservedFlags`].
     pub fn decode(frame: &[u8]) -> Result<Self, MessageError> {
+        Self::decode_with_flags(frame, HeaderFlags::from_bits)
+    }
+
+    /// Read a header using the Wire 3 flag registry. Wire 2 decoding keeps
+    /// rejecting bit 2 as reserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MessageError::HeaderTruncated`] or [`MessageError::ReservedFlags`].
+    pub fn decode_wire3(frame: &[u8]) -> Result<Self, MessageError> {
+        Self::decode_with_flags(frame, HeaderFlags::from_wire3_bits)
+    }
+
+    fn decode_with_flags(
+        frame: &[u8],
+        decode_flags: fn(u8) -> Result<HeaderFlags, u8>,
+    ) -> Result<Self, MessageError> {
         if frame.len() < HEADER_LEN {
             return Err(MessageError::HeaderTruncated { got: frame.len() });
         }
@@ -170,12 +227,11 @@ impl MessageHeader {
         let mut correlation = [0_u8; 8];
         correlation.copy_from_slice(&frame[3..11]);
         let correlation = NonZeroU64::new(u64::from_be_bytes(correlation));
-        let flags =
-            HeaderFlags::from_bits(frame[2]).map_err(|bits| MessageError::ReservedFlags {
-                bits,
-                message_type,
-                correlation,
-            })?;
+        let flags = decode_flags(frame[2]).map_err(|bits| MessageError::ReservedFlags {
+            bits,
+            message_type,
+            correlation,
+        })?;
         let mut length = [0_u8; 4];
         length.copy_from_slice(&frame[11..15]);
         Ok(Self {
@@ -218,13 +274,46 @@ pub fn encode_message(
 ///
 /// # Errors
 ///
-/// Every variant of [`MessageError`]. A frame that fails here is answered with
-/// a protocol-block error, never with a connection close.
+/// Every variant of [`MessageError`]. A reserved flag bit is answered with
+/// `UNSUPPORTED` on the open session; every other failure closes the
+/// connection without a reply.
 pub fn decode_message(
     frame: &[u8],
     max_message_bytes: u32,
 ) -> Result<(MessageHeader, &[u8]), MessageError> {
     let header = MessageHeader::decode(frame)?;
+    let max_value_bytes =
+        max_message_bytes.saturating_sub(u32::try_from(HEADER_LEN).unwrap_or(u32::MAX));
+    if max_message_bytes < u32::try_from(HEADER_LEN).unwrap_or(u32::MAX)
+        || header.length > max_value_bytes
+    {
+        return Err(MessageError::TooLarge {
+            length: header.length,
+            max: max_value_bytes,
+        });
+    }
+    let value = &frame[HEADER_LEN..];
+    let declared = usize::try_from(header.length).unwrap_or(usize::MAX);
+    if value.len() != declared {
+        return Err(MessageError::LengthMismatch {
+            declared: header.length,
+            actual: value.len(),
+        });
+    }
+    Ok((header, value))
+}
+
+/// Decode one complete Wire 3 message. This shares Wire 2's header layout and
+/// size rules while accepting the Wire 3 extension flag.
+///
+/// # Errors
+///
+/// Returns a header, size, or length-mismatch error for a malformed frame.
+pub fn decode_message_wire3(
+    frame: &[u8],
+    max_message_bytes: u32,
+) -> Result<(MessageHeader, &[u8]), MessageError> {
+    let header = MessageHeader::decode_wire3(frame)?;
     let max_value_bytes =
         max_message_bytes.saturating_sub(u32::try_from(HEADER_LEN).unwrap_or(u32::MAX));
     if max_message_bytes < u32::try_from(HEADER_LEN).unwrap_or(u32::MAX)
@@ -434,5 +523,48 @@ mod tests {
         let decoded = decode_message(&frame, LIMIT);
         // Assert
         assert!(matches!(decoded, Err(MessageError::TooLarge { .. })));
+    }
+
+    #[test]
+    fn should_keep_wire_two_decoder_rejecting_the_wire_three_extension_flag() {
+        // Arrange
+        let frame = encode_message(
+            104,
+            HeaderFlags::extensions_present(),
+            correlation(1),
+            &[0, 0, 0, 0, 0, 8, 0, 0, 0, 0],
+        );
+
+        // Act
+        let error = decode_message(&frame, LIMIT).expect_err("wire 2 reserved flag");
+
+        // Assert
+        assert_eq!(
+            error,
+            MessageError::ReservedFlags {
+                bits: FLAG_EXTENSIONS_PRESENT,
+                message_type: 104,
+                correlation: correlation(1),
+            }
+        );
+    }
+
+    #[test]
+    fn should_accept_the_extension_flag_only_in_wire_three_header_decoder() {
+        // Arrange
+        let frame = encode_message(
+            104,
+            HeaderFlags::ack_requested().with_extensions_present(),
+            correlation(2),
+            &[0, 0, 0, 0, 0, 8, 0, 0, 0, 0],
+        );
+
+        // Act
+        let (header, value) = decode_message_wire3(&frame, LIMIT).expect("wire 3 header");
+
+        // Assert
+        assert!(header.flags.is_ack_requested());
+        assert!(header.flags.is_extensions_present());
+        assert_eq!(value.len(), 10);
     }
 }

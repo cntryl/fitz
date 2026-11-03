@@ -5,7 +5,8 @@ Stable entrypoint for the Fitz wire protocol and client contract. Detailed secti
 ## Sections
 
 - [Scope, client model, concurrency, and transports](spec/overview.md)
-- [Wire protocol, connection lifecycle, auth, flow control, and routing](spec/wire-routing.md)
+- [Wire 3 protocol, connection lifecycle, auth, flow control, and routing](spec/wire-routing-3.md)
+- [Released Wire 2 protocol contract (historical)](spec/wire-routing.md)
 - [Route acceptance criteria, global route rules, and route shapes by domain](spec/wire-route-shapes.md)
 - [Canonical operation reference and shared client behavior](spec/operations.md)
 - [Notice and Stream domain details](spec/notice-stream.md)
@@ -14,4 +15,4 @@ Stable entrypoint for the Fitz wire protocol and client contract. Detailed secti
 - [Lease domain details](spec/lease.md)
 - [Schedule domain details](spec/schedule.md)
 - [Message registry and broker-specific behavior](spec/registry-acceptance.md)
-- [Error codes, classes, and effects (wire format 2)](spec/error-codes.md)
+- [Error codes, classes, and effects (assignments retained in Wire 3)](spec/error-codes.md)

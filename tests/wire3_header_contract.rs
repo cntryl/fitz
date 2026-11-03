@@ -2,8 +2,8 @@
 
 use fitz::protocol::error_codes::{decode_wire_error, protocol};
 use fitz::protocol::payload_codec::PayloadEncoder;
-use fitz::protocol::wire2::envelope::{Effect, ErrorClass};
-use fitz::protocol::wire2::header::decode_message;
+use fitz::protocol::wire3::envelope::{Effect, ErrorClass};
+use fitz::protocol::wire3::header::decode_message;
 use fitz::testkit::transport::FrameBuilder;
 use fitz::testkit::{TestClient, TestServer};
 use std::num::NonZeroU64;

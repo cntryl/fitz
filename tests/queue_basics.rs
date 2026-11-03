@@ -135,6 +135,14 @@ impl QueueProtocolHarness {
                 self.actor
                     .handle_ack_for_session(TEST_SESSION_ID, id, token)
             }
+            QueueMessage::Nack {
+                id,
+                token,
+                visibility_seconds,
+                ..
+            } => self
+                .actor
+                .handle_nack_for_session(TEST_SESSION_ID, id, token, visibility_seconds),
             QueueMessage::InflightExpired { .. } => unreachable!("internal queue message"),
         }
     }

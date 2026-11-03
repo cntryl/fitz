@@ -33,7 +33,7 @@ async fn websocket_upgrade_status_for_addr(
 }
 
 #[test]
-fn should_encode_a_wire2_message_frame() {
+fn should_encode_a_wire3_message_frame() {
     // Arrange
     let mut builder = FrameBuilder::new().with_correlation(7);
     builder.encode_field(100, b"test_value");
@@ -43,7 +43,7 @@ fn should_encode_a_wire2_message_frame() {
 
     // Assert
     let (header, value) =
-        crate::protocol::wire2::header::decode_message(&frame, u32::MAX).expect("one message");
+        crate::protocol::wire3::header::decode_message(&frame, u32::MAX).expect("one message");
     assert_eq!(header.message_type, 100);
     assert_eq!(header.correlation, std::num::NonZeroU64::new(7));
     assert_eq!(value, b"test_value");
@@ -75,14 +75,25 @@ fn should_build_connect_frame() {
 
     // Assert
     let (header, value) =
-        crate::protocol::wire2::header::decode_message(&frame, u32::MAX).expect("one message");
-    let connect = crate::protocol::wire2::handshake::Connect::decode(value).expect("CONNECT body");
+        crate::protocol::wire3::header::decode_message(&frame, u32::MAX).expect("one message");
+    let core = crate::protocol::wire3::extensions::decode_core_payload(
+        value,
+        crate::protocol::wire3::extensions::CONNECT_MESSAGE_TYPE,
+        crate::protocol::wire3::extensions::ExtensionDirection::ClientToBroker,
+        header.flags.is_extensions_present(),
+    )
+    .expect("CONNECT extension envelope");
+    let connect_core = core
+        .get(value)
+        .expect("CONNECT core range fits frame payload");
+    let connect = crate::protocol::wire3::handshake::Connect::decode(connect_core)
+        .expect("CONNECT core body");
     assert_eq!(
         header.message_type,
-        crate::protocol::wire2::control::CONNECT
+        crate::protocol::wire3::control::CONNECT
     );
     assert_eq!(connect.jwt, jwt);
-    assert_eq!(connect.max_version, crate::protocol::wire2::WIRE_VERSION);
+    assert_eq!(connect.max_version, crate::protocol::wire3::WIRE_VERSION);
 }
 
 #[test]
