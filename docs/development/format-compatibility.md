@@ -4,6 +4,10 @@ This page defines compatibility expectations for serialized data, protocol paylo
 
 ## Wire format 3 (planned final cutover; candidate)
 
+The current broker source, including 0.3.1 and the `release/rc-0.4.0` branch,
+accepts only Wire 3. The package version does not imply Wire 2 compatibility
+or certify the coordinated client release.
+
 Wire 3 is the next coordinated broker-and-SDK migration. Issue #508 records
 that the deployed client cohort remains on Fitz 0.1.0 / Wire 1, while Wire 2
 was released later and has not become the deployed baseline. The cutover moves
@@ -41,7 +45,8 @@ their presence. Schedule LIST 702 is cursor-based; 707 is retired. KV SCAN
 ends in an options byte. The following wire-1 sections are historical and do
 not apply to 0.3.0 or its 1.0.0 format candidate.
 
-Fitz 0.3.1 keeps these Wire 2 layouts and compatibility rules unchanged.
+The historical Wire 2 contract is unchanged, but the 0.3.1 broker source
+implements Wire 3 instead; it cannot serve Wire 2 clients.
 
 ## Historical wire 1: Stream error envelope generation 2
 

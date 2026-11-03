@@ -289,6 +289,30 @@ fn should_keep_connection_admission_independent() {
     assert!(admitted);
 }
 
+#[test]
+fn should_not_reserve_capacity_for_malformed_caller_cancellations() {
+    // Arrange
+    let id = uuid::Uuid::new_v4();
+    let mut prefix = vec![1];
+    prefix.extend_from_slice(id.as_bytes());
+    let malformed = [
+        prefix.clone(),
+        [prefix.clone(), vec![3]].concat(),
+        [prefix, vec![1, 0]].concat(),
+    ];
+
+    // Act
+    let available = malformed.map(|payload| {
+        let state = ConnectionState::default();
+        fill_leases(&state, MAX_IN_FLIGHT - 1);
+        assert!(state.admit(&request(304, 64, &payload)));
+        state.admit(&request(400, 65, &[]))
+    });
+
+    // Assert
+    assert_eq!(available, [true; 3]);
+}
+
 #[tokio::test]
 async fn should_keep_admission_capacity_when_a_refusal_reuses_a_pending_correlation() {
     // Arrange

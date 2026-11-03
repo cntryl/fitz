@@ -178,3 +178,57 @@ async fn should_answer_repeated_connect_with_rejection_on_both_transports() {
         );
     }
 }
+
+async fn client_after_malformed_cancellations(server: &TestServer, websocket: bool) -> WireClient {
+    let mut client = WireClient::open(server, websocket).await;
+    client.connect().await;
+    for correlation in 1_u64..=64 {
+        let mut malformed = vec![1];
+        malformed.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+        malformed.push(3); // Caller cancellation accepts only reasons 1 and 2.
+        client
+            .send(&encode_message(
+                304,
+                HeaderFlags::none(),
+                NonZeroU64::new(correlation),
+                &malformed,
+            ))
+            .await;
+    }
+
+    client
+}
+
+#[tokio::test]
+async fn should_preserve_capacity_after_malformed_cancellations_on_tcp() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    let mut client = client_after_malformed_cancellations(&server, false).await;
+    // Act
+    client.send(&begin(65)).await;
+    let response = client.receive().await.unwrap();
+    // Assert
+    let (header, value) = decode_message(&response, u32::MAX).unwrap();
+    assert_eq!(header.correlation, NonZeroU64::new(65));
+    assert_eq!(
+        value[0], 0,
+        "malformed cancellations consumed connection capacity"
+    );
+}
+
+#[tokio::test]
+async fn should_preserve_capacity_after_malformed_cancellations_on_websocket() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    let mut client = client_after_malformed_cancellations(&server, true).await;
+    // Act
+    client.send(&begin(65)).await;
+    let response = client.receive().await.unwrap();
+    // Assert
+    let (header, value) = decode_message(&response, u32::MAX).unwrap();
+    assert_eq!(header.correlation, NonZeroU64::new(65));
+    assert_eq!(
+        value[0], 0,
+        "malformed cancellations consumed connection capacity"
+    );
+}

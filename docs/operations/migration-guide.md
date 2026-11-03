@@ -29,12 +29,17 @@ See the [Wire 3 client contract](../clients/spec/wire-routing-3.md),
 [release policy](../development/release-policy.md), and
 [release checklist](release-checklist.md).
 
-## 0.3.1: maintenance release
+## 0.4.0: coordinated Wire 3 broker and SDK cutover
 
-Fitz 0.3.1 retains the 0.3.0 Wire 2 client contract and does not add a Fitz
-domain-data format change. It updates the embedded Midge engine from 0.5.0 to
-0.5.2; Midge 0.5.2 retains the 0.5.0 and 0.5.1 persisted formats. The existing
-Midge 0.5 migration from FORMAT 8 or earlier cloud metadata still applies.
+The Fitz 0.4.0 source accepts only Wire 3 and cannot serve Wire 1 or Wire 2
+clients. Use the coordinated [Wire 3 cutover](#wire-3-coordinated-cutover),
+including exact broker-and-SDK qualification and paired rollback. The package
+version alone does not certify a compatible release set.
+
+It does not add a Fitz domain-data format change. It updates the embedded
+Midge engine from 0.5.0 to 0.5.2; Midge 0.5.2 retains the 0.5.0 and 0.5.1
+persisted formats. The existing Midge 0.5 migration from FORMAT 8 or earlier
+cloud metadata still applies.
 
 Before upgrading, preserve a verified copy of the database or cloud prefix.
 For rollback, restore that copy with the matching broker unless the exact
