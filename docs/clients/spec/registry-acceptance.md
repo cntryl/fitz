@@ -1,8 +1,10 @@
 # Message Registry
 
-Message identifiers are fixed by wire format 2. Reserved identifiers are not
-valid operations. The broker manifest in `src/protocol/manifest.rs` is the
-implementation source of truth.
+The assignments below were fixed by released wire format 2 and remain unchanged
+in Wire 3. Reserved identifiers are not valid operations. The broker manifest
+in `src/protocol/manifest.rs` is the implementation source of truth. Wire 3
+extension fields are registered separately in
+[extension-registry.md](extension-registry.md).
 
 ## Message identifiers
 

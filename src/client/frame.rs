@@ -1,13 +1,13 @@
 //! Frame size validation and UTF-8 helpers for client-side code.
 //!
-//! These helpers do not decode or validate a complete Wire2 message.
+//! These helpers do not decode or validate a complete Fitz wire message.
 
 use std::str;
 
 /// Frame size limits
 #[derive(Clone, Debug)]
 pub struct FrameLimits {
-    /// Maximum frame size in bytes (default matches Wire2's default message limit)
+    /// Maximum frame size in bytes (default matches the broker's message limit)
     pub max_frame_size: usize,
 
     /// Maximum buffer size for frame assembly (default is five times the frame limit)

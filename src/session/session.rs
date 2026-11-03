@@ -1,14 +1,14 @@
 // LAYER: SESSION
 //! Session lifecycle and multiplexed frame handling
 //!
-//! Each session decodes Wire2 messages and owns a mux and permission metadata. The session
+//! Each session decodes Wire3 messages and owns a mux and permission metadata. The session
 //! pipeline decodes frames, demuxes them into logical channels, and dispatches
 //! them through the runtime ingress boundary.
 
 use crate::observability as obs;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::mux::{Mux, MuxError, TypeMapping};
-use crate::protocol::wire2::header::{decode_message, MessageError, HEADER_LEN};
+use crate::protocol::wire3::header::{decode_message, MessageError, HEADER_LEN};
 use crate::runtime::routing::RouteFamily;
 use crate::session::permissions::SessionPermissions;
 use bytes::Bytes;
@@ -366,7 +366,7 @@ impl Session {
     }
 
     /// Decode the one message a transport frame carries and admit it to its
-    /// channel. Wire format 2 puts exactly one message in every frame, so a
+    /// channel. Wire format 3 puts exactly one message in every frame, so a
     /// frame that is short, long, or carries reserved flags is malformed.
     ///
     /// # Errors
@@ -408,6 +408,38 @@ impl Session {
             payload_len = header.length,
             "Session decoded message"
         );
+        let wire_payload = &frame[HEADER_LEN..];
+        let core = crate::protocol::wire3::extensions::decode_core_payload(
+            wire_payload,
+            header.message_type,
+            crate::protocol::wire3::extensions::ExtensionDirection::ClientToBroker,
+            header.flags.is_extensions_present(),
+        )
+        .map_err(|error| {
+            crate::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
+            crate::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
+            SessionError::Decode(MessageError::InvalidExtensions(error))
+        })?;
+        if header.message_type == crate::protocol::wire3::extensions::CONNECT_MESSAGE_TYPE
+            && !header.flags.is_extensions_present()
+            && wire_payload.get(..4).is_some_and(|version_range| {
+                let min_version = u16::from_be_bytes([version_range[0], version_range[1]]);
+                let max_version = u16::from_be_bytes([version_range[2], version_range[3]]);
+                crate::protocol::wire3::handshake::negotiate_version(
+                    min_version,
+                    max_version,
+                    crate::protocol::wire3::WIRE_VERSION,
+                    crate::protocol::wire3::WIRE_VERSION,
+                )
+                .is_some()
+            })
+        {
+            crate::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
+            crate::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
+            return Err(SessionError::Decode(MessageError::InvalidExtensions(
+                crate::protocol::wire3::extensions::ExtensionError::CapabilityListMissing,
+            )));
+        }
         if crate::protocol::manifest::client_entry(crate::protocol::message::MessageType::new(
             header.message_type,
         ))
@@ -419,7 +451,9 @@ impl Session {
                 reason: "unsupported or server-to-client message type",
             });
         }
-        let payload = frame.slice(HEADER_LEN..);
+        let core_start = HEADER_LEN + core.offset;
+        let core_end = core_start + core.length;
+        let payload = frame.slice(core_start..core_end);
         let record = crate::protocol::message::WireMessage::new(
             crate::protocol::message::MessageType::new(header.message_type),
             payload,

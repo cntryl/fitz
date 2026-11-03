@@ -605,7 +605,7 @@ pub fn encode_terminal_error_response_message_into(
     response_enc.finish()
 }
 
-/// Encode an RPC client response payload. The transport adds the Wire2 header.
+/// Encode an RPC client response payload. The transport adds the Wire 3 header.
 #[must_use]
 pub fn encode_client_response_payload(response: &RpcClientResponseBody) -> Bytes {
     let payload_len = response_body_capacity(response);
@@ -654,7 +654,7 @@ pub fn encode_worker_request_payload(request: &RpcRequest, remaining_budget_ms: 
     buf.freeze()
 }
 
-/// Encode an RPC response payload (`303`). The transport adds the Wire2 header.
+/// Encode an RPC response payload (`303`). The transport adds the Wire 3 header.
 #[must_use]
 pub fn encode_response_message_payload(response: &RpcResponse) -> Bytes {
     let payload_len = response_message_capacity(response);

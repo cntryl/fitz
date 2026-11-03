@@ -3,7 +3,7 @@ use crate::protocol::message::MessageType;
 
 fn decode_single_frame(frame: &[u8]) -> (MessageType, Bytes) {
     let (header, value) =
-        crate::protocol::wire2::header::decode_message(frame, u32::MAX).expect("decode frame");
+        crate::protocol::wire3::header::decode_message(frame, u32::MAX).expect("decode frame");
     assert_eq!(header.correlation, None, "control frames answer no request");
     (
         MessageType::new(header.message_type),

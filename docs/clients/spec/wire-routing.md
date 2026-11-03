@@ -1,5 +1,9 @@
 ## Wire Protocol
 
+This page is the released Wire 2 contract. The current extensible protocol
+candidate is specified in [wire-routing-3.md](wire-routing-3.md); Wire 2
+assignments below remain unchanged.
+
 ### Message Header
 
 Every Fitz message is one transport frame (one WebSocket binary message, or

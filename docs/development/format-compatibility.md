@@ -2,7 +2,27 @@
 
 This page defines compatibility expectations for serialized data, protocol payloads, and storage formats.
 
-## Wire format 2 (0.3.0)
+## Wire format 3 (planned final cutover; candidate)
+
+Wire 3 is the next coordinated broker-and-SDK migration. Issue #508 records
+that the deployed client cohort remains on Fitz 0.1.0 / Wire 1, while Wire 2
+was released later and has not become the deployed baseline. The cutover moves
+directly to Wire 3; the broker has no Wire 1 or Wire 2 compatibility adapter
+and the fleet must not be mixed across generations. Roll back the broker and
+all SDKs together. Persisted data migration, if any, is separately qualified.
+
+Wire 3 retains the fixed header, message IDs, correlation semantics, and
+existing core payload layouts. Flag bit 2 introduces a bounded extension
+envelope. Capability IDs are listed in extensible CONNECT and HELLO, and the
+active set is the peers' intersection. Unknown fields are skipped only after
+bounds validation. See the [Wire 3 design](wire-format-3-design.md),
+[wire specification](../clients/spec/wire-routing-3.md), and
+[migration guide](../operations/migration-guide.md#wire-3-coordinated-cutover).
+The server draft alone is not a release qualification: all five SDKs, shared
+conformance, exact-candidate performance evidence, and rollback qualification
+remain release gates.
+
+## Released wire format 2 (0.3.0; historical contract)
 
 Fitz 0.3.0 uses the fixed 15-byte header, structured CONNECT answered by
 HELLO or CONNECT_REJECTED, request correlation, and the common

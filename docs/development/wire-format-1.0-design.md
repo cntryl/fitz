@@ -1,6 +1,7 @@
 # Wire Format 2 Design
 
-Wire format 2 is the current protocol design. The normative client contract is
+This document records the released Wire 2 design. The current candidate
+design is [Wire 3](wire-format-3-design.md). The Wire 2 client contract remains
 in [wire-routing.md](../clients/spec/wire-routing.md), the exact message IDs
 are in [registry-acceptance.md](../clients/spec/registry-acceptance.md), and
 error meanings are in [error-codes.md](../clients/spec/error-codes.md).

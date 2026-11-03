@@ -2,6 +2,33 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## Wire 3 coordinated cutover
+
+Wire 3 is the planned final wire compatibility cutover. Issue #508 records the
+deployed SDK cohort as Fitz 0.1.0 / Wire 1; Wire 2 was released later but has
+not become that deployed baseline. Wire 3 retains the fixed header, message
+IDs, correlation behavior, and existing domain core payloads, and adds the
+extensible payload envelope. It has no Wire 1 or Wire 2 fallback codec.
+
+**Cut over as one coordinated release.** Build and qualify the broker plus
+Rust, .NET, TypeScript, Go, and Python SDKs against the shared Wire 3 vectors
+and full conformance suite. Record their exact immutable versions, validate
+the full performance acceptance, and schedule a bounded maintenance
+replacement. Do not connect a Wire 1 or Wire 2 client to the Wire 3 broker, or
+operate a mixed-generation fleet. Unsupported CONNECT ranges receive
+`VERSION_MISMATCH` (0050) in `CONNECT_REJECTED` before close.
+
+**Rollback the broker and all five SDK lines together.** Disconnect ends the
+ephemeral session, so clients reauthenticate and rebuild subscriptions and
+worker registrations. This wire migration does not authorize a storage format
+change; review any stored-data migration separately and restore the matching
+broker and data snapshot when rolling back a storage change.
+
+See the [Wire 3 client contract](../clients/spec/wire-routing-3.md),
+[format compatibility ledger](../development/format-compatibility.md),
+[release policy](../development/release-policy.md), and
+[release checklist](release-checklist.md).
+
 ## 0.3.1: maintenance release
 
 Fitz 0.3.1 retains the 0.3.0 Wire 2 client contract and does not add a Fitz

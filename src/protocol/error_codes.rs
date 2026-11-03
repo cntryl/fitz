@@ -1,4 +1,4 @@
-//! Authoritative error code allocation for all Fitz domains, wire format 2.
+//! Authoritative error code allocation shared by Fitz wire formats 2 and 3.
 //!
 //! The human mirror is `docs/clients/spec/error-codes.md`; the class and
 //! typical effect of every code live in [`crate::protocol::wire2::catalog`].

@@ -1,7 +1,7 @@
 //! Connection admission and the `CONNECT_REJECTED` write barrier.
 
 use crate::protocol::mux::ChannelMessage;
-use crate::protocol::wire2::header::decode_message;
+use crate::protocol::wire3::header::decode_message;
 use parking_lot::Mutex;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,7 +37,10 @@ impl ConnectionState {
     pub(crate) fn validate_request(&self, message: &ChannelMessage) -> Result<(), &'static str> {
         let kind = message.msg_type.as_u16();
         if kind == 1 {
-            if message.correlation.is_some() || message.flags.bits() != 0 {
+            if message.correlation.is_some()
+                || message.flags.bits() & !crate::protocol::wire3::header::FLAG_EXTENSIONS_PRESENT
+                    != 0
+            {
                 return Err("CONNECT must use zero correlation and flags");
             }
             self.connect_seen.store(true, Ordering::Release);

@@ -542,7 +542,8 @@ Transport errors signal connection failure:
 ### Domain Errors
 
 Domain errors are returned in response payloads. Every domain uses the common
-envelope from `wire-routing.md` (Response Format Convention) and the codes in
+envelope from the released [wire-routing.md](wire-routing.md) Response Format
+Convention (unchanged in Wire 3) and the codes in
 `error-codes.md`.
 **Clients MUST:**
 

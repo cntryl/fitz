@@ -1,6 +1,6 @@
 //! Transport benchmark helpers
 //!
-//! Wire2 test-frame builders and parsers used by broker benchmarks.
+//! Wire 3 test-frame builders and parsers used by broker benchmarks.
 
 use crate::testkit::transport::{FrameBuilder, FrameParser};
 use bytes::BufMut;
@@ -29,11 +29,11 @@ fn u32_to_usize(value: u32) -> usize {
 
 /// Extract the message value from a test frame for direct-to-sink delivery.
 /// # Panics
-/// This function panics when the frame is not exactly one valid Wire2 message.
+/// This function panics when the frame is not exactly one valid Fitz message.
 #[must_use]
 pub fn extract_single_tlv_field(frame: &[u8]) -> (u16, Bytes) {
     let mut parser = FrameParser::new(frame);
-    let (msg_type, payload) = parser.next_field_ref().expect("single Wire2 message");
+    let (msg_type, payload) = parser.next_field_ref().expect("single Fitz message");
     (msg_type, Bytes::copy_from_slice(payload))
 }
 
@@ -104,7 +104,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = FrameParser::new(response);
 
-    // Server sends one Wire2 message per transport frame.
+    // Server sends one Wire 3 message per transport frame.
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if payload.is_empty() { 1 } else { payload[0] };

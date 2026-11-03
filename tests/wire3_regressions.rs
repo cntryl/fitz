@@ -1,7 +1,10 @@
 use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::protocol::payload_codec::PayloadEncoder;
-use fitz::protocol::wire2::handshake::{Connect, Hello};
-use fitz::protocol::wire2::header::{decode_message, encode_message, HeaderFlags};
+use fitz::protocol::wire3::extensions::{
+    encode_capability_ids, encode_payload, ExtensionDirection, ExtensionField,
+};
+use fitz::protocol::wire3::handshake::{Connect, ConnectRejected, Hello};
+use fitz::protocol::wire3::header::{decode_message, encode_message, HeaderFlags};
 use fitz::testkit::transport::{generate_test_jwt, TestServer};
 use futures_util::{SinkExt, StreamExt};
 use std::num::NonZeroU64;
@@ -9,20 +12,45 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn connect(version: u16, jwt: String) -> Vec<u8> {
+    let core = Connect {
+        min_version: version,
+        max_version: version,
+        client_caps: 0,
+        jwt,
+        service_name: String::new(),
+        client_build: String::new(),
+    }
+    .encode();
+    let capabilities = encode_capability_ids(&[]).unwrap();
+    let fields = [ExtensionField {
+        field_id: fitz::protocol::wire3::extensions::CAPABILITY_IDS_FIELD_ID,
+        value: &capabilities,
+    }];
+    let payload = encode_payload(
+        &core,
+        fitz::protocol::wire3::extensions::CONNECT_MESSAGE_TYPE,
+        ExtensionDirection::ClientToBroker,
+        &fields,
+    )
+    .unwrap();
     encode_message(
         1,
-        HeaderFlags::none(),
+        HeaderFlags::extensions_present(),
         None,
-        &Connect {
-            min_version: version,
-            max_version: version,
-            client_caps: 0,
-            jwt,
-            service_name: String::new(),
-            client_build: String::new(),
-        }
-        .encode(),
+        payload.value.as_ref(),
     )
+}
+
+fn decode_hello(frame: &[u8]) -> Hello {
+    let (header, payload) = decode_message(frame, u32::MAX).unwrap();
+    let core = fitz::protocol::wire3::extensions::decode_core_payload(
+        payload,
+        fitz::protocol::wire3::extensions::HELLO_MESSAGE_TYPE,
+        ExtensionDirection::BrokerToClient,
+        header.flags.is_extensions_present(),
+    )
+    .unwrap();
+    Hello::decode(core.get(payload)).unwrap()
 }
 
 async fn tcp_send(stream: &mut tokio::net::TcpStream, frame: &[u8]) {
@@ -99,6 +127,58 @@ async fn should_deliver_connect_rejected_before_closing_websocket() {
 }
 
 #[tokio::test]
+async fn should_return_version_mismatch_to_wire_two_connect() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    let mut stream = tokio::net::TcpStream::connect(server.tcp_addr)
+        .await
+        .unwrap();
+
+    // Act
+    tcp_send(&mut stream, &connect(2, String::new())).await;
+    let answer = tcp_recv(&mut stream).await.unwrap();
+    let (_, payload) = decode_message(&answer, u32::MAX).unwrap();
+    let rejected = ConnectRejected::decode(payload).unwrap();
+
+    // Assert
+    assert_eq!(
+        rejected.code,
+        fitz::protocol::wire3::catalog::VERSION_MISMATCH
+    );
+}
+
+#[tokio::test]
+async fn should_return_version_mismatch_to_legacy_wire_two_core_connect() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    let mut stream = tokio::net::TcpStream::connect(server.tcp_addr)
+        .await
+        .unwrap();
+    let core = Connect {
+        min_version: 2,
+        max_version: 2,
+        client_caps: 0,
+        jwt: String::new(),
+        service_name: String::new(),
+        client_build: String::new(),
+    }
+    .encode();
+    let frame = encode_message(1, HeaderFlags::none(), None, &core);
+
+    // Act
+    tcp_send(&mut stream, &frame).await;
+    let answer = tcp_recv(&mut stream).await.unwrap();
+    let (_, payload) = decode_message(&answer, u32::MAX).unwrap();
+    let rejected = ConnectRejected::decode(payload).unwrap();
+
+    // Assert
+    assert_eq!(
+        rejected.code,
+        fitz::protocol::wire3::catalog::VERSION_MISMATCH
+    );
+}
+
+#[tokio::test]
 async fn should_deliver_hello_when_authentication_changes_route_family() {
     // Arrange
     let server = TestServer::start_with_auth_route_families(vec![1, 2], [("acme", 2)])
@@ -108,7 +188,7 @@ async fn should_deliver_hello_when_authentication_changes_route_family() {
         .await
         .unwrap();
     // Act
-    tcp_send(&mut stream, &connect(2, generate_test_jwt("acme"))).await;
+    tcp_send(&mut stream, &connect(3, generate_test_jwt("acme"))).await;
     let answer = tcp_recv(&mut stream).await;
     // Assert
     assert!(answer.is_ok(), "HELLO lost after family rebind: {answer:?}");
@@ -128,9 +208,13 @@ async fn should_report_busy_when_queue_waiter_capacity_is_exhausted() {
     let mut stream = tokio::net::TcpStream::connect(server.tcp_addr)
         .await
         .unwrap();
-    tcp_send(&mut stream, &connect(2, String::new())).await;
+    tcp_send(
+        &mut stream,
+        &connect(fitz::protocol::wire3::WIRE_VERSION, String::new()),
+    )
+    .await;
     let hello_frame = tcp_recv(&mut stream).await.unwrap();
-    let hello = Hello::decode(decode_message(&hello_frame, u32::MAX).unwrap().1).unwrap();
+    let hello = decode_hello(&hello_frame);
     let mut payload = PayloadEncoder::new();
     payload.put_string("queue://acme/app/jobs");
     payload.put_u64(30);

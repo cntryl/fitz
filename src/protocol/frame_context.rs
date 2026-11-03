@@ -1,8 +1,8 @@
-//! Frame context: Associates Wire2 message metadata with router `Envelope`
+//! Frame context: Associates Wire 3 message metadata with router `Envelope`
 //!
 //! # Purpose
 //!
-//! The transport layer extracts `session_id`, `channel_id`, and `msg_type` from a Wire2 message,
+//! The transport layer extracts `session_id`, `channel_id`, and `msg_type` from a Wire 3 message,
 //! but the `Envelope` struct doesn't carry this metadata. This module defines `FrameContext`
 //! which combines the transport metadata needed by domain handlers.
 //!
@@ -31,9 +31,9 @@ pub struct FrameContext {
     pub session_id: u64,
     /// Channel ID from transport (for example, `Data`, `Control`, `Priority`).
     pub channel_id: ChannelId,
-    /// Message type from the Wire2 header.
+    /// Message type from the Wire 3 header.
     pub msg_type: MessageType,
-    /// Raw message value bytes after the Wire2 header.
+    /// Raw message core bytes after the Wire 3 header.
     pub payload: Bytes,
     /// `RouteFamily` assigned to this session.
     pub route_family: RouteFamily,

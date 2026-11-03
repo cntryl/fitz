@@ -37,6 +37,8 @@ pub struct ClientFrameMeta {
     pub ack_requested: bool,
     /// Marks a terminal frame in a correlated response sequence.
     pub response_final: bool,
+    /// The payload contains a Wire 3 core-length prefix and extension fields.
+    pub extensions_present: bool,
 }
 
 impl ClientFrameMeta {
@@ -56,6 +58,7 @@ impl ClientFrameMeta {
             correlation: None,
             ack_requested: false,
             response_final: true,
+            extensions_present: false,
         }
     }
 
@@ -76,6 +79,12 @@ impl ClientFrameMeta {
     #[must_use]
     pub fn with_response_final(mut self, response_final: bool) -> Self {
         self.response_final = response_final;
+        self
+    }
+
+    #[must_use]
+    pub fn with_extensions_present(mut self, extensions_present: bool) -> Self {
+        self.extensions_present = extensions_present;
         self
     }
 }

@@ -60,14 +60,22 @@ fn should_answer_connect_with_hello_as_the_first_frame() {
     assert_eq!(frames.len(), 1, "exactly one HELLO per session");
     assert_eq!(
         frames[0].meta.message_type,
-        crate::protocol::wire2::control::HELLO
+        crate::protocol::wire3::control::HELLO
     );
-    let hello =
-        crate::protocol::wire2::handshake::Hello::decode(&frames[0].payload).expect("HELLO body");
-    assert_eq!(hello.version, crate::protocol::wire2::WIRE_VERSION);
+    assert!(frames[0].meta.extensions_present);
+    let core = crate::protocol::wire3::extensions::decode_core_payload(
+        &frames[0].payload,
+        crate::protocol::wire3::extensions::HELLO_MESSAGE_TYPE,
+        crate::protocol::wire3::extensions::ExtensionDirection::BrokerToClient,
+        frames[0].meta.extensions_present,
+    )
+    .expect("HELLO extension envelope");
+    let hello = crate::protocol::wire3::handshake::Hello::decode(core.get(&frames[0].payload))
+        .expect("HELLO core body");
+    assert_eq!(hello.version, crate::protocol::wire3::WIRE_VERSION);
     assert_eq!(
         hello.broker_caps,
-        crate::protocol::wire2::BROKER_CAPABILITIES
+        crate::protocol::wire3::BROKER_CAPABILITIES
     );
     assert_eq!(
         hello.max_message_bytes,
@@ -77,5 +85,11 @@ fn should_answer_connect_with_hello_as_the_first_frame() {
     assert!(
         frames[0].meta.correlation.is_none(),
         "HELLO answers the connection, not a correlated request"
+    );
+    let capability_field_offset = core.offset + core.length;
+    assert_eq!(
+        &frames[0].payload[capability_field_offset..],
+        &[0, 1, 0, 0, 0, 2, 0, 0],
+        "HELLO advertises an explicitly empty capability set"
     );
 }

@@ -1,6 +1,6 @@
 //! Multiplexing layer for logical channels
 //!
-//! This module maps Wire2 message types to logical channels and enforces
+//! This module maps the shared Wire 2/3 message types to logical channels and enforces
 //! per-channel backpressure.
 
 use crate::protocol::frame::ChannelId;
