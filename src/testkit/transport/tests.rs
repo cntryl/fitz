@@ -83,7 +83,10 @@ fn should_build_connect_frame() {
         header.flags.is_extensions_present(),
     )
     .expect("CONNECT extension envelope");
-    let connect = crate::protocol::wire3::handshake::Connect::decode(core.get(value))
+    let connect_core = core
+        .get(value)
+        .expect("CONNECT core range fits frame payload");
+    let connect = crate::protocol::wire3::handshake::Connect::decode(connect_core)
         .expect("CONNECT core body");
     assert_eq!(
         header.message_type,

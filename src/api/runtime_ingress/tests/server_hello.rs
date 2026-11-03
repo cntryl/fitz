@@ -70,8 +70,11 @@ fn should_answer_connect_with_hello_as_the_first_frame() {
         frames[0].meta.extensions_present,
     )
     .expect("HELLO extension envelope");
-    let hello = crate::protocol::wire3::handshake::Hello::decode(core.get(&frames[0].payload))
-        .expect("HELLO core body");
+    let hello_core = core
+        .get(&frames[0].payload)
+        .expect("HELLO core range fits frame payload");
+    let hello =
+        crate::protocol::wire3::handshake::Hello::decode(hello_core).expect("HELLO core body");
     assert_eq!(hello.version, crate::protocol::wire3::WIRE_VERSION);
     assert_eq!(
         hello.broker_caps,

@@ -74,14 +74,18 @@ pub struct CorePayloadRange {
 }
 
 impl CorePayloadRange {
+    /// Return the core slice when this range fits the supplied payload.
     #[must_use]
-    pub fn get(self, payload: &[u8]) -> &[u8] {
-        &payload[self.offset..self.offset + self.length]
+    pub fn get(self, payload: &[u8]) -> Option<&[u8]> {
+        self.as_range().and_then(|range| payload.get(range))
     }
 
+    /// Return the byte range when its end can be represented.
     #[must_use]
-    pub const fn as_range(self) -> std::ops::Range<usize> {
-        self.offset..self.offset + self.length
+    pub fn as_range(self) -> Option<std::ops::Range<usize>> {
+        self.offset
+            .checked_add(self.length)
+            .map(|end| self.offset..end)
     }
 }
 
@@ -349,6 +353,7 @@ pub fn encode_payload<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn capability_list(ids: &[u32]) -> Vec<u8> {
         let mut value = Vec::with_capacity(2 + ids.len() * 4);
@@ -389,7 +394,43 @@ mod tests {
         // Assert
         assert!(!encoded.extensions_present);
         assert!(matches!(encoded.value, Cow::Borrowed(_)));
-        assert_eq!(range.get(&encoded.value), core);
+        assert_eq!(range.get(&encoded.value), Some(core.as_slice()));
+    }
+
+    #[test]
+    fn should_not_panic_when_a_core_range_does_not_fit_the_payload() {
+        // Arrange
+        let ranges = [
+            CorePayloadRange {
+                offset: 1,
+                length: 1,
+            },
+            CorePayloadRange {
+                offset: usize::MAX,
+                length: 1,
+            },
+        ];
+
+        // Act
+        let results = ranges.map(|range| range.get(&[]));
+
+        // Assert
+        assert_eq!(results, [None, None]);
+    }
+
+    #[test]
+    fn should_not_panic_when_a_core_range_end_overflows() {
+        // Arrange
+        let range = CorePayloadRange {
+            offset: usize::MAX,
+            length: 1,
+        };
+
+        // Act
+        let result = range.as_range();
+
+        // Assert
+        assert_eq!(result, None);
     }
 
     #[test]
@@ -402,7 +443,7 @@ mod tests {
             decode_core_payload(&encoded, 104, ExtensionDirection::ClientToBroker, true).unwrap();
 
         // Assert
-        assert_eq!(range.get(&encoded), b"core");
+        assert_eq!(range.get(&encoded), Some(&b"core"[..]));
     }
 
     #[test]
@@ -417,6 +458,41 @@ mod tests {
 
         // Assert
         assert_eq!(error, ExtensionError::FieldHeaderTruncated);
+    }
+
+    #[test]
+    fn should_reject_every_truncated_core_length_prefix() {
+        // Arrange
+        let direction = ExtensionDirection::ClientToBroker;
+
+        // Act
+        let errors = (0..4)
+            .map(|length| decode_core_payload(&vec![0; length], 104, direction, true).unwrap_err())
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(errors, vec![ExtensionError::CoreLengthMissing; 4]);
+    }
+
+    #[test]
+    fn should_reject_every_truncated_extension_field_header() {
+        // Arrange
+        let direction = ExtensionDirection::ClientToBroker;
+
+        // Act
+        let errors = (1..EXTENSION_HEADER_LEN)
+            .map(|length| {
+                let mut encoded = payload(b"", &[]);
+                encoded.extend(std::iter::repeat_n(0, length));
+                decode_core_payload(&encoded, 104, direction, true).unwrap_err()
+            })
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(
+            errors,
+            vec![ExtensionError::FieldHeaderTruncated; EXTENSION_HEADER_LEN - 1]
+        );
     }
 
     #[test]
@@ -533,6 +609,28 @@ mod tests {
     }
 
     #[test]
+    fn should_reject_out_of_order_fields_from_encoder() {
+        // Arrange
+        let fields = [
+            ExtensionField {
+                field_id: 9,
+                value: b"nine",
+            },
+            ExtensionField {
+                field_id: 3,
+                value: b"three",
+            },
+        ];
+
+        // Act
+        let error =
+            encode_payload(b"core", 104, ExtensionDirection::ClientToBroker, &fields).unwrap_err();
+
+        // Assert
+        assert_eq!(error, ExtensionError::FieldsOutOfOrder);
+    }
+
+    #[test]
     fn should_validate_hello_capability_field_in_server_to_client_scope() {
         // Arrange
         let caps = capability_list(&[3, 9]);
@@ -548,7 +646,7 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(range.get(&encoded), b"hello");
+        assert_eq!(range.get(&encoded), Some(&b"hello"[..]));
     }
 
     #[test]
@@ -579,7 +677,7 @@ mod tests {
 
         // Assert
         assert!(encoded.extensions_present);
-        assert_eq!(range.get(&encoded.value), b"core");
+        assert_eq!(range.get(&encoded.value), Some(&b"core"[..]));
     }
 
     #[test]
@@ -674,6 +772,95 @@ mod tests {
     }
 
     #[test]
+    fn should_reject_capability_lists_shorter_than_the_count_field() {
+        // Arrange
+        let truncated_values: [&[u8]; 2] = [&[], &[0]];
+
+        // Act
+        let errors = truncated_values
+            .iter()
+            .map(|value| {
+                let encoded = payload(b"connect", &[(CAPABILITY_IDS_FIELD_ID, value)]);
+                decode_core_payload(
+                    &encoded,
+                    CONNECT_MESSAGE_TYPE,
+                    ExtensionDirection::ClientToBroker,
+                    true,
+                )
+                .unwrap_err()
+            })
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(
+            errors,
+            vec![ExtensionError::CapabilityListTruncated; truncated_values.len()]
+        );
+    }
+
+    #[test]
+    fn should_reject_reserved_capability_id_in_decoder() {
+        // Arrange
+        let capabilities = capability_list(&[0]);
+        let encoded = payload(b"connect", &[(CAPABILITY_IDS_FIELD_ID, &capabilities)]);
+
+        // Act
+        let error = decode_core_payload(
+            &encoded,
+            CONNECT_MESSAGE_TYPE,
+            ExtensionDirection::ClientToBroker,
+            true,
+        )
+        .unwrap_err();
+
+        // Assert
+        assert_eq!(error, ExtensionError::CapabilityIdReserved);
+    }
+
+    #[test]
+    fn should_reject_reserved_capability_id_in_encoder() {
+        // Arrange
+
+        // Act
+        let error = encode_capability_ids(&[0]).unwrap_err();
+
+        // Assert
+        assert_eq!(error, ExtensionError::CapabilityIdReserved);
+    }
+
+    #[test]
+    fn should_reject_more_than_u16_max_capability_ids_in_encoder() {
+        // Arrange
+        let ids = vec![1; usize::from(u16::MAX) + 1];
+
+        // Act
+        let error = encode_capability_ids(&ids).unwrap_err();
+
+        // Assert
+        assert_eq!(error, ExtensionError::CapabilityListLengthMismatch);
+    }
+
+    #[test]
+    fn should_accept_maximum_u16_capability_count() {
+        // Arrange
+        let ids = (1..=u32::from(u16::MAX)).collect::<Vec<_>>();
+        let capabilities = encode_capability_ids(&ids).unwrap();
+        let encoded = payload(b"connect", &[(CAPABILITY_IDS_FIELD_ID, &capabilities)]);
+
+        // Act
+        let range = decode_core_payload(
+            &encoded,
+            CONNECT_MESSAGE_TYPE,
+            ExtensionDirection::ClientToBroker,
+            true,
+        )
+        .unwrap();
+
+        // Assert
+        assert_eq!(range.get(&encoded), Some(&b"connect"[..]));
+    }
+
+    #[test]
     fn should_encode_the_empty_capability_set_with_a_zero_count() {
         // Arrange
 
@@ -710,6 +897,51 @@ mod tests {
             decode_core_payload(&encoded, 104, ExtensionDirection::ClientToBroker, true).unwrap();
 
         // Assert
-        assert_eq!(range.get(&encoded), b"core");
+        assert_eq!(range.get(&encoded), Some(&b"core"[..]));
+    }
+
+    #[test]
+    fn should_scope_capability_field_ids_to_handshake_messages() {
+        // Arrange
+        let encoded = payload(b"core", &[(CAPABILITY_IDS_FIELD_ID, b"bad"), (1, b"")]);
+
+        // Act
+        let range =
+            decode_core_payload(&encoded, 104, ExtensionDirection::ClientToBroker, true).unwrap();
+
+        // Assert
+        assert_eq!(range.get(&encoded), Some(&b"core"[..]));
+    }
+
+    proptest! {
+        #[test]
+        fn should_return_only_in_bounds_core_ranges_for_arbitrary_payloads(
+            payload in prop::collection::vec(any::<u8>(), 0..1024),
+            message_type in any::<u16>(),
+            client_to_broker in any::<bool>(),
+            extensions_present in any::<bool>(),
+        ) {
+            // Arrange
+            let direction = if client_to_broker {
+                ExtensionDirection::ClientToBroker
+            } else {
+                ExtensionDirection::BrokerToClient
+            };
+
+            // Act
+            let decoded = decode_core_payload(
+                &payload,
+                message_type,
+                direction,
+                extensions_present,
+            );
+
+            // Assert
+            if let Ok(range) = decoded {
+                prop_assert!(range.offset <= payload.len());
+                prop_assert!(range.length <= payload.len() - range.offset);
+                prop_assert_eq!(range.get(&payload).map(<[u8]>::len), Some(range.length));
+            }
+        }
     }
 }

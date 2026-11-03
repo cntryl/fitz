@@ -12,10 +12,14 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn connect(version: u16, jwt: String) -> Vec<u8> {
+    connect_with_client_caps(version, jwt, 0)
+}
+
+fn connect_with_client_caps(version: u16, jwt: String, client_caps: u32) -> Vec<u8> {
     let core = Connect {
         min_version: version,
         max_version: version,
-        client_caps: 0,
+        client_caps,
         jwt,
         service_name: String::new(),
         client_build: String::new(),
@@ -50,7 +54,11 @@ fn decode_hello(frame: &[u8]) -> Hello {
         header.flags.is_extensions_present(),
     )
     .unwrap();
-    Hello::decode(core.get(payload)).unwrap()
+    Hello::decode(
+        core.get(payload)
+            .expect("HELLO core range fits frame payload"),
+    )
+    .unwrap()
 }
 
 async fn tcp_send(stream: &mut tokio::net::TcpStream, frame: &[u8]) {
@@ -144,6 +152,32 @@ async fn should_return_version_mismatch_to_wire_two_connect() {
     assert_eq!(
         rejected.code,
         fitz::protocol::wire3::catalog::VERSION_MISMATCH
+    );
+}
+
+#[tokio::test]
+async fn should_reject_wire_three_connect_with_legacy_capability_bits() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    let mut stream = tokio::net::TcpStream::connect(server.tcp_addr)
+        .await
+        .unwrap();
+
+    // Act
+    tcp_send(&mut stream, &connect_with_client_caps(3, String::new(), 1)).await;
+    let answer = tcp_recv(&mut stream).await.unwrap();
+    let (header, payload) = decode_message(&answer, u32::MAX).unwrap();
+    let rejected = ConnectRejected::decode(payload).unwrap();
+
+    // Assert
+    assert_eq!(header.message_type, 3);
+    assert_eq!(
+        rejected.code,
+        fitz::protocol::wire3::catalog::shared(
+            fitz::protocol::wire3::catalog::block::PROTOCOL,
+            fitz::protocol::wire3::envelope::ErrorClass::BadRequest,
+        )
+        .unwrap()
     );
 }
 

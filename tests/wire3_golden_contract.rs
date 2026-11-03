@@ -130,5 +130,5 @@ fn should_decode_core_from_golden_vector_with_unknown_extension() {
 
     // Assert
     assert_eq!(header.correlation, NonZeroU64::new(1));
-    assert_eq!(core.get(payload), b"hi");
+    assert_eq!(core.get(payload), Some(&b"hi"[..]));
 }
