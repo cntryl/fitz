@@ -21,15 +21,15 @@
     "gen:adapters": "askr generate ../public/openapi.yml -o ./src/adapters/generated"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.5.0",
-    "@askrjs/auth": "^0.5.0",
+    "@askrjs/askr": "^0.5.1",
+    "@askrjs/auth": "^0.5.1",
     "@askrjs/fetch": "0.5.0",
-    "@askrjs/lucide": "0.5.0",
-    "@askrjs/themes": "^0.5.0",
+    "@askrjs/lucide": "0.5.1",
+    "@askrjs/themes": "^0.5.1",
     "@askrjs/ui": "^0.5.0"
   },
   "devDependencies": {
-    "@askrjs/cli": "0.5.0",
+    "@askrjs/cli": "0.5.1",
     "@askrjs/vite": "0.5.0",
     "@playwright/test": "^1.64.1",
     "@types/node": "^26.6.6",
@@ -43,6 +43,8 @@
   "overrides": {
     "@vitest/browser-playwright": "5.0.5",
     "@xmldom/xmldom": "0.9.12",
+    "glob": "14.0.3",
+    "minimatch": "11.0.4",
     "vite": "$vite",
     "vitest": "5.0.5"
   },
