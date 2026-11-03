@@ -1,7 +1,7 @@
 //! Sequential payload encoding for domain message bodies.
 //!
 //! It encodes and decodes a fixed order of typed fields (scalars,
-//! length-prefixed strings and bytes, and optionals) inside a Wire2 message
+//! length-prefixed strings and bytes, and optionals) inside a wire core payload
 //! value. The outer header is defined in [`crate::protocol::wire2::header`].
 
 use bytes::BufMut;

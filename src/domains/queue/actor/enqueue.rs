@@ -60,16 +60,35 @@ impl QueueActor {
 
     /// Handle send operation
     pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        self.handle_send_with_ttl(body, delay_seconds, None)
+    }
+
+    pub fn handle_send_with_ttl(
+        &mut self,
+        body: Bytes,
+        delay_seconds: Option<u64>,
+        ttl_hours: Option<std::num::NonZeroU32>,
+    ) -> QueueResponse {
         if self.storage_outcome_is_unknown() {
             return Self::unknown_outcome_response();
         }
         if let Err(reason) = self.validate_deliverable_body(body.len()) {
             return QueueResponse::BadRequest { reason };
         }
-        self.send_inner(body, delay_seconds)
+        self.send_inner_with_ttl(body, delay_seconds, ttl_hours)
     }
 
+    #[cfg(test)]
     fn send_inner(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        self.send_inner_with_ttl(body, delay_seconds, None)
+    }
+
+    fn send_inner_with_ttl(
+        &mut self,
+        body: Bytes,
+        delay_seconds: Option<u64>,
+        ttl_hours: Option<std::num::NonZeroU32>,
+    ) -> QueueResponse {
         if !self.has_message_id_capacity(1) {
             return QueueResponse::Error {
                 message: "queue message id space exhausted".to_string(),
@@ -96,7 +115,10 @@ impl QueueActor {
         let reserved_limit = self.reserved_id_limit_for(1);
         let staged_next_id = reserved_limit.unwrap_or(self.next_id_limit);
         let is_ready = timing.visible_at <= now_instant;
-        let record = QueueRecord::enqueued(id, timing.visible_at_ms, is_ready, now_epoch_ms);
+        let mut record = QueueRecord::enqueued(id, timing.visible_at_ms, is_ready, now_epoch_ms);
+        if let Err(response) = self.set_publish_deadline(&mut record, ttl_hours) {
+            return response;
+        }
         let staged_ready_count = self
             .persisted_ready_count
             .saturating_add(usize::from(is_ready));
@@ -356,15 +378,19 @@ impl QueueActor {
         txn.put(
             self.cached_header_key(id),
             Self::encode_record_header(record),
-            None,
+            self.record_ttl_seconds(record),
         )
         .map_err(|error| {
             Self::store_error_response(&error, "Failed to add message header to transaction")
         })?;
-        txn.put(self.cached_body_key(id), body.to_vec(), None)
-            .map_err(|error| {
-                Self::store_error_response(&error, "Failed to add message body to transaction")
-            })?;
+        txn.put(
+            self.cached_body_key(id),
+            body.to_vec(),
+            self.record_ttl_seconds(record),
+        )
+        .map_err(|error| {
+            Self::store_error_response(&error, "Failed to add message body to transaction")
+        })?;
 
         if let Some((shard, range)) = ready_index_write {
             txn.put(
@@ -376,10 +402,14 @@ impl QueueActor {
                 Self::store_error_response(&error, "Failed to update queue ready index")
             })?;
         } else {
-            txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
-                .map_err(|error| {
-                    Self::store_error_response(&error, "Failed to update queue delayed index")
-                })?;
+            txn.put(
+                self.delayed_index_key(visible_at_ms, id),
+                Self::index_expiry_value(record.retention_expires_at_ms),
+                self.record_ttl_seconds(record),
+            )
+            .map_err(|error| {
+                Self::store_error_response(&error, "Failed to update queue delayed index")
+            })?;
         }
 
         Ok(())
@@ -482,8 +512,9 @@ impl QueueActor {
         for (body, delay_seconds) in items {
             let timing = Self::send_timing(*delay_seconds, now_instant, now_epoch_ms)?;
             let id = MessageId::new(next_id);
-            let record =
+            let mut record =
                 QueueRecord::enqueued(id, timing.visible_at_ms, timing.delay_ms == 0, now_epoch_ms);
+            self.set_publish_deadline(&mut record, None)?;
             let ready_index_write = if timing.delay_ms == 0 {
                 let (shard, range) = Self::prepare_persisted_ready_append(
                     staged_ready_tails[Self::shard_for_id(id)],

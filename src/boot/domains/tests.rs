@@ -6,6 +6,7 @@ use bytes::{BufMut, Bytes};
 
 mod contracts;
 mod health;
+mod queue_attempts;
 
 fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
@@ -18,6 +19,8 @@ fn domain_setup_options() -> DomainSetupOptions {
         schedule_write_policy: crate::domains::WritePolicy::BestEffort,
 
         queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
+        queue_max_attempts: None,
+        queue_retention: crate::domains::queue::retention::QueueRetention::default(),
 
         request_sync_write_policy: crate::domains::WritePolicy::Sync,
         request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
@@ -37,6 +40,8 @@ fn cloud_domain_setup_options(
         schedule_write_policy: durable_write_policy,
 
         queue_fast_flush_interval: None,
+        queue_max_attempts: None,
+        queue_retention: crate::domains::queue::retention::QueueRetention::default(),
 
         request_sync_write_policy: durable_write_policy,
         request_buffered_write_policy: crate::domains::WritePolicy::CloudAsync,

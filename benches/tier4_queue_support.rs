@@ -221,7 +221,9 @@ fn dispatch_encoded(actor: &mut QueueActor, session_id: u64, frame: &[u8]) -> Qu
             ..
         } => actor.handle_receive_for_session(session_id, inflight_seconds, batch_size),
         QueueMessage::Ack { id, token, .. } => actor.handle_ack_for_session(session_id, id, token),
-        QueueMessage::Extend { .. } | QueueMessage::InflightExpired { .. } => {
+        QueueMessage::Extend { .. }
+        | QueueMessage::Nack { .. }
+        | QueueMessage::InflightExpired { .. } => {
             panic!("unexpected Queue lifecycle operation")
         }
     }

@@ -104,7 +104,7 @@ impl QueueActor {
         txn: &mut super::super::recovery_store::QueueTransaction,
         id: MessageId,
         plan: PersistedIndexMutationPlan,
-        dead_lettered_at_ms: Option<u64>,
+        dead_letter: Option<&super::super::QueueRecord>,
     ) -> Result<(), String> {
         if let Some((shard, mutation)) = plan.ready_mutation {
             self.write_persisted_ready_mutation(txn, shard, mutation)
@@ -118,11 +118,12 @@ impl QueueActor {
                 .map_err(|e| format!("Failed to update delayed index for message {id}: {e:?}"))?;
         }
 
-        if let Some(dead_lettered_at_ms) = dead_lettered_at_ms {
+        if let Some(record) = dead_letter {
+            let dead_lettered_at_ms = record.dead_lettered_at_ms.ok_or("DLQ timestamp missing")?;
             txn.put(
                 self.dlq_index_key(dead_lettered_at_ms, id),
-                Vec::new(),
-                None,
+                Self::index_expiry_value(record.retention_expires_at_ms),
+                self.record_ttl_seconds(record),
             )
             .map_err(|e| format!("Failed to write DLQ index for message {id}: {e:?}"))?;
         }

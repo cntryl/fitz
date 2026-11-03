@@ -7,7 +7,7 @@ use crate::control::admin::QueueAgeBuckets;
 impl QueueActor {
     #[must_use]
     pub fn ready_len(&self) -> usize {
-        self.ready.len()
+        self.ready_count
     }
 
     #[must_use]
@@ -55,11 +55,11 @@ impl QueueActor {
             self.backlog_age_metrics(now_epoch_ms);
         let delay_age_buckets = self.delay_age_metrics(now_epoch_ms);
         QueueAdminSnapshot {
-            messages_ready: self.ready.len(),
+            messages_ready: self.ready_count,
             messages_delayed: self.persisted_delayed.len(),
             messages_inflight: self.inflight.len(),
             messages_dead_lettered: self.persisted_dlq.len(),
-            messages_total: self.ready.len()
+            messages_total: self.ready_count
                 + self.inflight.len()
                 + self.persisted_delayed.len()
                 + self.persisted_dlq.len(),
@@ -116,7 +116,7 @@ impl QueueActor {
                 Err(error) => return Err(error),
             }
         };
-        if !matches!(record.state, QueueState::Dlq) {
+        if !matches!(record.state, QueueState::Dlq) || self.record_has_expired(&record) {
             return Ok(None);
         }
         Ok(Some(QueueDeadLetterSnapshot {
@@ -135,7 +135,7 @@ impl QueueActor {
         let mut dead_letters: Vec<_> = self
             .persisted_dlq
             .iter()
-            .map(|(id, &dead_lettered_at_epoch_ms)| {
+            .filter_map(|(id, &dead_lettered_at_epoch_ms)| {
                 let record = self
                     .records
                     .get(id)
@@ -145,27 +145,23 @@ impl QueueActor {
                         self.load_record_metadata_from_store(*id)
                             .ok()
                             .filter(|record| matches!(record.state, QueueState::Dlq))
-                    });
+                    })?;
+                if self.record_has_expired(&record) {
+                    return None;
+                }
 
-                let attempts = record
-                    .as_ref()
-                    .map(|record| record.attempts as usize)
-                    .unwrap_or_default();
+                let attempts = record.attempts as usize;
                 let dead_lettered_at_epoch_ms = record
-                    .as_ref()
-                    .and_then(|record| record.dead_lettered_at_ms)
+                    .dead_lettered_at_ms
                     .unwrap_or(dead_lettered_at_epoch_ms);
-                let reason = record
-                    .as_ref()
-                    .and_then(|record| record.dlq_reason)
-                    .map_or("unknown", DlqReason::as_str);
+                let reason = record.dlq_reason.map_or("unknown", DlqReason::as_str);
 
-                QueueDeadLetterSnapshot {
+                Some(QueueDeadLetterSnapshot {
                     message_id: id.as_u64(),
                     dead_lettered_at_epoch_ms,
                     attempts,
                     reason,
-                }
+                })
             })
             .collect();
 
@@ -178,7 +174,7 @@ impl QueueActor {
 
     #[must_use]
     pub fn ready_contains(&self, id: MessageId) -> bool {
-        self.ready.iter().any(|entry| entry.id == id)
+        !self.expired_ready.contains(&id) && self.ready.iter().any(|entry| entry.id == id)
     }
 
     /// Returns true if queue-local waiters should be re-checked.

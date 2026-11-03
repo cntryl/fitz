@@ -50,15 +50,15 @@ fn open_connected_session(
     frames
 }
 
-fn decoded_goaway(frames: &Captured) -> crate::protocol::wire2::handshake::GoAway {
+fn decoded_goaway(frames: &Captured) -> crate::protocol::wire3::handshake::GoAway {
     let frames = frames.lock().unwrap();
     assert_eq!(frames.len(), 2, "HELLO then GOAWAY, got {frames:?}");
     assert_eq!(
         frames[1].meta.message_type,
-        crate::protocol::wire2::control::GOAWAY
+        crate::protocol::wire3::control::GOAWAY
     );
     assert!(frames[1].meta.correlation.is_none());
-    crate::protocol::wire2::handshake::GoAway::decode(&frames[1].payload).expect("GOAWAY body")
+    crate::protocol::wire3::handshake::GoAway::decode(&frames[1].payload).expect("GOAWAY body")
 }
 
 #[test]
@@ -150,10 +150,10 @@ fn should_wait_until_hello_to_announce_goaway_to_a_connecting_session() {
     assert_eq!(captured.len(), 2, "HELLO followed by GOAWAY");
     assert_eq!(
         captured[0].meta.message_type,
-        crate::protocol::wire2::control::HELLO
+        crate::protocol::wire3::control::HELLO
     );
     assert_eq!(
         captured[1].meta.message_type,
-        crate::protocol::wire2::control::GOAWAY
+        crate::protocol::wire3::control::GOAWAY
     );
 }

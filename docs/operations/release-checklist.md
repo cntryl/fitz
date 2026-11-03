@@ -10,6 +10,11 @@ Use this checklist for a Fitz release candidate.
   [migration guide](migration-guide.md).
 - For a wire change, validate the broker and supported SDKs against the shared
   [client scenarios](../clients/cross-language-conformance-suite.yaml).
+- For the Wire 3 cutover, record the deployed 0.1.0 / Wire 1 baseline and exact
+  broker plus Rust, .NET, TypeScript, Go, and Python SDK versions. Require
+  shared golden-vector and full conformance results, same-hardware performance
+  evidence, a no-mixed-generation cutover plan, and a paired broker/client
+  rollback plan. Keep any storage migration as a separate qualification.
 
 ## Validation
 

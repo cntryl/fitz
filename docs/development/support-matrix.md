@@ -22,6 +22,11 @@ runtime, transport, storage provider, and client version.
 - No broker serves both. A 0.3.0 broker requires the 2.0 line of every SDK, and
   a 0.2.x broker requires the 1.x lines; the migration guide states the
   flag-day order.
+- Wire 3 is a broker draft for the coordinated cutover described in
+  [issue #508](https://github.com/cntryl/fitz/issues/508); it is not a released
+  or supported client/broker combination. Its planned release starts from the
+  deployed 0.1.0 / Wire 1 client cohort and requires all five SDKs to qualify
+  with it together.
 
 ## Client SDK Status
 

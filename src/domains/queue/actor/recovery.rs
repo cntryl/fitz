@@ -1,4 +1,4 @@
-use super::recovery_store::{QueueRecoverySnapshot, QueueRecoveryStore};
+use super::recovery_store::{QueueRecoverySnapshot, QueueRecoveryStore, TimedIndexEntry};
 use super::{
     DelayedMessage, IndexRecoveryAttempt, MessageId, QueueActor, QueueState, RecoveryPath,
     QUEUE_IDLE_HORIZON,
@@ -108,6 +108,8 @@ impl QueueActor {
                 ready: &self.persisted_ready_shards,
                 delayed: &self.persisted_delayed,
                 dlq: &self.persisted_dlq,
+                retention_deadlines: &self.retention_schedule.deadlines,
+                now_epoch_ms: self.clock.now_epoch_ms(),
             })?;
         self.index_meta_written = true;
         Ok(())
@@ -137,6 +139,9 @@ impl QueueActor {
             );
         }
         if max_id.is_none() {
+            if let Some(next_id) = fallback_next_id {
+                self.rewrite_index_from_memory(next_id)?;
+            }
             return Ok(None);
         }
         let fallback_next_id = fallback_next_id
@@ -257,8 +262,8 @@ impl QueueActor {
     fn scan_index_entries(
         &mut self,
         ready_iter: &mut impl Iterator<Item = Result<super::ReadyRange, String>>,
-        delayed_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
-        dlq_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
+        delayed_iter: &mut impl Iterator<Item = Result<TimedIndexEntry, String>>,
+        dlq_iter: &mut impl Iterator<Item = Result<TimedIndexEntry, String>>,
     ) -> Result<IndexScanStats, IndexRecoveryAttempt> {
         let now_epoch_ms = self.clock.now_epoch_ms();
         let now_instant = self.clock.now_instant();
@@ -297,16 +302,18 @@ impl QueueActor {
 
     fn scan_delayed_entries(
         &mut self,
-        delayed_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
+        delayed_iter: &mut impl Iterator<Item = Result<TimedIndexEntry, String>>,
         now_epoch_ms: u64,
         now_instant: Instant,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
         for entry in delayed_iter.by_ref() {
-            let (visible_at_ms, id) =
-                entry.map_err(|reason| IndexRecoveryAttempt::Error { reason })?;
+            let TimedIndexEntry {
+                timestamp: visible_at_ms,
+                id,
+                expires_at_ms,
+            } = entry.map_err(|reason| IndexRecoveryAttempt::Error { reason })?;
 
-            self.insert_persisted_delayed(id, visible_at_ms);
             stats.scanned_delayed_count += 1;
             stats.scanned_next_delayed = Some(
                 stats
@@ -319,6 +326,11 @@ impl QueueActor {
                     .map_or(id.as_u64(), |max_id| max_id.max(id.as_u64())),
             );
 
+            if expires_at_ms.is_some_and(|deadline| deadline <= now_epoch_ms) {
+                continue;
+            }
+            self.retention_schedule.schedule(id, expires_at_ms);
+            self.insert_persisted_delayed(id, visible_at_ms);
             if visible_at_ms <= now_epoch_ms {
                 stats.matured_delayed_ids.push(id);
             } else {
@@ -337,19 +349,26 @@ impl QueueActor {
 
     fn scan_dlq_entries(
         &mut self,
-        dlq_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
+        dlq_iter: &mut impl Iterator<Item = Result<TimedIndexEntry, String>>,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
         for entry in dlq_iter.by_ref() {
-            let (dead_lettered_at_ms, id) =
-                entry.map_err(|reason| IndexRecoveryAttempt::Error { reason })?;
+            let TimedIndexEntry {
+                timestamp: dead_lettered_at_ms,
+                id,
+                expires_at_ms,
+            } = entry.map_err(|reason| IndexRecoveryAttempt::Error { reason })?;
 
-            self.insert_persisted_dlq(id, dead_lettered_at_ms);
             stats.max_id = Some(
                 stats
                     .max_id
                     .map_or(id.as_u64(), |max_id| max_id.max(id.as_u64())),
             );
+            if expires_at_ms.is_some_and(|deadline| deadline <= self.clock.now_epoch_ms()) {
+                continue;
+            }
+            self.retention_schedule.schedule(id, expires_at_ms);
+            self.insert_persisted_dlq(id, dead_lettered_at_ms);
         }
 
         Ok(())
@@ -365,6 +384,11 @@ impl QueueActor {
         max_id: &mut Option<u64>,
     ) {
         *max_id = Some(max_id.map_or(id.as_u64(), |current| current.max(id.as_u64())));
+        if self.record_has_expired(record) {
+            return;
+        }
+        self.retention_schedule
+            .schedule(id, record.retention_expires_at_ms);
         if matches!(record.state, QueueState::Dlq) {
             self.insert_persisted_dlq(
                 id,

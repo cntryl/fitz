@@ -104,7 +104,14 @@ fn should_enqueue_batch_once_when_l0_admission_closes_after_pressure_wait() {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(delayed_index, vec![(visible_at, ids[1])]);
+    assert_eq!(
+        delayed_index,
+        vec![super::super::recovery_store::TimedIndexEntry {
+            timestamp: visible_at,
+            id: ids[1],
+            expires_at_ms: None,
+        }]
+    );
 }
 
 #[test]

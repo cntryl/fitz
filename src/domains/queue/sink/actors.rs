@@ -338,7 +338,8 @@ impl QueueFamilyState {
                 dirty_families.insert(key.family);
             }
 
-            if let Some(notification) = self.record_ready_state(&key, counts) {
+            let notification = self.record_ready_state(&key, counts);
+            if notification.is_some() || (due_work_changed && counts.ready > 0) {
                 notifications.push((key.clone(), notification));
             }
 
@@ -358,7 +359,7 @@ impl QueueFamilyState {
                         }
                         if let Some(notification) = self.record_ready_state(&key, recovered_counts)
                         {
-                            notifications.push((key, notification));
+                            notifications.push((key, Some(notification)));
                         }
                     }
                     Err(error) => {
@@ -412,7 +413,7 @@ impl QueueFamilyState {
             self.mark_admin_snapshot_dirty();
         }
         for (key, notification) in notifications {
-            self.notify_queue_ready_and_wake_reserves(&key, Some(notification), now);
+            self.notify_queue_ready_and_wake_reserves(&key, notification, now);
         }
     }
 

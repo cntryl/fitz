@@ -8,6 +8,40 @@ use super::{
 use crate::observability as obs;
 
 impl QueueActor {
+    pub(super) fn compact_inflight_timers(&mut self) {
+        if self.timers.len() > self.inflight.len().saturating_mul(2).saturating_add(64) {
+            // Failed token operations can schedule retries for the same live
+            // epoch. Keep its earliest check instead of every duplicate.
+            let mut earliest =
+                super::FastMap::with_capacity_and_hasher(self.inflight.len(), super::FxBuildHasher);
+            for Reverse(expiry) in self.timers.drain() {
+                if self
+                    .inflight
+                    .get(&expiry.id)
+                    .is_none_or(|inflight| inflight.inflight_epoch != expiry.inflight_epoch)
+                {
+                    continue;
+                }
+                match earliest.entry(expiry.id) {
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(expiry);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut entry)
+                        if expiry.expires_at < entry.get().expires_at =>
+                    {
+                        entry.insert(expiry);
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => {}
+                }
+            }
+            self.timers.extend(earliest.into_values().map(Reverse));
+            self.next_expiration_deadline = self.timers.peek().map_or_else(
+                || self.clock.now_instant() + QUEUE_IDLE_HORIZON,
+                |expiry| expiry.0.expires_at,
+            );
+        }
+    }
+
     pub(super) fn handle_inflight_expired(&mut self, id: MessageId) -> bool {
         let Some(inflight) = self.load_expired_inflight(id) else {
             return false;
@@ -16,18 +50,10 @@ impl QueueActor {
         let Some(mut record) = self.load_redelivery_record(id, &inflight) else {
             return false;
         };
+        if self.record_has_expired(&record) {
+            return self.remove_unavailable_message(id).is_ok();
+        }
 
-        let Some(next_attempts) = record.attempts.checked_add(1) else {
-            tracing::error!(
-                queue = ?self.queue_key,
-                route_family = self.queue_key.family.as_u64(),
-                message_id = id.as_u64(),
-                "Queue delivery attempt counter exhausted during redelivery"
-            );
-            self.schedule_inflight_retry(id, &inflight);
-            return false;
-        };
-        record.attempts = next_attempts;
         let outcome = decide_redelivery(self.max_attempts, &record, &inflight);
         let Some(txn) = self.begin_redelivery_transaction(id, &inflight) else {
             return false;
@@ -117,6 +143,12 @@ impl QueueActor {
 
         match self.load_record_metadata_from_store(id) {
             Ok(record) => Some(record),
+            Err(error) if error == format!("Message {id} disappeared from storage") => {
+                if self.remove_unavailable_message(id).is_err() {
+                    self.schedule_inflight_retry(id, inflight);
+                }
+                None
+            }
             Err(error) => {
                 self.warn_redelivery_load_error(id, error.as_str());
                 // The expiry timer was already popped; re-arm it like every other
@@ -208,7 +240,11 @@ impl QueueActor {
         let header_key = self.cached_header_key(id);
         match txn.get(&header_key) {
             Ok(Some(_)) => txn
-                .put(header_key, Self::encode_record_header(record), None)
+                .put(
+                    header_key,
+                    Self::encode_record_header(record),
+                    self.record_ttl_seconds(record),
+                )
                 .map_err(|error| format!("persist split redelivery failed: {error:?}")),
             Ok(None) => Err("Queue message disappeared during redelivery".to_string()),
             Err(error) => Err(format!(
@@ -223,10 +259,7 @@ impl QueueActor {
         inflight: &Inflight,
         record: &QueueRecord,
     ) {
-        self.cache_record(
-            id,
-            QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
-        );
+        self.cache_record(id, record.metadata_only_from());
         self.update_cached_inflight_metadata(
             id,
             inflight.inflight_epoch,

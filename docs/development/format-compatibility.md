@@ -2,7 +2,27 @@
 
 This page defines compatibility expectations for serialized data, protocol payloads, and storage formats.
 
-## Wire format 2 (0.3.0)
+## Wire format 3 (planned final cutover; candidate)
+
+Wire 3 is the next coordinated broker-and-SDK migration. Issue #508 records
+that the deployed client cohort remains on Fitz 0.1.0 / Wire 1, while Wire 2
+was released later and has not become the deployed baseline. The cutover moves
+directly to Wire 3; the broker has no Wire 1 or Wire 2 compatibility adapter
+and the fleet must not be mixed across generations. Roll back the broker and
+all SDKs together. Persisted data migration, if any, is separately qualified.
+
+Wire 3 retains the fixed header, message IDs, correlation semantics, and
+existing core payload layouts. Flag bit 2 introduces a bounded extension
+envelope. Capability IDs are listed in extensible CONNECT and HELLO, and the
+active set is the peers' intersection. Unknown fields are skipped only after
+bounds validation. See the [Wire 3 design](wire-format-3-design.md),
+[wire specification](../clients/spec/wire-routing-3.md), and
+[migration guide](../operations/migration-guide.md#wire-3-coordinated-cutover).
+The server draft alone is not a release qualification: all five SDKs, shared
+conformance, exact-candidate performance evidence, and rollback qualification
+remain release gates.
+
+## Released wire format 2 (0.3.0; historical contract)
 
 Fitz 0.3.0 uses the fixed 15-byte header, structured CONNECT answered by
 HELLO or CONNECT_REJECTED, request correlation, and the common
@@ -187,16 +207,32 @@ formats and all Fitz row encodings. Cloud reads now fail with
 
 ## Single-generation storage formats
 
-Every domain store now reads exactly the one on-disk generation it writes.
-All prior-generation readers have been removed, so a store written by an
+Domain stores read their documented current row encodings. Obsolete
+prior-generation readers have been removed, so a store written by an
 earlier broker is not upgraded, migrated, or detected — it is simply not
 readable. Upgrading in place requires starting from a fresh storage path.
 
-- **Queue records**: messages are written as a versioned split header (`0x02`,
-  79 bytes) plus a separate body row. The former embedded-header encoding and
+- **Queue records**: messages use split headers plus a separate body row.
+  Headers without retention remain `0x02` (79 bytes), byte-for-byte unchanged.
+  A TTL header is `0x03` (95 bytes): the existing fields retain their offsets,
+  followed by the original publish expiry and current effective retention
+  expiry, each a little-endian `u64` epoch-millisecond value (zero means absent).
+  Readers accept both split-header forms. The former embedded-header encoding and
   the separate legacy message-key family (`0x05`) are gone, along with their
   recovery scan. The queue meta row holds a single little-endian `u64`
   reserved-id value; the wider 57-byte meta encoding is no longer read.
+  Header/body and individual delayed/DLQ index rows receive Midge native TTL.
+  A delayed/DLQ index value is empty without retention, or an eight-byte
+  little-endian absolute effective deadline, allowing recovery to schedule
+  expiry without hydrating every header. Index rebuilds preserve the deadline
+  and remaining native TTL.
+  Shared ready ranges and global metadata never receive a per-message TTL.
+  Queue checks absolute deadlines before using cached records; rewrites pass
+  the remaining lifetime rounded up to seconds. Midge expiry makes data
+  unavailable independently of a warm actor; physical reclamation follows
+  Midge compaction. Stale shared index entries are reconciled lazily and warm
+  expiry bookkeeping runs in bounded batches. A missing authoritative header
+  is discarded instead of recreating a phantom DLQ record.
 - **Queue index meta**: only version `0x02` is accepted. Version `0x01` rows no
   longer decode to a recoverable state.
 - **Schedule definitions**: only the metadata-plus-body row pair is read

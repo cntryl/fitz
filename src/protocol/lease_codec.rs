@@ -1,6 +1,6 @@
 //! Lease domain codec - ephemeral lock operations
 //!
-//! Encodes and decodes Wire2 payloads for lease operations inside one broker.
+//! Encodes and decodes the lease core payloads retained by Wire 3.
 //! Supports Acquire, Extend, Release, Query, Subscribe, and Unsubscribe operations.
 //!
 //! Wire format follows `CLIENT_SPEC`: ACQUIRE success includes `response_type`

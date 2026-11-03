@@ -32,6 +32,7 @@ pub const METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL: &str =
 pub const METRIC_ENQUEUE_TOTAL: &str = "fitz_queue_enqueue_total";
 pub const METRIC_RESERVE_TOTAL: &str = "fitz_queue_reserve_total";
 pub const METRIC_COMPLETE_TOTAL: &str = "fitz_queue_complete_total";
+pub const METRIC_NACK_TOTAL: &str = "fitz_queue_nack_total";
 pub const METRIC_RELEASE_TOTAL: &str = "fitz_queue_release_total";
 pub const METRIC_EXTEND_TOTAL: &str = "fitz_queue_extend_total";
 pub const METRIC_ENQUEUE_LATENCY_MS: &str = "fitz_queue_enqueue_latency_ms";
@@ -108,6 +109,10 @@ impl QueueMetrics {
 
     pub fn record_complete(&self) {
         self.metrics.counter_inc(METRIC_COMPLETE_TOTAL);
+    }
+
+    pub fn record_nack(&self) {
+        self.metrics.counter_inc(METRIC_NACK_TOTAL);
     }
 
     pub fn record_release(&self) {

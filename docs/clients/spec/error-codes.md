@@ -85,15 +85,15 @@ before a request reaches a domain.
 | --- | --- | --- | --- | --- |
 | 0001 | UNAUTHORIZED | 1 | NOT_APPLIED | JWT invalid, expired, or missing in authenticated mode |
 | 0005 | BUSY | 5 | NOT_APPLIED | `max_in_flight` reached for this connection |
-| 0008 | BAD_REQUEST | 8 | NOT_APPLIED | Malformed header or payload; length mismatch; trailing bytes |
+| 0008 | BAD_REQUEST | 8 | NOT_APPLIED | `CONNECT_REJECTED` for a malformed `CONNECT` (header labels, body, or a repeat); also the shared protocol-block bad-request slot |
 | 0010 | UNSUPPORTED | 10 | NOT_APPLIED | Unknown verb id, reserved flag set, or capability not negotiated |
 | 0050 | VERSION_MISMATCH | 10 | NOT_APPLIED | No wire version in common (`CONNECT_REJECTED`) |
 | 0051 | FAMILY_NOT_PROVISIONED | 2 | NOT_APPLIED | Identity maps to a route family the broker does not serve |
-| 0052 | CONNECT_TIMEOUT | 8 | NOT_APPLIED | No `CONNECT` within the broker's window |
-| 0053 | RESERVED_0053 | 10 | NOT_APPLIED | Permanently tombstoned; oversized frames use shared 0008 `BAD_REQUEST` |
+| 0052 | CONNECT_TIMEOUT | 8 | NOT_APPLIED | Reserved. The broker closes silently when no `CONNECT` arrives in time; it does not send this code |
+| 0053 | RESERVED_0053 | 10 | NOT_APPLIED | Permanently tombstoned; an oversized or length-mismatched frame closes the connection without a reply |
 | 0054 | DRAINING | 5 | NOT_APPLIED | `GOAWAY`: planned drain; reconnect within `grace_ms` |
-| 0055 | FORCED_CLOSE | 6 | INDETERMINATE | `GOAWAY`: the broker is closing now; in-flight outcomes unknown |
-| 0056 | LIMIT_CHANGED | 10 | NOT_APPLIED | `GOAWAY`: a negotiated limit changed; reconnect to renegotiate |
+| 0055 | FORCED_CLOSE | 6 | INDETERMINATE | Reserved for `GOAWAY`. This broker does not send it yet; a forced close arrives as a transport close |
+| 0056 | LIMIT_CHANGED | 10 | NOT_APPLIED | Reserved for `GOAWAY`. This broker does not send it yet; limits do not change within a session |
 
 ## KV (1xxx)
 

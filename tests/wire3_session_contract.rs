@@ -1,7 +1,7 @@
 //! The negotiated session boundary is identical on TCP and WebSocket.
 
 use fitz::protocol::payload_codec::PayloadEncoder;
-use fitz::protocol::wire2::header::{decode_message, encode_message, HeaderFlags};
+use fitz::protocol::wire3::header::{decode_message, encode_message, HeaderFlags};
 use fitz::testkit::transport::build_connect_frame;
 use fitz::testkit::TestServer;
 use futures_util::{SinkExt, StreamExt};

@@ -14,7 +14,9 @@ use routing_watch_and_admin::*;
 mod cleanup_and_eviction;
 mod correctness;
 mod fault_injection;
+mod max_attempts;
 mod reply_deadlines;
+mod retention;
 
 #[test]
 fn should_advance_queue_maintenance_deadlines_only_when_due() {

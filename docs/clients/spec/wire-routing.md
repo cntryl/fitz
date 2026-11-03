@@ -1,5 +1,9 @@
 ## Wire Protocol
 
+This page is the released Wire 2 contract. The current extensible protocol
+candidate is specified in [wire-routing-3.md](wire-routing-3.md); Wire 2
+assignments below remain unchanged.
+
 ### Message Header
 
 Every Fitz message is one transport frame (one WebSocket binary message, or
@@ -38,8 +42,9 @@ correlation, never by arrival order or by message type.
    broker does not police it.
 2. A response-bearing request with correlation 0 is a protocol violation and
    closes the connection before dispatch. Unacknowledged Notice PUBLISH and
-   UUID-addressed RPC worker RESPONSE/lifecycle acknowledgements may use 0
-   because they do not open a connection-level response sequence.
+   UUID-addressed RPC worker RESPONSE/lifecycle acknowledgements MUST use 0
+   because they do not open a connection-level response sequence; the broker
+   closes the connection on a non-zero value there.
 3. **A correlation may receive more than one frame.** Every correlated server
    response sets `RESPONSE_FINAL` only on its terminal frame. Intermediate
    frames clear it. A contended Lease `ACQUIRE` returns `Queued` with the bit
@@ -177,6 +182,7 @@ Wire format specification:
 [bytes]    route
 [u32 BE]   body_len
 [bytes]    body
+[u8]       budget_present (0, or 1 followed by [u32 BE] remaining_budget_ms)
 ```
 
 Actual bytes on wire:
@@ -184,14 +190,15 @@ Actual bytes on wire:
 [0x01 0x2E]                              (type=302, RPC REQUEST)
 [0x00]                                   (flags=0)
 [0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x04]  (correlation=4)
-[0x00 0x00 0x00 0x30]                    (length=48 bytes)
+[0x00 0x00 0x00 0x31]                    (length=49 bytes)
   [12 34 56 78 9a bc de f0 12 34 56 78 9a bc de f0]  (correlation_id, 16 bytes UUID)
   [0x00 0x00 0x00 0x15]                  (route_len=21)
   [72 70 63 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 77 6f 72 6b 65 72]  (route="rpc://prod/app/worker", 21 bytes)
   [0x00 0x00 0x00 0x03]                  (body_len=3)
   [66 6f 6f]                             (body="foo", 3 bytes)
+  [0x00]                                 (budget_present=0)
 
-Total frame size: 15 (header) + 48 (payload) = 63 bytes
+Total frame size: 15 (header) + 49 (payload) = 64 bytes
 ```
 
 #### Transport Layer Framing
@@ -202,7 +209,7 @@ One binary WebSocket frame contains one message:
 [header 15 bytes][value]
 
 Example: Send KV PUT
-WebSocket binary frame body = 72 bytes (from Example 1 above)
+WebSocket binary frame body = 62 bytes (from Example 1 above)
 ```
 
 **TCP (with length-prefixed framing):**
@@ -212,13 +219,13 @@ WebSocket binary frame body = 72 bytes (from Example 1 above)
 │                       └─ one message
 └─ header + value byte count (excludes the 4-byte prefix)
 
-Example: Send KV PUT (72-byte message)
-[0x00 0x00 0x00 0x48]  (frame_length=72)
+Example: Send KV PUT (62-byte message)
+[0x00 0x00 0x00 0x3E]  (frame_length=62)
 [0x00 0x68]            (type=104)
 [0x00]                 (flags=0)
 [...8 bytes correlation...]
-[0x00 0x00 0x00 0x39]  (length=57)
-[...57 bytes payload...]
+[0x00 0x00 0x00 0x2F]  (length=47)
+[...47 bytes payload...]
 ```
 
 #### Reference Decoder Pseudocode
@@ -233,28 +240,16 @@ def decode_frame(frame_bytes):
     length = read_u32_be(frame_bytes[11:15])
     payload = frame_bytes[15:]
 
-    if flags & 0xFE:
+    if flags & 0xFC:
         raise ProtocolError("Reserved flag bit set")
     if len(payload) != length:
         raise ProtocolError("Payload length mismatch")
     
-    # Route to domain decoder based on MessageType
-    if 100 <= message_type <= 199:
-        return decode_kv_message(message_type, payload)
-    elif 200 <= message_type <= 299:
-        return decode_queue_message(message_type, payload)
-    elif 300 <= message_type <= 399:
-        return decode_rpc_message(message_type, payload)
-    elif 400 <= message_type <= 499:
-        return decode_lease_message(message_type, payload)
-    elif 500 <= message_type <= 599:
-        return decode_notice_message(message_type, payload)
-    elif 600 <= message_type <= 699:
-        return decode_stream_message(message_type, payload)
-    elif 700 <= message_type <= 799:
-        return decode_schedule_message(message_type, payload)
-    else:
+    # Route by the exact registry entry; numeric ranges never select a decoder
+    entry = REGISTRY.get(message_type)   # assigned ids from registry-acceptance.md
+    if entry is None:
         raise UnknownMessageType(message_type)
+    return entry.decoder(message_type, payload)
 
 def decode_kv_message(message_type, payload):
     """Decode KV domain message based on MessageType."""
@@ -508,10 +503,11 @@ The broker answers every `CONNECT` with exactly one of:
 - **`CONNECT_REJECTED`** (type 3, correlation 0), after which the broker closes:
   ```
   [u16 BE] code     protocol block of error-codes.md: 0001 UNAUTHORIZED,
+                    0008 BAD_REQUEST (malformed or repeated CONNECT),
                     0050 VERSION_MISMATCH, 0051 FAMILY_NOT_PROVISIONED
   [string] message
   ```
-- **No `CONNECT` within 10 seconds:** the broker closes the connection.
+- **No `CONNECT` within 10 seconds:** the broker closes the connection without a reply (0052 `CONNECT_TIMEOUT` is reserved and not sent).
 
 Clients MUST:
 
@@ -578,7 +574,7 @@ Each request receives at least one response frame carrying its correlation. Resp
 At any time after `HELLO` the broker may send `GOAWAY` (type 4, correlation 0):
 
 ```
-[u16 BE] code       protocol block of error-codes.md: 0054 DRAINING, 0055 FORCED_CLOSE, 0056 LIMIT_CHANGED
+[u16 BE] code       protocol block of error-codes.md: 0054 DRAINING (the only code this broker sends; 0055 FORCED_CLOSE and 0056 LIMIT_CHANGED are reserved)
 [u32 BE] grace_ms   how long the broker keeps serving before it closes; 0 means now
 [string] reason     diagnostic only
 ```
@@ -835,7 +831,7 @@ Clients MUST:
    - Rust: `enum KvVerb { Get, Put, ... }`
    - JavaScript: `const KvVerb = { Get: "get", Put: "put" }`
 2. **Never expose wire codes** in public API
-3. **Map verbs to i16 wire codes internally**
+3. **Map verbs to u16 wire codes internally**
 4. **Treat wire codes as ABI-stable** (never reused, append-only)
 
 ### Verb Set (All Domains)
@@ -865,6 +861,8 @@ Clients MUST:
 | RPC      | UNSUBSCRIBE_WORKER |       301 | Data          | Unregister worker       |
 | RPC      | REQUEST            |       302 | Data          | Send request            |
 | RPC      | RESPONSE           |       303 | Data          | Send response           |
+| RPC      | CANCEL             |       304 | Data          | Cancel request / cleanup ACK |
+| RPC      | LIFECYCLE          |       305 | Server→Client | Cancellation signal or result |
 | Lease    | ACQUIRE            |       400 | Data          | Acquire lease           |
 | Lease    | RENEW              |       401 | Data          | Extend lease            |
 | Lease    | RELEASE            |       402 | Data          | Release lease           |
@@ -897,7 +895,7 @@ Clients MUST:
 
 ### MessageType Ranges Are Non-Overlapping
 
-Each domain occupies an exclusive 100-code block. The broker's mux layer routes by numeric range — **no overlap, no disambiguation needed**.
+Each domain occupies an exclusive 100-code block for readability. The broker dispatches by the exact registry entry, never by numeric range; an unassigned id inside a block is reserved and unsupported.
 **Clients MUST use the wire codes from the Constants & Message Registry section.**
 
 ### Transport failure boundaries

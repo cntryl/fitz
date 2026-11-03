@@ -315,6 +315,7 @@ mod tests {
             ),
             correlation: None,
             ack_requested: false,
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
             received_at: std::time::Instant::now(),
         }
     }

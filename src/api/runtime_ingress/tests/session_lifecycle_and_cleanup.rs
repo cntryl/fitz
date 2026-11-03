@@ -85,7 +85,7 @@ impl MailboxSink for CleanupTrackingSink {
     }
 }
 
-/// A wire format 2 CONNECT body for this broker's version.
+/// A Wire 3 CONNECT core body for direct ingress tests.
 pub(super) fn connect_payload(jwt: &str) -> Bytes {
     Bytes::from(crate::testkit::transport::connect_body(jwt, ""))
 }

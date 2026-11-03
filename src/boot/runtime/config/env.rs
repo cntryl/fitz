@@ -48,6 +48,40 @@ pub(super) fn queue_loss_window_ms_from_env() -> (u64, Option<String>) {
     )
 }
 
+pub(super) fn queue_max_attempts_from_env() -> (Option<std::num::NonZeroU32>, Option<String>) {
+    optional_positive_u32_from_env(super::ENV_QUEUE_MAX_ATTEMPTS)
+}
+
+pub(super) fn queue_retention_from_env() -> (
+    crate::domains::queue::retention::QueueRetention,
+    Option<String>,
+) {
+    let (message, message_error) = optional_positive_u32_from_env("FITZ_QUEUE_MESSAGE_TTL");
+    let (dlq, dlq_error) = optional_positive_u32_from_env("FITZ_QUEUE_DLQ_TTL");
+    (
+        crate::domains::queue::retention::QueueRetention::from_days(message, dlq),
+        message_error.or(dlq_error),
+    )
+}
+
+fn optional_positive_u32_from_env(key: &str) -> (Option<std::num::NonZeroU32>, Option<String>) {
+    let invalid = || {
+        Some(format!(
+            "{key} must be an integer between 1 and {}",
+            u32::MAX
+        ))
+    };
+    let value = match std::env::var(key) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return (None, None),
+        Err(std::env::VarError::NotUnicode(_)) => return (None, invalid()),
+    };
+    match value.trim().parse::<std::num::NonZeroU32>() {
+        Ok(limit) => (Some(limit), None),
+        Err(_) => (None, invalid()),
+    }
+}
+
 fn positive_u64_from_env(key: &str, default: u64, unit_noun: &str) -> (u64, Option<String>) {
     let Some(value) = env_non_empty(key) else {
         return (default, None);

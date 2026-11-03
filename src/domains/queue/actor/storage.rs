@@ -7,7 +7,8 @@ use crate::observability as obs;
 
 impl QueueActor {
     pub(super) fn decode_record_header(bytes: &[u8]) -> Result<QueueRecord, String> {
-        if bytes.len() != 79 || bytes[0] != Self::HEADER_VERSION_V2 {
+        let is_v3 = bytes.len() == 95 && bytes[0] == Self::HEADER_VERSION_V3;
+        if !is_v3 && (bytes.len() != 79 || bytes[0] != Self::HEADER_VERSION_V2) {
             return Err("Invalid record format".to_string());
         }
 
@@ -29,6 +30,13 @@ impl QueueActor {
         let inflight_expires_at_ms = u64::from_le_bytes(bytes[62..70].try_into().unwrap());
         let dead_lettered_at_ms = u64::from_le_bytes(bytes[70..78].try_into().unwrap());
         let dlq_reason = DlqReason::from_wire_code(bytes[78])?;
+        let optional_deadline = |offset| {
+            if !is_v3 {
+                return None;
+            }
+            let value = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            (value != 0).then_some(value)
+        };
 
         Ok(QueueRecord {
             body: None,
@@ -44,6 +52,8 @@ impl QueueActor {
             inflight_expires_at_ms: (inflight_expires_at_ms != 0).then_some(inflight_expires_at_ms),
             dead_lettered_at_ms: (dead_lettered_at_ms != 0).then_some(dead_lettered_at_ms),
             dlq_reason,
+            expires_at_ms: optional_deadline(79),
+            retention_expires_at_ms: optional_deadline(87),
         })
     }
 
@@ -161,6 +171,9 @@ impl QueueActor {
         id: MessageId,
     ) -> Result<(Bytes, u32), String> {
         if let Some(record) = self.records.get(&id) {
+            if self.record_has_expired(record) {
+                return Err(format!("Message {id} TTL expired"));
+            }
             let attempts = record.attempts;
             if let Some(body) = self.body_cache.get(&id) {
                 return Ok((body.clone(), attempts));
@@ -180,6 +193,9 @@ impl QueueActor {
             .clone()
             .ok_or_else(|| format!("Message {id} body missing after hydration"))?;
         self.cache_record(id, record.metadata_only_from());
+        if self.record_has_expired(&record) {
+            return Err(format!("Message {id} TTL expired"));
+        }
         Ok((body, record.attempts))
     }
 
@@ -192,7 +208,7 @@ impl QueueActor {
         txn.put(
             self.cached_header_key(id),
             Self::encode_record_header(record),
-            None,
+            self.record_ttl_seconds(record),
         )
         .map_err(|e| format!("Failed to write queue header: {e:?}"))?;
 
@@ -200,8 +216,12 @@ impl QueueActor {
             .body
             .as_ref()
             .ok_or_else(|| format!("Queue record {id} missing body for write"))?;
-        txn.put(self.cached_body_key(id), body.to_vec(), None)
-            .map_err(|e| format!("Failed to write queue body: {e:?}"))?;
+        txn.put(
+            self.cached_body_key(id),
+            body.to_vec(),
+            self.record_ttl_seconds(record),
+        )
+        .map_err(|e| format!("Failed to write queue body: {e:?}"))?;
         Ok(())
     }
 
@@ -247,13 +267,14 @@ impl QueueActor {
                 QueueCommit::Redelivery => {
                     FAIL_NEXT_REDELIVERY_COMMIT.with(|cell| cell.replace(false))
                 }
-                QueueCommit::Enqueue => false,
+                QueueCommit::Enqueue | QueueCommit::Reserve => false,
             };
 
             if should_fail {
                 let operation = match commit {
                     QueueCommit::Ack => "ack",
                     QueueCommit::Enqueue => "enqueue",
+                    QueueCommit::Reserve => "reserve",
                     QueueCommit::Redelivery => "redelivery",
                 };
                 return Err(super::recovery_store::QueueStoreError::from_midge(

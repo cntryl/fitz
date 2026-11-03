@@ -4,6 +4,7 @@ Stream 604 Idempotent
 Stream 605 Idempotent
 Stream 606 Idempotent
 Queue 204 Context-Dependent (message_id+token)
+Queue 210 Context-Dependent (message_id+token)
 Lease 403 Idempotent
 Schedule 702 Idempotent
 

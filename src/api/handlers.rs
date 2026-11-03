@@ -28,8 +28,8 @@ pub struct ListenerHandle {
 pub(super) type SessionTasks = Arc<Mutex<JoinSet<()>>>;
 
 fn is_connect_rejected_frame(frame: &[u8]) -> bool {
-    crate::protocol::wire2::header::MessageHeader::decode(frame).is_ok_and(|header| {
-        header.message_type == crate::protocol::wire2::control::CONNECT_REJECTED
+    crate::protocol::wire3::header::MessageHeader::decode_wire3(frame).is_ok_and(|header| {
+        header.message_type == crate::protocol::wire3::control::CONNECT_REJECTED
     })
 }
 
