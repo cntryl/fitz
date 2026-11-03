@@ -8,6 +8,20 @@ use super::{
 use crate::observability as obs;
 
 impl QueueActor {
+    pub(super) fn compact_inflight_timers(&mut self) {
+        if self.timers.len() > self.inflight.len().saturating_mul(2).saturating_add(64) {
+            self.timers.retain(|expiry| {
+                self.inflight
+                    .get(&expiry.0.id)
+                    .is_some_and(|inflight| inflight.inflight_epoch == expiry.0.inflight_epoch)
+            });
+            self.next_expiration_deadline = self.timers.peek().map_or_else(
+                || self.clock.now_instant() + QUEUE_IDLE_HORIZON,
+                |expiry| expiry.0.expires_at,
+            );
+        }
+    }
+
     pub(super) fn handle_inflight_expired(&mut self, id: MessageId) -> bool {
         let Some(inflight) = self.load_expired_inflight(id) else {
             return false;

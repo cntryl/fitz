@@ -29,7 +29,7 @@ impl fitz::domains::queue::Clock for ExpiryClock {
     }
 }
 
-fn measure_sparse_expiry(ctx: &mut StressContext, backlog: usize, name: &str) {
+fn measure_expiry(ctx: &mut StressContext, backlog: usize, delayed: bool, name: &str) {
     use fitz::domains::queue::QueueKey;
     use fitz::testkit::domain_internals::queue::QueueActor;
     let clock = ExpiryClock {
@@ -55,8 +55,9 @@ fn measure_sparse_expiry(ctx: &mut StressContext, backlog: usize, name: &str) {
         message_seconds: Some(3_600),
         dlq_seconds: None,
     });
-    actor.handle_send_with_ttl(Bytes::new(), None, std::num::NonZeroU32::new(2));
-    let response = actor.handle_send_batch(&vec![(Bytes::new(), None); backlog]);
+    let delay = delayed.then_some(7_200);
+    actor.handle_send_with_ttl(Bytes::new(), delay, std::num::NonZeroU32::new(2));
+    let response = actor.handle_send_batch(&vec![(Bytes::new(), delay); backlog]);
     assert!(matches!(response, QueueResponse::SentBatch { ids } if ids.len() == backlog));
     clock
         .elapsed_seconds
@@ -65,8 +66,9 @@ fn measure_sparse_expiry(ctx: &mut StressContext, backlog: usize, name: &str) {
     let changed = actor.process_due_work();
     let elapsed = start.elapsed();
     assert!(changed);
-    assert_eq!(actor.admin_snapshot().messages_ready, backlog + 1 - 32);
+    assert_eq!(actor.admin_snapshot().messages_total, backlog + 1 - 32);
     ctx.parameter("backlog", backlog);
+    ctx.parameter("delayed", delayed.to_string());
     ctx.parameter("expired_non_head_messages_per_pass", 32);
     tier2_stress::record_completed(ctx, 32);
     tier2_stress::record_duration(ctx, name, elapsed, 32);
@@ -74,12 +76,22 @@ fn measure_sparse_expiry(ctx: &mut StressContext, backlog: usize, name: &str) {
 
 #[stress(tier = 2, name = "expiry_sparse_16k_completed")]
 fn should_expire_sparse_16k_completed(ctx: &mut StressContext) {
-    measure_sparse_expiry(ctx, 16_384, "expiry_sparse_16k_completed");
+    measure_expiry(ctx, 16_384, false, "expiry_sparse_16k_completed");
 }
 
 #[stress(tier = 2, name = "expiry_sparse_64k_completed")]
 fn should_expire_sparse_64k_completed(ctx: &mut StressContext) {
-    measure_sparse_expiry(ctx, 65_536, "expiry_sparse_64k_completed");
+    measure_expiry(ctx, 65_536, false, "expiry_sparse_64k_completed");
+}
+
+#[stress(tier = 2, name = "expiry_delayed_16k_completed")]
+fn should_expire_delayed_16k_completed(ctx: &mut StressContext) {
+    measure_expiry(ctx, 16_384, true, "expiry_delayed_16k_completed");
+}
+
+#[stress(tier = 2, name = "expiry_delayed_64k_completed")]
+fn should_expire_delayed_64k_completed(ctx: &mut StressContext) {
+    measure_expiry(ctx, 65_536, true, "expiry_delayed_64k_completed");
 }
 
 fn measure_nack(ctx: &mut StressContext, visibility_seconds: u64, name: &str) {

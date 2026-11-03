@@ -80,6 +80,10 @@ Parked reserves are rechecked during bounded runtime sweeps while ready work
 is reported, so recovered expired heads cannot strand a waiting worker.
 An empty bounded read with unverified ready heads rearms availability hints
 for watchers, allowing them to continue draining after the next sweep.
+Delayed messages are promoted in visibility order, with enqueue order breaking
+equal-deadline ties. Reservation timers likewise process the earliest deadline
+first. Maintenance bounds stale timer storage as messages expire or leave
+their reservation.
 
 #### NACK (210)
 

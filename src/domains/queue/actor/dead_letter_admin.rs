@@ -324,6 +324,7 @@ impl QueueActor {
         }
         let now = self.clock.now_instant();
         let mut mutated = self.process_retention_expirations();
+        self.compact_inflight_timers();
 
         if now >= self.next_expiration_deadline {
             mutated |= self.process_expired_timers();

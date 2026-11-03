@@ -327,7 +327,11 @@ struct InflightExpiry {
 impl Ord for InflightExpiry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Earlier expiration = higher priority (min-heap via Reverse wrapper)
-        other.expires_at.cmp(&self.expires_at)
+        self.expires_at
+            .cmp(&other.expires_at)
+            .then_with(|| self.id.as_u64().cmp(&other.id.as_u64()))
+            .then_with(|| self.inflight_epoch.cmp(&other.inflight_epoch))
+            .then_with(|| self.expires_at_ms.cmp(&other.expires_at_ms))
     }
 }
 
@@ -353,11 +357,11 @@ struct DelayedMessage {
 impl Ord for DelayedMessage {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Earlier visibility = higher priority (min-heap via Reverse wrapper)
-        other
-            .visible_at
-            .cmp(&self.visible_at)
-            .then_with(|| other.enqueue_seq.cmp(&self.enqueue_seq))
-            .then_with(|| other.id.as_u64().cmp(&self.id.as_u64()))
+        self.visible_at
+            .cmp(&other.visible_at)
+            .then_with(|| self.enqueue_seq.cmp(&other.enqueue_seq))
+            .then_with(|| self.id.as_u64().cmp(&other.id.as_u64()))
+            .then_with(|| self.visible_at_ms.cmp(&other.visible_at_ms))
     }
 }
 
@@ -634,6 +638,7 @@ pub struct QueueActor {
 
     /// Authoritative delayed index entries keyed by message ID.
     persisted_delayed: FastMap<MessageId, u64>,
+    persisted_delayed_visibilities: std::collections::BTreeMap<u64, usize>,
 
     /// Authoritative dead-letter index entries keyed by message ID.
     persisted_dlq: FastMap<MessageId, u64>,

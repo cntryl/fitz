@@ -120,6 +120,7 @@ impl QueueActor {
             timers: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
             persisted_delayed: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
+            persisted_delayed_visibilities: std::collections::BTreeMap::new(),
             persisted_dlq: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
             persisted_next_delayed_visibility_ms: None,
             index_meta_written: false,
