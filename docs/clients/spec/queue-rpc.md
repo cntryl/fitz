@@ -454,8 +454,10 @@ Every operation includes route:
 |  301 | UNSUBSCRIBE_WORKER | Client → Server |
 |  302 | REQUEST            | Client → Server (sync: client sends request, broker delivers to worker) |
 |  303 | RESPONSE           | Server ↔ Client (sync or async: worker sends response(s) back to caller) |
+|  304 | RPC_CANCEL         | Client → Server (caller cancel; worker cleanup ACK) |
+|  305 | RPC_LIFECYCLE      | Server → Client (cancellation signal or result) |
 
-Message type 304 is unsupported. Fitz has no RPC ACK frame.
+Message types 304 (`RPC_CANCEL`) and 305 (`RPC_LIFECYCLE`) carry deadline cancellation; see [RPC deadlines and cancellation](../../development/rpc-cancellation-lifecycle.md). Fitz has no other RPC ACK frame.
 
 #### SUBSCRIBE_WORKER Request
 

@@ -41,13 +41,15 @@ extension fields are registered separately in
 | 208 | UNSUBSCRIBE |
 | 209 | NOTIFY |
 | 210 | NACK (Wire 3 capability 2) |
-**RPC Domain (300–303):**
+**RPC Domain (300–305):**
 | Value | Name |
 |---:|---|
 | 300 | SUBSCRIBE_WORKER |
 | 301 | UNSUBSCRIBE_WORKER |
 | 302 | REQUEST |
 | 303 | RESPONSE |
+| 304 | CANCEL (caller cancel; worker cleanup ACK) |
+| 305 | LIFECYCLE (Server→Client: cancellation signal or result) |
 **Lease messages:**
 | Value | Name |
 |---:|---|
@@ -119,6 +121,7 @@ Clients do NOT encode these; listed for reference:
 | Sub | 2 | Subscriptions/delivery |
 | Rpc | 3 | RPC request/response |
 | Lease | 4 | Lease domain |
+| Internal | 5 | Schedule domain |
 
 ### Type Encoding Rules
 

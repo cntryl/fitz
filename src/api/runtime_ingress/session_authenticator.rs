@@ -406,6 +406,22 @@ impl SessionAuthenticator {
         Ok(connect)
     }
 
+    /// Refuse a `CONNECT` whose header is malformed (reserved flag bits or a
+    /// non-zero correlation) before any session state is established.
+    pub(super) fn reject_malformed_connect(
+        &self,
+        session_id: u64,
+        reason: &str,
+    ) -> IngressDecision {
+        self.reject_connect(
+            session_id,
+            &ConnectRefusal {
+                code: crate::protocol::error_codes::protocol::ERR_BAD_REQUEST,
+                message: reason.to_owned(),
+            },
+        )
+    }
+
     /// Send `CONNECT_REJECTED` to the session's inbox and produce the close
     /// decision that follows it.
     fn reject_connect(&self, session_id: u64, refusal: &ConnectRefusal) -> IngressDecision {

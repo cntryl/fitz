@@ -504,3 +504,127 @@ async fn should_reject_a_65th_deferred_lease_acquire_when_max_in_flight_is_64() 
         fitz::protocol::wire2::envelope::Effect::NotApplied
     );
 }
+
+async fn expect_frame(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+    tcp_recv(stream).await.expect("frame")
+}
+
+#[tokio::test]
+async fn should_clear_response_final_on_a_queued_lease_acquire() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    let acquire = |owner: &str, wait: u32| {
+        let mut payload = PayloadEncoder::new();
+        payload.put_string("lease://acme/app/lock");
+        payload.put_string(owner);
+        payload.put_u64(30);
+        payload.put_u32(wait);
+        encode_message(
+            400,
+            HeaderFlags::none(),
+            NonZeroU64::new(1),
+            &payload.finish(),
+        )
+    };
+    let mut holder = tokio::net::TcpStream::connect(server.tcp_addr)
+        .await
+        .unwrap();
+    tcp_send(
+        &mut holder,
+        &connect(fitz::protocol::wire3::WIRE_VERSION, String::new()),
+    )
+    .await;
+    expect_frame(&mut holder).await;
+    tcp_send(&mut holder, &acquire("holder", 0)).await;
+    expect_frame(&mut holder).await;
+    let mut waiter = tokio::net::TcpStream::connect(server.tcp_addr)
+        .await
+        .unwrap();
+    tcp_send(
+        &mut waiter,
+        &connect(fitz::protocol::wire3::WIRE_VERSION, String::new()),
+    )
+    .await;
+    expect_frame(&mut waiter).await;
+
+    // Act
+    tcp_send(&mut waiter, &acquire("waiter", 30)).await;
+    let queued = expect_frame(&mut waiter).await;
+    drop(holder);
+    let granted = expect_frame(&mut waiter).await;
+
+    // Assert
+    let queued = decode_message(&queued, u32::MAX).unwrap();
+    let granted = decode_message(&granted, u32::MAX).unwrap();
+    assert_eq!(&queued.1[..2], &[0, 2], "second frame is Queued");
+    assert!(!queued.0.flags.is_response_final());
+    assert!(granted.0.flags.is_response_final());
+}
+
+#[tokio::test]
+async fn should_answer_an_undecodable_rpc_request_as_not_applied_bad_request() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    let mut client = tokio::net::TcpStream::connect(server.tcp_addr)
+        .await
+        .unwrap();
+    tcp_send(
+        &mut client,
+        &connect(fitz::protocol::wire3::WIRE_VERSION, String::new()),
+    )
+    .await;
+    expect_frame(&mut client).await;
+    let mut request = PayloadEncoder::new();
+    request.put_raw(&[1; 16]);
+    request.put_string("rpc://acme/app/worker");
+    request.put_bytes(b"missing the budget byte");
+
+    // Act
+    tcp_send(
+        &mut client,
+        &encode_message(
+            302,
+            HeaderFlags::none(),
+            NonZeroU64::new(4),
+            &request.finish(),
+        ),
+    )
+    .await;
+    let answer = expect_frame(&mut client).await;
+
+    // Assert
+    let (_, value) = decode_message(&answer, u32::MAX).unwrap();
+    let error = fitz::protocol::error_codes::decode_wire_error(&value[29..]).unwrap();
+    assert_eq!(error.code, 6008);
+    assert_eq!(
+        error.effect,
+        fitz::protocol::wire2::envelope::Effect::NotApplied
+    );
+}
+
+#[tokio::test]
+async fn should_reject_a_malformed_connect_before_establishing_the_session() {
+    // Arrange
+    let server = TestServer::start().await.unwrap();
+    let mut flagged = connect(fitz::protocol::wire3::WIRE_VERSION, String::new());
+    flagged[2] |= 0b1000_0000;
+    let mut correlated = connect(fitz::protocol::wire3::WIRE_VERSION, String::new());
+    correlated[3..11].copy_from_slice(&7_u64.to_be_bytes());
+
+    for frame in [flagged, correlated] {
+        let mut client = tokio::net::TcpStream::connect(server.tcp_addr)
+            .await
+            .unwrap();
+
+        // Act
+        tcp_send(&mut client, &frame).await;
+        let answer = expect_frame(&mut client).await;
+
+        // Assert
+        let (header, value) = decode_message(&answer, u32::MAX).unwrap();
+        assert_eq!(header.message_type, 3, "CONNECT_REJECTED, not HELLO");
+        let rejected = fitz::protocol::wire2::handshake::ConnectRejected::decode(value).unwrap();
+        assert_eq!(rejected.code, 8);
+        assert!(tcp_recv(&mut client).await.is_err(), "connection closes");
+    }
+}

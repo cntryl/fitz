@@ -274,8 +274,9 @@ pub fn encode_message(
 ///
 /// # Errors
 ///
-/// Every variant of [`MessageError`]. A frame that fails here is answered with
-/// a protocol-block error, never with a connection close.
+/// Every variant of [`MessageError`]. A reserved flag bit is answered with
+/// `UNSUPPORTED` on the open session; every other failure closes the
+/// connection without a reply.
 pub fn decode_message(
     frame: &[u8],
     max_message_bytes: u32,

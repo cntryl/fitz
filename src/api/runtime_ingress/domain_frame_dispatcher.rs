@@ -794,7 +794,7 @@ impl DomainFrameDispatcher {
                 {
                     return self.send_domain_error_frame(
                         DomainErrorFrame::for_dispatch(&dispatch),
-                        crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                        crate::protocol::error_codes::rpc::ERR_BAD_REQUEST,
                         "RPC request parse failed",
                     );
                 }

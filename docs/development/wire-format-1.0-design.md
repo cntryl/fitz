@@ -20,7 +20,8 @@ error meanings are in [error-codes.md](../clients/spec/error-codes.md).
   drain, forced close, or limit change.
 - Wire format 2 defines no capability bits. Message IDs and error codes are
   exact assignments; gaps are reserved. Error 0053 is permanently tombstoned;
-  oversized-frame failures use shared 0008 `BAD_REQUEST`.
+  an oversized, truncated, or length-mismatched frame closes the connection
+  without a reply.
 - Errors carry a code, class, effect, and message. The effect distinguishes
   `NOT_APPLIED`, `APPLIED`, and `INDETERMINATE` outcomes.
 - Domain payloads use explicit, length-checked fields. Their layouts and

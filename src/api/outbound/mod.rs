@@ -321,7 +321,7 @@ impl SessionOutboundSink {
         self.encode_frame_with_flags(msg_type, correlation, flags, payload)
     }
 
-    fn encode_frame_with_flags(
+    pub(super) fn encode_frame_with_flags(
         &self,
         msg_type: u16,
         correlation: Option<std::num::NonZeroU64>,

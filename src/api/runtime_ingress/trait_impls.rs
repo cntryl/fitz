@@ -61,6 +61,11 @@ impl Ingress for RuntimeIngress {
         .await
     }
 
+    fn reject_connect(&self, session_id: u64, reason: &str) -> IngressDecision {
+        self.session_authenticator()
+            .reject_malformed_connect(session_id, reason)
+    }
+
     async fn on_frame_received_at(
         &self,
         session_id: u64,

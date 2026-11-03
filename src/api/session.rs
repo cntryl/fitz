@@ -79,6 +79,26 @@ fn reject_unsupported_frame(
         })
 }
 
+/// Why `frame` is a `CONNECT` whose header must be refused, if it is one.
+fn malformed_connect_reason(session: &Session, frame: &[u8]) -> Option<&'static str> {
+    use crate::protocol::wire3::header::{decode_message, MessageError, FLAG_EXTENSIONS_PRESENT};
+    if session.info().authenticated || frame.len() < 3 || frame[..2] != [0, 1] {
+        return None;
+    }
+    match decode_message(frame, u32::MAX) {
+        Ok((header, _))
+            if header.correlation.is_some()
+                || header.flags.bits() & !FLAG_EXTENSIONS_PRESENT != 0 =>
+        {
+            Some("CONNECT must use zero correlation and flags")
+        }
+        Err(MessageError::ReservedFlags { .. }) => {
+            Some("CONNECT must not set reserved header flags")
+        }
+        _ => None,
+    }
+}
+
 fn decode_frame_or_reject(
     session: &mut Session,
     frame: &Bytes,
@@ -117,6 +137,14 @@ async fn process_frame(
     received_at: Instant,
     outbound: Option<&crate::api::outbound::SessionOutboundSink>,
 ) -> Result<(), SessionError> {
+    if outbound.is_some() {
+        if let Some(reason) = malformed_connect_reason(session, &frame) {
+            return match ingress.reject_connect(session.info().session_id, reason) {
+                IngressDecision::Close(close) => Err(SessionError::IngressClose(close)),
+                _ => Err(SessionError::IngressClose(reason.to_owned())),
+            };
+        }
+    }
     let Some(message) = decode_frame_or_reject(session, &frame, outbound)? else {
         return Ok(());
     };

@@ -291,6 +291,12 @@ pub trait Ingress: Send + Sync {
         correlation: Option<std::num::NonZeroU64>,
     ) -> IngressDecision;
 
+    /// Refuse a malformed `CONNECT` header: answer `CONNECT_REJECTED` with
+    /// protocol `BAD_REQUEST`, then close. The default only closes.
+    fn reject_connect(&self, _session_id: u64, reason: &str) -> IngressDecision {
+        IngressDecision::Close(format!("connect rejected: {reason}"))
+    }
+
     /// Called with the transport's monotonic receive time for this message.
     ///
     /// Existing implementations can keep implementing [`Self::on_frame`].
