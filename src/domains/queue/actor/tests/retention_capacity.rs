@@ -167,3 +167,29 @@ fn should_advance_the_earliest_visibility_when_its_only_message_expires() {
     // Assert
     assert_eq!(stored_next_visibility(&actor), Some(expected));
 }
+
+#[test]
+fn should_coalesce_duplicate_retry_timers_during_compaction() {
+    // Arrange
+    let clock = MockClock::new();
+    let mut actor = retained_actor(&clock);
+    let QueueResponse::Sent { id } =
+        actor.handle_send_with_ttl(Bytes::new(), None, std::num::NonZeroU32::new(1))
+    else {
+        panic!("enqueued")
+    };
+    actor.handle_receive_for_session(TEST_SESSION_ID, 1, Some(1));
+    let inflight = actor.inflight.get(&id).unwrap().clone();
+    clock.advance(Duration::from_secs(2));
+    for _ in 0..128 {
+        actor.schedule_inflight_retry(id, &inflight);
+    }
+    QueueActor::fail_next_redelivery_commit_for_tests();
+
+    // Act
+    actor.process_due_work();
+
+    // Assert
+    assert_eq!(actor.inflight.len(), 1);
+    assert_eq!(actor.timers.len(), 1);
+}

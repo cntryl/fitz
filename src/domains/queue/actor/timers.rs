@@ -10,11 +10,31 @@ use crate::observability as obs;
 impl QueueActor {
     pub(super) fn compact_inflight_timers(&mut self) {
         if self.timers.len() > self.inflight.len().saturating_mul(2).saturating_add(64) {
-            self.timers.retain(|expiry| {
-                self.inflight
-                    .get(&expiry.0.id)
-                    .is_some_and(|inflight| inflight.inflight_epoch == expiry.0.inflight_epoch)
-            });
+            // Failed token operations can schedule retries for the same live
+            // epoch. Keep its earliest check instead of every duplicate.
+            let mut earliest =
+                super::FastMap::with_capacity_and_hasher(self.inflight.len(), super::FxBuildHasher);
+            for Reverse(expiry) in self.timers.drain() {
+                if self
+                    .inflight
+                    .get(&expiry.id)
+                    .is_none_or(|inflight| inflight.inflight_epoch != expiry.inflight_epoch)
+                {
+                    continue;
+                }
+                match earliest.entry(expiry.id) {
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(expiry);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut entry)
+                        if expiry.expires_at < entry.get().expires_at =>
+                    {
+                        entry.insert(expiry);
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => {}
+                }
+            }
+            self.timers.extend(earliest.into_values().map(Reverse));
             self.next_expiration_deadline = self.timers.peek().map_or_else(
                 || self.clock.now_instant() + QUEUE_IDLE_HORIZON,
                 |expiry| expiry.0.expires_at,
