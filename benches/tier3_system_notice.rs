@@ -27,9 +27,10 @@ use std::time::Duration;
 const PUBLISHER_SESSION_ID: u64 = 10_000;
 const NOTICE_FANOUT_CONFIRM_BATCH_SIZE: usize = 1_024;
 const NOTICE_HIGH_SUBSCRIBER_BATCH_SIZE: usize = 2_048;
-// Keep each delivery burst within the production per-family lane capacity. The
-// Notice path is intentionally fire-and-forget once that lane is saturated.
-const NOTICE_DELIVERY_BATCH_SIZE: usize = 64;
+// Each publish queues one job per 64 matching subscriptions on a 64-job
+// per-family worker queue. With 100 subscribers, cap bursts at 32 publishes
+// and drain before sending the next burst.
+const NOTICE_DELIVERY_BATCH_SIZE: usize = 32;
 const NOTICE_DELIVERY_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn configure_publish_measurement(ctx: &mut StressContext) {

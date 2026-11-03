@@ -146,16 +146,8 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     configure_read_measurement(ctx);
 
     let context = setup_stream_sink();
-    let route = "stream://bench/system/read/read";
-    let session_id = begin_stream(&context, route);
-    let append_frame = build_stream_append(session_id, 0, b"read event");
-    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-    for _ in 0..100 {
-        request_ok(&context, route, append_msg_type, append_payload.clone());
-    }
-    let commit_frame = build_stream_commit(session_id, STREAM_SYNC_COMMIT_MODE);
-    let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-    request_ok(&context, route, commit_msg_type, commit_payload);
+    let route = "stream://bench/system/read";
+    seed_committed_stream_route(&context, route, 100, b"read event");
 
     let read_frame = build_stream_read(route, 0);
     let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);

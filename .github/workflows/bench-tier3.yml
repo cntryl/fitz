@@ -34,7 +34,7 @@ jobs:
           - tier3_system_stream
           - tier3_system_stream_admin
     env:
-      RUSTUP_TOOLCHAIN: "1.99.0"
+      RUSTUP_TOOLCHAIN: "1.99.1"
       CARGO_INCREMENTAL: "0"
       RUST_LOG: "off"
       FITZ_LOG_LEVEL: "off"

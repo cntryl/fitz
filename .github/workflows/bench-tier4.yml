@@ -51,7 +51,7 @@ jobs:
           - tier4_stream_shapes
           - tier4_stream_compacted
     env:
-      RUSTUP_TOOLCHAIN: "1.99.0"
+      RUSTUP_TOOLCHAIN: "1.99.1"
       CARGO_INCREMENTAL: "0"
       RUST_LOG: "off"
       FITZ_LOG_LEVEL: "off"

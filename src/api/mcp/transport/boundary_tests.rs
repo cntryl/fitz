@@ -2,7 +2,16 @@ use super::*;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 
-fn request(mut body: serde_json::Value, revision: &str, method: &str) -> Request<Full<Bytes>> {
+fn request(body: serde_json::Value, revision: &str, method: &str) -> Request<Full<Bytes>> {
+    request_with_token(body, revision, method, &tests::protocol_test_token())
+}
+
+fn request_with_token(
+    mut body: serde_json::Value,
+    revision: &str,
+    method: &str,
+    token: &str,
+) -> Request<Full<Bytes>> {
     if revision == "2026-07-28" {
         body["params"]["_meta"] = serde_json::json!({
             "io.modelcontextprotocol/protocolVersion": revision,
@@ -13,10 +22,7 @@ fn request(mut body: serde_json::Value, revision: &str, method: &str) -> Request
         .method(Method::POST)
         .uri("/mcp")
         .header(HOST, "fitz.example.test")
-        .header(
-            AUTHORIZATION,
-            format!("Bearer {}", tests::protocol_test_token()),
-        )
+        .header(AUTHORIZATION, format!("Bearer {token}"))
         .header(hyper::header::CONTENT_TYPE, "application/json")
         .header(hyper::header::ACCEPT, "application/json, text/event-stream")
         .header("mcp-protocol-version", revision)
@@ -285,7 +291,8 @@ async fn should_close_expired_compatibility_session_before_releasing_binding() {
 async fn should_keep_session_binding_when_transport_delete_is_rejected() {
     // Arrange
     let state = tests::http_state_for_tests();
-    let initialize = request(
+    let token = tests::protocol_test_token();
+    let initialize = request_with_token(
         serde_json::json!({
             "jsonrpc":"2.0", "id":7, "method":"initialize",
             "params":{"protocolVersion":"2025-11-25", "capabilities":{},
@@ -293,6 +300,7 @@ async fn should_keep_session_binding_when_transport_delete_is_rejected() {
         }),
         "2025-11-25",
         "initialize",
+        &token,
     );
     let initialized = state.handle(initialize).await;
     let session_id = initialized
@@ -307,10 +315,7 @@ async fn should_keep_session_binding_when_transport_delete_is_rejected() {
             .method(Method::DELETE)
             .uri("/mcp")
             .header(HOST, "fitz.example.test")
-            .header(
-                AUTHORIZATION,
-                format!("Bearer {}", tests::protocol_test_token()),
-            )
+            .header(AUTHORIZATION, format!("Bearer {token}"))
             .header("mcp-protocol-version", revision)
             .header("mcp-session-id", session_id.as_str())
             .body(Full::new(Bytes::new()))

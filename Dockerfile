@@ -18,7 +18,7 @@ COPY ui/ ./
 RUN npm run build
 
 # Keep the Rust tag on the toolchain pinned in .github/workflows/ci.yml.
-FROM rust:1.99.0-slim-trixie AS chef
+FROM rust:1.99.1-slim-trixie AS chef
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
