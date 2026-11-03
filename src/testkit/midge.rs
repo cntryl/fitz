@@ -91,15 +91,7 @@ static ENGINE_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Panics if `cf_ids` contains 0 or if the test engine cannot be opened.
 #[allow(clippy::needless_pass_by_value)]
 pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
-    // Validate: CF=0 is FORBIDDEN
-    for cf_id in &cf_ids {
-        assert!(
-            *cf_id != 0,
-            "CRITICAL TEST VIOLATION: Attempted to create engine with default CF (CF=0). \
-             All Fitz tests MUST use explicit non-zero column families. \
-             This enforces the architectural rule: RouteFamily -> ColumnFamily mapping."
-        );
-    }
+    validate_cf_ids(&cf_ids);
 
     let unique_id = ENGINE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let timestamp = std::time::SystemTime::now()
@@ -113,19 +105,49 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     ));
     let _ = std::fs::create_dir_all(&db_path);
 
-    let engine = Arc::new(
-        Engine::open(
-            OpenOptions::local(db_path)
-                .build()
-                .expect("Failed to build test engine options"),
-        )
-        .expect("Failed to create test engine"),
-    );
+    let options = OpenOptions::local(db_path)
+        .build()
+        .expect("Failed to build test engine options");
+    open_engine_with_cfs(options, &cf_ids)
+}
+
+/// Creates a test Midge engine with explicit non-zero column families and no
+/// disk I/O.
+///
+/// Use this for model tests that never reopen storage. Opening an on-disk
+/// engine costs roughly 100 ms per call, which dominates property tests that
+/// open one engine per generated case.
+///
+/// # Panics
+///
+/// Panics if `cf_ids` contains 0 or if the test engine cannot be opened.
+#[must_use]
+pub fn create_in_memory_test_engine_with_cfs(cf_ids: &[u32]) -> Arc<Engine> {
+    validate_cf_ids(cf_ids);
+    let options = OpenOptions::in_memory()
+        .build()
+        .expect("Failed to build in-memory test engine options");
+    open_engine_with_cfs(options, cf_ids)
+}
+
+fn validate_cf_ids(cf_ids: &[u32]) {
+    for cf_id in cf_ids {
+        assert!(
+            *cf_id != 0,
+            "CRITICAL TEST VIOLATION: Attempted to create engine with default CF (CF=0). \
+             All Fitz tests MUST use explicit non-zero column families. \
+             This enforces the architectural rule: RouteFamily -> ColumnFamily mapping."
+        );
+    }
+}
+
+fn open_engine_with_cfs(options: cntryl_midge::OpenOptions, cf_ids: &[u32]) -> Arc<Engine> {
+    let engine = Arc::new(Engine::open(options).expect("Failed to create test engine"));
 
     // Explicitly create each requested column family.
     // Midge assigns IDs sequentially starting from 1, so creating CFs in
     // order (1, 2, 3, ...) produces the expected CF IDs.
-    for cf_id in &cf_ids {
+    for cf_id in cf_ids {
         let name = format!("cf_{cf_id}");
         let handle = engine
             .create_column_family(&name)

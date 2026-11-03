@@ -49,7 +49,7 @@ pub mod domain_internals {
 // Re-export common test utilities
 pub use body::to_bytes;
 pub use domains::{create_domain_runtime_fixture, DomainRuntimeFixture};
-pub use midge::create_test_engine_with_cfs;
+pub use midge::{create_in_memory_test_engine_with_cfs, create_test_engine_with_cfs};
 pub use notice::{addr, make_router, route, session_id, TestSink};
 pub use operator_seed::{seed_operator_console, OperatorSeedFamily, OperatorSeedReport};
 pub use stream::{addr_with_family, create_test_db, create_test_store, create_test_stream_actor};

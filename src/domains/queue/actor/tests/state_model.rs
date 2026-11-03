@@ -1,4 +1,5 @@
 use super::*;
+use crate::testkit::create_in_memory_test_engine_with_cfs;
 use proptest::prelude::*;
 use std::collections::HashSet;
 
@@ -41,7 +42,7 @@ proptest! {
     fn should_match_queue_reservation_reference_state_model(operations in prop::collection::vec(operation(), 1..=64)) {
         // Arrange
         let clock = MockClock::new();
-        let store = create_test_engine_with_cfs(vec![1]);
+        let store = create_in_memory_test_engine_with_cfs(&[1]);
         let mut key = unique_queue_key("reservation-model");
         key.family = RouteFamily::new(1);
         let mut actor = QueueActor::with_clock(RouteFamily::new(1), key, store, Box::new(clock.clone()), None, crate::utils::idempotency::default_dedup_store());

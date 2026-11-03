@@ -48,7 +48,7 @@ proptest! {
     #[test]
     fn should_match_schedule_claim_reference_state_model(operations in prop::collection::vec(operation(), 1..=48)) {
         // Arrange
-        let engine = create_test_engine_with_cfs(vec![1]);
+        let engine = create_in_memory_test_engine_with_cfs(&[1]);
         let clock = Arc::new(MockClock::new(epoch_ms(2026, 1, 1, 0, 0, 0)));
         let mut actor = new_actor(engine.clone(), clock.clone());
         let mut definitions = BTreeMap::<String, Definition>::new();

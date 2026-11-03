@@ -52,7 +52,15 @@ impl AdmissionFailure {
 struct FailingRpcSink(DeliveryError);
 
 impl MailboxSink for FailingRpcSink {
-    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+    // Session cleanup is not the behavior under test. Accepting it keeps
+    // teardown from waiting out the cleanup coordinator's retry window.
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if envelope
+            .payload::<fitz::runtime::SessionCleanup>()
+            .is_some()
+        {
+            return Ok(());
+        }
         Err(self.0.clone())
     }
 
