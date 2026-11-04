@@ -77,6 +77,9 @@ stalled refresh in another family does not block it. Coordination and storage
 write admission share one 30-second pre-submission budget; an exhausted budget
 fails without submitting the deletion. Storage acknowledgement after submission
 has its own timeout and can still have an indeterminate outcome.
+An indeterminate response does not cancel an admitted DROP: it may apply later.
+Reconcile the selected scope before recreating data after such an error. The
+broker fences stale inventory writes against delayed DROP application.
 
 An overlapping active read-write transaction causes `ERR_ISOLATION_CONFLICT`
 (1053), including one owned by the DROP caller. DROP leaves that transaction

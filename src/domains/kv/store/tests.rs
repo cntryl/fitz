@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 mod drop_adversarial;
 mod drop_coordination;
+mod drop_delayed_outcome;
 mod drop_scope;
 
 #[test]

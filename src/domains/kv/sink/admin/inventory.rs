@@ -248,19 +248,16 @@ impl KvFamilyRuntime<'_> {
             .try_lock_until(deadline)
             .ok_or_else(crate::domains::kv::store::KvStore::inventory_coordination_timeout)
             .map_err(|error| error.to_string())?;
-        let read_tx = self
+        let mut tx = self
             .core
             .store
-            .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
+            .begin(column_family, crate::domains::kv::TxMode::ReadWrite)
             .map_err(|error| error.to_string())?;
         let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
         let metadata_key = KvActor::inventory_metadata_key(realm, area, resource);
-        let metadata_exists = read_tx
-            .get(&metadata_key)
-            .map_err(|error| error.to_string())?
-            .is_some();
+        let original_metadata = tx.get(&metadata_key).map_err(|error| error.to_string())?;
         let mut rows = Self::scan_scoped_prefix(
-            &read_tx,
+            &tx,
             &resource_prefix,
             &resource_prefix,
             &resource_prefix,
@@ -282,22 +279,20 @@ impl KvFamilyRuntime<'_> {
             estimate_complete,
         };
 
-        drop(read_tx);
-
-        if (persist_empty && metadata_exists)
+        if (persist_empty && original_metadata.is_some())
             || estimate.estimated_record_count > 0
             || !estimate.estimate_complete
         {
-            let mut write_tx = self
-                .core
-                .store
-                .begin(column_family, crate::domains::kv::TxMode::ReadWrite)
+            // DROP can return an indeterminate outcome before its tombstones
+            // apply. The family mutex cannot fence that delayed application.
+            // Keep the scan snapshot through commit and let storage reject a
+            // point mutation or covering tombstone newer than this snapshot,
+            // including a deletion of an initially absent metadata key.
+            tx.assert_value(metadata_key.clone(), original_metadata.as_deref())
                 .map_err(|error| error.to_string())?;
-            write_tx
-                .put(metadata_key, encode_estimate(estimate))
+            tx.put(metadata_key, encode_estimate(estimate))
                 .map_err(|error| error.to_string())?;
-            write_tx
-                .commit_until(self.core.sync_write_policy, deadline)
+            tx.commit_until(self.core.sync_write_policy, deadline)
                 .map_err(|error| error.to_string())?;
         }
 

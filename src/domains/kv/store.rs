@@ -114,6 +114,18 @@ impl From<Arc<cntryl_midge::Engine>> for KvStore {
 }
 
 impl KvTransaction {
+    /// Fence a write against point mutations and covering range deletions
+    /// newer than this transaction's frozen snapshot.
+    pub(crate) fn assert_value(
+        &mut self,
+        key: Vec<u8>,
+        expected: Option<&[u8]>,
+    ) -> Result<(), KvError> {
+        self.inner
+            .assert_value(key, expected.map(<[u8]>::to_vec))
+            .map_err(|error| KvStore::map_error(&error))
+    }
+
     pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Bytes>, KvError> {
         self.inner
             .get(key)

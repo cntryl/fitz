@@ -54,10 +54,11 @@ impl KvActor {
             .transpose()
             .map_err(KvError::BackendError)?
             .unwrap_or_default();
-        if estimate.estimate_complete {
-            estimate.estimate_complete = false;
-            active.tx.put(key, encode_estimate(estimate))?;
-        }
+        // Always stage the marker with the data. An earlier indeterminate
+        // DROP can remove an already-incomplete marker after this snapshot
+        // but before this newer data transaction commits.
+        estimate.estimate_complete = false;
+        active.tx.put(key, encode_estimate(estimate))?;
         Ok(())
     }
 
@@ -82,13 +83,13 @@ impl KvActor {
 
         let key = Self::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
         let mut tx = store.begin(column_family, TxMode::ReadWrite)?;
-        let existing = tx.get(&key)?;
-        let mut estimate = existing
-            .as_deref()
-            .map(crate::domains::kv::inventory::decode_estimate)
-            .transpose()
-            .map_err(KvError::BackendError)?
-            .unwrap_or_default();
+        // Every mutating data commit creates its inventory marker atomically.
+        // An absent marker means DROP has retired this companion update.
+        let Some(existing) = tx.get(&key)? else {
+            return Ok(());
+        };
+        let mut estimate = crate::domains::kv::inventory::decode_estimate(&existing)
+            .map_err(KvError::BackendError)?;
 
         for stored_bytes in inventory_delta.inserted_key_bytes.values() {
             estimate.estimated_record_count = estimate.estimated_record_count.saturating_add(1);
@@ -101,7 +102,7 @@ impl KvActor {
         }
 
         let encoded = encode_estimate(estimate);
-        if existing.as_deref() == Some(encoded.as_slice()) {
+        if existing.as_ref() == encoded.as_slice() {
             return Ok(());
         }
         #[cfg(test)]
@@ -111,6 +112,10 @@ impl KvActor {
             ));
         }
 
+        // An admitted DROP may still apply after an indeterminate response.
+        // A storage assertion protects this same read/write snapshot even
+        // after the family coordination guard has been released.
+        tx.assert_value(key.clone(), Some(&existing))?;
         tx.put(key, encoded)?;
         tx.commit(write_policy)
     }
@@ -126,16 +131,6 @@ impl KvActor {
         scope: &KvResourceScope,
         write_policy: crate::domains::WritePolicy,
     ) -> Result<(), KvError> {
-        // A DROP can have applied even if its caller received an indeterminate
-        // storage error. Repairs may update an existing marker, never recreate
-        // one removed by that deletion. Data commits create their marker in
-        // the same transaction as the data, before a repair can be queued.
-        let tx = store.begin(column_family, TxMode::ReadOnly)?;
-        let key = Self::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
-        if tx.get(&key)?.is_none() {
-            return Ok(());
-        }
-        drop(tx);
         let mut delta = KvInventoryDelta::default();
         delta.mark_incomplete();
         Self::apply_inventory_delta(store, column_family, scope, &delta, write_policy)

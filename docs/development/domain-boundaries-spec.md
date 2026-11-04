@@ -379,6 +379,20 @@ budget; storage work for one family must not hold a shared cross-family
 inventory lock. A coordination timeout must not submit the deletion or proceed
 without protecting the inventory refresh boundary.
 
+An indeterminate DROP response does not establish whether its admitted
+tombstones have applied. Inventory refreshes and companion estimate updates
+must therefore keep one read-write snapshot from their metadata read (and any
+row scan) through commit, asserting the original metadata key in that same
+transaction. Storage rejects an intervening point mutation or covering range
+deletion, including deletion of an initially absent key. A stale estimate must
+conflict rather than recreate dropped inventory after a delayed application.
+Companion updates skip metadata already removed by DROP; a fresh admin read can
+reconcile the current state without retrying the deletion.
+Every mutating KV COMMIT stages its incomplete inventory marker atomically
+with its values, even if the marker was already incomplete in its snapshot.
+Newer committed data therefore remains discoverable if an earlier indeterminate
+DROP applies between the new transaction's snapshot and commit.
+
 KV does NOT guarantee:
 
 - event history
