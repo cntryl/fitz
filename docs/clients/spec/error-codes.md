@@ -132,7 +132,7 @@ before a request reaches a domain.
 | 2008 | BAD_REQUEST | 8 | NOT_APPLIED | new | |
 | 2009 | NOT_FOUND | 9 | NOT_APPLIED | new | |
 | 2010 | UNSUPPORTED | 10 | NOT_APPLIED | new | |
-| 2050 | CONCURRENCY_CONFLICT | 0 | NOT_APPLIED | 2001 | `expected_offset` mismatch; the session stays open |
+| 2050 | CONCURRENCY_CONFLICT | 0 | NOT_APPLIED | 2001 | `expected_offset` mismatch, an append invalidated by DROP, or DROP blocked by an active append session. An offset mismatch leaves the session open; a DROP fence invalidates it. |
 | 2051 | SESSION_ALREADY_ACTIVE | 0 | NOT_APPLIED | 2002 | |
 | 2052 | SESSION_NOT_FOUND | 9 | NOT_APPLIED | 2003 | |
 | 2053 | INVALID_READ_BOUND | 8 | NOT_APPLIED | 2004 | |

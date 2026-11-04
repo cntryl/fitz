@@ -6,6 +6,11 @@ use crate::runtime::context::TimerId;
 use crate::runtime::DomainPublishEvent;
 use std::time::Duration;
 
+pub(super) struct CommittedRange {
+    pub(super) last: u64,
+    pub(super) last_global: u64,
+}
+
 /// Encode the watermark notification body published to
 /// `stream://…/watermark` subscribers.
 pub(super) fn watermark_payload(previous: u64, watermark: u64) -> bytes::Bytes {
@@ -38,6 +43,18 @@ impl WatermarkNotification {
     /// True when nothing is queued and no debounce or retry timer is armed.
     pub(super) const fn is_idle(&self) -> bool {
         self.pending.is_none() && self.timer.is_none()
+    }
+
+    pub(super) const fn has_unarmed_pending(&self) -> bool {
+        self.pending.is_some() && self.timer.is_none()
+    }
+
+    pub(super) fn clear<A: Actor>(&mut self, ctx: &mut Context<A>) {
+        if let Some(timer) = self.timer.take() {
+            let _ = ctx.timer_manager().cancel(timer);
+        }
+        self.pending = None;
+        self.retry_attempts = 0;
     }
 
     pub(super) fn queue<A: Actor>(&mut self, event: DomainPublishEvent, ctx: &mut Context<A>) {

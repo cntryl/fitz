@@ -43,6 +43,10 @@ pub enum KeyPrefix {
     CursorState = 0x16,
     /// Durable generation fencing pre-recovery writers.
     FamilyWriterEpoch = 0x15,
+    /// Global-offset boundary hiding a destructive namespace reset.
+    DropCutoff = 0x17,
+    /// Durable progress for bounded reclamation of deleted payloads.
+    DropReclamation = 0x18,
     // --- LEGACY D3 PROTOTYPE PREFIXES; REJECTED BY PRODUCTION VALIDATION ---
     /// Obsolete prototype canonical row. Production code must not write it.
     CanonicalResource = 0x0B,
@@ -101,6 +105,8 @@ impl TryFrom<u8> for KeyPrefix {
             0x14 => Ok(Self::GlobalDiscriminator),
             0x15 => Ok(Self::FamilyWriterEpoch),
             0x16 => Ok(Self::CursorState),
+            0x17 => Ok(Self::DropCutoff),
+            0x18 => Ok(Self::DropReclamation),
             0xE4 => Ok(Self::CompactAreaPage),
             0xE8 => Ok(Self::CompressedCompactRealmPage),
             0xEA => Ok(Self::CompactResourcePage),

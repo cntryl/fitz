@@ -5,6 +5,7 @@ use super::{
     KeyPrefix, PostingEntry, PostingPageValue, StreamStore, GLOBAL_PAGE_RECORD_LIMIT,
 };
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 const FRAGMENT_COMPACTION_THRESHOLD: usize = 8;
 // Maintenance executes on the same synchronous family actor as client Stream
@@ -12,6 +13,19 @@ const FRAGMENT_COMPACTION_THRESHOLD: usize = 8;
 // monopolize that actor beyond the client liveness budget.
 const MAX_BUCKETS_PER_INVOCATION: usize = 1;
 const MAX_BYTES_PER_INVOCATION: usize = 4 * 1024 * 1024;
+
+#[cfg(test)]
+std::thread_local! {
+    static AFTER_SCAN_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn after_next_scan_for_tests(hook: Box<dyn FnOnce()>) {
+    AFTER_SCAN_HOOK.with(|pending| {
+        assert!(pending.borrow().is_none());
+        *pending.borrow_mut() = Some(hook);
+    });
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StreamMaintenanceResult {
@@ -170,11 +184,14 @@ struct Fragment {
     first_offset: u64,
     generation: u64,
     value: Vec<u8>,
+    reset_fence: Arc<super::drop_scope::CutoffSnapshot>,
 }
+
+type CompactionSource = (Vec<u8>, Vec<u8>, Arc<super::drop_scope::CutoffSnapshot>);
 
 struct CompactedBucket {
     group_key: Vec<u8>,
-    source_keys: Vec<Vec<u8>>,
+    sources: Vec<CompactionSource>,
     bucket_start: u64,
     replacement_generation: u64,
     bytes_examined: usize,
@@ -185,6 +202,32 @@ enum BucketMaintenanceOutcome {
     NotCompactable { bytes: usize },
     OverBudget { bytes: usize },
     Compacted { records: usize, bytes: usize },
+}
+
+fn fragment_reset_fence(
+    txn: &cntryl_midge::Transaction,
+    key: &[u8],
+    plane: Plane,
+) -> Result<Arc<super::drop_scope::CutoffSnapshot>, String> {
+    let (realm, suffix) = crate::utils::storage_key::split_domain_key(
+        key,
+        crate::utils::storage_key::DomainKeyspace::Stream,
+    )
+    .ok_or_else(|| "invalid Stream maintenance key".to_string())?;
+    let mut segments = suffix[1..].split(|byte| *byte == 0);
+    let area = matches!(plane, Plane::Resource | Plane::Area)
+        .then(|| segments.next())
+        .flatten()
+        .map(std::str::from_utf8)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let resource = (plane == Plane::Resource)
+        .then(|| segments.next())
+        .flatten()
+        .map(std::str::from_utf8)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    super::drop_scope::cutoff_snapshot(txn, realm, area, resource).map(Arc::new)
 }
 
 #[cfg(test)]
@@ -265,6 +308,7 @@ fn scan_maintenance_buckets(
             first_offset,
             generation,
             value: value.to_vec(),
+            reset_fence: fragment_reset_fence(&txn, &key, plane)?,
         });
     }
     Ok(buckets)
@@ -314,6 +358,7 @@ fn scan_maintenance_bucket(
             first_offset,
             generation,
             value: value.to_vec(),
+            reset_fence: fragment_reset_fence(&txn, &key, plane)?,
         });
     }
     Ok(fragments)
@@ -376,7 +421,10 @@ fn merge_maintenance_bucket(
     let bytes_examined = fragments.iter().map(|fragment| fragment.value.len()).sum();
     Ok(Some(CompactedBucket {
         group_key,
-        source_keys: fragments.into_iter().map(|fragment| fragment.key).collect(),
+        sources: fragments
+            .into_iter()
+            .map(|fragment| (fragment.key, fragment.value, fragment.reset_fence))
+            .collect(),
         bucket_start,
         replacement_generation,
         bytes_examined,
@@ -411,10 +459,12 @@ fn validate_merged_posting(
 
 impl StreamStore {
     pub(crate) fn has_pending_maintenance(&self, family: u64) -> bool {
-        self.maintenance_queues
-            .lock()
-            .get(&family)
-            .is_none_or(|queue| !queue.initialized || !queue.buckets.is_empty())
+        self.has_pending_drop_reclamation(family)
+            || self
+                .maintenance_queues
+                .lock()
+                .get(&family)
+                .is_none_or(|queue| !queue.initialized || !queue.buckets.is_empty())
     }
 
     #[cfg(test)]
@@ -523,6 +573,10 @@ impl StreamStore {
             });
         }
         let record_count = bucket.merged.len();
+        #[cfg(test)]
+        if let Some(hook) = AFTER_SCAN_HOOK.with(|pending| pending.borrow_mut().take()) {
+            hook();
+        }
         let now_epoch_ms = self.now_epoch_ms();
         let mut merged = bucket.merged;
         merged.prune_expired(now_epoch_ms);
@@ -554,6 +608,13 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadWrite,
             )
             .map_err(|error| format!("begin Stream maintenance tx failed: {error:?}"))?;
+        write_txn.set_conflict_policy(cntryl_midge::ConflictPolicy::AbortOnWriteConflict);
+        for (source_key, source_value, fence) in &bucket.sources {
+            write_txn
+                .assert_value(source_key.clone(), Some(source_value.clone()))
+                .map_err(|error| error.to_string())?;
+            fence.assert_unchanged(&mut write_txn)?;
+        }
         #[cfg(test)]
         self.inject_maintenance_failure(MaintenanceFailureStage::BeforeReplacement)?;
         if retain_expired_range || latest_expiration.is_none_or(|deadline| deadline > now_epoch_ms)
@@ -566,7 +627,7 @@ impl StreamStore {
         self.inject_maintenance_failure(MaintenanceFailureStage::DuringReplacement)?;
         #[cfg(test)]
         self.inject_maintenance_failure(MaintenanceFailureStage::BeforeDeletion)?;
-        for source_key in bucket.source_keys {
+        for (source_key, _, _) in bucket.sources {
             if source_key != replacement_key {
                 write_txn
                     .delete(source_key)
@@ -596,6 +657,9 @@ impl StreamStore {
     /// replacement transaction.
     pub fn run_maintenance(&self, family: u64) -> Result<StreamMaintenanceResult, String> {
         self.ensure_layout_activation_for_family(family)?;
+        if let Some(result) = self.run_drop_reclamation(family)? {
+            return Ok(result);
+        }
         let mut result = StreamMaintenanceResult::default();
         let mut buckets_examined = 0usize;
         while buckets_examined < MAX_BUCKETS_PER_INVOCATION

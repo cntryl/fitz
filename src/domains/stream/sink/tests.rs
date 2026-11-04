@@ -14,6 +14,11 @@ use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 
+mod drop;
+mod drop_coordination;
+mod drop_reclamation;
+mod drop_snapshots;
+
 const TEST_CLIENT_SESSION_ID: u64 = 1;
 
 struct TestContext {
@@ -439,6 +444,7 @@ fn stream_read_response(
 
 mod active_subscriptions;
 mod actor_retention;
+mod adversarial_drop;
 mod capacity;
 mod commit_deadline;
 mod correctness;

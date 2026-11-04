@@ -24,6 +24,19 @@ struct PreparedSessionReservation {
 }
 
 impl StreamStore {
+    /// Commit one resource batch against its current deletion boundary.
+    ///
+    /// # Errors
+    /// Returns an error on an invalid frontier, deletion race, or storage failure.
+    pub fn commit_records(
+        &self,
+        params: CommitRecordsParams<'_>,
+    ) -> Result<CommitResponse, String> {
+        let cutoff =
+            self.resource_drop_cutoff(params.family, params.realm, params.area, params.resource)?;
+        self.commit_records_fenced(params, cutoff)
+    }
+
     fn recover_global_ordering_after_unknown_commit(&self, family: u64) -> Result<(), String> {
         self.recovered_global_families.lock().remove(&family);
         self.recover_global_ordering_once(family)
@@ -79,6 +92,7 @@ impl StreamStore {
                 first_realm_offset,
                 first_global_offset: params.first_global_offset,
                 writer_epoch: params.writer_epoch,
+                expected_drop_cutoff: params.expected_drop_cutoff,
                 events: params.events,
                 committed_size_before: params.committed_size_before,
                 ingest_metadata: params.ingest_metadata.clone(),
@@ -296,9 +310,10 @@ impl StreamStore {
     /// Returns an error if layout activation fails, the batch is empty, the
     /// expected frontier no longer matches persisted state, or the commit write
     /// path fails.
-    pub fn commit_records(
+    pub(crate) fn commit_records_fenced(
         &self,
         params: CommitRecordsParams<'_>,
+        expected_drop_cutoff: u64,
     ) -> Result<CommitResponse, String> {
         self.ensure_layout_activation_for_family(params.family)?;
         let CommitRecordsParams {
@@ -358,6 +373,7 @@ impl StreamStore {
                 first_realm_offset,
                 first_global_offset: global_reservation.first_offset,
                 writer_epoch: global_reservation.writer_epoch,
+                expected_drop_cutoff,
                 events,
                 committed_size_before: resource_meta_before.committed_size_bytes,
                 ingest_metadata: ingest_metadata.clone(),
@@ -624,6 +640,12 @@ impl StreamStore {
             first_realm_offset,
             first_global_offset: global_reservation.first_offset,
             writer_epoch: global_reservation.writer_epoch,
+            expected_drop_cutoff: self.resource_drop_cutoff(
+                family,
+                &session.realm,
+                &session.area,
+                &session.resource,
+            )?,
             events: &session.staged_events,
             committed_size_before: resource_meta_before.committed_size_bytes,
             ingest_metadata: session.ingest_metadata.clone(),

@@ -327,8 +327,50 @@ Stream guarantees:
 - replay from client-supplied offsets
 - wildcard area and realm reads gated by committed watermarks
 - a concrete three-segment route on every READ delivery item, including exact reads and filtered markers
-- monotonic committed offsets and watermarks
+- monotonic committed offsets and watermarks within a scope's lifetime; explicit
+  destructive DROP resets the offsets of fully contained scopes
 - committed history is readable after restart
+
+Stream supports standalone destructive DROP of one resource, an area's
+resources, or a realm's Stream resources, within one RouteFamily. One write
+permission must cover the entire selected scope. DROP requires an explicit
+Buffered or Sync persistence choice and rejects every overlapping live append
+session, including an empty session owned by the caller.
+
+Resource DROP resets that resource's offset. Area DROP also resets the area's
+offset and watermark; realm DROP also resets the realm's offset and watermark.
+Surviving enclosing scopes retain their counters, and family-global offsets
+are never reset. Recreated resources start at resource offset zero. Old
+checkpoints, expected revisions, and cursors for reset scopes are invalid after
+DROP; the protocol adds no client-visible generation token or stale-revision
+protection across this intentional destruction.
+
+Namespace-contiguous rows and reset metadata are deleted atomically using Midge
+range tombstones. A durable family-global cutoff prevents deleted records from
+remaining visible through shared parent indexes or global replay. Every replay
+path honors deletion before fetching a deleted payload. Reads already holding
+an earlier storage snapshot may observe the earlier history. Later pages omit
+deleted records and advance over the gaps; a captured watermark bounds replay
+but does not retain records that have been deleted.
+
+Payload reclamation is eventual. A restartable, bounded storage sweep uses
+range deletes for deleted payload ranges and selectively rewrites shared pages
+while preserving surviving records and positional offsets. Physical disk space
+is reclaimed by Midge compaction. Each active sweep finishes its captured
+frontier before a coalesced revisit handles newer deletions; additional DROP
+requests must not continuously restart existing reclamation progress. Both
+the active cursor and a pending revisit survive restart.
+Delayed commits, watermark retries, and
+fragment maintenance must assert the relevant durable deletion fence so they
+cannot restore pre-DROP state after an indeterminate outcome.
+
+DROP is idempotent for an empty scope. Live subscriptions remain registered;
+commit notifications are ephemeral hints and may race deletion. DROP does not
+enumerate per-resource deletion events. Clients reconcile through explicit
+reads. Snapshot export omits deleted history, and reset destinations may accept
+ordinary snapshot replay. The first DROP installs a persisted format marker
+that prevents an older broker from ignoring deletion cutoffs and exposing old
+history. Concurrent cold initialization must preserve that stronger marker.
 
 Replay validates decoded fragments and checks blob integrity for examined
 records, including records excluded by a discriminator filter. It does not

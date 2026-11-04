@@ -22,10 +22,11 @@ enum ReadScope {
 impl StreamFamilyState {
     pub(in crate::domains::stream::sink) fn run_maintenance_slice(&mut self, family: u64) {
         match self.stream_store.run_maintenance(family) {
-            Ok(result) if result.buckets_compacted > 0 => {
+            Ok(_) => {
+                // A late DROP can finish its durable sweep with no fragments
+                // left (for example after TTL expiry) and still reset inventory.
                 self.mark_committed_admin_snapshot_dirty();
             }
-            Ok(_) => {}
             Err(error) => {
                 tracing::warn!(
                     domain = "stream",

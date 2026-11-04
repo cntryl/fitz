@@ -20,7 +20,7 @@
 //!
 //! # Semantics
 //!
-//! - **Durable committed events**: committed events and offsets survive restart
+//! - **Durable committed events**: committed events and offsets survive restart until explicit DROP
 //! - **Ephemeral append sessions**: one active append session per resource,
 //!   lost on disconnect cleanup or broker restart
 //! - **Optimistic concurrency**: caller provides `expected_offset` on each append for conflict detection
@@ -39,6 +39,7 @@
 
 pub(crate) mod actor;
 pub mod constants;
+mod drop_scope;
 pub(crate) mod metrics;
 pub mod protocol;
 pub(crate) mod route_grammar;
@@ -62,13 +63,14 @@ pub use constants::{
     INTERNAL_AREA_SEGMENT, INTERNAL_REALM_SEGMENT, MAX_POSTING_ENTRIES_EXAMINED,
     MAX_POSTING_FRAGMENTS_FETCHED, MAX_READ_ITEMS, MAX_WATERMARK_COORDINATORS, NOTICE_DEBOUNCE_MS,
 };
+pub use drop_scope::{StreamDropScope, StreamDropTarget};
 pub(crate) use metrics::StreamMetrics;
 pub use protocol::{
     AppendResponse, GetMetadataResponse, ReadResponse, StreamClientError, StreamClientErrorKind,
     StreamClientFrame, StreamClientNotification, StreamClientRequest, StreamClientResponse,
-    StreamClientResponseBody, StreamDiscriminator, StreamFilterClause, StreamFilterSet,
-    StreamFilteredReason, StreamMessage, StreamMetadata, StreamReadItem, StreamRecord,
-    StreamSubscriptionFailure,
+    StreamClientResponseBody, StreamDiscriminator, StreamDropRequest, StreamFilterClause,
+    StreamFilterSet, StreamFilteredReason, StreamMessage, StreamMetadata, StreamReadItem,
+    StreamRecord, StreamSubscriptionFailure,
 };
 pub(crate) use route_grammar::canonical_auth_route;
 pub use store::StreamStorageLayout;

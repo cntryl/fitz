@@ -437,6 +437,10 @@ Stream is not a queue, a broker-managed consumer group system, an exactly-once c
 |  607 | SUBSCRIBE    | Client → Server            |
 |  608 | UNSUBSCRIBE  | Client → Server            |
 |  609 | NOTIFY       | Server → Client (delivery) |
+|  610 | DROP         | Client → Server            |
+
+Standalone [DROP](stream-drop.md) destructively removes selected history and
+resets offsets within the selected scope. Existing message layouts are unchanged.
 
 #### Error envelope
 
@@ -814,7 +818,7 @@ class StreamSession:
 
 - **Atomicity**: Appends are atomic; partial writes never visible
 - **Ordering**: Records strictly ordered by offset within resource
-- **Commit-Time Global Order**: Area and realm offsets are assigned durably at COMMIT time and remain monotonic across restart
+- **Commit-Time Global Order**: Area and realm offsets are assigned durably at COMMIT time and remain monotonic across restart, except for deliberate scope resets by [DROP](stream-drop.md).
 - **Watermarks**: Reads stop at the current committed watermark; reading past it returns an empty success
 - **Optimistic Concurrency**: `expected_offset` on APPEND prevents lost updates
 - **Filtered Replay**: `StreamFilterSet` clauses are conjunctive and operate on the optional append discriminator sidecar
@@ -828,7 +832,7 @@ Every Stream operation, READ included, uses the common envelope
 `[status=1][u16 BE code][u8 class][u8 effect][string message]`. Never infer a
 code from message wording.
 
-- 2050 = ERR_CONCURRENCY_CONFLICT (expected_offset mismatch)
+- 2050 = ERR_CONCURRENCY_CONFLICT (expected_offset mismatch, DROP fence, or an active append session blocking DROP)
 - 2051 = ERR_SESSION_ALREADY_ACTIVE
 - 2052 = ERR_SESSION_NOT_FOUND
 - 2053 = ERR_INVALID_READ_BOUND

@@ -1,7 +1,7 @@
 use super::read_support::{
     begin_read_tx, bounded_fragment_rows, broad_scope_fragment_rows, hydrate_area_locator,
-    hydrate_realm_locator, page_slot_offset, resolve_blob_payload, validate_fragment_range,
-    GlobalFragmentCache,
+    hydrate_realm_locator, locator_is_dropped, page_slot_offset, resolve_blob_payload,
+    validate_fragment_range, GlobalFragmentCache,
 };
 use super::{
     bounded_max_bytes, collect_filtered_read_page_items, decode_area_offset_from_key,
@@ -111,24 +111,11 @@ impl StreamStore {
                 page.records.len(),
                 &mut previous_fragment_end,
             )?;
-            let mut page_records = Vec::with_capacity(page.records.len());
-            for (slot, page_record) in page.records.into_iter().enumerate() {
-                let offset = page_slot_offset(page_start, slot);
-                if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    // Only records the caller has not already paged past may
-                    // move the cursor. This pre-pass walks the whole fragment,
-                    // which starts at the enclosing 64-record page boundary, so
-                    // without this an expired record BELOW `from_offset` would
-                    // hand back a resume point behind where the caller already
-                    // was - and an idle stream would replay those events on
-                    // every poll.
-                    if offset >= params.from_offset {
-                        update_resource_cursor(&mut cursor, offset, &page_record);
-                    }
-                    continue;
-                }
-                page_records.push((offset, page_record));
-            }
+            let page_records = page
+                .records
+                .into_iter()
+                .enumerate()
+                .map(|(slot, record)| (page_slot_offset(page_start, slot), record));
 
             let mut state = ReadPageState {
                 from_offset: params.from_offset,
@@ -145,6 +132,7 @@ impl StreamStore {
             let stop_scan = collect_filtered_read_page_items(
                 page_records,
                 &mut state,
+                |_, record| Ok(record_is_expired(record.expires_at, now_epoch_ms)),
                 |resource_offset, _page_record| {
                     Self::load_optional_discriminator(
                         &txn,
@@ -284,24 +272,11 @@ impl StreamStore {
                 page.records.len(),
                 &mut previous_fragment_end,
             )?;
-            let mut page_records = Vec::with_capacity(page.records.len());
-            for (slot, page_record) in page.records.into_iter().enumerate() {
-                let offset = page_slot_offset(page_start, slot);
-                if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    // Only records the caller has not already paged past may
-                    // move the cursor. This pre-pass walks the whole fragment,
-                    // which starts at the enclosing 64-record page boundary, so
-                    // without this an expired record BELOW `from_offset` would
-                    // hand back a resume point behind where the caller already
-                    // was - and an idle stream would replay those events on
-                    // every poll.
-                    if offset >= params.from_offset {
-                        update_area_cursor(&mut cursor, offset, &page_record);
-                    }
-                    continue;
-                }
-                page_records.push((offset, page_record));
-            }
+            let page_records = page
+                .records
+                .into_iter()
+                .enumerate()
+                .map(|(slot, record)| (page_slot_offset(page_start, slot), record));
 
             let mut state = ReadPageState {
                 from_offset: params.from_offset,
@@ -318,6 +293,19 @@ impl StreamStore {
             let stop_scan = collect_filtered_read_page_items(
                 page_records,
                 &mut state,
+                |_, record| {
+                    if record_is_expired(record.expires_at, now_epoch_ms) {
+                        Ok(true)
+                    } else {
+                        locator_is_dropped(
+                            &txn,
+                            params.realm,
+                            params.area,
+                            &record.resource,
+                            &record.body,
+                        )
+                    }
+                },
                 |area_offset, _page_record| {
                     Self::load_optional_discriminator(
                         &txn,
@@ -460,24 +448,11 @@ impl StreamStore {
                 page.records.len(),
                 &mut previous_fragment_end,
             )?;
-            let mut page_records = Vec::with_capacity(page.records.len());
-            for (slot, page_record) in page.records.into_iter().enumerate() {
-                let offset = page_slot_offset(page_start, slot);
-                if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    // Only records the caller has not already paged past may
-                    // move the cursor. This pre-pass walks the whole fragment,
-                    // which starts at the enclosing 64-record page boundary, so
-                    // without this an expired record BELOW `from_offset` would
-                    // hand back a resume point behind where the caller already
-                    // was - and an idle stream would replay those events on
-                    // every poll.
-                    if offset >= from_offset {
-                        update_realm_cursor(&mut cursor, offset, &page_record);
-                    }
-                    continue;
-                }
-                page_records.push((offset, page_record));
-            }
+            let page_records = page
+                .records
+                .into_iter()
+                .enumerate()
+                .map(|(slot, record)| (page_slot_offset(page_start, slot), record));
 
             let mut state = ReadPageState {
                 from_offset,
@@ -494,6 +469,19 @@ impl StreamStore {
             let stop_scan = collect_filtered_read_page_items(
                 page_records,
                 &mut state,
+                |_, record| {
+                    if record_is_expired(record.expires_at, now_epoch_ms) {
+                        Ok(true)
+                    } else {
+                        locator_is_dropped(
+                            &txn,
+                            realm,
+                            &record.area,
+                            &record.resource,
+                            &record.body,
+                        )
+                    }
+                },
                 |realm_offset, _page_record| {
                     Self::load_optional_discriminator(
                         &txn,

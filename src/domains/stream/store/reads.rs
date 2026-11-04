@@ -1,6 +1,6 @@
 use super::read_support::{
     begin_read_tx, bounded_fragment_rows, bounded_posting_rows, broad_scope_fragment_rows,
-    hydrate_realm_locator, load_global_locator_record, resolve_blob_payload,
+    hydrate_realm_locator, load_global_locator_header, locator_is_dropped, resolve_blob_payload,
     validate_fragment_range, GlobalFragmentCache,
 };
 use super::{
@@ -135,6 +135,9 @@ fn realm_posting_record(
     let mut record = page.records.get(index).cloned().ok_or_else(|| {
         "ERR_STREAM_CORRUPT_LOCATOR: realm posting points outside parent fragment".to_string()
     })?;
+    if locator_is_dropped(txn, realm, &record.area, &record.resource, &record.body)? {
+        return Ok(None);
+    }
     hydrate_realm_locator(txn, realm, &mut record, global_cache)?;
     Ok(Some(record))
 }
@@ -144,7 +147,19 @@ fn global_posting_record(
     entry: &super::PostingEntry,
     cache: &mut GlobalFragmentCache,
 ) -> Result<Option<super::CompactGlobalPageRecord>, String> {
-    load_global_locator_record(txn, entry.offset, entry.parent_fragment_start, cache).map(Some)
+    let mut record =
+        load_global_locator_header(txn, entry.offset, entry.parent_fragment_start, cache)?;
+    if super::record_is_dropped(
+        txn,
+        &record.realm,
+        &record.area,
+        &record.resource,
+        entry.offset,
+    )? {
+        return Ok(None);
+    }
+    resolve_blob_payload(txn, &mut record.body, &mut record.metadata)?;
+    Ok(Some(record))
 }
 
 fn global_posting_keys(
@@ -473,7 +488,15 @@ impl StreamStore {
                 if offset >= watermark {
                     break 'pages;
                 }
-                if record_is_expired(record.expires_at, now_epoch_ms) {
+                if record_is_expired(record.expires_at, now_epoch_ms)
+                    || super::record_is_dropped(
+                        &txn,
+                        &record.realm,
+                        &record.area,
+                        &record.resource,
+                        offset,
+                    )?
+                {
                     last_examined = offset;
                     continue;
                 }

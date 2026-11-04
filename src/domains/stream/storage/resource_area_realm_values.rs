@@ -36,7 +36,10 @@ impl StreamLayoutMarkerValue {
     /// Returns an error if the marker is missing or the encoded layout id is
     /// unknown.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() != 3 || !bytes.starts_with(&STREAM_LAYOUT_MARKER_VALUE_V2_MARKER) {
+        if bytes.len() != 3
+            || !(bytes.starts_with(&STREAM_LAYOUT_MARKER_VALUE_V2_MARKER)
+                || bytes.starts_with(&[0, 0xD5]))
+        {
             return Err("decode stream layout marker: invalid encoding".to_string());
         }
 

@@ -70,7 +70,7 @@ extension fields are registered separately in
 | 502 | UNSUBSCRIBE |
 | 503 | UNSUBSCRIBE_ALL |
 | 504 | NOTIFY |
-**Stream Domain (600–609):**
+**Stream Domain (600–610):**
 | Value | Name |
 |---:|---|
 | 600 | BEGIN |
@@ -83,6 +83,7 @@ extension fields are registered separately in
 | 607 | SUBSCRIBE |
 | 608 | UNSUBSCRIBE |
 | 609 | NOTIFY |
+| 610 | DROP |
 **Schedule Domain (700–706):**
 | Value | Name |
 |---:|---|

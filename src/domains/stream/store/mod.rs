@@ -180,6 +180,7 @@ impl PromotionCommitFailure {
 enum PromotionWriteFailure {
     ScopeConflict,
     WriterFenced,
+    Dropped,
     Other(String),
 }
 
@@ -309,6 +310,7 @@ struct CommitPromotionFrontierBatchParams<'a> {
     first_realm_offset: u64,
     first_global_offset: u64,
     writer_epoch: u64,
+    expected_drop_cutoff: u64,
     events: &'a [EventPayload],
     committed_size_before: u64,
     ingest_metadata: Option<IngestMetadata>,
@@ -703,9 +705,11 @@ impl ReadCursorState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_filtered_read_page_items<
     R,
     I,
+    FSkipRecord,
     FLoadDiscriminator,
     FHydrateAndMeasure,
     FUpdateCursor,
@@ -714,6 +718,7 @@ fn collect_filtered_read_page_items<
 >(
     records: I,
     state: &mut ReadPageState<'_>,
+    mut skip_record: FSkipRecord,
     mut load_discriminator: FLoadDiscriminator,
     mut hydrate_and_measure: FHydrateAndMeasure,
     mut update_cursor: FUpdateCursor,
@@ -722,6 +727,7 @@ fn collect_filtered_read_page_items<
 ) -> Result<bool, String>
 where
     I: IntoIterator<Item = (u64, R)>,
+    FSkipRecord: FnMut(u64, &R) -> Result<bool, String>,
     FLoadDiscriminator: FnMut(u64, &R) -> Result<Option<String>, String>,
     // Hydrates an examined record and returns its wire cost, including
     // validation when the record becomes a filter-excluded marker.
@@ -742,6 +748,11 @@ where
                 stop_scan = true;
                 break;
             }
+        }
+
+        if skip_record(offset, &record)? {
+            update_cursor(state.cursor, offset, &record);
+            continue;
         }
 
         if state.items.len() == state.limit {
@@ -795,6 +806,10 @@ where
 mod commits_and_sessions;
 mod compact_page_writes;
 mod config_and_layout;
+mod drop_mutation;
+mod drop_scope;
+use drop_scope::record_is_dropped;
+mod drop_reclamation;
 mod global_recovery;
 mod maintenance;
 mod write_admission;

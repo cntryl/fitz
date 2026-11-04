@@ -620,6 +620,17 @@ pub fn build_stream_rollback(session_id: u64) -> Vec<u8> {
     builder.build()
 }
 
+/// Build standalone STREAM DROP (`msg_type` 610), mode 0=Buffered or 1=Sync.
+#[must_use]
+pub fn build_stream_drop(selector: &str, mode: u8) -> Vec<u8> {
+    let mut payload = crate::protocol::payload_codec::PayloadEncoder::new();
+    payload.put_string(selector);
+    payload.put_u8(mode);
+    let mut builder = FrameBuilder::new();
+    builder.encode_field(610, &payload.finish());
+    builder.build()
+}
+
 /// Build STREAM READ frame (`msg_type` 604)
 #[must_use]
 pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {

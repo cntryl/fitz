@@ -19,6 +19,7 @@ struct ActiveAppendSession {
     staged_events: Vec<EventPayload>,
     total_bytes: usize,
     ingest_metadata: Option<IngestMetadata>,
+    drop_cutoff: u64,
 }
 
 /// Warm in-memory append-session state for a single resource stream.
@@ -32,6 +33,7 @@ pub struct StreamActor {
     resource: String,
     store: Arc<StreamStore>,
     next_resource_offset: u64,
+    drop_cutoff: u64,
     active_session: Option<ActiveAppendSession>,
 }
 
@@ -47,6 +49,8 @@ impl StreamActor {
         resource: String,
         store: Arc<StreamStore>,
     ) -> Result<Self, String> {
+        let drop_cutoff =
+            store.resource_drop_cutoff(family_id.as_u64(), &realm, &area, &resource)?;
         let next_resource_offset =
             store.get_next_resource_offset(family_id.as_u64(), &realm, &area, &resource)?;
 
@@ -57,6 +61,7 @@ impl StreamActor {
             resource,
             store,
             next_resource_offset,
+            drop_cutoff,
             active_session: None,
         })
     }
@@ -89,6 +94,22 @@ impl StreamActor {
             return Err("session already active".to_string());
         }
 
+        let drop_cutoff = self.store.resource_drop_cutoff(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+            &self.resource,
+        )?;
+        if drop_cutoff != self.drop_cutoff {
+            self.next_resource_offset = self.store.get_next_resource_offset(
+                self.family_id.as_u64(),
+                &self.realm,
+                &self.area,
+                &self.resource,
+            )?;
+            self.drop_cutoff = drop_cutoff;
+        }
+
         self.active_session = Some(ActiveAppendSession {
             stream_session_id,
             owner_session_id,
@@ -96,6 +117,7 @@ impl StreamActor {
             staged_events: Vec::new(),
             total_bytes: 0,
             ingest_metadata,
+            drop_cutoff,
         });
         Ok(stream_session_id)
     }
@@ -114,6 +136,7 @@ impl StreamActor {
         metadata: Option<Bytes>,
         discriminator: Option<StreamDiscriminator>,
     ) -> Result<u64, String> {
+        self.ensure_session_current(owner_session_id, stream_session_id)?;
         let session = self
             .active_session
             .as_mut()
@@ -205,6 +228,7 @@ impl StreamActor {
         stream_session_id: u64,
         mode: StreamWriteMode,
     ) -> Result<CommitSessionResponse, String> {
+        self.ensure_session_current(owner_session_id, stream_session_id)?;
         let session = self.active_session.take().ok_or_else(|| {
             StreamStoreError::SessionNotFound
                 .client_message()
@@ -230,19 +254,24 @@ impl StreamActor {
             return Err("session not initialized".to_string());
         };
 
-        let response = match self.store.commit_records(CommitRecordsParams {
-            family: self.family_id.as_u64(),
-            realm: &self.realm,
-            area: &self.area,
-            resource: &self.resource,
-            expected_resource_next_offset: expected_offset,
-            events: &session.staged_events,
-            ingest_metadata: session.ingest_metadata.clone(),
-            mode,
-        }) {
+        let response = match self.store.commit_records_fenced(
+            CommitRecordsParams {
+                family: self.family_id.as_u64(),
+                realm: &self.realm,
+                area: &self.area,
+                resource: &self.resource,
+                expected_resource_next_offset: expected_offset,
+                events: &session.staged_events,
+                ingest_metadata: session.ingest_metadata.clone(),
+                mode,
+            },
+            session.drop_cutoff,
+        ) {
             Ok(response) => response,
             Err(error) => {
-                self.active_session = Some(session);
+                if error != "ERR_STREAM_DROPPED" {
+                    self.active_session = Some(session);
+                }
                 return Err(StreamStoreError::from_store_message(&error)
                     .map_or(error, |error| error.client_message().to_string()));
             }
@@ -326,6 +355,36 @@ impl StreamActor {
             );
         }
         Some(session.stream_session_id)
+    }
+
+    fn ensure_session_current(
+        &mut self,
+        owner_session_id: u64,
+        stream_session_id: u64,
+    ) -> Result<(), String> {
+        let session = self
+            .active_session
+            .as_ref()
+            .filter(|session| {
+                session.owner_session_id == owner_session_id
+                    && session.stream_session_id == stream_session_id
+            })
+            .ok_or_else(|| {
+                StreamStoreError::SessionNotFound
+                    .client_message()
+                    .to_string()
+            })?;
+        let cutoff = self.store.resource_drop_cutoff(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+            &self.resource,
+        )?;
+        if cutoff != session.drop_cutoff {
+            self.cleanup_session(owner_session_id);
+            return Err("ERR_STREAM_DROPPED".to_string());
+        }
+        Ok(())
     }
 
     /// # Errors
@@ -412,6 +471,57 @@ impl StreamActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_refresh_a_cached_resource_head_after_drop_before_begin() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let store = Arc::new(StreamStore::new(
+            crate::testkit::create_test_engine_with_cfs(vec![1]),
+        ));
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "acme",
+                area: "logs",
+                resource: "events",
+                expected_resource_next_offset: 0,
+                events: &[EventPayload {
+                    body: Bytes::from_static(b"old"),
+                    metadata: None,
+                    discriminator: None,
+                }],
+                ingest_metadata: None,
+                mode: StreamWriteMode::Sync,
+            })
+            .unwrap();
+        let mut actor = StreamActor::new(
+            family,
+            "acme".into(),
+            "logs".into(),
+            "events".into(),
+            store.clone(),
+        )
+        .unwrap();
+        let scope =
+            crate::domains::stream::StreamDropScope::parse(family, "stream://acme/logs/events")
+                .unwrap();
+        store.drop_scope(&scope, StreamWriteMode::Sync).unwrap();
+
+        // Act
+        actor.begin_append_session(7, 9, None).unwrap();
+        let assigned = actor.append_to_session_with_discriminator_for_owner(
+            7,
+            9,
+            0,
+            Bytes::from_static(b"new"),
+            None,
+            None,
+        );
+
+        // Assert
+        assert_eq!(assigned.unwrap(), 0);
+    }
     use crate::testkit::create_test_engine_with_cfs;
 
     mod invariants;

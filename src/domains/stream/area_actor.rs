@@ -11,7 +11,7 @@ use crate::runtime::routing::{Route, RouteFamily};
 use super::constants::WATERMARK_PERSIST_RETRY_MS;
 use super::protocol::StreamCoordinationMessage;
 use super::store::StreamStore;
-use super::watermark_notification::WatermarkNotification;
+use super::watermark_notification::{CommittedRange, WatermarkNotification};
 
 /// `AreaActor` tracks the area-level watermark
 ///
@@ -41,9 +41,12 @@ pub struct AreaActor {
     /// Whether the durable area watermark was loaded successfully.
     watermark_initialized: bool,
 
+    /// Broker-side reset fence; never exposed as a client generation token.
+    drop_cutoff: Option<u64>,
+
     /// Committed ranges from resources (for watermark calculation)
     /// Key: `first_offset`, Value: `last_offset`
-    committed_ranges: BTreeMap<u64, u64>,
+    committed_ranges: BTreeMap<u64, CommittedRange>,
 
     /// Debounced, retryable area watermark notification state.
     notification: WatermarkNotification,
@@ -60,6 +63,9 @@ impl AreaActor {
         store: Arc<StreamStore>,
         durable_metrics: Arc<super::metrics::StreamDurableMetrics>,
     ) -> Self {
+        let drop_cutoff = store
+            .area_drop_cutoff(family_id.as_u64(), &realm, &area)
+            .ok();
         let (area_watermark, watermark_initialized) = store
             .get_persisted_area_watermark(family_id.as_u64(), &realm, &area)
             .map_or_else(
@@ -85,6 +91,7 @@ impl AreaActor {
             durable_metrics,
             area_watermark,
             watermark_initialized,
+            drop_cutoff,
             committed_ranges: BTreeMap::new(),
             notification: WatermarkNotification::new(),
             watermark_retry_timer: None,
@@ -96,13 +103,30 @@ impl AreaActor {
         &mut self,
         first_area_offset: u64,
         last_area_offset: u64,
+        last_global_offset: u64,
         ctx: &mut Context<Self>,
     ) {
-        // Record committed range
+        if last_global_offset < self.drop_cutoff.unwrap_or(0) {
+            return;
+        }
         self.committed_ranges
-            .insert(first_area_offset, last_area_offset);
+            .entry(first_area_offset)
+            .and_modify(|range| {
+                if last_global_offset > range.last_global {
+                    *range = CommittedRange {
+                        last: last_area_offset,
+                        last_global: last_global_offset,
+                    };
+                }
+            })
+            .or_insert(CommittedRange {
+                last: last_area_offset,
+                last_global: last_global_offset,
+            });
 
-        self.flush_candidate_watermark(ctx);
+        if self.reconcile_drop(ctx) {
+            self.flush_candidate_watermark(ctx);
+        }
     }
 
     /// Compute the highest contiguous watermark candidate without mutating the
@@ -113,7 +137,8 @@ impl AreaActor {
             .area_watermark
             .map_or(Some(0), |watermark| watermark.checked_add(1))?;
 
-        while let Some(last_offset) = self.committed_ranges.get(&next_offset).copied() {
+        while let Some(range) = self.committed_ranges.get(&next_offset) {
+            let last_offset = range.last;
             candidate = Some(last_offset);
             let Some(following_offset) = last_offset.checked_add(1) else {
                 break;
@@ -136,11 +161,12 @@ impl AreaActor {
             return;
         };
 
-        match self.store.set_watermark(
+        match self.store.set_watermark_fenced(
             self.family_id.as_u64(),
             &self.realm,
             &self.area,
             candidate_watermark,
+            self.drop_cutoff.unwrap_or(0),
         ) {
             Ok(()) => self.apply_persisted_watermark(candidate_watermark, ctx),
             Err(error) => {
@@ -188,6 +214,33 @@ impl AreaActor {
         }
     }
 
+    fn reconcile_drop(&mut self, ctx: &mut Context<Self>) -> bool {
+        let cutoff = match self.store.area_drop_cutoff(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+        ) {
+            Ok(cutoff) => cutoff,
+            Err(error) => {
+                tracing::warn!(domain = "stream", error = %error, "Cannot read area DROP fence");
+                self.schedule_watermark_retry(ctx);
+                return false;
+            }
+        };
+        if self.drop_cutoff != Some(cutoff) {
+            self.drop_cutoff = Some(cutoff);
+            self.area_watermark = None;
+            self.watermark_initialized = false;
+            self.committed_ranges
+                .retain(|_, range| range.last_global >= cutoff);
+            self.notification.clear(ctx);
+            if let Some(timer) = self.watermark_retry_timer.take() {
+                let _ = ctx.timer_manager().cancel(timer);
+            }
+        }
+        true
+    }
+
     fn apply_persisted_watermark(&mut self, current_watermark: u64, ctx: &mut Context<Self>) {
         let previous_watermark = self.area_watermark.unwrap_or(0);
         self.area_watermark = Some(current_watermark);
@@ -198,7 +251,7 @@ impl AreaActor {
             current_watermark,
         );
         self.committed_ranges
-            .retain(|_, last_offset| *last_offset > current_watermark);
+            .retain(|_, range| range.last > current_watermark);
 
         if let Some(timer_id) = self.watermark_retry_timer.take() {
             let _ = ctx.timer_manager().cancel(timer_id);
@@ -264,7 +317,7 @@ impl AreaActor {
     pub fn committed_ranges(&self) -> Vec<std::ops::RangeInclusive<u64>> {
         self.committed_ranges
             .iter()
-            .map(|(&first, &last)| first..=last)
+            .map(|(&first, range)| first..=range.last)
             .collect()
     }
 }
@@ -275,20 +328,33 @@ impl Actor for AreaActor {
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
             StreamCoordinationMessage::BatchCommitted(commit) => {
-                self.handle_batch_committed(commit.first_area_offset, commit.last_area_offset, ctx);
+                self.handle_batch_committed(
+                    commit.first_area_offset,
+                    commit.last_area_offset,
+                    commit.last_global_offset,
+                    ctx,
+                );
             }
         }
     }
 
     fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
-        if self.watermark_retry_timer.is_some() && Some(timer_id) == self.watermark_retry_timer {
+        let retry = self.watermark_retry_timer == Some(timer_id);
+        if retry {
             self.watermark_retry_timer = None;
-            self.flush_candidate_watermark(ctx);
+        }
+        let notification = self.notification.take_fired_timer(timer_id);
+        if !retry && !notification {
             return;
         }
+        if !self.reconcile_drop(ctx) {
+            return;
+        }
+        if retry {
+            self.flush_candidate_watermark(ctx);
+        }
 
-        // If our debounce timer fired, send the pending publish
-        if self.notification.take_fired_timer(timer_id) {
+        if notification || self.notification.has_unarmed_pending() {
             self.publish_pending_notification(ctx);
         }
     }
@@ -297,6 +363,7 @@ impl Actor for AreaActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod drop_retry;
     use crate::runtime::routing::{Route, RouteAddress};
     use crate::runtime::Mailbox;
 
@@ -367,7 +434,7 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act
-        actor.handle_batch_committed(0, 3, &mut ctx);
+        actor.handle_batch_committed(0, 3, 3, &mut ctx);
 
         // Assert
         assert_eq!(actor.watermark(), 3);
@@ -383,7 +450,7 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor_with_watermark(Some(5));
 
         // Act
-        actor.handle_batch_committed(6, 6, &mut ctx);
+        actor.handle_batch_committed(6, 6, 6, &mut ctx);
 
         // Assert
         assert_eq!(actor.area_watermark, Some(6));
@@ -396,7 +463,7 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act
-        actor.handle_batch_committed(0, 0, &mut ctx);
+        actor.handle_batch_committed(0, 0, 0, &mut ctx);
 
         // Assert
         assert_eq!(actor.area_watermark, Some(0));
@@ -410,8 +477,8 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act
-        actor.handle_batch_committed(0, 3, &mut ctx);
-        actor.handle_batch_committed(6, 8, &mut ctx); // Gap at 4-5
+        actor.handle_batch_committed(0, 3, 3, &mut ctx);
+        actor.handle_batch_committed(6, 8, 8, &mut ctx); // Gap at 4-5
 
         // Assert
         assert_eq!(actor.watermark(), 3); // Stuck at 3 due to gap
@@ -423,9 +490,9 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act - Create gap then fill it
-        actor.handle_batch_committed(0, 3, &mut ctx);
-        actor.handle_batch_committed(6, 8, &mut ctx);
-        actor.handle_batch_committed(4, 5, &mut ctx); // Fill gap
+        actor.handle_batch_committed(0, 3, 3, &mut ctx);
+        actor.handle_batch_committed(6, 8, 8, &mut ctx);
+        actor.handle_batch_committed(4, 5, 5, &mut ctx); // Fill gap
 
         // Assert
         assert_eq!(actor.watermark(), 8); // Now advanced to 8
@@ -437,8 +504,8 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act - Commit contiguous ranges
-        actor.handle_batch_committed(0, 3, &mut ctx);
-        actor.handle_batch_committed(4, 6, &mut ctx);
+        actor.handle_batch_committed(0, 3, 3, &mut ctx);
+        actor.handle_batch_committed(4, 6, 6, &mut ctx);
 
         // Assert
         assert_eq!(actor.watermark(), 6);
@@ -451,9 +518,9 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act - Commit in reverse order
-        actor.handle_batch_committed(11, 13, &mut ctx);
-        actor.handle_batch_committed(6, 8, &mut ctx);
-        actor.handle_batch_committed(0, 3, &mut ctx);
+        actor.handle_batch_committed(11, 13, 13, &mut ctx);
+        actor.handle_batch_committed(6, 8, 8, &mut ctx);
+        actor.handle_batch_committed(0, 3, 3, &mut ctx);
 
         // Assert
         assert_eq!(actor.watermark(), 3);
@@ -467,7 +534,7 @@ mod tests {
         StreamStore::fail_next_area_watermark_persist_for_tests();
 
         // Act
-        actor.handle_batch_committed(0, 3, &mut ctx);
+        actor.handle_batch_committed(0, 3, 3, &mut ctx);
 
         // Assert
         assert_eq!(actor.area_watermark, None);
@@ -538,7 +605,7 @@ mod tests {
                 ))
                 .expect("fill Stream mailbox");
         }
-        actor.handle_batch_committed(0, 3, &mut ctx);
+        actor.handle_batch_committed(0, 3, 3, &mut ctx);
         let timer = actor.notification.timer().expect("area notification timer");
 
         // Act
@@ -553,7 +620,7 @@ mod tests {
     fn should_retry_area_watermark_publish_when_stream_route_is_temporarily_absent() {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
-        actor.handle_batch_committed(0, 3, &mut ctx);
+        actor.handle_batch_committed(0, 3, 3, &mut ctx);
         let timer = actor.notification.timer().expect("area notification timer");
 
         // Act
