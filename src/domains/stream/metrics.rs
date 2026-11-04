@@ -149,6 +149,77 @@ impl StreamDurableMetrics {
         self.watermark_generation.load(Ordering::Acquire)
     }
 
+    pub(crate) fn forget_drop_watermarks(&self, scope: &super::StreamDropScope) {
+        let family = scope.route_family.as_u64();
+        let mut realms = self.realm_watermarks.write();
+        let realm_count = realms.len();
+        realms.retain(|(id, realm), _| *id != family || !scope.resets_realm(realm));
+        let realm_changed = realms.len() != realm_count;
+        drop(realms);
+        let mut areas = self.area_watermarks.write();
+        let area_count = areas.len();
+        areas.retain(|(id, realm, area), _| *id != family || !scope.resets_area(realm, area));
+        if realm_changed || areas.len() != area_count {
+            self.watermark_generation.fetch_add(1, Ordering::Release);
+        }
+    }
+
+    pub(crate) fn family_watermarks(
+        &self,
+        family: u64,
+    ) -> (
+        Vec<StreamRealmWatermarkMetric>,
+        Vec<StreamAreaWatermarkMetric>,
+    ) {
+        let realms = self
+            .realm_watermarks
+            .read()
+            .iter()
+            .filter(|((id, _), _)| *id == family)
+            .map(|((id, realm), watermark)| StreamRealmWatermarkMetric {
+                family: *id,
+                realm: realm.clone(),
+                watermark: *watermark,
+            })
+            .collect();
+        let areas = self
+            .area_watermarks
+            .read()
+            .iter()
+            .filter(|((id, _, _), _)| *id == family)
+            .map(|((id, realm, area), watermark)| StreamAreaWatermarkMetric {
+                family: *id,
+                realm: realm.clone(),
+                area: area.clone(),
+                watermark: *watermark,
+            })
+            .collect();
+        (realms, areas)
+    }
+
+    pub(crate) fn replace_family_watermarks(
+        &self,
+        family: u64,
+        realm_values: Vec<StreamRealmWatermarkMetric>,
+        area_values: Vec<StreamAreaWatermarkMetric>,
+    ) {
+        let mut realms = self.realm_watermarks.write();
+        realms.retain(|(id, _), _| *id != family);
+        realms.extend(
+            realm_values
+                .into_iter()
+                .map(|value| ((family, value.realm), value.watermark)),
+        );
+        drop(realms);
+        let mut areas = self.area_watermarks.write();
+        areas.retain(|(id, _, _), _| *id != family);
+        areas.extend(
+            area_values
+                .into_iter()
+                .map(|value| ((family, value.realm, value.area), value.watermark)),
+        );
+    }
+
     #[cfg(test)]
     pub(crate) fn snapshot(&self) -> StreamDurableMetricsSnapshot {
         self.snapshot_bounded(usize::MAX)

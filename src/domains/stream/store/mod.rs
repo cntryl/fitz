@@ -59,11 +59,6 @@ struct AppendSession {
 pub type SessionId = u64;
 type SequenceGuardKey = (u64, String, String, String);
 type SequenceGuard = Arc<Mutex<()>>;
-#[cfg(test)]
-type RealmSequenceStateKey = (u64, String);
-#[cfg(test)]
-type RealmSequenceStateHandle = Arc<Mutex<RealmSequenceState>>;
-type ResourceMetaStateHandle = Arc<Mutex<ResourceMetaState>>;
 
 #[cfg(test)]
 const ERR_SESSION_ROUTE_FAMILY_MISMATCH: &str = "ERR_SESSION_ROUTE_FAMILY_MISMATCH";
@@ -79,6 +74,7 @@ use wire_budget::{
 pub(super) enum StreamStoreError {
     SessionNotFound,
     ConcurrencyConflict,
+    Dropped,
 }
 
 impl StreamStoreError {
@@ -86,6 +82,7 @@ impl StreamStoreError {
         match self {
             Self::SessionNotFound => "session not found",
             Self::ConcurrencyConflict => "concurrency conflict",
+            Self::Dropped => self.store_code(),
         }
     }
 
@@ -93,22 +90,27 @@ impl StreamStoreError {
         match self {
             Self::SessionNotFound => "ERR_SESSION_NOT_FOUND",
             Self::ConcurrencyConflict => "ERR_CONCURRENCY_CONFLICT",
+            Self::Dropped => "ERR_STREAM_DROPPED",
         }
     }
 
-    const fn client_kind(self) -> crate::domains::stream::StreamClientErrorKind {
+    pub(super) const fn client_kind(self) -> crate::domains::stream::StreamClientErrorKind {
         match self {
             Self::SessionNotFound => crate::domains::stream::StreamClientErrorKind::SessionNotFound,
-            Self::ConcurrencyConflict => {
+            Self::ConcurrencyConflict | Self::Dropped => {
                 crate::domains::stream::StreamClientErrorKind::ConcurrencyConflict
             }
         }
     }
 
     pub(super) fn from_store_message(message: &str) -> Option<Self> {
-        [Self::SessionNotFound, Self::ConcurrencyConflict]
-            .into_iter()
-            .find(|error| message == error.store_code())
+        [
+            Self::SessionNotFound,
+            Self::ConcurrencyConflict,
+            Self::Dropped,
+        ]
+        .into_iter()
+        .find(|error| message == error.store_code())
     }
 }
 
@@ -116,18 +118,6 @@ impl From<StreamStoreError> for crate::domains::stream::StreamClientError {
     fn from(error: StreamStoreError) -> Self {
         Self::new(error.client_kind(), error.client_message())
     }
-}
-
-#[cfg(test)]
-#[derive(Default)]
-struct RealmSequenceState {
-    next_realm_offset: Option<u64>,
-    next_area_offsets: HashMap<String, u64>,
-}
-
-#[derive(Default)]
-struct ResourceMetaState {
-    snapshot: Option<ResourceMetaValue>,
 }
 
 #[derive(Default)]
@@ -180,6 +170,7 @@ impl PromotionCommitFailure {
 enum PromotionWriteFailure {
     ScopeConflict,
     WriterFenced,
+    Dropped,
     Other(String),
 }
 
@@ -309,6 +300,7 @@ struct CommitPromotionFrontierBatchParams<'a> {
     first_realm_offset: u64,
     first_global_offset: u64,
     writer_epoch: u64,
+    expected_drop_cutoff: u64,
     events: &'a [EventPayload],
     committed_size_before: u64,
     ingest_metadata: Option<IngestMetadata>,
@@ -414,9 +406,6 @@ pub struct StreamStore {
     #[cfg(test)]
     next_session_id: std::sync::atomic::AtomicU64,
     sequencing_guards: Arc<Mutex<HashMap<SequenceGuardKey, SequenceGuard>>>,
-    #[cfg(test)]
-    realm_sequence_states: Arc<Mutex<HashMap<RealmSequenceStateKey, RealmSequenceStateHandle>>>,
-    resource_meta_states: Arc<Mutex<HashMap<SequenceGuardKey, ResourceMetaStateHandle>>>,
     family_sequence_guards: Arc<Mutex<HashMap<u64, SequenceGuard>>>,
     global_completion_states: Arc<Mutex<HashMap<u64, GlobalCompletionStateHandle>>>,
     recovered_global_families: Arc<Mutex<HashSet<u64>>>,
@@ -486,6 +475,8 @@ impl From<crate::storage::FitzStorageEngine> for StreamDomainStorage {
 #[derive(Default)]
 struct MaintenanceQueueState {
     initialized: bool,
+    prefer_regular: bool,
+    last_group: Option<Vec<u8>>,
     buckets: BTreeSet<Vec<u8>>,
     retry_buckets: BTreeSet<Vec<u8>>,
 }
@@ -703,9 +694,11 @@ impl ReadCursorState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_filtered_read_page_items<
     R,
     I,
+    FSkipRecord,
     FLoadDiscriminator,
     FHydrateAndMeasure,
     FUpdateCursor,
@@ -714,6 +707,7 @@ fn collect_filtered_read_page_items<
 >(
     records: I,
     state: &mut ReadPageState<'_>,
+    mut skip_record: FSkipRecord,
     mut load_discriminator: FLoadDiscriminator,
     mut hydrate_and_measure: FHydrateAndMeasure,
     mut update_cursor: FUpdateCursor,
@@ -722,6 +716,7 @@ fn collect_filtered_read_page_items<
 ) -> Result<bool, String>
 where
     I: IntoIterator<Item = (u64, R)>,
+    FSkipRecord: FnMut(u64, &R) -> Result<bool, String>,
     FLoadDiscriminator: FnMut(u64, &R) -> Result<Option<String>, String>,
     // Hydrates an examined record and returns its wire cost, including
     // validation when the record becomes a filter-excluded marker.
@@ -742,6 +737,11 @@ where
                 stop_scan = true;
                 break;
             }
+        }
+
+        if skip_record(offset, &record)? {
+            update_cursor(state.cursor, offset, &record);
+            continue;
         }
 
         if state.items.len() == state.limit {
@@ -795,11 +795,16 @@ where
 mod commits_and_sessions;
 mod compact_page_writes;
 mod config_and_layout;
+mod drop_mutation;
+mod drop_scope;
+use drop_scope::record_is_dropped;
+mod drop_reclamation;
 mod global_recovery;
 mod maintenance;
 mod write_admission;
 #[cfg(test)]
 pub(super) use maintenance::MaintenanceFailureStage;
+pub(crate) use maintenance::StreamMaintenanceKind;
 pub use maintenance::StreamMaintenanceResult;
 mod ordered_reads;
 mod read_support;

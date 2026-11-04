@@ -368,14 +368,24 @@ fn should_leave_complete_source_set_when_maintenance_commit_fails() {
                 max_bytes: None,
             })
             .expect("read intact sources after failed maintenance");
-        let retried = store.run_maintenance(1);
+        let retried = (0..32)
+            .find_map(|_| {
+                let result = store
+                    .run_maintenance(1)
+                    .expect("maintenance should progress");
+                (metrics
+                    .counter_get(crate::domains::stream::metrics::METRIC_MAINTENANCE_RETRIES_TOTAL)
+                    > 0)
+                .then_some(result)
+            })
+            .expect("failed group should retry after other groups get a turn");
 
         // Assert
         assert!(failed
             .expect_err("maintenance failure should surface")
             .contains("injected"));
         assert_eq!(event_records(before_retry.0).len(), 9);
-        assert!(retried.expect("retry maintenance").buckets_compacted > 0);
+        assert!(retried.buckets_compacted > 0);
         assert_eq!(
             metrics.counter_get(crate::domains::stream::metrics::METRIC_MAINTENANCE_FAILURES_TOTAL),
             1

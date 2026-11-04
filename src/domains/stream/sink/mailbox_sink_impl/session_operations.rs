@@ -218,6 +218,9 @@ impl StreamFamilyState {
                                 )
                             }
                             Err(error) => {
+                                if !actor.has_active_session() {
+                                    self.actors.remove(&key);
+                                }
                                 crate::observability::counter_inc(
                                     "fitz_stream_append_conflicts_total",
                                 );
@@ -291,7 +294,10 @@ impl StreamFamilyState {
                     false,
                 )
             }
-            Err(error) => (Self::stream_error_response(error), None, false),
+            Err(error) => {
+                let removed = self.remove_inactive_append_session(session_id, &owner.key);
+                (Self::stream_error_response(error), None, removed)
+            }
         }
     }
 
@@ -353,11 +359,12 @@ impl StreamFamilyState {
                 }
             }
             Err(error) => {
+                let removed = self.remove_inactive_append_session(session_id, &owner.key);
                 self.handle_visibility_advance(meta.route_family);
                 StreamCommitOutcome {
                     response: Self::stream_error_response(error),
                     notification: None,
-                    admin_dirty: false,
+                    admin_dirty: removed,
                     watermark: None,
                 }
             }
@@ -404,6 +411,24 @@ impl StreamFamilyState {
             }
             Err(error) => (Self::stream_error_response(error), None, false),
         }
+    }
+
+    fn remove_inactive_append_session(
+        &mut self,
+        session_id: u64,
+        key: &crate::domains::stream::sink::model::StreamResourceScope,
+    ) -> bool {
+        if self
+            .actors
+            .get(key)
+            .is_some_and(crate::domains::stream::StreamActor::has_active_session)
+        {
+            return false;
+        }
+        self.session_owners.remove(session_id);
+        self.actors.remove(key);
+        self.counter_inc("fitz_stream_append_sessions_ended_total");
+        true
     }
 
     fn encode_operation_result(

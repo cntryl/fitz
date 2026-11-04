@@ -117,6 +117,9 @@ impl StreamFamilyState {
     }
 
     fn try_sync_admin_snapshot(&mut self) -> Result<(), String> {
+        if self.observability.drop_watermarks_dirty() {
+            self.reconcile_drop_watermarks()?;
+        }
         let (mut streams, stream_realm_watermarks, stream_area_watermarks, committed_events_total) =
             if let Some(snapshot) = self.observability.committed_snapshot() {
                 (
@@ -154,6 +157,39 @@ impl StreamFamilyState {
             stream_area_watermarks,
             committed_events_total,
         );
+        Ok(())
+    }
+
+    fn reconcile_drop_watermarks(&self) -> Result<(), String> {
+        let family = self.family.as_u64();
+        let (realm_values, area_values) = self
+            .observability
+            .durable_metrics()
+            .family_watermarks(family);
+        let mut realms = Vec::with_capacity(realm_values.len());
+        let mut areas = Vec::with_capacity(area_values.len());
+        // Refresh observations once per durable DROP revision. An empty
+        // resource does not imply its surviving parent's watermark was reset.
+        for mut value in realm_values {
+            if let Some(watermark) = self
+                .stream_store
+                .get_persisted_realm_watermark(family, &value.realm)?
+            {
+                value.watermark = watermark;
+                realms.push(value);
+            }
+        }
+        for mut value in area_values {
+            if let Some(watermark) =
+                self.stream_store
+                    .get_persisted_area_watermark(family, &value.realm, &value.area)?
+            {
+                value.watermark = watermark;
+                areas.push(value);
+            }
+        }
+        self.observability
+            .publish_reconciled_watermarks(family, realms, areas);
         Ok(())
     }
 

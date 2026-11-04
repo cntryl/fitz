@@ -434,6 +434,13 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
     ),
     server(609, "stream", Some("stream"), ManifestDecoder::Stream),
     client(
+        610,
+        "stream",
+        Some("stream"),
+        ManifestAuthorization::RouteWrite,
+        ManifestDecoder::Stream,
+    ),
+    client(
         700,
         "schedule",
         Some("schedule"),

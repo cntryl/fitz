@@ -341,9 +341,8 @@ impl StreamDomain {
             .map(RouteFamily::as_u64)
             .collect();
         for family in families {
-            if !self.config.stream_store.has_pending_maintenance(family) {
-                continue;
-            }
+            // A late DROP can reset metadata without queuing payload cleanup.
+            // The family polls its durable revision even when otherwise idle.
             let command = StreamDomainCommand::RunMaintenance {
                 family,
                 reply: None,

@@ -3,18 +3,14 @@ use super::{
     encode_area_counter_key, encode_realm_counter_key, encode_resource_meta_key,
     family_to_storage_partition, usize_to_u64_saturating, AreaCounterValue, Bytes,
     CompactAreaPageValue, CompactResourcePageValue, CompressedCompactRealmPageValue,
-    DiscriminatorWriteRowsParams, Entry, EventPayload, RealmCounterValue, ResourceMetaState,
-    ResourceMetaStateHandle, ResourceMetaValue, SequenceGuard, StreamFilterSet, StreamStore,
-    WatermarkValue,
+    DiscriminatorWriteRowsParams, Entry, EventPayload, RealmCounterValue, ResourceMetaValue,
+    SequenceGuard, StreamFilterSet, StreamStore, WatermarkValue,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
 
 #[cfg(test)]
-use super::{
-    RealmSequenceState, RealmSequenceStateHandle, FAIL_NEXT_AREA_WATERMARK_GUARD_READ,
-    FAIL_NEXT_REALM_WATERMARK_GUARD_READ,
-};
+use super::{FAIL_NEXT_AREA_WATERMARK_GUARD_READ, FAIL_NEXT_REALM_WATERMARK_GUARD_READ};
 
 #[derive(Clone, Copy)]
 enum WatermarkGuardScope {
@@ -71,50 +67,6 @@ impl StreamStore {
                 let guard = Arc::new(Mutex::new(()));
                 entry.insert(guard.clone());
                 guard
-            }
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn realm_sequence_state(
-        &self,
-        family: u64,
-        realm: &str,
-    ) -> RealmSequenceStateHandle {
-        let mut states = self.realm_sequence_states.lock();
-        let key = (family, realm.to_string());
-
-        match states.entry(key) {
-            Entry::Occupied(entry) => entry.get().clone(),
-            Entry::Vacant(entry) => {
-                let state = Arc::new(Mutex::new(RealmSequenceState::default()));
-                entry.insert(state.clone());
-                state
-            }
-        }
-    }
-
-    pub(super) fn resource_meta_state(
-        &self,
-        family: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-    ) -> ResourceMetaStateHandle {
-        let mut states = self.resource_meta_states.lock();
-        let key = (
-            family,
-            realm.to_string(),
-            area.to_string(),
-            resource.to_string(),
-        );
-
-        match states.entry(key) {
-            Entry::Occupied(entry) => entry.get().clone(),
-            Entry::Vacant(entry) => {
-                let state = Arc::new(Mutex::new(ResourceMetaState::default()));
-                entry.insert(state.clone());
-                state
             }
         }
     }
