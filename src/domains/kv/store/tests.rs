@@ -1,6 +1,11 @@
 use super::*;
 use std::sync::Arc;
 
+mod drop_adversarial;
+mod drop_coordination;
+mod drop_delayed_outcome;
+mod drop_scope;
+
 #[test]
 fn should_preserve_unknown_commit_outcome_as_a_backend_error() {
     // Arrange

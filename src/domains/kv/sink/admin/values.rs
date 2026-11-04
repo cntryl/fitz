@@ -2,7 +2,7 @@
 
 use super::super::locks::KvResourceLockKey;
 use super::super::state::KvFamilyRuntime;
-use crate::domains::kv::KvActor;
+use crate::domains::kv::key_layout;
 
 impl KvFamilyRuntime<'_> {
     pub(super) fn admin_get_committed_value(
@@ -14,14 +14,14 @@ impl KvFamilyRuntime<'_> {
         key: &[u8],
     ) -> Result<Option<Vec<u8>>, String> {
         let started_at = std::time::Instant::now();
-        let column_family = KvActor::resolve_column_family(route_family)?;
+        let column_family = key_layout::resolve_column_family(route_family)?;
         let tx = self
             .core
             .store
             .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
-        let prefix = KvActor::realm_resource_prefix(realm, area, resource);
-        let scoped_key = KvActor::encode_scoped_key(&prefix, key);
+        let prefix = key_layout::realm_resource_prefix(realm, area, resource);
+        let scoped_key = key_layout::encode_scoped_key(&prefix, key);
         let value = tx
             .get(&scoped_key)
             .map(|value| value.map(|value| value.as_ref().to_vec()))

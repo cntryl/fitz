@@ -2,7 +2,8 @@ use super::{AuthorizationPolicy, DispatchDomain, DomainAuthorizationSpec};
 #[cfg(test)]
 use super::{Bytes, ChannelId};
 
-type AuthRouteExtractor = for<'a> fn(u16, &'a [u8]) -> Result<Option<&'a str>, String>;
+type AuthRouteExtractor =
+    for<'a> fn(u16, &'a [u8]) -> Result<Option<std::borrow::Cow<'a, str>>, String>;
 type AuthRouteCanonicalizer = for<'a> fn(&'a str) -> Result<std::borrow::Cow<'a, str>, String>;
 type RequestEnvelopeBuilder = fn(
     crate::runtime::DomainKind,
@@ -76,7 +77,7 @@ impl IngressDomainDescriptor {
         &self,
         msg_type: u16,
         payload: &'a [u8],
-    ) -> Result<Option<&'a str>, String> {
+    ) -> Result<Option<std::borrow::Cow<'a, str>>, String> {
         (self.extract_auth_route)(msg_type, payload)
     }
 
@@ -171,7 +172,7 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         canonical_auth_route: crate::domains::kv::canonical_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
         pattern_registration_message_ids: &[109, 110],
-        wildcard_selector_message_ids: &[],
+        wildcard_selector_message_ids: &[112],
         multi_route_message_ids: &[],
         terminal_reply_message_ids: &[],
     },
@@ -460,7 +461,7 @@ mod tests {
     fn should_preserve_invalid_message_rejections() {
         // Arrange
         let cases = [
-            111, 112, 199, 209, 201, 205, 299, 305, 306, 399, 409, 404, 504, 505, 609, 610, 699,
+            111, 113, 199, 209, 201, 205, 299, 305, 306, 399, 409, 404, 504, 505, 609, 610, 699,
             705, 707, 799,
         ];
 

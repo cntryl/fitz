@@ -5,6 +5,7 @@
 //! - Resource (table) isolation
 //! - Explicit `RouteFamily` → `ColumnFamily` mapping
 
+use super::KvDropScope;
 use crate::domains::CommitPersistence;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
@@ -40,7 +41,14 @@ impl KvResourceScope {
     }
 }
 
-/// KV operation request
+/// A standalone family-coordinated namespace deletion.
+#[derive(Debug, Clone)]
+pub struct KvDropRequest {
+    pub scope: KvDropScope,
+    pub persistence: CommitPersistence,
+}
+
+/// Resource-scoped transaction operations handled by the session actor.
 #[derive(Debug, Clone)]
 pub enum KvMessage {
     /// Begin a transaction bound to a resource (table)
@@ -120,6 +128,11 @@ impl KvMessage {
             | Self::Scan { scope, .. } => scope,
         }
     }
+
+    #[must_use]
+    pub const fn route_family(&self) -> RouteFamily {
+        self.scope().route_family
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +175,21 @@ impl KvClientRequest {
 pub enum KvClientFrame {
     Op(KvMessage),
     Sub(KvSubscriptionMessage),
+    Drop(KvDropRequest),
+}
+
+impl KvClientFrame {
+    #[must_use]
+    pub const fn route_family(&self) -> RouteFamily {
+        match self {
+            Self::Op(message) => message.route_family(),
+            Self::Sub(
+                KvSubscriptionMessage::Subscribe { family_id, .. }
+                | KvSubscriptionMessage::Unsubscribe { family_id, .. },
+            ) => *family_id,
+            Self::Drop(request) => request.scope.route_family,
+        }
+    }
 }
 
 /// Typed KV response to be encoded at the transport edge.
@@ -246,6 +274,8 @@ pub struct ScanQuery {
 /// KV operation response
 #[derive(Debug, Clone)]
 pub enum KvResponse {
+    /// Standalone scoped deletion committed successfully.
+    DropOk,
     /// Transaction began successfully with server-assigned ID
     BeginOk { tx_id: u64 },
 

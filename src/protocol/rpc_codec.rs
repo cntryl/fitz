@@ -191,10 +191,13 @@ pub fn parse_request(
 ///
 /// Returns an error when the payload is malformed, has trailing data, or the
 /// message type is unsupported for RPC authorization extraction.
-pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+pub fn extract_auth_route(
+    msg_type: u16,
+    payload: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, str>>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
-    match msg_type {
+    let route = match msg_type {
         300 => {
             let route = dec.get_string_ref()?;
             let max_concurrent = dec.get_u32()?;
@@ -218,7 +221,16 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         }
         303 | 304 => Ok(None),
         _ => Err(format!("Unknown operation: {msg_type}")),
-    }
+    }?;
+    route
+        .map(|route| {
+            crate::protocol::auth_route::canonicalize(
+                "rpc",
+                route,
+                crate::dispatch::wire::rpc::canonical_auth_route,
+            )
+        })
+        .transpose()
 }
 
 /// Encode a domain response payload.

@@ -1,9 +1,8 @@
 use super::{
-    canonicalize_dispatch_route_str, extract_auth_route_for_domain,
-    is_pattern_authorization_target, is_subscription_registration_message, AuthorizationFailure,
-    AuthorizationPolicy, AuthorizationTargets, ChannelId, Cow, DispatchDomain,
-    DomainAuthorizationSpec, DomainDispatchPayload, DomainDispatchRequest, IngressDecision,
-    RuntimeIngress,
+    extract_auth_route_for_domain, is_pattern_authorization_target,
+    is_subscription_registration_message, AuthorizationFailure, AuthorizationPolicy,
+    AuthorizationTargets, ChannelId, Cow, DispatchDomain, DomainAuthorizationSpec,
+    DomainDispatchPayload, DomainDispatchRequest, IngressDecision, RuntimeIngress,
 };
 use crate::observability as obs;
 use bytes::Bytes;
@@ -883,10 +882,7 @@ impl DomainFrameDispatcher {
                     );
                 }
 
-                let routes = crate::protocol::schedule_codec::extract_batch_auth_routes(payload)?
-                    .into_iter()
-                    .map(|route| canonicalize_dispatch_route_str(domain, route))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let routes = crate::protocol::schedule_codec::extract_batch_auth_routes(payload)?;
                 Ok((AuthorizationTargets::Multiple(routes), access))
             }
             AuthorizationPolicy::RouteScoped(access) => {

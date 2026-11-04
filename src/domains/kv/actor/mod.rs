@@ -14,7 +14,6 @@ use super::protocol::{KvMessage, KvResourceScope, KvResponse, TxMode};
 
 mod introspection;
 mod inventory_delta;
-mod key_layout;
 mod mutations;
 mod scan;
 mod snapshot;
@@ -22,8 +21,6 @@ mod transaction_access;
 mod transactions;
 
 use inventory_delta::KvInventoryDelta;
-#[cfg(test)]
-use key_layout::KV_KEY_SCOPE_MARKER;
 #[cfg(test)]
 use scan::MAX_SCAN_ITEMS;
 

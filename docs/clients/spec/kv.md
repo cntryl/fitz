@@ -2,8 +2,9 @@
 
 ### KV Domain (Durable Key-Value)
 
-**Purpose:** Transaction-based CRUD and range operations with isolation.
-**IMPORTANT:** All KV operations occur within transactions (Begin/Commit/Rollback).
+**Purpose:** Transaction-based CRUD, range operations, and scoped namespace deletion.
+CRUD and range operations occur within transactions (Begin/Commit/Rollback).
+DROP is a standalone operation with its own explicit persistence choice.
 BEGIN selects scope and transaction mode only. Every COMMIT explicitly selects
 Buffered or Sync. Missing choices, values other than 0/1, and trailing bytes are
 rejected. Local Buffered/Sync map to buffered WAL/synced WAL; cloud Buffered/Sync
@@ -26,6 +27,74 @@ A success response follows completion of the selected storage commit boundary.
 |  109 | SUBSCRIBE    |
 |  110 | UNSUBSCRIBE  |
 |  111 | NOTIFY       |
+|  112 | DROP         |
+
+#### DROP Request
+
+```
+[u32 BE]  route_len
+[bytes]   route (UTF-8)
+[u8]      persistence (0=Buffered, 1=Sync)
+Response (success):
+  [u8]     0 (status: success)
+Response (error):
+  [u8]     1 (status: error)
+  [u16 BE] code
+  [u8]     class
+  [u8]     effect
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+DROP accepts exactly these scope shapes (the `kv://` scheme may be omitted):
+
+| Route | Deleted scope |
+| --- | --- |
+| `kv://{realm}/*` | All KV resources in the specified realm |
+| `kv://{realm}/{area}/*` | All KV resources in the specified area |
+| `kv://{realm}/{area}/{resource}` | One KV resource |
+
+The realm and any named area or resource must be concrete. Other wildcard
+forms, including `**`, wildcard realms, partial-segment wildcards, and
+`{realm}/*/*`, are rejected. DROP always acts within the caller's assigned
+RouteFamily; the realm remains a separate application-defined namespace.
+
+DROP requires write permission covering the complete selected scope. A grant
+for one resource cannot authorize its area's DROP, and an area grant cannot
+authorize its realm's DROP. Realm DROP authorization compares the complete
+depth-three set `kv://{realm}/*/*`, rather than treating its short wire selector
+as an ordinary single-segment wildcard.
+
+The broker atomically deletes committed user rows and matching inventory
+metadata in one storage transaction, using prefix range tombstones without
+enumerating stored keys. Buffered and Sync select the same local/cloud commit
+boundaries as COMMIT. Missing persistence, values other than 0/1, and trailing
+payload bytes are rejected. A success ACK follows the selected commit boundary.
+Physical disk-space reclamation occurs later through storage compaction.
+
+DROP coordinates with inventory refreshes only within its RouteFamily, so a
+stalled refresh in another family does not block it. Coordination and storage
+write admission share one 30-second pre-submission budget; an exhausted budget
+fails without submitting the deletion. Storage acknowledgement after submission
+has its own timeout and can still have an indeterminate outcome.
+An indeterminate response does not cancel an admitted DROP: it may apply later.
+Reconcile the selected scope before recreating data after such an error. The
+broker fences stale inventory writes against delayed DROP application.
+
+An overlapping active read-write transaction causes `ERR_ISOLATION_CONFLICT`
+(1053), including one owned by the DROP caller. DROP leaves that transaction
+and the committed data intact. The client must finish or roll back the
+transaction before retrying; normal idle-expiry and disconnect cleanup also
+release transactions. DROP itself does not expire overlapping writers.
+Read-only transactions do not block DROP and retain their existing snapshot.
+New transactions observe the deletion after DROP succeeds. Dropping an empty
+scope succeeds, and subsequent writes can recreate resources in that scope.
+
+Subscriptions remain registered. DROP returns its operation ACK without
+enumerating resources or sending per-resource NOTIFY frames; clients that
+issue DROP must explicitly reconcile their cached resource state. This is an
+additive broker message: existing message payloads and client operations are
+unchanged, and SDK support may be added independently.
 
 #### BEGIN Request
 

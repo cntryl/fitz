@@ -1,6 +1,6 @@
 use super::*;
 use crate::domains::kv::inventory::{encode_estimate, KvInventoryEstimate};
-use crate::domains::kv::KvActor;
+use crate::domains::kv::key_layout;
 
 fn sink() -> KvDomain {
     let sink = KvDomain::new(
@@ -32,13 +32,13 @@ fn sink() -> KvDomain {
                     b"invalid sibling metadata".to_vec()
                 };
                 tx.put(
-                    KvActor::inventory_metadata_key(realm, area, resource),
+                    key_layout::inventory_metadata_key(realm, area, resource),
                     metadata,
                 )
                 .unwrap();
-                let prefix = KvActor::realm_resource_prefix(realm, area, resource);
+                let prefix = key_layout::realm_resource_prefix(realm, area, resource);
                 tx.put(
-                    KvActor::encode_scoped_key(&prefix, b"private-value"),
+                    key_layout::encode_scoped_key(&prefix, b"private-value"),
                     vec![3; 1024 * 1024],
                 )
                 .unwrap();

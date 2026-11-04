@@ -6,6 +6,7 @@ use super::{
     AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsError, AdminKvRowsRequest,
     AdminKvRowsResult,
 };
+use crate::domains::kv::key_layout;
 use crate::domains::kv::KvActor;
 
 fn parse_kv_resource_route(route: &str) -> Option<(&str, &str, &str)> {
@@ -52,13 +53,13 @@ impl KvFamilyRuntime<'_> {
 
         self.reject_restore_of_locked_resources(family, resources.keys())?;
 
-        let column_family = KvActor::resolve_column_family(family)?;
+        let column_family = key_layout::resolve_column_family(family)?;
         let mut completed = Vec::new();
         for (route, entries) in resources {
             let Some((realm, area, name)) = parse_kv_resource_route(&route) else {
                 return Err(format!("invalid KV resource route in snapshot: {route}"));
             };
-            let prefix = KvActor::realm_resource_prefix(realm, area, name);
+            let prefix = key_layout::realm_resource_prefix(realm, area, name);
             let record_count = u64::try_from(entries.len()).unwrap_or(u64::MAX);
             let keys_to_delete = existing_keys.get(&route).map_or(&[][..], Vec::as_slice);
             let mutation_count = u64::try_from(keys_to_delete.len())
@@ -72,7 +73,7 @@ impl KvFamilyRuntime<'_> {
                     format!("restore failed after resources {completed:?}: {error}")
                 })?;
             for key in keys_to_delete {
-                let scoped_key = KvActor::encode_scoped_key(&prefix, key);
+                let scoped_key = key_layout::encode_scoped_key(&prefix, key);
                 tx.delete(scoped_key).map_err(|error| {
                     format!("restore failed after resources {completed:?}: {error}")
                 })?;
@@ -83,10 +84,13 @@ impl KvFamilyRuntime<'_> {
                     u64::try_from(entry.key.len().saturating_add(entry.value.len()))
                         .unwrap_or(u64::MAX),
                 );
-                tx.put(KvActor::encode_scoped_key(&prefix, &entry.key), entry.value)
-                    .map_err(|error| {
-                        format!("restore failed after resources {completed:?}: {error}")
-                    })?;
+                tx.put(
+                    key_layout::encode_scoped_key(&prefix, &entry.key),
+                    entry.value,
+                )
+                .map_err(|error| {
+                    format!("restore failed after resources {completed:?}: {error}")
+                })?;
             }
             let estimate = crate::domains::kv::inventory::KvInventoryEstimate {
                 estimated_record_count: record_count,
@@ -94,7 +98,7 @@ impl KvFamilyRuntime<'_> {
                 estimate_complete: true,
             };
             tx.put(
-                KvActor::inventory_metadata_key(realm, area, name),
+                key_layout::inventory_metadata_key(realm, area, name),
                 crate::domains::kv::inventory::encode_estimate(estimate),
             )
             .map_err(|error| format!("restore failed after resources {completed:?}: {error}"))?;
@@ -166,14 +170,14 @@ impl KvFamilyRuntime<'_> {
         limit: usize,
     ) -> Result<AdminKvPrefixScanResult, String> {
         let started_at = std::time::Instant::now();
-        let column_family = KvActor::resolve_column_family(route_family)?;
+        let column_family = key_layout::resolve_column_family(route_family)?;
         let tx = self
             .core
             .store
             .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
-        let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
-        let scoped_prefix = KvActor::encode_scoped_key(&resource_prefix, key_prefix);
+        let resource_prefix = key_layout::realm_resource_prefix(realm, area, resource);
+        let scoped_prefix = key_layout::encode_scoped_key(&resource_prefix, key_prefix);
         let mut rows = Self::scan_scoped_prefix(
             &tx,
             &resource_prefix,
@@ -205,7 +209,7 @@ impl KvFamilyRuntime<'_> {
             }
         }
 
-        let column_family = KvActor::resolve_column_family(request.route_family)
+        let column_family = key_layout::resolve_column_family(request.route_family)
             .map_err(AdminKvRowsError::Backend)?;
         let tx = self
             .core
@@ -213,11 +217,11 @@ impl KvFamilyRuntime<'_> {
             .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| AdminKvRowsError::Backend(error.to_string()))?;
         let resource_prefix =
-            KvActor::realm_resource_prefix(request.realm, request.area, request.resource);
-        let scoped_prefix = KvActor::encode_scoped_key(&resource_prefix, request.starts_with);
+            key_layout::realm_resource_prefix(request.realm, request.area, request.resource);
+        let scoped_prefix = key_layout::encode_scoped_key(&resource_prefix, request.starts_with);
         let scoped_start = request.cursor.map_or_else(
             || scoped_prefix.clone(),
-            |cursor| KvActor::encode_scoped_key(&resource_prefix, cursor),
+            |cursor| key_layout::encode_scoped_key(&resource_prefix, cursor),
         );
         let mut rows = Self::scan_scoped_prefix(
             &tx,
@@ -267,14 +271,14 @@ impl KvFamilyRuntime<'_> {
             .scan(
                 scoped_prefix,
                 scoped_start.to_vec(),
-                KvActor::prefix_range_end(scoped_prefix),
+                crate::utils::storage_key::prefix_range_end(scoped_prefix),
                 limit,
                 false,
             )
             .map_err(|error| error.to_string())?;
         let mut rows = Vec::new();
         for (scoped_key, value) in iterator {
-            if let Some(user_key) = KvActor::strip_scoped_prefix(resource_prefix, &scoped_key) {
+            if let Some(user_key) = key_layout::strip_scoped_prefix(resource_prefix, &scoped_key) {
                 rows.push(AdminKvCommittedPair {
                     key: user_key,
                     value: value.to_vec(),

@@ -231,8 +231,11 @@ fn parse_route_str_ref<'a>(payload: &'a [u8], offset: &mut usize) -> Result<&'a 
 ///
 /// Returns an error when the message type is unsupported, server-only, or the
 /// route/pattern prefix cannot be decoded from the payload.
-pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
-    match msg_type {
+pub fn extract_auth_route(
+    msg_type: u16,
+    payload: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, str>>, String> {
+    let route = match msg_type {
         msg_type::ENQUEUE
         | msg_type::RESERVE
         | msg_type::EXTEND
@@ -245,7 +248,16 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         }
         msg_type::NOTIFY => Err("QUEUE_NOTIFY is server-to-client only".to_string()),
         _ => Err(format!("Unknown Queue message type: {msg_type}")),
-    }
+    }?;
+    route
+        .map(|route| {
+            crate::protocol::auth_route::canonicalize(
+                "queue",
+                route,
+                crate::dispatch::wire::queue::canonical_auth_route,
+            )
+        })
+        .transpose()
 }
 
 fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
@@ -846,7 +858,7 @@ mod tests {
         let error = encode_response(msg_type::ENQUEUE, &QueueResponse::QueueNotFound);
 
         // Assert
-        assert_eq!(parsed_route, Some(route));
+        assert_eq!(parsed_route.as_deref(), Some(route));
         assert_eq!(response, [0, 0, 0, 0, 0, 0, 0, 0, 7]);
         assert_eq!(
             notification,

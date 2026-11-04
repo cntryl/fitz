@@ -2,6 +2,7 @@
 
 use super::{ActiveKvTx, KvActor, KvInventoryDelta};
 use crate::auth::validate_realm_format;
+use crate::domains::kv::key_layout;
 use crate::domains::kv::{KvError, KvResourceScope, KvResponse, TxMode};
 use std::time::{Duration, Instant};
 
@@ -22,7 +23,7 @@ impl KvActor {
             };
         }
 
-        let Ok(column_family) = Self::resolve_column_family(scope.route_family) else {
+        let Ok(column_family) = key_layout::resolve_column_family(scope.route_family) else {
             return KvResponse::Error {
                 error: KvError::InvalidRouteFamily,
             };
@@ -38,7 +39,7 @@ impl KvActor {
                 let tx_id = self.next_tx_id;
                 self.next_tx_id = next_tx_id;
                 let scoped_prefix =
-                    Self::realm_resource_prefix(&scope.realm, &scope.area, &scope.resource);
+                    key_layout::realm_resource_prefix(&scope.realm, &scope.area, &scope.resource);
                 self.transactions.insert(
                     tx_id,
                     ActiveKvTx {

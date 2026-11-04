@@ -1,6 +1,6 @@
 use super::*;
 use crate::domains::kv::inventory::{encode_estimate, KvInventoryEstimate};
-use crate::domains::kv::KvActor;
+use crate::domains::kv::key_layout;
 
 fn write_fixture(sink: &KvDomain, family: RouteFamily, metadata: Option<Vec<u8>>) {
     sink.run_on_family_for_tests(family, move |runtime| {
@@ -9,15 +9,15 @@ fn write_fixture(sink: &KvDomain, family: RouteFamily, metadata: Option<Vec<u8>>
             .store
             .begin(family.id(), crate::domains::kv::TxMode::ReadWrite)
             .unwrap();
-        let prefix = KvActor::realm_resource_prefix("acme", "jobs", "orders");
+        let prefix = key_layout::realm_resource_prefix("acme", "jobs", "orders");
         tx.put(
-            KvActor::encode_scoped_key(&prefix, b"private-key"),
+            key_layout::encode_scoped_key(&prefix, b"private-key"),
             vec![7; 1024 * 1024],
         )
         .unwrap();
         if let Some(metadata) = metadata {
             tx.put(
-                KvActor::inventory_metadata_key("acme", "jobs", "orders"),
+                key_layout::inventory_metadata_key("acme", "jobs", "orders"),
                 metadata,
             )
             .unwrap();
@@ -57,7 +57,9 @@ fn should_read_incomplete_kv_inventory_metadata_without_refreshing_user_values()
             .store
             .begin(1, crate::domains::kv::TxMode::ReadOnly)
             .unwrap()
-            .get(&KvActor::inventory_metadata_key("acme", "jobs", "orders"))
+            .get(&key_layout::inventory_metadata_key(
+                "acme", "jobs", "orders",
+            ))
             .unwrap()
             .unwrap()
     });
@@ -86,7 +88,9 @@ fn should_report_missing_kv_inventory_metadata_without_scanning_user_values() {
             .store
             .begin(1, crate::domains::kv::TxMode::ReadOnly)
             .unwrap()
-            .get(&KvActor::inventory_metadata_key("acme", "jobs", "orders"))
+            .get(&key_layout::inventory_metadata_key(
+                "acme", "jobs", "orders",
+            ))
             .unwrap()
     });
 

@@ -141,10 +141,13 @@ pub(crate) fn parse_prepared_request(
 ///
 /// Returns an error when the payload is malformed, has trailing data, or the
 /// message type is unsupported for lease authorization extraction.
-pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+pub fn extract_auth_route(
+    msg_type: u16,
+    payload: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, str>>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
-    match msg_type {
+    let route = match msg_type {
         msg_type::ACQUIRE => {
             let route = dec.get_string_ref()?;
             dec.get_string_ref()?;
@@ -191,7 +194,16 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         }
         msg_type::NOTIFY => Err("LEASE_NOTIFY is server-to-client only".to_string()),
         _ => Err(format!("Unknown operation: {msg_type}")),
-    }
+    }?;
+    route
+        .map(|route| {
+            crate::protocol::auth_route::canonicalize(
+                "lease",
+                route,
+                crate::dispatch::wire::lease::canonical_auth_route,
+            )
+        })
+        .transpose()
 }
 
 /// Encode domain `LeaseResponse` to wire bytes (`CLIENT_SPEC`).
@@ -695,7 +707,7 @@ mod tests {
         let error = encode_domain_response(&DomainLeaseResponse::NotHeld);
 
         // Assert
-        assert_eq!(parsed_route, Some(route));
+        assert_eq!(parsed_route.as_deref(), Some(route));
         assert_eq!(response, [0, 0, 0, 0, 0, 0, 0, 0, 0, 7]);
         assert_eq!(
             notification,

@@ -850,6 +850,7 @@ Clients MUST:
 | KV       | SUBSCRIBE          |       109 | Data          | Watch committed changes |
 | KV       | UNSUBSCRIBE        |       110 | Data          | Stop watching changes   |
 | KV       | NOTIFY             |       111 | Notification  | Committed change event  |
+| KV       | DROP               |       112 | Data          | Standalone scoped deletion |
 | Queue    | ENQUEUE            |       200 | Data          | Add message             |
 | Queue    | RESERVE            |       202 | Data          | Lease message(s)        |
 | Queue    | EXTEND             |       203 | Data          | Extend lease            |

@@ -1,6 +1,7 @@
 //! Range scans with item, pagination, and wire-size bounds.
 
 use super::KvActor;
+use crate::domains::kv::key_layout;
 use crate::domains::kv::{KvError, KvPair, KvResourceScope, KvResponse, ScanQuery};
 use bytes::{Buf, Bytes};
 
@@ -141,12 +142,12 @@ impl KvActor {
         if query.reverse {
             let lower = query.end.as_ref().map_or_else(
                 || prefix.to_vec(),
-                |key| Self::immediate_successor(Self::encode_scoped_key(prefix, key)),
+                |key| Self::immediate_successor(key_layout::encode_scoped_key(prefix, key)),
             );
             let upper = query.start.as_ref().map_or_else(
-                || Self::prefix_range_end(prefix),
+                || crate::utils::storage_key::prefix_range_end(prefix),
                 |key| {
-                    let scoped = Self::encode_scoped_key(prefix, key);
+                    let scoped = key_layout::encode_scoped_key(prefix, key);
                     if query.start_exclusive {
                         scoped
                     } else {
@@ -159,7 +160,7 @@ impl KvActor {
             let lower = query.start.as_ref().map_or_else(
                 || prefix.to_vec(),
                 |key| {
-                    let scoped = Self::encode_scoped_key(prefix, key);
+                    let scoped = key_layout::encode_scoped_key(prefix, key);
                     if query.start_exclusive {
                         Self::immediate_successor(scoped)
                     } else {
@@ -168,8 +169,8 @@ impl KvActor {
                 },
             );
             let upper = query.end.as_ref().map_or_else(
-                || Self::prefix_range_end(prefix),
-                |key| Self::encode_scoped_key(prefix, key),
+                || crate::utils::storage_key::prefix_range_end(prefix),
+                |key| key_layout::encode_scoped_key(prefix, key),
             );
             Some((lower, upper))
         }

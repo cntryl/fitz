@@ -3,6 +3,14 @@
 use super::{KvError, KvStore, KvTransaction};
 use std::time::{Duration, Instant};
 
+const WRITE_ADMISSION_BUDGET: Duration = Duration::from_secs(30);
+
+impl KvStore {
+    pub(crate) fn write_admission_deadline() -> Instant {
+        Instant::now() + WRITE_ADMISSION_BUDGET
+    }
+}
+
 #[cfg(test)]
 type AdmissionHook = Box<dyn FnOnce(u32, Duration) -> cntryl_midge::MidgeResult<bool>>;
 
@@ -32,8 +40,20 @@ pub(super) fn inject_admission(hook: AdmissionHook) -> AdmissionHookGuard {
 
 impl KvTransaction {
     pub(super) fn wait_for_write_admission(&self) -> Result<(), KvError> {
-        let budget = Duration::from_secs(30);
+        let budget = WRITE_ADMISSION_BUDGET;
         let deadline = Instant::now() + budget;
+        self.wait_with_budget(budget, deadline)
+    }
+
+    pub(super) fn wait_for_write_admission_until(&self, deadline: Instant) -> Result<(), KvError> {
+        let budget = deadline.saturating_duration_since(Instant::now());
+        if budget.is_zero() {
+            return Self::admission_result(Ok(false), deadline);
+        }
+        self.wait_with_budget(budget, deadline)
+    }
+
+    fn wait_with_budget(&self, budget: Duration, deadline: Instant) -> Result<(), KvError> {
         #[cfg(test)]
         let injected = ADMISSION_HOOK.with(|hook| hook.borrow_mut().take());
         #[cfg(test)]

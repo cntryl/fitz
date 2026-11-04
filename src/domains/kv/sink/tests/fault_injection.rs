@@ -3,6 +3,7 @@
 //! state-model invariant that must hold afterwards.
 
 use super::*;
+use crate::domains::kv::key_layout;
 
 /// Sequence: COMMIT notifies every matching watcher -> one watcher's mailbox
 /// is full and delivery fails.
@@ -343,7 +344,7 @@ fn should_flag_inventory_estimate_incomplete_after_failed_post_commit_update() {
 
     // Assert
     assert_eq!(pending_after_retry, (1, 0));
-    let key = crate::domains::kv::KvActor::inventory_metadata_key("acme", "app", "users");
+    let key = key_layout::inventory_metadata_key("acme", "app", "users");
     let read = store
         .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
         .expect("begin inventory read");
@@ -375,18 +376,18 @@ fn should_rescan_inventory_after_failed_estimate_update() {
             .store
             .begin(family.id(), crate::domains::kv::TxMode::ReadWrite)
             .expect("begin inventory fixture transaction");
-        let prefix = crate::domains::kv::KvActor::realm_resource_prefix(
+        let prefix = key_layout::realm_resource_prefix(
             &fixture_scope.realm,
             &fixture_scope.area,
             &fixture_scope.resource,
         );
         tx.put(
-            crate::domains::kv::KvActor::encode_scoped_key(&prefix, b"existing"),
+            key_layout::encode_scoped_key(&prefix, b"existing"),
             b"value".to_vec(),
         )
         .expect("seed committed value");
         tx.put(
-            crate::domains::kv::KvActor::inventory_metadata_key(
+            key_layout::inventory_metadata_key(
                 &fixture_scope.realm,
                 &fixture_scope.area,
                 &fixture_scope.resource,
@@ -461,6 +462,20 @@ fn should_back_off_inventory_repair_retries_after_failure() {
         crate::control::admin::read_model::AdminReadModel::new(),
     );
     let scope = KvResourceScope::new(family, "acme", "app", "users");
+    // Repairs follow a committed data write, which persists an inventory marker.
+    let mut tx = sink
+        .config
+        .store
+        .begin(1, crate::domains::kv::TxMode::ReadWrite)
+        .unwrap();
+    tx.put(
+        key_layout::inventory_metadata_key("acme", "app", "users"),
+        crate::domains::kv::inventory::encode_estimate(
+            crate::domains::kv::inventory::KvInventoryEstimate::default(),
+        ),
+    )
+    .unwrap();
+    tx.commit(crate::domains::WritePolicy::Sync).unwrap();
 
     // Act
     let pending_after_immediate_retry = sink.run_on_family_for_tests(family, move |runtime| {

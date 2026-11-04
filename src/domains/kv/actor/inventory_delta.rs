@@ -7,6 +7,7 @@
 
 use super::KvActor;
 use crate::domains::kv::inventory::encode_estimate;
+use crate::domains::kv::key_layout;
 use crate::domains::kv::{KvError, KvResourceScope, TxMode};
 use std::collections::HashMap;
 
@@ -42,7 +43,7 @@ impl KvActor {
     pub(super) fn mark_inventory_incomplete_in_transaction(
         active: &mut super::ActiveKvTx,
     ) -> Result<(), KvError> {
-        let key = Self::inventory_metadata_key(
+        let key = key_layout::inventory_metadata_key(
             &active.scope.realm,
             &active.scope.area,
             &active.scope.resource,
@@ -54,10 +55,11 @@ impl KvActor {
             .transpose()
             .map_err(KvError::BackendError)?
             .unwrap_or_default();
-        if estimate.estimate_complete {
-            estimate.estimate_complete = false;
-            active.tx.put(key, encode_estimate(estimate))?;
-        }
+        // Always stage the marker with the data. An earlier indeterminate
+        // DROP can remove an already-incomplete marker after this snapshot
+        // but before this newer data transaction commits.
+        estimate.estimate_complete = false;
+        active.tx.put(key, encode_estimate(estimate))?;
         Ok(())
     }
 
@@ -80,15 +82,15 @@ impl KvActor {
             return Ok(());
         }
 
-        let key = Self::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
+        let key = key_layout::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
         let mut tx = store.begin(column_family, TxMode::ReadWrite)?;
-        let existing = tx.get(&key)?;
-        let mut estimate = existing
-            .as_deref()
-            .map(crate::domains::kv::inventory::decode_estimate)
-            .transpose()
-            .map_err(KvError::BackendError)?
-            .unwrap_or_default();
+        // Every mutating data commit creates its inventory marker atomically.
+        // An absent marker means DROP has retired this companion update.
+        let Some(existing) = tx.get(&key)? else {
+            return Ok(());
+        };
+        let mut estimate = crate::domains::kv::inventory::decode_estimate(&existing)
+            .map_err(KvError::BackendError)?;
 
         for stored_bytes in inventory_delta.inserted_key_bytes.values() {
             estimate.estimated_record_count = estimate.estimated_record_count.saturating_add(1);
@@ -101,7 +103,7 @@ impl KvActor {
         }
 
         let encoded = encode_estimate(estimate);
-        if existing.as_deref() == Some(encoded.as_slice()) {
+        if existing.as_ref() == encoded.as_slice() {
             return Ok(());
         }
         #[cfg(test)]
@@ -111,6 +113,10 @@ impl KvActor {
             ));
         }
 
+        // An admitted DROP may still apply after an indeterminate response.
+        // A storage assertion protects this same read/write snapshot even
+        // after the family coordination guard has been released.
+        tx.assert_value(key.clone(), Some(&existing))?;
         tx.put(key, encoded)?;
         tx.commit(write_policy)
     }

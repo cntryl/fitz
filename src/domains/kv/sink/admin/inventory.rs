@@ -6,7 +6,7 @@
 use super::super::locks::KvResourceLockKey;
 use super::super::state::KvFamilyRuntime;
 use crate::domains::kv::inventory::{decode_estimate, encode_estimate, KvInventoryEstimate};
-use crate::domains::kv::KvActor;
+use crate::domains::kv::key_layout;
 
 const ADMIN_INVENTORY_REFRESH_LIMIT: usize = 10_000;
 
@@ -23,12 +23,12 @@ impl KvFamilyRuntime<'_> {
             .core
             .store
             .begin(
-                KvActor::resolve_column_family(family)?,
+                key_layout::resolve_column_family(family)?,
                 crate::domains::kv::TxMode::ReadOnly,
             )
             .map_err(|error| error.to_string())?;
         let Some(value) = tx
-            .get(&KvActor::inventory_metadata_key(realm, area, resource))
+            .get(&key_layout::inventory_metadata_key(realm, area, resource))
             .map_err(|error| error.to_string())?
         else {
             return Ok(None);
@@ -54,13 +54,13 @@ impl KvFamilyRuntime<'_> {
     ) -> Result<(Vec<crate::control::admin::KvResourceInventoryEntry>, bool), String> {
         let family = route_family.as_u64();
         let prefix = area.map_or_else(
-            || KvActor::inventory_realm_prefix(realm),
-            |area| KvActor::inventory_area_prefix(realm, area),
+            || key_layout::inventory_realm_prefix(realm),
+            |area| key_layout::inventory_area_prefix(realm, area),
         );
         let start = after.map_or_else(
             || prefix.clone(),
             |(area, resource)| {
-                let mut key = KvActor::inventory_metadata_key(realm, area, resource);
+                let mut key = key_layout::inventory_metadata_key(realm, area, resource);
                 key.push(0);
                 key
             },
@@ -69,7 +69,7 @@ impl KvFamilyRuntime<'_> {
             .core
             .store
             .begin(
-                KvActor::resolve_column_family(route_family)?,
+                key_layout::resolve_column_family(route_family)?,
                 crate::domains::kv::TxMode::ReadOnly,
             )
             .map_err(|error| error.to_string())?;
@@ -77,7 +77,7 @@ impl KvFamilyRuntime<'_> {
             .scan(
                 &prefix,
                 start,
-                KvActor::prefix_range_end(&prefix),
+                crate::utils::storage_key::prefix_range_end(&prefix),
                 limit.saturating_add(1),
                 false,
             )
@@ -87,7 +87,7 @@ impl KvFamilyRuntime<'_> {
         let entries = rows
             .into_iter()
             .filter_map(|(key, value)| {
-                KvActor::parse_inventory_metadata_key(&key)
+                key_layout::parse_inventory_metadata_key(&key)
                     .map(|(realm, area, resource)| (realm, area, resource, value))
             })
             .map(|(realm, area, resource, value)| {
@@ -156,8 +156,8 @@ impl KvFamilyRuntime<'_> {
         resource: &str,
     ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
         let family_id = route_family.as_u64();
-        let column_family = KvActor::resolve_column_family(route_family)?;
-        let key = KvActor::inventory_metadata_key(realm, area, resource);
+        let column_family = key_layout::resolve_column_family(route_family)?;
+        let key = key_layout::inventory_metadata_key(realm, area, resource);
         let tx = self
             .core
             .store
@@ -191,7 +191,7 @@ impl KvFamilyRuntime<'_> {
     ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
             .map_err(|_| format!("invalid route family ID: {family_id}"))?;
-        let column_family = KvActor::resolve_column_family(route_family)?;
+        let column_family = key_layout::resolve_column_family(route_family)?;
         let tx = self
             .core
             .store
@@ -201,7 +201,8 @@ impl KvFamilyRuntime<'_> {
         let mut discovered = Vec::new();
 
         for (key, value) in iterator {
-            let Some((realm, area, resource)) = KvActor::parse_inventory_metadata_key(&key) else {
+            let Some((realm, area, resource)) = key_layout::parse_inventory_metadata_key(&key)
+            else {
                 continue;
             };
             let estimate = decode_estimate(&value)?;
@@ -232,17 +233,31 @@ impl KvFamilyRuntime<'_> {
         resource: &str,
         persist_empty: bool,
     ) -> Result<KvInventoryEstimate, String> {
+        // The admin façade runs outside the family actor. Keep its read/write
+        // refresh indivisible with respect to DROP so stale estimates cannot
+        // restore inventory entries after a successful deletion.
+        let deadline = crate::domains::kv::store::KvStore::write_admission_deadline();
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
             .map_err(|_| format!("invalid route family ID: {family_id}"))?;
-        let column_family = KvActor::resolve_column_family(route_family)?;
-        let read_tx = self
+        let column_family = key_layout::resolve_column_family(route_family)?;
+        let inventory_gate = self
             .core
             .store
-            .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
+            .inventory_gate_for(column_family, deadline)
             .map_err(|error| error.to_string())?;
-        let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
+        let _inventory_guard = inventory_gate
+            .acquire_until(deadline)
+            .map_err(|error| error.to_string())?;
+        let mut tx = self
+            .core
+            .store
+            .begin(column_family, crate::domains::kv::TxMode::ReadWrite)
+            .map_err(|error| error.to_string())?;
+        let resource_prefix = key_layout::realm_resource_prefix(realm, area, resource);
+        let metadata_key = key_layout::inventory_metadata_key(realm, area, resource);
+        let original_metadata = tx.get(&metadata_key).map_err(|error| error.to_string())?;
         let mut rows = Self::scan_scoped_prefix(
-            &read_tx,
+            &tx,
             &resource_prefix,
             &resource_prefix,
             &resource_prefix,
@@ -264,22 +279,20 @@ impl KvFamilyRuntime<'_> {
             estimate_complete,
         };
 
-        drop(read_tx);
-
-        if persist_empty || estimate.estimated_record_count > 0 || !estimate.estimate_complete {
-            let mut write_tx = self
-                .core
-                .store
-                .begin(column_family, crate::domains::kv::TxMode::ReadWrite)
+        if (persist_empty && original_metadata.is_some())
+            || estimate.estimated_record_count > 0
+            || !estimate.estimate_complete
+        {
+            // DROP can return an indeterminate outcome before its tombstones
+            // apply. The family mutex cannot fence that delayed application.
+            // Keep the scan snapshot through commit and let storage reject a
+            // point mutation or covering tombstone newer than this snapshot,
+            // including a deletion of an initially absent metadata key.
+            tx.assert_value(metadata_key.clone(), original_metadata.as_deref())
                 .map_err(|error| error.to_string())?;
-            write_tx
-                .put(
-                    KvActor::inventory_metadata_key(realm, area, resource),
-                    encode_estimate(estimate),
-                )
+            tx.put(metadata_key, encode_estimate(estimate))
                 .map_err(|error| error.to_string())?;
-            write_tx
-                .commit(self.core.sync_write_policy)
+            tx.commit_until(self.core.sync_write_policy, deadline)
                 .map_err(|error| error.to_string())?;
         }
 
@@ -330,5 +343,55 @@ impl KvFamilyRuntime<'_> {
             write_latency_p95_ms: 0.0,
             transactions_active: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domains::kv::sink::KvDomain;
+
+    #[test]
+    fn should_keep_dropped_inventory_absent_when_refresh_requests_an_empty_estimate() {
+        // Arrange
+        let sink = KvDomain::new(
+            crate::testkit::midge::create_in_memory_test_engine_with_cfs(&[1, 2]),
+            std::sync::Arc::new(crate::runtime::Router::new()),
+            crate::control::admin::read_model::AdminReadModel::new(),
+        );
+        let mut core = sink.admin_core();
+        let metadata_key = key_layout::inventory_metadata_key("acme", "jobs", "orders");
+        let mut tx = core
+            .store
+            .begin(1, crate::domains::kv::TxMode::ReadWrite)
+            .unwrap();
+        tx.put(metadata_key.clone(), b"old estimate".to_vec())
+            .unwrap();
+        tx.commit(crate::domains::WritePolicy::Sync).unwrap();
+        let scope = crate::domains::kv::KvDropScope::parse(
+            crate::runtime::routing::RouteFamily::new(1),
+            "kv://acme/*",
+        )
+        .unwrap();
+        core.store
+            .drop_scope(&scope, crate::domains::WritePolicy::Sync)
+            .unwrap();
+        let runtime = KvFamilyRuntime { core: &mut core };
+
+        // Act
+        let estimate = runtime
+            .refresh_inventory_estimate(1, "acme", "jobs", "orders", true)
+            .unwrap();
+        let persisted = runtime
+            .core
+            .store
+            .begin(1, crate::domains::kv::TxMode::ReadOnly)
+            .unwrap()
+            .get(&metadata_key)
+            .unwrap();
+
+        // Assert
+        assert_eq!(estimate.estimated_record_count, 0);
+        assert!(persisted.is_none());
     }
 }

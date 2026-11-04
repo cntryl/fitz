@@ -36,32 +36,9 @@ impl RuntimeIngress {
         domain: DispatchDomain,
         route: &str,
     ) -> Result<Cow<'_, str>, String> {
-        crate::utils::route_shape::validate_route_shape(route)?;
-        Self::validate_qualified_domain_scheme(domain, route)?;
-
-        let canonical =
-            crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
-                domain,
-            )
-            .canonical_auth_route(route)?;
-        crate::utils::route_shape::validate_route_shape(canonical.as_ref())?;
-        Ok(canonical)
-    }
-
-    fn validate_qualified_domain_scheme(domain: DispatchDomain, route: &str) -> Result<(), String> {
-        let Some((scheme, _)) = route.split_once("://") else {
-            return Ok(());
-        };
-
-        if scheme == domain.as_str() {
-            return Ok(());
-        }
-
-        Err(format!(
-            "{} message route must use {}://, not {}://",
-            domain.as_str(),
-            domain.as_str(),
-            scheme
-        ))
+        let descriptor = super::domain_registry::IngressDomainPolicy::descriptor_for_domain(domain);
+        crate::protocol::auth_route::canonicalize(domain.as_str(), route, |route| {
+            descriptor.canonical_auth_route(route)
+        })
     }
 }

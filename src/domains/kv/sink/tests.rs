@@ -13,12 +13,48 @@ use std::time::{Duration, Instant};
 mod admin_row_errors;
 mod configuration;
 mod correctness;
+mod drop;
+mod drop_frames;
 mod fault_injection;
 mod lifecycle;
 mod metadata_inventory;
 mod metadata_inventory_pages;
 mod snapshot;
 mod subscriptions;
+
+fn commit_value(
+    store: crate::domains::kv::store::KvStore,
+    scope: KvResourceScope,
+    key: &'static [u8],
+    value: &'static [u8],
+) {
+    use crate::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
+
+    let mut actor = KvActor::new(store);
+    let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
+        scope: scope.clone(),
+        mode: TxMode::ReadWrite,
+    }) else {
+        panic!("begin KV transaction");
+    };
+    assert!(matches!(
+        actor.handle(KvMessage::Put {
+            tx_id,
+            scope: scope.clone(),
+            key: Bytes::copy_from_slice(key),
+            value: Bytes::copy_from_slice(value),
+        }),
+        KvResponse::PutOk
+    ));
+    assert!(matches!(
+        actor.handle(KvMessage::Commit {
+            tx_id,
+            scope,
+            persistence: crate::domains::CommitPersistence::Sync,
+        }),
+        KvResponse::CommitOk
+    ));
+}
 
 #[inline]
 fn usize_to_u32_saturating(value: usize) -> u32 {

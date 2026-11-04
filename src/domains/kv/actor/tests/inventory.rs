@@ -1,4 +1,5 @@
 use super::*;
+use crate::domains::kv::key_layout;
 use std::sync::Arc;
 
 #[test]
@@ -82,7 +83,8 @@ fn should_persist_inventory_estimate_after_commit_in_cloud_mode() {
     // bug, so the real assertion is that the inventory estimate is actually
     // persisted afterward.
     assert!(matches!(commit, KvResponse::CommitOk));
-    let inventory_key = KvActor::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
+    let inventory_key =
+        key_layout::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
     let read_tx = store
         .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
         .expect("begin inventory read transaction");
@@ -153,7 +155,7 @@ fn should_mark_concurrent_insert_estimate_incomplete_without_conflicting() {
         .begin(scope.route_family.id(), TxMode::ReadWrite)
         .expect("begin inventory seed transaction");
     seed.put(
-        KvActor::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource),
+        key_layout::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource),
         crate::domains::kv::inventory::encode_estimate(
             crate::domains::kv::inventory::KvInventoryEstimate {
                 estimated_record_count: 0,
@@ -205,7 +207,7 @@ fn should_mark_concurrent_insert_estimate_incomplete_without_conflicting() {
         .begin(scope.route_family.id(), TxMode::ReadOnly)
         .expect("begin inventory read transaction");
     let stored = read
-        .get(&KvActor::inventory_metadata_key(
+        .get(&key_layout::inventory_metadata_key(
             &scope.realm,
             &scope.area,
             &scope.resource,
@@ -252,7 +254,7 @@ fn should_mark_inventory_incomplete_for_put_without_adding_a_hot_path_read() {
         .begin(1, TxMode::ReadOnly)
         .expect("begin inventory read transaction");
     let encoded = read_tx
-        .get(&KvActor::inventory_metadata_key(
+        .get(&key_layout::inventory_metadata_key(
             &scope.realm,
             &scope.area,
             &scope.resource,
@@ -315,23 +317,6 @@ fn should_skip_redundant_incomplete_inventory_writes() {
     );
     assert!(matches!(changed_update, KvResponse::CommitOk));
     assert_eq!(actor.take_inventory_repairs(), vec![(1, changed_scope)]);
-}
-
-#[test]
-pub(super) fn should_encode_kv_scope_prefix_with_typed_segments() {
-    // Arrange
-    let expected = {
-        let mut bytes = b"acme\0kv\0".to_vec();
-        bytes.push(KV_KEY_SCOPE_MARKER);
-        bytes.extend_from_slice(b"users\0profiles\0");
-        bytes
-    };
-
-    // Act
-    let prefix = KvActor::realm_resource_prefix("acme", "users", "profiles");
-
-    // Assert
-    assert_eq!(prefix, expected);
 }
 
 #[test]

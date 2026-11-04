@@ -1,5 +1,7 @@
 use super::*;
 
+mod kv_drop;
+
 fn authenticated_actor(permission: &str) -> crate::session::actor::SessionActor {
     let permission = crate::auth::Permission::parse(permission).unwrap();
     let snapshot =

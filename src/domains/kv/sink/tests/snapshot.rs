@@ -1,37 +1,6 @@
 use super::*;
+use crate::domains::kv::key_layout;
 use crate::domains::kv::KvResponse;
-
-fn commit_value(
-    store: crate::domains::kv::store::KvStore,
-    scope: KvResourceScope,
-    key: &'static [u8],
-    value: &'static [u8],
-) {
-    let mut actor = crate::domains::kv::KvActor::new(store);
-    let KvResponse::BeginOk { tx_id } = actor.handle(crate::domains::kv::KvMessage::Begin {
-        scope: scope.clone(),
-        mode: crate::domains::kv::TxMode::ReadWrite,
-    }) else {
-        panic!("begin KV transaction");
-    };
-    assert!(matches!(
-        actor.handle(crate::domains::kv::KvMessage::Put {
-            tx_id,
-            scope: scope.clone(),
-            key: Bytes::copy_from_slice(key),
-            value: Bytes::copy_from_slice(value),
-        }),
-        KvResponse::PutOk
-    ));
-    assert!(matches!(
-        actor.handle(crate::domains::kv::KvMessage::Commit {
-            tx_id,
-            scope,
-            persistence: crate::domains::CommitPersistence::Sync,
-        }),
-        KvResponse::CommitOk
-    ));
-}
 
 #[test]
 fn should_capture_committed_values_from_one_exact_kv_resource() {
@@ -45,9 +14,8 @@ fn should_capture_committed_values_from_one_exact_kv_resource() {
     );
     let write_scope = scope.clone();
     sink.run_on_family_for_tests(family, move |runtime| {
-        let column_family =
-            crate::domains::kv::KvActor::resolve_column_family(family).expect("valid route family");
-        let resource_prefix = crate::domains::kv::KvActor::realm_resource_prefix(
+        let column_family = key_layout::resolve_column_family(family).expect("valid route family");
+        let resource_prefix = key_layout::realm_resource_prefix(
             &write_scope.realm,
             &write_scope.area,
             &write_scope.resource,
@@ -58,7 +26,7 @@ fn should_capture_committed_values_from_one_exact_kv_resource() {
             .begin(column_family, crate::domains::kv::TxMode::ReadWrite)
             .expect("begin committed write");
         tx.put(
-            crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, b"key"),
+            key_layout::encode_scoped_key(&resource_prefix, b"key"),
             b"value".to_vec(),
         )
         .expect("write KV row");

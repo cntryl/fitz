@@ -76,13 +76,13 @@ fn should_keep_auth_route_canonicalization_stable() {
                 (*route).to_string(),
                 format!("{}://{route}", domain.as_str()),
             ] {
-                let result = canonicalize_dispatch_route_str(domain, &candidate);
+                let result = RuntimeIngress::canonicalize_domain_route_str(domain, &candidate);
                 let _ = writeln!(actual, "{} {candidate:?} => {result:?}", domain.as_str());
             }
         }
         for prefix in FOREIGN_PREFIXES {
             let candidate = format!("{prefix}acme/app/users");
-            let result = canonicalize_dispatch_route_str(domain, &candidate);
+            let result = RuntimeIngress::canonicalize_domain_route_str(domain, &candidate);
             let _ = writeln!(actual, "{} {candidate:?} => {result:?}", domain.as_str());
         }
     }

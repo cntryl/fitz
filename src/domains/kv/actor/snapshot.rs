@@ -1,6 +1,7 @@
 //! Family-scoped committed-row reads for KV snapshot capture.
 
 use super::KvActor;
+use crate::domains::kv::key_layout;
 use crate::domains::kv::TxMode;
 use crate::snapshot::{SnapshotDomain, SnapshotKvEntry, SnapshotKvResource, SnapshotSelector};
 use std::collections::BTreeMap;
@@ -22,7 +23,7 @@ impl KvActor {
         if selector.domain() != SnapshotDomain::Kv {
             return Err("KV snapshot requires a KV selector".to_string());
         }
-        let column_family = Self::resolve_column_family(selector.route_family())?;
+        let column_family = key_layout::resolve_column_family(selector.route_family())?;
         let read = store
             .begin(column_family, TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
@@ -30,15 +31,15 @@ impl KvActor {
         let mut resources = BTreeMap::<String, Vec<SnapshotKvEntry>>::new();
 
         for (key, value) in rows {
-            let Some((realm, area, resource)) = Self::parse_user_scope_key(&key) else {
+            let Some((realm, area, resource)) = key_layout::parse_user_scope_key(&key) else {
                 continue;
             };
             let route = format!("kv://{realm}/{area}/{resource}");
             if !selector.matches(SnapshotDomain::Kv, selector.route_family(), &route) {
                 continue;
             }
-            let prefix = Self::realm_resource_prefix(&realm, &area, &resource);
-            let Some(key) = Self::strip_scoped_prefix(&prefix, &key) else {
+            let prefix = key_layout::realm_resource_prefix(&realm, &area, &resource);
+            let Some(key) = key_layout::strip_scoped_prefix(&prefix, &key) else {
                 continue;
             };
             resources.entry(route).or_default().push(SnapshotKvEntry {

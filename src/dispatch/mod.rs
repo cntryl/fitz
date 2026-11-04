@@ -11,10 +11,10 @@ use crate::runtime::routing::{RouteAddress, RouteFamily};
 use crate::runtime::{ClientChannel, ClientFrameMeta, DomainKind, Envelope};
 use bytes::Bytes;
 
-/// Wire/domain DTO contracts used by codecs.
+/// Domain-owned wire contracts used by codecs.
 ///
-/// Protocol codecs reach domain-owned command DTOs only through this adapter
-/// namespace. Keeping these imports here makes the dependency crossing
+/// Protocol codecs reach domain-owned command DTOs and route grammar through
+/// this adapter namespace. Keeping these imports here makes the dependency crossing
 /// explicit and gives architecture checks one allowlisted boundary to audit.
 pub mod wire {
     pub mod kv {
@@ -22,10 +22,12 @@ pub mod wire {
     }
 
     pub mod lease {
+        pub(crate) use crate::domains::lease::canonical_auth_route;
         pub use crate::domains::lease::protocol::*;
     }
 
     pub mod notice {
+        pub(crate) use crate::domains::notice::canonical_auth_route;
         pub use crate::domains::notice::protocol::*;
     }
 
@@ -34,6 +36,7 @@ pub mod wire {
     }
 
     pub mod rpc {
+        pub(crate) use crate::domains::rpc::canonical_auth_route;
         pub use crate::domains::rpc::protocol::*;
     }
 
@@ -42,6 +45,7 @@ pub mod wire {
     }
 
     pub mod stream {
+        pub(crate) use crate::domains::stream::canonical_auth_route;
         pub use crate::domains::stream::protocol::*;
     }
 }
@@ -142,15 +146,7 @@ fn build_kv_envelope(
         route_family,
         session_id,
         source.clone(),
-    )
-    .map(|frame| match frame {
-        crate::protocol::kv::ParsedKvFrame::Op(message) => {
-            crate::domains::kv::KvClientFrame::Op(message)
-        }
-        crate::protocol::kv::ParsedKvFrame::Sub(message) => {
-            crate::domains::kv::KvClientFrame::Sub(message)
-        }
-    });
+    );
     Envelope::from_route(
         source,
         destination,

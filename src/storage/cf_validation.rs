@@ -66,7 +66,6 @@ pub fn validate_route_family(family: crate::runtime::routing::RouteFamily) -> Re
 /// # Errors
 ///
 /// Returns an error if `family.id()` is 0
-#[cfg(test)]
 pub fn route_family_to_cf(
     family: crate::runtime::routing::RouteFamily,
 ) -> Result<cntryl_midge::ColumnFamilyId, String> {

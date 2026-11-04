@@ -1,5 +1,6 @@
 kv 109 registration=true pattern=true literal=true
 kv 110 registration=true pattern=true literal=true
+kv 112 registration=false pattern=true literal=false
 queue 202 registration=false pattern=true literal=false
 queue 207 registration=true pattern=true literal=true
 queue 208 registration=true pattern=true literal=true

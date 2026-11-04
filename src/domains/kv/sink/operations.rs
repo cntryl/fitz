@@ -6,8 +6,6 @@ use super::state::{KvAdminTransactionUpdate, KvOperationOutcome};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::kv::KvActor;
-#[cfg(test)]
-use crate::domains::kv::KvClientFrame;
 use crate::domains::kv::KvClientRequest;
 use crate::domains::kv::{KvError, KvResponse};
 use crate::runtime::Envelope;
@@ -96,15 +94,7 @@ impl KvFamilyRuntime<'_> {
                 frame_ctx.route_family,
                 frame_ctx.session_id,
                 subscriber,
-            )
-            .map(|frame| match frame {
-                crate::dispatch::protocol::kv::ParsedKvFrame::Op(message) => {
-                    KvClientFrame::Op(message)
-                }
-                crate::dispatch::protocol::kv::ParsedKvFrame::Sub(message) => {
-                    KvClientFrame::Sub(message)
-                }
-            });
+            );
             Some(KvClientRequest::new(meta, parsed))
         }
 
@@ -135,12 +125,6 @@ impl KvFamilyRuntime<'_> {
             && *subscriber.family() == family_id
             && session_id == meta.session_id
             && envelope.source().is_none_or(|source| source == subscriber)
-    }
-
-    pub(super) fn kv_message_family(
-        message: &crate::domains::kv::KvMessage,
-    ) -> crate::runtime::routing::RouteFamily {
-        message.scope().route_family
     }
 
     pub(super) fn error_response(reason: &str) -> KvResponse {
