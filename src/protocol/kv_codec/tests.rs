@@ -94,6 +94,9 @@ fn canonical_operation_payloads() -> Vec<(u16, Vec<u8>)> {
 
     let mut scan = transaction_only.clone();
     scan.extend_from_slice(&[0, 0, 0, 0]);
+    let mut drop = Vec::new();
+    put_route(&mut drop, "kv://acme/*");
+    drop.push(1);
 
     vec![
         (msg_type::BEGIN, begin),
@@ -109,6 +112,7 @@ fn canonical_operation_payloads() -> Vec<(u16, Vec<u8>)> {
         (msg_type::DELETE, keyed),
         (msg_type::DELETE_RANGE, range),
         (msg_type::SCAN, scan),
+        (msg_type::DROP, drop),
     ]
 }
 

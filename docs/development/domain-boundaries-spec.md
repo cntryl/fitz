@@ -359,6 +359,25 @@ KV guarantees:
 - rollback discards uncommitted mutations
 - stale or invalid transaction handles do not mutate committed state
 - RouteFamily isolation for committed values
+- standalone DROP of one resource, an area's resources, or a realm's KV resources,
+  confined to one RouteFamily and authorized over the entire selected scope
+- atomic deletion of selected current values and inventory metadata according
+  to DROP's explicit Buffered or Sync choice, without enumerating stored rows
+- rejection of DROP while any overlapping read-write transaction remains active,
+  including the caller's own transaction; existing read-only snapshots remain valid
+
+DROP is idempotent for an empty scope and does not prevent later writes from
+recreating resources. It keeps live subscriptions registered and does not
+enumerate per-resource change notifications. Clients must reconcile cached
+state explicitly after DROP. Deletion becomes visible at its commit boundary;
+storage compaction reclaims physical bytes later. This is a namespace deletion
+primitive, not general cross-resource transaction or workflow support.
+
+Inventory refresh and DROP coordinate within one RouteFamily. Their registry
+lookup, family-lock wait, and write admission use one bounded pre-submission
+budget; storage work for one family must not hold a shared cross-family
+inventory lock. A coordination timeout must not submit the deletion or proceed
+without protecting the inventory refresh boundary.
 
 KV does NOT guarantee:
 
@@ -623,6 +642,7 @@ Allowed complexity:
 - committed reads and writes
 - single-resource isolation
 - write-policy clarity
+- scoped namespace deletion with full-scope authorization and writer exclusion
 
 Not allowed:
 

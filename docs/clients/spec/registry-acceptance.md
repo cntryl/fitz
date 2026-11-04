@@ -15,7 +15,7 @@ extension fields are registered separately in
 | 2 | HELLO | Server→Client |
 | 3 | CONNECT_REJECTED | Server→Client |
 | 4 | GOAWAY | Server→Client |
-**KV Domain (100–111):**
+**KV Domain (100–112):**
 | Value | Name |
 |---:|---|
 | 100 | BEGIN |
@@ -30,6 +30,7 @@ extension fields are registered separately in
 | 109 | SUBSCRIBE |
 | 110 | UNSUBSCRIBE |
 | 111 | NOTIFY |
+| 112 | DROP |
 **Queue Domain (200–210):**
 | Value | Name |
 |---:|---|

@@ -9,6 +9,31 @@ pub(super) const KV_KEY_SCOPE_MARKER: u8 = 0x01;
 const KV_INVENTORY_SCOPE_MARKER: u8 = 0x02;
 
 impl KvActor {
+    /// Separate user-data and inventory ranges for one DROP scope.
+    pub(crate) fn drop_prefixes(scope: &crate::domains::kv::KvDropScope) -> [Vec<u8>; 2] {
+        use crate::domains::kv::KvDropTarget;
+
+        let build_prefix = |marker| {
+            let mut encoder =
+                storage_key::domain_marker_encoder(&scope.realm, DomainKeyspace::Kv, marker, 0);
+            match &scope.target {
+                KvDropTarget::Realm => {}
+                KvDropTarget::Area { area } => {
+                    storage_key::encode_bytes_segment_into(&mut encoder, area.as_bytes());
+                }
+                KvDropTarget::Resource { area, resource } => {
+                    storage_key::encode_bytes_segment_into(&mut encoder, area.as_bytes());
+                    storage_key::encode_bytes_segment_into(&mut encoder, resource.as_bytes());
+                }
+            }
+            encoder.into_vec()
+        };
+        [
+            build_prefix(KV_KEY_SCOPE_MARKER),
+            build_prefix(KV_INVENTORY_SCOPE_MARKER),
+        ]
+    }
+
     /// Resolve the column family from `RouteFamily`; resource isolation uses key prefixes.
     ///
     /// # Errors

@@ -56,6 +56,7 @@ A request is valid **only if**:
 
 **Valid Route Shapes:**
 
+- `kv://{realm}/*` (DROP only)
 - `kv://{realm}/{area}`
 - `kv://{realm}/{area}/{resource}`
 - `kv://{realm}/{area}/*`
@@ -74,13 +75,14 @@ A request is valid **only if**:
   | `INSERT` | `{realm}/{area}/{resource}` |
   | `DELETE` | `{realm}/{area}/{resource}` |
   | `DELETE_RANGE` | `{realm}/{area}/{resource}` |
+  | `DROP` | `{realm}/*`, `{realm}/{area}/*`, `{realm}/{area}/{resource}` |
   | `SCAN` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
   | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*/*` |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
   | `CREATE_BATCH` | broker extension; repeated canonical CREATE entries |
   | `COMMIT` | `{realm}/{area}/{resource}` |
   | `ROLLBACK` | `{realm}/{area}/{resource}` |
-  **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on data operations: BEGIN, GET, PUT, INSERT, DELETE, DELETE_RANGE, SCAN, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK.
+  **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on data operations: BEGIN, GET, PUT, INSERT, DELETE, DELETE_RANGE, DROP, SCAN, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK. DROP is standalone, requires an explicit persistence choice and full-scope write authorization, and accepts only the three listed scope shapes; see [KV DROP](kv.md#drop-request).
 
 ### Stream Domain
 

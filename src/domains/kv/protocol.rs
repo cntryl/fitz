@@ -5,6 +5,7 @@
 //! - Resource (table) isolation
 //! - Explicit `RouteFamily` → `ColumnFamily` mapping
 
+use super::KvDropScope;
 use crate::domains::CommitPersistence;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
@@ -43,6 +44,11 @@ impl KvResourceScope {
 /// KV operation request
 #[derive(Debug, Clone)]
 pub enum KvMessage {
+    /// Atomically delete all committed data and inventory in a selected scope.
+    Drop {
+        scope: KvDropScope,
+        persistence: CommitPersistence,
+    },
     /// Begin a transaction bound to a resource (table)
     Begin {
         scope: KvResourceScope,
@@ -107,7 +113,7 @@ pub enum KvMessage {
 
 impl KvMessage {
     #[must_use]
-    pub const fn scope(&self) -> &KvResourceScope {
+    pub const fn scope(&self) -> Option<&KvResourceScope> {
         match self {
             Self::Begin { scope, .. }
             | Self::Commit { scope, .. }
@@ -117,7 +123,24 @@ impl KvMessage {
             | Self::Insert { scope, .. }
             | Self::Delete { scope, .. }
             | Self::DeleteRange { scope, .. }
-            | Self::Scan { scope, .. } => scope,
+            | Self::Scan { scope, .. } => Some(scope),
+            Self::Drop { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn route_family(&self) -> RouteFamily {
+        match self {
+            Self::Drop { scope, .. } => scope.route_family,
+            Self::Begin { scope, .. }
+            | Self::Commit { scope, .. }
+            | Self::Rollback { scope, .. }
+            | Self::Get { scope, .. }
+            | Self::Put { scope, .. }
+            | Self::Insert { scope, .. }
+            | Self::Delete { scope, .. }
+            | Self::DeleteRange { scope, .. }
+            | Self::Scan { scope, .. } => scope.route_family,
         }
     }
 }
@@ -246,6 +269,8 @@ pub struct ScanQuery {
 /// KV operation response
 #[derive(Debug, Clone)]
 pub enum KvResponse {
+    /// Standalone scoped deletion committed successfully.
+    DropOk,
     /// Transaction began successfully with server-assigned ID
     BeginOk { tx_id: u64 },
 

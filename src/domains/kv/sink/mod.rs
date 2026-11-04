@@ -4,6 +4,7 @@ mod admin;
 mod cleanup;
 mod commands;
 mod delivery;
+mod drop_scope;
 mod inventory_repair;
 mod lifecycle;
 mod locks;

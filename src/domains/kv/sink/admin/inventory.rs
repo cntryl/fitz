@@ -232,15 +232,33 @@ impl KvFamilyRuntime<'_> {
         resource: &str,
         persist_empty: bool,
     ) -> Result<KvInventoryEstimate, String> {
+        // The admin façade runs outside the family actor. Keep its read/write
+        // refresh indivisible with respect to DROP so stale estimates cannot
+        // restore inventory entries after a successful deletion.
+        let deadline = crate::domains::kv::store::KvStore::write_admission_deadline();
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
             .map_err(|_| format!("invalid route family ID: {family_id}"))?;
         let column_family = KvActor::resolve_column_family(route_family)?;
+        let inventory_gate = self
+            .core
+            .store
+            .inventory_gate_for(column_family, deadline)
+            .map_err(|error| error.to_string())?;
+        let _inventory_guard = inventory_gate
+            .try_lock_until(deadline)
+            .ok_or_else(crate::domains::kv::store::KvStore::inventory_coordination_timeout)
+            .map_err(|error| error.to_string())?;
         let read_tx = self
             .core
             .store
             .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
         let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
+        let metadata_key = KvActor::inventory_metadata_key(realm, area, resource);
+        let metadata_exists = read_tx
+            .get(&metadata_key)
+            .map_err(|error| error.to_string())?
+            .is_some();
         let mut rows = Self::scan_scoped_prefix(
             &read_tx,
             &resource_prefix,
@@ -266,20 +284,20 @@ impl KvFamilyRuntime<'_> {
 
         drop(read_tx);
 
-        if persist_empty || estimate.estimated_record_count > 0 || !estimate.estimate_complete {
+        if (persist_empty && metadata_exists)
+            || estimate.estimated_record_count > 0
+            || !estimate.estimate_complete
+        {
             let mut write_tx = self
                 .core
                 .store
                 .begin(column_family, crate::domains::kv::TxMode::ReadWrite)
                 .map_err(|error| error.to_string())?;
             write_tx
-                .put(
-                    KvActor::inventory_metadata_key(realm, area, resource),
-                    encode_estimate(estimate),
-                )
+                .put(metadata_key, encode_estimate(estimate))
                 .map_err(|error| error.to_string())?;
             write_tx
-                .commit(self.core.sync_write_policy)
+                .commit_until(self.core.sync_write_policy, deadline)
                 .map_err(|error| error.to_string())?;
         }
 
@@ -330,5 +348,55 @@ impl KvFamilyRuntime<'_> {
             write_latency_p95_ms: 0.0,
             transactions_active: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domains::kv::sink::KvDomain;
+
+    #[test]
+    fn should_keep_dropped_inventory_absent_when_refresh_requests_an_empty_estimate() {
+        // Arrange
+        let sink = KvDomain::new(
+            crate::testkit::midge::create_in_memory_test_engine_with_cfs(&[1, 2]),
+            std::sync::Arc::new(crate::runtime::Router::new()),
+            crate::control::admin::read_model::AdminReadModel::new(),
+        );
+        let mut core = sink.admin_core();
+        let metadata_key = KvActor::inventory_metadata_key("acme", "jobs", "orders");
+        let mut tx = core
+            .store
+            .begin(1, crate::domains::kv::TxMode::ReadWrite)
+            .unwrap();
+        tx.put(metadata_key.clone(), b"old estimate".to_vec())
+            .unwrap();
+        tx.commit(crate::domains::WritePolicy::Sync).unwrap();
+        let scope = crate::domains::kv::KvDropScope::parse(
+            crate::runtime::routing::RouteFamily::new(1),
+            "kv://acme/*",
+        )
+        .unwrap();
+        core.store
+            .drop_scope(&scope, crate::domains::WritePolicy::Sync)
+            .unwrap();
+        let runtime = KvFamilyRuntime { core: &mut core };
+
+        // Act
+        let estimate = runtime
+            .refresh_inventory_estimate(1, "acme", "jobs", "orders", true)
+            .unwrap();
+        let persisted = runtime
+            .core
+            .store
+            .begin(1, crate::domains::kv::TxMode::ReadOnly)
+            .unwrap()
+            .get(&metadata_key)
+            .unwrap();
+
+        // Assert
+        assert_eq!(estimate.estimated_record_count, 0);
+        assert!(persisted.is_none());
     }
 }

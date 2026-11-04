@@ -70,6 +70,11 @@ impl KvActor {
 
     pub fn handle(&mut self, message: KvMessage) -> KvResponse {
         match message {
+            KvMessage::Drop { .. } => super::KvResponse::Error {
+                error: super::KvError::InvalidRequest(
+                    "DROP requires family-level write-lock coordination".to_string(),
+                ),
+            },
             KvMessage::Begin { scope, mode } => self.handle_begin(scope, mode),
             KvMessage::Commit {
                 tx_id,

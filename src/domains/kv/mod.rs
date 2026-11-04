@@ -10,7 +10,8 @@
 //! broker restart.
 //!
 //! It enforces:
-//! - All operations execute within a transaction
+//! - Data operations execute within a resource-scoped transaction
+//! - Standalone DROP commits scope-wide data and inventory deletion atomically
 //! - Transactions are scoped to a single resource (table)
 //! - Explicit `RouteFamily` -> `ColumnFamily` mapping (no default CF)
 //! - Original Midge transaction and snapshot retained during bounded write
@@ -24,6 +25,8 @@
 //! - `begin` - Start a transaction bound to `{resource}`
 //! - `commit` - Commit the active transaction
 //! - `rollback` - Abort the active transaction
+//! - `drop` - Delete a resource, an area's resources, or a realm's KV resources
+//!   with explicit persistence and no open transaction handle
 //!
 //! KV operations (require active transaction):
 //! - `get` - Retrieve value by key
@@ -51,6 +54,7 @@
 
 pub(crate) mod actor;
 mod admin_projection;
+mod drop_scope;
 mod inventory;
 pub(crate) mod metrics;
 mod protocol;
@@ -68,6 +72,7 @@ mod store;
 mod watch_registry;
 
 pub(crate) use actor::KvActor;
+pub use drop_scope::{KvDropScope, KvDropTarget};
 pub use protocol::{
     KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvError, KvMessage,
     KvNotification, KvPair, KvResourceScope, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,

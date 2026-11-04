@@ -198,6 +198,13 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
     ),
     server(111, "kv", Some("kv"), ManifestDecoder::Kv),
     client(
+        112,
+        "kv",
+        Some("kv"),
+        ManifestAuthorization::RouteWrite,
+        ManifestDecoder::Kv,
+    ),
+    client(
         200,
         "queue",
         Some("queue"),

@@ -85,7 +85,21 @@ pub(super) fn extract_auth_route_for_domain(
         .and_then(|route| {
             route
                 .map(|route| {
-                    let route = canonicalize_dispatch_route_str(domain, route)?;
+                    // DROP's realm/* shorthand selects every concrete KV
+                    // resource, so authorize realm/*/* at KV's depth of three.
+                    let route = if domain == DispatchDomain::Kv
+                        && msg_type == crate::protocol::kv_codec::msg_type::DROP
+                    {
+                        Cow::Owned(
+                            crate::domains::kv::KvDropScope::parse(
+                                crate::runtime::routing::RouteFamily::new(1),
+                                route,
+                            )?
+                            .authorization_route(),
+                        )
+                    } else {
+                        canonicalize_dispatch_route_str(domain, route)?
+                    };
                     if is_pattern_authorization_target(domain, msg_type, route.as_ref()) {
                         // Scheme, depth, and the exact-only rule all come from
                         // the domain descriptor, so ingress authorization and

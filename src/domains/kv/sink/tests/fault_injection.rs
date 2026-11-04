@@ -461,6 +461,20 @@ fn should_back_off_inventory_repair_retries_after_failure() {
         crate::control::admin::read_model::AdminReadModel::new(),
     );
     let scope = KvResourceScope::new(family, "acme", "app", "users");
+    // Repairs follow a committed data write, which persists an inventory marker.
+    let mut tx = sink
+        .config
+        .store
+        .begin(1, crate::domains::kv::TxMode::ReadWrite)
+        .unwrap();
+    tx.put(
+        crate::domains::kv::KvActor::inventory_metadata_key("acme", "app", "users"),
+        crate::domains::kv::inventory::encode_estimate(
+            crate::domains::kv::inventory::KvInventoryEstimate::default(),
+        ),
+    )
+    .unwrap();
+    tx.commit(crate::domains::WritePolicy::Sync).unwrap();
 
     // Act
     let pending_after_immediate_retry = sink.run_on_family_for_tests(family, move |runtime| {

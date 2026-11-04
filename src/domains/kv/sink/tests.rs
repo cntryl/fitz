@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 mod admin_row_errors;
 mod configuration;
 mod correctness;
+mod drop;
 mod fault_injection;
 mod lifecycle;
 mod metadata_inventory;

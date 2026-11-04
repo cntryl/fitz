@@ -2,7 +2,7 @@
 
 use crate::dispatch::wire::kv::KvError;
 use crate::dispatch::wire::kv::{
-    KvMessage, KvResourceScope, KvResponse, KvSubscriptionMessage, TxMode,
+    KvDropScope, KvMessage, KvResourceScope, KvResponse, KvSubscriptionMessage, TxMode,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadDecoder;
@@ -34,6 +34,7 @@ pub mod msg_type {
     pub const SUBSCRIBE: u16 = 109;
     pub const UNSUBSCRIBE: u16 = 110;
     pub const NOTIFY: u16 = 111;
+    pub const DROP: u16 = 112;
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +62,8 @@ pub fn parse_frame(
         | msg_type::INSERT
         | msg_type::DELETE
         | msg_type::DELETE_RANGE
-        | msg_type::SCAN => {
+        | msg_type::SCAN
+        | msg_type::DROP => {
             parse_request(ctx.msg_type.0, route_family, payload).map(ParsedKvFrame::Op)
         }
         msg_type::SUBSCRIBE => {
@@ -97,6 +99,13 @@ pub fn parse_request(
         msg_type::DELETE => parse_delete(route_family, payload),
         msg_type::DELETE_RANGE => parse_delete_range(route_family, payload),
         msg_type::SCAN => parse_scan(route_family, payload),
+        msg_type::DROP => {
+            let drop = decode_drop(route_family, payload)?;
+            Ok(KvMessage::Drop {
+                scope: drop.scope,
+                persistence: drop.persistence,
+            })
+        }
         _ => Err(format!("Unknown KV message type: {msg_type}")),
     }
 }
@@ -115,7 +124,7 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
             buf.put_u8(0); // status: success
             buf.put_u64(*subscription_id);
         }
-        KvResponse::UnsubscribeOk => {
+        KvResponse::DropOk | KvResponse::UnsubscribeOk => {
             buf.put_u8(0); // status: success
         }
         KvResponse::CommitOk => {
@@ -286,6 +295,7 @@ fn validate_route(route_str: &str) -> Result<(), String> {
 /// Returns an error if the payload is malformed for the given KV message type.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     match msg_type {
+        msg_type::DROP => Ok(Some(decode_drop(RouteFamily::new(1), payload)?.route)),
         msg_type::BEGIN => {
             let route_str = decode_begin(payload)?.route;
             validate_route(route_str)?;
@@ -319,6 +329,25 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         msg_type::NOTIFY => Err("KV_NOTIFY is server-to-client only".to_string()),
         _ => Err(format!("Unknown KV message type: {msg_type}")),
     }
+}
+
+struct DropFields<'a> {
+    route: &'a str,
+    scope: KvDropScope,
+    persistence: crate::domains::CommitPersistence,
+}
+
+fn decode_drop(route_family: RouteFamily, payload: &[u8]) -> Result<DropFields<'_>, String> {
+    let mut decoder = PayloadDecoder::new(payload);
+    let route = decoder.get_string_ref()?;
+    let scope = KvDropScope::parse(route_family, route)?;
+    let persistence = crate::domains::CommitPersistence::decode(decoder.get_u8()?)?;
+    ensure_complete(&decoder, "DROP")?;
+    Ok(DropFields {
+        route,
+        scope,
+        persistence,
+    })
 }
 
 fn parse_commit(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {

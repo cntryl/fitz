@@ -126,6 +126,16 @@ impl KvActor {
         scope: &KvResourceScope,
         write_policy: crate::domains::WritePolicy,
     ) -> Result<(), KvError> {
+        // A DROP can have applied even if its caller received an indeterminate
+        // storage error. Repairs may update an existing marker, never recreate
+        // one removed by that deletion. Data commits create their marker in
+        // the same transaction as the data, before a repair can be queued.
+        let tx = store.begin(column_family, TxMode::ReadOnly)?;
+        let key = Self::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
+        if tx.get(&key)?.is_none() {
+            return Ok(());
+        }
+        drop(tx);
         let mut delta = KvInventoryDelta::default();
         delta.mark_incomplete();
         Self::apply_inventory_delta(store, column_family, scope, &delta, write_policy)

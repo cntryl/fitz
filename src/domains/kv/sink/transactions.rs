@@ -51,7 +51,7 @@ impl KvFamilyRuntime<'_> {
                     &scope.resource,
                 ));
             }
-        } else {
+        } else if !matches!(&kv_message, KvMessage::Drop { .. }) {
             self.expire_idle_transactions_for_session(session_id);
         }
 

@@ -6,6 +6,8 @@ use std::sync::Arc;
 use super::{KvError, TxMode};
 use crate::domains::WritePolicy;
 
+mod drop_scope;
+mod inventory_coordination;
 mod write_admission;
 
 #[cfg(test)]
@@ -17,6 +19,7 @@ pub(crate) type CommitObserver = Arc<parking_lot::Mutex<Vec<cntryl_midge::WriteO
 #[derive(Clone)]
 pub(crate) struct KvStore {
     engine: crate::storage::FitzStorageEngine,
+    inventory_gates: Arc<inventory_coordination::InventoryGates>,
     #[cfg(test)]
     commit_observer: Option<CommitObserver>,
 }
@@ -34,6 +37,7 @@ impl KvStore {
     pub(crate) fn new(engine: Arc<cntryl_midge::Engine>) -> Self {
         Self {
             engine: crate::storage::FitzStorageEngine::new(engine),
+            inventory_gates: Arc::default(),
             #[cfg(test)]
             commit_observer: None,
         }
@@ -172,8 +176,28 @@ impl KvTransaction {
     }
 
     pub(crate) fn commit(self, policy: WritePolicy) -> Result<(), KvError> {
+        self.commit_with_admission_deadline(policy, None)
+    }
+
+    pub(crate) fn commit_until(
+        self,
+        policy: WritePolicy,
+        deadline: std::time::Instant,
+    ) -> Result<(), KvError> {
+        self.commit_with_admission_deadline(policy, Some(deadline))
+    }
+
+    fn commit_with_admission_deadline(
+        self,
+        policy: WritePolicy,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<(), KvError> {
         if self.has_mutations {
-            self.wait_for_write_admission()?;
+            if let Some(deadline) = deadline {
+                self.wait_for_write_admission_until(deadline)?;
+            } else {
+                self.wait_for_write_admission()?;
+            }
         }
         let options = policy.into();
         #[cfg(test)]

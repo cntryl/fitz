@@ -8,4 +8,6 @@ pub use frame_and_routes::{
 pub use mutation_parsers::{encode_notify, SCAN_OPTION_REVERSE, SCAN_OPTION_START_EXCLUSIVE};
 
 #[cfg(test)]
+mod drop_tests;
+#[cfg(test)]
 mod tests;
