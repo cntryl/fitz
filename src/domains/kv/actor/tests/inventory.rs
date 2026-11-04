@@ -320,23 +320,6 @@ fn should_skip_redundant_incomplete_inventory_writes() {
 }
 
 #[test]
-pub(super) fn should_encode_kv_scope_prefix_with_typed_segments() {
-    // Arrange
-    let expected = {
-        let mut bytes = b"acme\0kv\0".to_vec();
-        bytes.push(KV_KEY_SCOPE_MARKER);
-        bytes.extend_from_slice(b"users\0profiles\0");
-        bytes
-    };
-
-    // Act
-    let prefix = key_layout::realm_resource_prefix("acme", "users", "profiles");
-
-    // Assert
-    assert_eq!(prefix, expected);
-}
-
-#[test]
 fn should_queue_inventory_repair_when_estimate_update_fails_after_commit() {
     // Arrange
     let mut actor = test_actor();

@@ -5,7 +5,6 @@ use super::state::{
     KvAdminTransactionUpdate, KvCommitNotification, KvFamilyRuntime, KvOperationOutcome,
 };
 use crate::domains::kv::{KvError, KvResponse};
-use crate::runtime::SessionScoped as _;
 use crate::runtime::{DeliveryError, Envelope};
 
 impl KvFamilyRuntime<'_> {
@@ -18,17 +17,6 @@ impl KvFamilyRuntime<'_> {
         kv_message: crate::domains::kv::KvMessage,
     ) -> Result<(), DeliveryError> {
         use crate::domains::kv::{KvMessage, TxMode};
-        if Self::kv_message_family(&kv_message) != meta.route_family {
-            let response = Self::error_response("route family mismatch");
-            self.route_kv_response(envelope, meta, &response, request_started)?;
-            return Ok(());
-        }
-        if self.is_cleaned_up_request(meta.session_id, envelope) {
-            let response = Self::error_response("session already closed");
-            self.route_kv_response(envelope, meta, &response, request_started)?;
-            return Ok(());
-        }
-
         let session_id = meta.session_id;
         let read_tx_id = match &kv_message {
             KvMessage::Get { tx_id, .. } | KvMessage::Scan { tx_id, .. } => Some(*tx_id),
@@ -68,8 +56,7 @@ impl KvFamilyRuntime<'_> {
             admin_update,
             commit_notification,
         } = self.dispatch_actor_operation(session_id, meta, kv_message);
-        self.collect_inventory_repairs(session_id);
-        self.retry_inventory_repairs();
+        self.repair_inventory_after_operation(session_id);
         if matches!(
             &response,
             KvResponse::Error {

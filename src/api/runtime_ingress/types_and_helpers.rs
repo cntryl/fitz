@@ -64,13 +64,6 @@ pub(super) fn dispatch_session_cleanup_for_domains(
     failed_domains
 }
 
-pub(super) fn canonicalize_dispatch_route_str(
-    domain: DispatchDomain,
-    route: &str,
-) -> Result<Cow<'_, str>, String> {
-    RuntimeIngress::canonicalize_domain_route_str(domain, route)
-}
-
 pub(super) fn extract_auth_route_for_domain(
     domain: DispatchDomain,
     msg_type: u16,
@@ -80,27 +73,18 @@ pub(super) fn extract_auth_route_for_domain(
         crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         );
-    descriptor
-        .extract_auth_route(msg_type, payload)
-        .and_then(|route| {
-            route
-                .map(|route| {
-                    let route =
-                        RuntimeIngress::canonicalize_operation_route_str(domain, msg_type, route)?;
-                    if is_pattern_authorization_target(domain, msg_type, route.as_ref()) {
-                        // Scheme, depth, and the exact-only rule all come from
-                        // the domain descriptor, so ingress authorization and
-                        // the domain sink cannot accept different pattern
-                        // languages (routing-design.md §4).
-                        domain
-                            .descriptor()
-                            .compile_registration_pattern(route.as_ref())?;
-                        return Ok(route);
-                    }
-                    Ok(route)
-                })
-                .transpose()
-        })
+    let Some(route) = descriptor.extract_auth_route(msg_type, payload)? else {
+        return Ok(None);
+    };
+    if is_pattern_authorization_target(domain, msg_type, route.as_ref()) {
+        // Scheme, depth, and the exact-only rule all come from the domain
+        // descriptor, so ingress authorization and the domain sink cannot
+        // accept different pattern languages (routing-design.md §4).
+        domain
+            .descriptor()
+            .compile_registration_pattern(route.as_ref())?;
+    }
+    Ok(Some(route))
 }
 
 pub(super) fn is_subscription_registration_message(domain: DispatchDomain, msg_type: u16) -> bool {

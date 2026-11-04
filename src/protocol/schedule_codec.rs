@@ -52,10 +52,13 @@ pub fn parse_request(
 ///
 /// Returns an error when the payload is malformed, has trailing data, or the
 /// message type is unsupported for schedule authorization extraction.
-pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+pub fn extract_auth_route(
+    msg_type: u16,
+    payload: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, str>>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
-    match msg_type {
+    let route = match msg_type {
         700 => {
             let route = dec.get_string_ref()?;
             dec.get_string_ref()?;
@@ -91,13 +94,22 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             Ok(None)
         }
         _ => Err(format!("Unknown operation: {msg_type}")),
-    }
+    }?;
+    route.map(canonical_auth_route).transpose()
+}
+
+fn canonical_auth_route(route: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    crate::protocol::auth_route::canonicalize(
+        "schedule",
+        route,
+        crate::dispatch::wire::schedule::canonical_auth_route,
+    )
 }
 
 /// # Errors
 ///
 /// Returns an error when the batch payload is malformed or contains trailing data.
-pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<&str>, String> {
+pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<std::borrow::Cow<'_, str>>, String> {
     let mut dec = PayloadDecoder::new(payload);
     let entry_count = dec.get_u32()? as usize;
     let mut routes = Vec::with_capacity(entry_count.min(256));
@@ -114,7 +126,7 @@ pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<&str>, String> {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(routes)
+    routes.into_iter().map(canonical_auth_route).collect()
 }
 
 /// Encode a domain response payload.
@@ -498,7 +510,7 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(parsed_route, Some(route));
+        assert_eq!(parsed_route.as_deref(), Some(route));
         assert_eq!(response, [0, 1, 0, 0, 0, 0, 0, 0, 0, 7]);
         assert_eq!(
             notification,
@@ -519,7 +531,7 @@ mod tests {
         // Arrange
         let mut enc = PayloadEncoder::new();
         enc.put_u32(2);
-        enc.put_string("schedule://acme/jobs/backup/run");
+        enc.put_string("acme/jobs/backup/run");
         enc.put_string("0 2 * * *");
         enc.put_u8(ScheduleDeliveryMode::Broadcast as u8);
         enc.put_bytes(b"backup");
@@ -536,6 +548,39 @@ mod tests {
         assert_eq!(routes.len(), 2);
         assert_eq!(routes[0], "schedule://acme/jobs/backup/run");
         assert_eq!(routes[1], "schedule://acme/jobs/report/run");
+    }
+
+    #[test]
+    fn should_reject_schedule_batch_if_any_authorization_route_uses_a_foreign_scheme() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_u32(2);
+        for route in [
+            "schedule://acme/jobs/backup/run",
+            "notice://acme/jobs/report/run",
+        ] {
+            enc.put_string(route);
+            enc.put_string("0 2 * * *");
+            enc.put_u8(ScheduleDeliveryMode::Broadcast as u8);
+            enc.put_bytes(b"job");
+        }
+        let payload = enc.finish();
+
+        // Act
+        let routes = extract_batch_auth_routes(&payload);
+
+        // Assert
+        assert!(routes.is_err());
+    }
+
+    #[test]
+    fn should_keep_schedule_list_authorization_without_a_route() {
+        // Arrange
+        let payload = [];
+        // Act
+        let route = super::extract_auth_route(702, &payload).unwrap();
+        // Assert
+        assert!(route.is_none());
     }
 
     #[test]

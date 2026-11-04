@@ -13,6 +13,11 @@ use crate::domains::kv::KvActor;
 const INVENTORY_REPAIR_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl KvFamilyRuntime<'_> {
+    pub(super) fn repair_inventory_after_operation(&mut self, session_id: u64) {
+        self.collect_inventory_repairs(session_id);
+        self.retry_inventory_repairs();
+    }
+
     /// Move a session actor's failed estimate updates into family state.
     pub(super) fn collect_inventory_repairs(&mut self, session_id: u64) {
         let repairs = self

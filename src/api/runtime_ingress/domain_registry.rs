@@ -2,10 +2,9 @@ use super::{AuthorizationPolicy, DispatchDomain, DomainAuthorizationSpec};
 #[cfg(test)]
 use super::{Bytes, ChannelId};
 
-type AuthRouteExtractor = for<'a> fn(u16, &'a [u8]) -> Result<Option<&'a str>, String>;
+type AuthRouteExtractor =
+    for<'a> fn(u16, &'a [u8]) -> Result<Option<std::borrow::Cow<'a, str>>, String>;
 type AuthRouteCanonicalizer = for<'a> fn(&'a str) -> Result<std::borrow::Cow<'a, str>, String>;
-type OperationAuthRouteCanonicalizer =
-    for<'a> fn(u16, &'a str) -> Result<std::borrow::Cow<'a, str>, String>;
 type RequestEnvelopeBuilder = fn(
     crate::runtime::DomainKind,
     crate::dispatch::DomainEnvelopeBuildRequest,
@@ -40,7 +39,6 @@ pub(crate) struct IngressDomainDescriptor {
     pub(super) backpressure_error_code: u16,
     extract_auth_route: AuthRouteExtractor,
     canonical_auth_route: AuthRouteCanonicalizer,
-    canonical_operation_auth_route: Option<OperationAuthRouteCanonicalizer>,
     build_request_envelope: RequestEnvelopeBuilder,
     /// Messages whose route is a retained registration pattern
     /// (`SUBSCRIBE`/`UNSUBSCRIBE`/`WATCH`/`REGISTER`) or a one-shot patterned
@@ -79,7 +77,7 @@ impl IngressDomainDescriptor {
         &self,
         msg_type: u16,
         payload: &'a [u8],
-    ) -> Result<Option<&'a str>, String> {
+    ) -> Result<Option<std::borrow::Cow<'a, str>>, String> {
         (self.extract_auth_route)(msg_type, payload)
     }
 
@@ -89,19 +87,6 @@ impl IngressDomainDescriptor {
         route: &'a str,
     ) -> Result<std::borrow::Cow<'a, str>, String> {
         (self.canonical_auth_route)(route)
-    }
-
-    /// Requests may have operation-specific selectors; permission grants keep
-    /// using the domain's existing canonical route grammar.
-    pub(super) fn canonical_operation_auth_route<'a>(
-        &self,
-        message_type: u16,
-        route: &'a str,
-    ) -> Result<std::borrow::Cow<'a, str>, String> {
-        self.canonical_operation_auth_route.map_or_else(
-            || self.canonical_auth_route(route),
-            |canonicalize| canonicalize(message_type, route),
-        )
     }
 
     pub(super) fn is_pattern_registration(&self, msg_type: u16) -> bool {
@@ -185,9 +170,6 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         unavailable_error_code: crate::protocol::error_codes::kv::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::kv_codec::extract_auth_route,
         canonical_auth_route: crate::domains::kv::canonical_auth_route,
-        canonical_operation_auth_route: Some(
-            crate::protocol::kv_codec::canonical_operation_auth_route,
-        ),
         build_request_envelope: crate::dispatch::build_request_envelope,
         pattern_registration_message_ids: &[109, 110],
         wildcard_selector_message_ids: &[112],
@@ -202,7 +184,6 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         unavailable_error_code: crate::protocol::error_codes::queue::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
         canonical_auth_route: crate::domains::queue::canonical_auth_route,
-        canonical_operation_auth_route: None,
         build_request_envelope: crate::dispatch::build_request_envelope,
         pattern_registration_message_ids: &[207, 208],
         wildcard_selector_message_ids: &[202],
@@ -217,7 +198,6 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         unavailable_error_code: crate::protocol::error_codes::notice::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::notice_codec::extract_auth_route,
         canonical_auth_route: crate::domains::notice::canonical_auth_route,
-        canonical_operation_auth_route: None,
         build_request_envelope: crate::dispatch::build_request_envelope,
         pattern_registration_message_ids: &[501],
         wildcard_selector_message_ids: &[],
@@ -232,7 +212,6 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         unavailable_error_code: crate::protocol::error_codes::stream::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::stream_codec::extract_auth_route,
         canonical_auth_route: crate::domains::stream::canonical_auth_route,
-        canonical_operation_auth_route: None,
         build_request_envelope: crate::dispatch::build_request_envelope,
         pattern_registration_message_ids: &[607, 608],
         wildcard_selector_message_ids: &[604],
@@ -247,7 +226,6 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         unavailable_error_code: crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
         canonical_auth_route: crate::domains::rpc::canonical_auth_route,
-        canonical_operation_auth_route: None,
         build_request_envelope: crate::dispatch::build_request_envelope,
         pattern_registration_message_ids: &[300, 301],
         wildcard_selector_message_ids: &[],
@@ -262,7 +240,6 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         unavailable_error_code: crate::protocol::error_codes::lease::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
         canonical_auth_route: crate::domains::lease::canonical_auth_route,
-        canonical_operation_auth_route: None,
         build_request_envelope: crate::dispatch::build_request_envelope,
         pattern_registration_message_ids: &[407, 408, 410],
         wildcard_selector_message_ids: &[],
@@ -277,7 +254,6 @@ const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
         unavailable_error_code: crate::protocol::error_codes::schedule::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
         canonical_auth_route: crate::domains::schedule::canonical_auth_route,
-        canonical_operation_auth_route: None,
         build_request_envelope: crate::dispatch::build_request_envelope,
         pattern_registration_message_ids: &[703, 704],
         wildcard_selector_message_ids: &[],

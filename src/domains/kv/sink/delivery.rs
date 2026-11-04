@@ -42,6 +42,11 @@ impl KvFamilyRuntime<'_> {
             return Ok(());
         };
 
+        if parsed_frame.route_family() != meta.route_family {
+            let response = Self::error_response("route family mismatch");
+            return self.route_kv_response(envelope, meta, &response, request_started);
+        }
+
         match parsed_frame {
             KvClientFrame::Sub(sub_msg) => {
                 self.handle_subscription_frame(envelope, meta, request_started, sub_msg)

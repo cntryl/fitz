@@ -22,16 +22,10 @@ impl KvFamilyRuntime<'_> {
         request_started: std::time::Instant,
         request: &crate::domains::kv::KvDropRequest,
     ) -> Result<(), DeliveryError> {
-        if request.scope.route_family != meta.route_family {
-            let response = Self::error_response("route family mismatch");
-            return self.route_kv_response(envelope, meta, &response, request_started);
-        }
-
         // DROP is family work, not a session transaction operation. In
         // particular it must not expire the caller's overlapping idle writer.
         let response = self.handle_drop_scope(&request.scope, request.persistence);
-        self.collect_inventory_repairs(meta.session_id);
-        self.retry_inventory_repairs();
+        self.repair_inventory_after_operation(meta.session_id);
         self.route_kv_response(envelope, meta, &response, request_started)
     }
 

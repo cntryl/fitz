@@ -85,6 +85,28 @@ fn should_encode_drop_success_as_an_empty_ack() {
 }
 
 #[test]
+fn should_canonicalize_every_drop_scope_for_authorization() {
+    // Arrange
+    let cases = [
+        ("acme/*", "kv://acme/*/*"),
+        ("kv://acme/app/*", "kv://acme/app/*"),
+        ("acme/app/orders", "kv://acme/app/orders"),
+    ];
+
+    // Act
+    let routes = cases.map(|(route, expected)| {
+        let bytes = payload(route, &[1]);
+        let actual = extract_auth_route(msg_type::DROP, &bytes).unwrap().unwrap();
+        (actual.into_owned(), expected)
+    });
+
+    // Assert
+    for (actual, expected) in routes {
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
 fn should_reject_drop_with_unsupported_selector_shapes() {
     // Arrange
     let routes = [

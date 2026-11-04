@@ -113,7 +113,7 @@ fn should_preserve_rpc_wire_golden_vectors() {
     );
 
     // Assert
-    assert_eq!(parsed_route, Some("rpc://r/a/x"));
+    assert_eq!(parsed_route.as_deref(), Some("rpc://r/a/x"));
     assert_eq!(
         delivery,
         [
@@ -216,7 +216,7 @@ fn should_parse_request_with_remaining_budget() {
     assert!(matches!(parsed_request, RpcMessage::Request(parsed)
         if parsed.correlation_id == request.correlation_id
             && parsed.route == route && parsed.body == request.body));
-    assert_eq!(auth_route, Some(route.as_str()));
+    assert_eq!(auth_route.as_deref(), Some(route.as_str()));
 }
 
 #[test]

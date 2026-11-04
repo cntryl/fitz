@@ -20,8 +20,7 @@ use std::borrow::Cow;
 use tracing::{debug, info, trace, warn};
 
 use types_and_helpers::{
-    canonicalize_dispatch_route_str, dispatch_session_cleanup,
-    dispatch_session_cleanup_for_domains, extract_auth_route_for_domain,
+    dispatch_session_cleanup, dispatch_session_cleanup_for_domains, extract_auth_route_for_domain,
     is_pattern_authorization_target, is_subscription_registration_message, AuthorizationFailure,
     AuthorizationPolicy, AuthorizationTargets, DomainAuthorizationSpec, DomainDispatchPayload,
     DomainDispatchRequest, PendingSessionCleanup,

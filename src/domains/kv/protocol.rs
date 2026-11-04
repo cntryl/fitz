@@ -178,6 +178,20 @@ pub enum KvClientFrame {
     Drop(KvDropRequest),
 }
 
+impl KvClientFrame {
+    #[must_use]
+    pub const fn route_family(&self) -> RouteFamily {
+        match self {
+            Self::Op(message) => message.route_family(),
+            Self::Sub(
+                KvSubscriptionMessage::Subscribe { family_id, .. }
+                | KvSubscriptionMessage::Unsubscribe { family_id, .. },
+            ) => *family_id,
+            Self::Drop(request) => request.scope.route_family,
+        }
+    }
+}
+
 /// Typed KV response to be encoded at the transport edge.
 #[derive(Debug, Clone)]
 pub struct KvClientResponse {

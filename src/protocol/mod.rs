@@ -10,6 +10,7 @@
 //!
 //! This layer is transport-agnostic and contains no Tokio, no routing, no domain logic.
 
+pub(crate) mod auth_route;
 pub mod error_codes;
 pub mod frame;
 pub mod frame_context;

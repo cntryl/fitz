@@ -69,10 +69,13 @@ pub fn parse_request(
 ///
 /// Returns an error when the payload is malformed, has trailing data, or the
 /// message type is unsupported for stream authorization extraction.
-pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+pub fn extract_auth_route(
+    msg_type: u16,
+    payload: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, str>>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
-    match msg_type {
+    let route = match msg_type {
         600 => {
             let route = dec.get_string_ref()?;
             dec.skip_optional_bytes()?;
@@ -131,7 +134,16 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             Ok(Some(route))
         }
         _ => Err(format!("Unknown operation: {msg_type}")),
-    }
+    }?;
+    route
+        .map(|route| {
+            crate::protocol::auth_route::canonicalize(
+                "stream",
+                route,
+                crate::dispatch::wire::stream::canonical_auth_route,
+            )
+        })
+        .transpose()
 }
 
 /// Encode a domain response payload.

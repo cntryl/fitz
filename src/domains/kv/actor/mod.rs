@@ -20,8 +20,6 @@ mod snapshot;
 mod transaction_access;
 mod transactions;
 
-#[cfg(test)]
-use crate::domains::kv::key_layout::KV_KEY_SCOPE_MARKER;
 use inventory_delta::KvInventoryDelta;
 #[cfg(test)]
 use scan::MAX_SCAN_ITEMS;

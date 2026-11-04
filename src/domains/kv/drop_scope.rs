@@ -89,22 +89,26 @@ impl KvDropScope {
 fn parse_selector(route: &str) -> Result<(String, KvDropTarget), String> {
     crate::utils::route_shape::validate_route_shape(route)?;
     let path = route.strip_prefix("kv://").unwrap_or(route);
-    let parts = path.split('/').collect::<Vec<_>>();
-    let (realm, target) = match parts.as_slice() {
-        [realm, "*"] => (*realm, KvDropTarget::Realm),
-        [realm, area, "*"] if !area.contains('*') => (
-            *realm,
+    let mut parts = path.split('/');
+    let (realm, target) = match [parts.next(), parts.next(), parts.next(), parts.next()] {
+        [Some(realm), Some("*"), None, None] => (realm, KvDropTarget::Realm),
+        [Some(realm), Some(area), Some("*"), None] if !area.contains('*') => (
+            realm,
             KvDropTarget::Area {
-                area: (*area).to_string(),
+                area: area.to_string(),
             },
         ),
-        [realm, area, resource] if !area.contains('*') && !resource.contains('*') => (
-            *realm,
-            KvDropTarget::Resource {
-                area: (*area).to_string(),
-                resource: (*resource).to_string(),
-            },
-        ),
+        [Some(realm), Some(area), Some(resource), None]
+            if !area.contains('*') && !resource.contains('*') =>
+        {
+            (
+                realm,
+                KvDropTarget::Resource {
+                    area: area.to_string(),
+                    resource: resource.to_string(),
+                },
+            )
+        }
         _ => return Err("DROP requires realm/*, realm/area/*, or realm/area/resource".to_string()),
     };
     validate_selector(realm, &target)?;
@@ -122,9 +126,24 @@ fn validate_selector(realm: &str, target: &KvDropTarget) -> Result<(), String> {
     if !valid_target {
         return Err("DROP area and resource must be literal non-empty segments".to_string());
     }
-    crate::runtime::DomainKind::Kv
-        .descriptor()
-        .compile_registration_pattern(&authorization_route(realm, target))?;
+    let (area, resource) = match target {
+        KvDropTarget::Realm => ("*", "*"),
+        KvDropTarget::Area { area } => (area.as_str(), "*"),
+        KvDropTarget::Resource { area, resource } => (area.as_str(), resource.as_str()),
+    };
+    if crate::utils::route_shape::contains_control_character(area)
+        || crate::utils::route_shape::contains_control_character(resource)
+    {
+        return Err("route must not contain control characters".to_string());
+    }
+    // The selector's three authorization segments already enforce KV's depth
+    // and whole-segment wildcard grammar. Check its rendered byte bound without
+    // allocating a route and a compiled pattern that would both be discarded.
+    let route_bytes = "kv://".len() + realm.len() + 1 + area.len() + 1 + resource.len();
+    let maximum = crate::utils::route_shape::MAX_ROUTE_BYTES;
+    if route_bytes > maximum {
+        return Err(format!("route exceeds maximum length of {maximum} bytes"));
+    }
     Ok(())
 }
 
@@ -156,6 +175,13 @@ mod tests {
                 area: "app".into(),
                 resource: "\0".into(),
             },
+            KvDropTarget::Area {
+                area: "app\u{85}".into(),
+            },
+            KvDropTarget::Resource {
+                area: "app".into(),
+                resource: "rows\n".into(),
+            },
         ];
 
         // Act
@@ -170,6 +196,97 @@ mod tests {
 
         // Assert
         assert!(results.iter().all(Result::is_err));
+    }
+
+    #[test]
+    fn should_preserve_literal_drop_selector_grammar() {
+        // Arrange
+        let routes = [
+            ("kv://acme/*", true),
+            ("acme/app/*", true),
+            ("kv://Åcme_2/my area/café?raw#1", true),
+            ("queue://acme/app/rows", false),
+            ("kv://acme/app/rows/extra", false),
+            ("kv://acme/*/rows", false),
+            ("kv://acme/**", false),
+            ("kv://acme/app/row*", false),
+            ("kv://acme//rows", false),
+            ("kv://acme/app/", false),
+            ("kv://acme/a\0b/rows", false),
+        ];
+
+        // Act
+        let results = routes.map(|(route, expected)| {
+            (
+                route,
+                KvDropScope::parse(RouteFamily::new(41), route),
+                KvDropScope::canonical_authorization_route(route),
+                expected,
+            )
+        });
+
+        // Assert
+        for (route, parsed, canonical, expected) in results {
+            assert_eq!(parsed.is_ok(), expected, "{route:?}");
+            assert_eq!(canonical.is_ok(), expected, "{route:?}");
+        }
+    }
+
+    #[test]
+    fn should_bound_drop_selectors_by_canonical_route_bytes() {
+        // Arrange
+        let maximum = crate::utils::route_shape::MAX_ROUTE_BYTES;
+        let resource = "r".repeat(maximum - "kv://acme/app/".len());
+        let realm = "r".repeat(maximum - "kv:///*/*".len());
+        let routes = [
+            (format!("kv://acme/app/{resource}"), true),
+            (format!("acme/app/{resource}"), true),
+            (format!("kv://acme/app/{resource}x"), false),
+            (format!("acme/app/{resource}x"), false),
+            (format!("kv://{realm}/*"), true),
+            (format!("kv://{realm}x/*"), false),
+        ];
+
+        // Act
+        let results = routes.map(|(route, expected)| {
+            (
+                KvDropScope::parse(RouteFamily::new(41), &route).is_ok(),
+                KvDropScope::canonical_authorization_route(&route).is_ok(),
+                expected,
+            )
+        });
+
+        // Assert
+        for (parsed, canonical, expected) in results {
+            assert_eq!(parsed, expected);
+            assert_eq!(canonical, expected);
+        }
+    }
+
+    #[test]
+    fn should_bound_typed_drop_scopes_by_canonical_route_bytes() {
+        // Arrange
+        let maximum = crate::utils::route_shape::MAX_ROUTE_BYTES;
+        let mut scope = KvDropScope {
+            route_family: RouteFamily::new(41),
+            realm: "acme".into(),
+            target: KvDropTarget::Resource {
+                area: "app".into(),
+                resource: "r".repeat(maximum - "kv://acme/app/".len()),
+            },
+        };
+
+        // Act
+        let at_limit = scope.validate();
+        let KvDropTarget::Resource { resource, .. } = &mut scope.target else {
+            unreachable!()
+        };
+        resource.push('x');
+        let over_limit = scope.validate();
+
+        // Assert
+        assert!(at_limit.is_ok());
+        assert!(over_limit.is_err());
     }
 
     #[test]

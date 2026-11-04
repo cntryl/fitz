@@ -1,10 +1,7 @@
 //! Standalone DROP frames retain family and session-lifecycle validation.
 
 use super::*;
-use crate::domains::kv::{
-    KvActor, KvClientFrame, KvClientRequest, KvDropRequest, KvDropScope, KvMessage, KvResponse,
-    TxMode,
-};
+use crate::domains::kv::{KvClientFrame, KvClientRequest, KvDropRequest, KvDropScope};
 use crate::domains::CommitPersistence;
 
 const ROUTE: &str = "kv://acme/app/rows";
@@ -35,31 +32,12 @@ impl Fixture {
     }
 
     fn seed(&self, family: RouteFamily) {
-        let scope = KvResourceScope::new(family, "acme", "app", "rows");
-        let mut actor = KvActor::new(self.sink.config.store.clone());
-        let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
-            scope: scope.clone(),
-            mode: TxMode::ReadWrite,
-        }) else {
-            panic!("seed transaction must begin")
-        };
-        assert!(matches!(
-            actor.handle(KvMessage::Put {
-                tx_id,
-                scope: scope.clone(),
-                key: Bytes::from_static(b"key"),
-                value: Bytes::from_static(b"value"),
-            }),
-            KvResponse::PutOk
-        ));
-        assert!(matches!(
-            actor.handle(KvMessage::Commit {
-                tx_id,
-                scope,
-                persistence: CommitPersistence::Sync
-            }),
-            KvResponse::CommitOk
-        ));
+        commit_value(
+            self.sink.config.store.clone(),
+            KvResourceScope::new(family, "acme", "app", "rows"),
+            b"key",
+            b"value",
+        );
     }
 
     fn drop_frame(&self, decoded_family: RouteFamily) -> Envelope {

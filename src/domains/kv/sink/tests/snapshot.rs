@@ -2,38 +2,6 @@ use super::*;
 use crate::domains::kv::key_layout;
 use crate::domains::kv::KvResponse;
 
-fn commit_value(
-    store: crate::domains::kv::store::KvStore,
-    scope: KvResourceScope,
-    key: &'static [u8],
-    value: &'static [u8],
-) {
-    let mut actor = crate::domains::kv::KvActor::new(store);
-    let KvResponse::BeginOk { tx_id } = actor.handle(crate::domains::kv::KvMessage::Begin {
-        scope: scope.clone(),
-        mode: crate::domains::kv::TxMode::ReadWrite,
-    }) else {
-        panic!("begin KV transaction");
-    };
-    assert!(matches!(
-        actor.handle(crate::domains::kv::KvMessage::Put {
-            tx_id,
-            scope: scope.clone(),
-            key: Bytes::copy_from_slice(key),
-            value: Bytes::copy_from_slice(value),
-        }),
-        KvResponse::PutOk
-    ));
-    assert!(matches!(
-        actor.handle(crate::domains::kv::KvMessage::Commit {
-            tx_id,
-            scope,
-            persistence: crate::domains::CommitPersistence::Sync,
-        }),
-        KvResponse::CommitOk
-    ));
-}
-
 #[test]
 fn should_capture_committed_values_from_one_exact_kv_resource() {
     // Arrange
