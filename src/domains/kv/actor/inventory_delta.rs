@@ -7,6 +7,7 @@
 
 use super::KvActor;
 use crate::domains::kv::inventory::encode_estimate;
+use crate::domains::kv::key_layout;
 use crate::domains::kv::{KvError, KvResourceScope, TxMode};
 use std::collections::HashMap;
 
@@ -42,7 +43,7 @@ impl KvActor {
     pub(super) fn mark_inventory_incomplete_in_transaction(
         active: &mut super::ActiveKvTx,
     ) -> Result<(), KvError> {
-        let key = Self::inventory_metadata_key(
+        let key = key_layout::inventory_metadata_key(
             &active.scope.realm,
             &active.scope.area,
             &active.scope.resource,
@@ -81,7 +82,7 @@ impl KvActor {
             return Ok(());
         }
 
-        let key = Self::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
+        let key = key_layout::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
         let mut tx = store.begin(column_family, TxMode::ReadWrite)?;
         // Every mutating data commit creates its inventory marker atomically.
         // An absent marker means DROP has retired this companion update.

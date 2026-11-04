@@ -1,6 +1,7 @@
 //! Transaction-scoped GET and mutation operations.
 
 use super::KvActor;
+use crate::domains::kv::key_layout;
 use crate::domains::kv::{KvError, KvResourceScope, KvResponse};
 use bytes::Bytes;
 
@@ -16,7 +17,7 @@ impl KvActor {
             Err(error) => return error,
         };
 
-        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
+        let scoped_key = key_layout::encode_scoped_key(&active.scoped_prefix, key);
         match active.tx.get(&scoped_key) {
             Ok(Some(value)) => KvResponse::GetResult {
                 found: true,
@@ -45,7 +46,7 @@ impl KvActor {
             return response;
         }
 
-        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
+        let scoped_key = key_layout::encode_scoped_key(&active.scoped_prefix, key);
         match active.tx.put(scoped_key, value.to_vec()) {
             Ok(()) => {
                 active.mutation_count = active.mutation_count.saturating_add(1);
@@ -71,7 +72,7 @@ impl KvActor {
             return response;
         }
 
-        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
+        let scoped_key = key_layout::encode_scoped_key(&active.scoped_prefix, key);
         match active.tx.get(&scoped_key) {
             Ok(Some(_)) => KvResponse::Error {
                 error: KvError::AlreadyExists,
@@ -104,7 +105,7 @@ impl KvActor {
             return response;
         }
 
-        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
+        let scoped_key = key_layout::encode_scoped_key(&active.scoped_prefix, key);
         match active.tx.delete(scoped_key) {
             Ok(()) => {
                 active.mutation_count = active.mutation_count.saturating_add(1);
@@ -135,8 +136,8 @@ impl KvActor {
             };
         }
 
-        let scoped_start = Self::encode_scoped_key(&active.scoped_prefix, start);
-        let scoped_end = Self::encode_scoped_key(&active.scoped_prefix, end);
+        let scoped_start = key_layout::encode_scoped_key(&active.scoped_prefix, start);
+        let scoped_end = key_layout::encode_scoped_key(&active.scoped_prefix, end);
         match active.tx.delete_range(scoped_start, scoped_end) {
             Ok(()) => {
                 active.mutation_count = active.mutation_count.saturating_add(1);

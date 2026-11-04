@@ -13,5 +13,5 @@ fn should_expose_scope_for_every_kv_message_variant() {
     let actual = message.scope();
 
     // Assert
-    assert_eq!(actual, Some(&scope));
+    assert_eq!(actual, &scope);
 }

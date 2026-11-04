@@ -30,11 +30,6 @@ impl KvFamilyRuntime<'_> {
             return self.handle_begin_read_write(session_id, &lock_key, kv_message);
         }
         match kv_message {
-            KvMessage::Drop { scope, persistence } => KvOperationOutcome::new(
-                self.handle_drop_scope(&scope, persistence),
-                KvAdminTransactionUpdate::None,
-                None,
-            ),
             message @ KvMessage::Commit { tx_id, .. } => {
                 self.handle_commit_frame(session_id, meta.route_family, tx_id, message)
             }
@@ -108,6 +103,9 @@ impl KvFamilyRuntime<'_> {
                 }
                 crate::dispatch::protocol::kv::ParsedKvFrame::Sub(message) => {
                     KvClientFrame::Sub(message)
+                }
+                crate::dispatch::protocol::kv::ParsedKvFrame::Drop(request) => {
+                    KvClientFrame::Drop(request)
                 }
             });
             Some(KvClientRequest::new(meta, parsed))

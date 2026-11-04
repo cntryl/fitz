@@ -2,16 +2,17 @@
 
 use super::*;
 use crate::domains::kv::inventory::{encode_estimate, KvInventoryEstimate};
+use crate::domains::kv::key_layout;
 use crate::domains::kv::{KvActor, KvDomain, KvDropScope};
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::Router;
 
 fn seed_scope(store: &KvStore, complete: Option<bool>) -> (Vec<u8>, Vec<u8>) {
-    let data_key = KvActor::encode_scoped_key(
-        &KvActor::realm_resource_prefix("acme", "app", "rows"),
+    let data_key = key_layout::encode_scoped_key(
+        &key_layout::realm_resource_prefix("acme", "app", "rows"),
         b"key",
     );
-    let inventory_key = KvActor::inventory_metadata_key("acme", "app", "rows");
+    let inventory_key = key_layout::inventory_metadata_key("acme", "app", "rows");
     let mut tx = store.begin(1, TxMode::ReadWrite).unwrap();
     tx.put(data_key.clone(), b"value".to_vec()).unwrap();
     if let Some(complete) = complete {
@@ -45,8 +46,11 @@ fn return_before_drop_applies(store: &KvStore) {
 
 fn apply_delayed_drop(engine: &cntryl_midge::Engine) -> cntryl_midge::MidgeResult<()> {
     let mut tx = engine.begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)?;
-    for prefix in KvActor::drop_prefixes(&drop_scope()) {
-        tx.delete_range(prefix.clone(), KvActor::prefix_range_end(&prefix))?;
+    for prefix in key_layout::drop_prefixes(&drop_scope()) {
+        tx.delete_range(
+            prefix.clone(),
+            crate::utils::storage_key::prefix_range_end(&prefix),
+        )?;
     }
     tx.commit(cntryl_midge::WriteOptions::sync())
 }
@@ -217,8 +221,8 @@ fn should_recreate_inventory_with_a_data_commit_after_an_indeterminate_drop_appl
         persistence: crate::domains::CommitPersistence::Sync,
     });
     let tx = store.begin(1, TxMode::ReadOnly).unwrap();
-    let new_key = KvActor::encode_scoped_key(
-        &KvActor::realm_resource_prefix("acme", "app", "rows"),
+    let new_key = key_layout::encode_scoped_key(
+        &key_layout::realm_resource_prefix("acme", "app", "rows"),
         b"new",
     );
     let old = tx.get(&old_key).unwrap();

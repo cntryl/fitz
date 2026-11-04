@@ -36,14 +36,36 @@ impl RuntimeIngress {
         domain: DispatchDomain,
         route: &str,
     ) -> Result<Cow<'_, str>, String> {
+        Self::canonicalize_route_with(domain, route, |descriptor| {
+            descriptor.canonical_auth_route(route)
+        })
+    }
+
+    pub(super) fn canonicalize_operation_route_str(
+        domain: DispatchDomain,
+        message_type: u16,
+        route: &str,
+    ) -> Result<Cow<'_, str>, String> {
+        Self::canonicalize_route_with(domain, route, |descriptor| {
+            descriptor.canonical_operation_auth_route(message_type, route)
+        })
+    }
+
+    fn canonicalize_route_with<'a>(
+        domain: DispatchDomain,
+        route: &'a str,
+        canonicalize: impl FnOnce(
+            &super::domain_registry::IngressDomainDescriptor,
+        ) -> Result<Cow<'a, str>, String>,
+    ) -> Result<Cow<'a, str>, String> {
         crate::utils::route_shape::validate_route_shape(route)?;
         Self::validate_qualified_domain_scheme(domain, route)?;
 
-        let canonical =
+        let canonical = canonicalize(
             crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
                 domain,
-            )
-            .canonical_auth_route(route)?;
+            ),
+        )?;
         crate::utils::route_shape::validate_route_shape(canonical.as_ref())?;
         Ok(canonical)
     }

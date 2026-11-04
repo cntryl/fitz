@@ -1,16 +1,17 @@
 //! DROP coordination shares one deadline with write admission.
 
 use super::*;
-use crate::domains::kv::{KvActor, KvDropScope};
+use crate::domains::kv::key_layout;
+use crate::domains::kv::KvDropScope;
 use crate::runtime::routing::RouteFamily;
 use std::time::{Duration, Instant};
 
 fn seed_scope(store: &KvStore) -> (Vec<u8>, Vec<u8>) {
-    let data_key = KvActor::encode_scoped_key(
-        &KvActor::realm_resource_prefix("acme", "area", "resource"),
+    let data_key = key_layout::encode_scoped_key(
+        &key_layout::realm_resource_prefix("acme", "area", "resource"),
         b"key",
     );
-    let metadata_key = KvActor::inventory_metadata_key("acme", "area", "resource");
+    let metadata_key = key_layout::inventory_metadata_key("acme", "area", "resource");
     let mut tx = store.begin(1, TxMode::ReadWrite).unwrap();
     tx.put(data_key.clone(), b"value".to_vec()).unwrap();
     tx.put(metadata_key.clone(), b"inventory".to_vec()).unwrap();
@@ -41,7 +42,9 @@ fn should_preserve_scope_when_drop_cannot_acquire_its_family_gate_before_deadlin
         .clone()
         .inventory_gate_for(1, Instant::now() + Duration::from_secs(5))
         .unwrap();
-    let held = gate.lock();
+    let held = gate
+        .acquire_until(Instant::now() + Duration::from_secs(5))
+        .unwrap();
     let scope = KvDropScope::parse(RouteFamily::new(1), "kv://acme/*").unwrap();
 
     // Act
@@ -92,7 +95,9 @@ fn should_reduce_drop_admission_budget_by_time_spent_waiting_for_its_family_gate
     let gate = store
         .inventory_gate_for(1, Instant::now() + Duration::from_secs(5))
         .unwrap();
-    let held = gate.lock();
+    let held = gate
+        .acquire_until(Instant::now() + Duration::from_secs(5))
+        .unwrap();
     let budget = Duration::from_secs(5);
     let gate_wait = Duration::from_millis(50);
     let deadline = Instant::now() + budget;

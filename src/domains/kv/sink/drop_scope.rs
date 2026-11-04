@@ -4,6 +4,7 @@ use super::locks::KvResourceLockKey;
 use super::state::KvFamilyRuntime;
 use crate::domains::kv::{KvDropScope, KvError, KvResponse};
 use crate::domains::CommitPersistence;
+use crate::runtime::{DeliveryError, Envelope};
 
 impl KvResourceLockKey {
     fn is_in_drop_scope(&self, scope: &KvDropScope) -> bool {
@@ -14,6 +15,26 @@ impl KvResourceLockKey {
 }
 
 impl KvFamilyRuntime<'_> {
+    pub(super) fn handle_drop_frame(
+        &mut self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: std::time::Instant,
+        request: &crate::domains::kv::KvDropRequest,
+    ) -> Result<(), DeliveryError> {
+        if request.scope.route_family != meta.route_family {
+            let response = Self::error_response("route family mismatch");
+            return self.route_kv_response(envelope, meta, &response, request_started);
+        }
+
+        // DROP is family work, not a session transaction operation. In
+        // particular it must not expire the caller's overlapping idle writer.
+        let response = self.handle_drop_scope(&request.scope, request.persistence);
+        self.collect_inventory_repairs(meta.session_id);
+        self.retry_inventory_repairs();
+        self.route_kv_response(envelope, meta, &response, request_started)
+    }
+
     pub(super) fn handle_drop_scope(
         &mut self,
         scope: &KvDropScope,

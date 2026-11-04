@@ -1,7 +1,8 @@
 //! DROP deletes a selected namespace without enumerating its committed rows.
 
 use super::*;
-use crate::domains::kv::{KvActor, TxMode};
+use crate::domains::kv::key_layout;
+use crate::domains::kv::TxMode;
 use crate::domains::WritePolicy;
 
 const RESOURCE: &str = "kv://acme/jobs/orders";
@@ -68,7 +69,7 @@ impl DropFixture {
     }
 
     fn seed(&self, family: u32, realm: &str, area: &str, resource: &str) {
-        let prefix = KvActor::realm_resource_prefix(realm, area, resource);
+        let prefix = key_layout::realm_resource_prefix(realm, area, resource);
         let mut tx = self
             .sink
             .config
@@ -76,11 +77,11 @@ impl DropFixture {
             .begin(family, TxMode::ReadWrite)
             .unwrap();
         for key in RAW_KEYS {
-            tx.put(KvActor::encode_scoped_key(&prefix, key), b"old".to_vec())
+            tx.put(key_layout::encode_scoped_key(&prefix, key), b"old".to_vec())
                 .unwrap();
         }
         tx.put(
-            KvActor::inventory_metadata_key(realm, area, resource),
+            key_layout::inventory_metadata_key(realm, area, resource),
             b"estimate".to_vec(),
         )
         .unwrap();
@@ -94,12 +95,13 @@ impl DropFixture {
             .store
             .begin(family, TxMode::ReadOnly)
             .unwrap();
-        let prefix = KvActor::realm_resource_prefix(realm, area, resource);
-        let rows = RAW_KEYS
-            .iter()
-            .map(|key| tx.get(&KvActor::encode_scoped_key(&prefix, key)).unwrap());
+        let prefix = key_layout::realm_resource_prefix(realm, area, resource);
+        let rows = RAW_KEYS.iter().map(|key| {
+            tx.get(&key_layout::encode_scoped_key(&prefix, key))
+                .unwrap()
+        });
         let metadata = tx
-            .get(&KvActor::inventory_metadata_key(realm, area, resource))
+            .get(&key_layout::inventory_metadata_key(realm, area, resource))
             .unwrap();
         let present = metadata.is_some();
         for row in rows {

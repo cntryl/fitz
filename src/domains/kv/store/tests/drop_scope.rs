@@ -1,16 +1,17 @@
 use super::*;
-use crate::domains::kv::{KvActor, KvDropScope};
+use crate::domains::kv::key_layout;
+use crate::domains::kv::KvDropScope;
 use crate::runtime::routing::RouteFamily;
 
 #[test]
 fn should_preserve_scope_when_drop_admission_fails() {
     // Arrange
     let (engine, store, _directory) = local_store();
-    let data_key = KvActor::encode_scoped_key(
-        &KvActor::realm_resource_prefix("acme", "area", "resource"),
+    let data_key = key_layout::encode_scoped_key(
+        &key_layout::realm_resource_prefix("acme", "area", "resource"),
         b"key",
     );
-    let metadata_key = KvActor::inventory_metadata_key("acme", "area", "resource");
+    let metadata_key = key_layout::inventory_metadata_key("acme", "area", "resource");
     let mut tx = store.begin(1, TxMode::ReadWrite).unwrap();
     tx.put(data_key.clone(), b"value".to_vec()).unwrap();
     tx.put(metadata_key.clone(), b"inventory".to_vec()).unwrap();

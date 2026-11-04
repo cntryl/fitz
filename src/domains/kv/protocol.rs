@@ -41,14 +41,16 @@ impl KvResourceScope {
     }
 }
 
-/// KV operation request
+/// A standalone family-coordinated namespace deletion.
+#[derive(Debug, Clone)]
+pub struct KvDropRequest {
+    pub scope: KvDropScope,
+    pub persistence: CommitPersistence,
+}
+
+/// Resource-scoped transaction operations handled by the session actor.
 #[derive(Debug, Clone)]
 pub enum KvMessage {
-    /// Atomically delete all committed data and inventory in a selected scope.
-    Drop {
-        scope: KvDropScope,
-        persistence: CommitPersistence,
-    },
     /// Begin a transaction bound to a resource (table)
     Begin {
         scope: KvResourceScope,
@@ -113,7 +115,7 @@ pub enum KvMessage {
 
 impl KvMessage {
     #[must_use]
-    pub const fn scope(&self) -> Option<&KvResourceScope> {
+    pub const fn scope(&self) -> &KvResourceScope {
         match self {
             Self::Begin { scope, .. }
             | Self::Commit { scope, .. }
@@ -123,25 +125,13 @@ impl KvMessage {
             | Self::Insert { scope, .. }
             | Self::Delete { scope, .. }
             | Self::DeleteRange { scope, .. }
-            | Self::Scan { scope, .. } => Some(scope),
-            Self::Drop { .. } => None,
+            | Self::Scan { scope, .. } => scope,
         }
     }
 
     #[must_use]
-    pub fn route_family(&self) -> RouteFamily {
-        match self {
-            Self::Drop { scope, .. } => scope.route_family,
-            Self::Begin { scope, .. }
-            | Self::Commit { scope, .. }
-            | Self::Rollback { scope, .. }
-            | Self::Get { scope, .. }
-            | Self::Put { scope, .. }
-            | Self::Insert { scope, .. }
-            | Self::Delete { scope, .. }
-            | Self::DeleteRange { scope, .. }
-            | Self::Scan { scope, .. } => scope.route_family,
-        }
+    pub const fn route_family(&self) -> RouteFamily {
+        self.scope().route_family
     }
 }
 
@@ -185,6 +175,7 @@ impl KvClientRequest {
 pub enum KvClientFrame {
     Op(KvMessage),
     Sub(KvSubscriptionMessage),
+    Drop(KvDropRequest),
 }
 
 /// Typed KV response to be encoded at the transport edge.

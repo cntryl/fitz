@@ -46,6 +46,9 @@ impl KvFamilyRuntime<'_> {
             KvClientFrame::Sub(sub_msg) => {
                 self.handle_subscription_frame(envelope, meta, request_started, sub_msg)
             }
+            KvClientFrame::Drop(request) => {
+                self.handle_drop_frame(envelope, meta, request_started, &request)
+            }
             KvClientFrame::Op(kv_message) => self.handle_actor_operation_frame(
                 envelope,
                 meta,

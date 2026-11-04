@@ -14,6 +14,7 @@ mod admin_row_errors;
 mod configuration;
 mod correctness;
 mod drop;
+mod drop_frames;
 mod fault_injection;
 mod lifecycle;
 mod metadata_inventory;

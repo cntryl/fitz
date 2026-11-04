@@ -1,7 +1,8 @@
 //! Adversarial regressions for DROP progress while admin estimates are refreshed.
 
 use super::*;
-use crate::domains::kv::{KvActor, KvDomain};
+use crate::domains::kv::key_layout;
+use crate::domains::kv::KvDomain;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::message::MessageType;
@@ -19,15 +20,15 @@ struct RefreshDropOutcome {
 fn drop_during_stalled_refresh(family_id: u32, route: &str) -> RefreshDropOutcome {
     let (engine, store, _directory) = local_store();
     assert_eq!(engine.create_column_family("cf_2").unwrap().id(), 2);
-    let prefix = KvActor::realm_resource_prefix("acme", "app", "rows");
+    let prefix = key_layout::realm_resource_prefix("acme", "app", "rows");
     let mut seed = store.begin(1, TxMode::ReadWrite).unwrap();
     seed.put(
-        KvActor::encode_scoped_key(&prefix, b"key"),
+        key_layout::encode_scoped_key(&prefix, b"key"),
         b"value".to_vec(),
     )
     .unwrap();
     seed.put(
-        KvActor::inventory_metadata_key("acme", "app", "rows"),
+        key_layout::inventory_metadata_key("acme", "app", "rows"),
         crate::domains::kv::inventory::encode_estimate(
             crate::domains::kv::inventory::KvInventoryEstimate {
                 estimate_complete: false,
@@ -102,11 +103,11 @@ fn drop_during_stalled_refresh(family_id: u32, route: &str) -> RefreshDropOutcom
     );
     let tx = store.begin(1, TxMode::ReadOnly).unwrap();
     let rows_present = tx
-        .get(&KvActor::encode_scoped_key(&prefix, b"key"))
+        .get(&key_layout::encode_scoped_key(&prefix, b"key"))
         .unwrap()
         .is_some();
     let inventory_present = tx
-        .get(&KvActor::inventory_metadata_key("acme", "app", "rows"))
+        .get(&key_layout::inventory_metadata_key("acme", "app", "rows"))
         .unwrap()
         .is_some();
     drop(tx);

@@ -56,6 +56,7 @@ pub(crate) mod actor;
 mod admin_projection;
 mod drop_scope;
 mod inventory;
+pub(crate) mod key_layout;
 pub(crate) mod metrics;
 mod protocol;
 mod scan_wire_budget;
@@ -74,8 +75,9 @@ mod watch_registry;
 pub(crate) use actor::KvActor;
 pub use drop_scope::{KvDropScope, KvDropTarget};
 pub use protocol::{
-    KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvError, KvMessage,
-    KvNotification, KvPair, KvResourceScope, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
+    KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvDropRequest, KvError,
+    KvMessage, KvNotification, KvPair, KvResourceScope, KvResponse, KvSubscriptionMessage,
+    ScanQuery, TxMode,
 };
 
 /// Canonicalize a KV route for authorization: exactly `realm/area/resource`.

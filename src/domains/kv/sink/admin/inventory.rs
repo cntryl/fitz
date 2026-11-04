@@ -6,7 +6,7 @@
 use super::super::locks::KvResourceLockKey;
 use super::super::state::KvFamilyRuntime;
 use crate::domains::kv::inventory::{decode_estimate, encode_estimate, KvInventoryEstimate};
-use crate::domains::kv::KvActor;
+use crate::domains::kv::key_layout;
 
 const ADMIN_INVENTORY_REFRESH_LIMIT: usize = 10_000;
 
@@ -23,12 +23,12 @@ impl KvFamilyRuntime<'_> {
             .core
             .store
             .begin(
-                KvActor::resolve_column_family(family)?,
+                key_layout::resolve_column_family(family)?,
                 crate::domains::kv::TxMode::ReadOnly,
             )
             .map_err(|error| error.to_string())?;
         let Some(value) = tx
-            .get(&KvActor::inventory_metadata_key(realm, area, resource))
+            .get(&key_layout::inventory_metadata_key(realm, area, resource))
             .map_err(|error| error.to_string())?
         else {
             return Ok(None);
@@ -54,13 +54,13 @@ impl KvFamilyRuntime<'_> {
     ) -> Result<(Vec<crate::control::admin::KvResourceInventoryEntry>, bool), String> {
         let family = route_family.as_u64();
         let prefix = area.map_or_else(
-            || KvActor::inventory_realm_prefix(realm),
-            |area| KvActor::inventory_area_prefix(realm, area),
+            || key_layout::inventory_realm_prefix(realm),
+            |area| key_layout::inventory_area_prefix(realm, area),
         );
         let start = after.map_or_else(
             || prefix.clone(),
             |(area, resource)| {
-                let mut key = KvActor::inventory_metadata_key(realm, area, resource);
+                let mut key = key_layout::inventory_metadata_key(realm, area, resource);
                 key.push(0);
                 key
             },
@@ -69,7 +69,7 @@ impl KvFamilyRuntime<'_> {
             .core
             .store
             .begin(
-                KvActor::resolve_column_family(route_family)?,
+                key_layout::resolve_column_family(route_family)?,
                 crate::domains::kv::TxMode::ReadOnly,
             )
             .map_err(|error| error.to_string())?;
@@ -77,7 +77,7 @@ impl KvFamilyRuntime<'_> {
             .scan(
                 &prefix,
                 start,
-                KvActor::prefix_range_end(&prefix),
+                crate::utils::storage_key::prefix_range_end(&prefix),
                 limit.saturating_add(1),
                 false,
             )
@@ -87,7 +87,7 @@ impl KvFamilyRuntime<'_> {
         let entries = rows
             .into_iter()
             .filter_map(|(key, value)| {
-                KvActor::parse_inventory_metadata_key(&key)
+                key_layout::parse_inventory_metadata_key(&key)
                     .map(|(realm, area, resource)| (realm, area, resource, value))
             })
             .map(|(realm, area, resource, value)| {
@@ -156,8 +156,8 @@ impl KvFamilyRuntime<'_> {
         resource: &str,
     ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
         let family_id = route_family.as_u64();
-        let column_family = KvActor::resolve_column_family(route_family)?;
-        let key = KvActor::inventory_metadata_key(realm, area, resource);
+        let column_family = key_layout::resolve_column_family(route_family)?;
+        let key = key_layout::inventory_metadata_key(realm, area, resource);
         let tx = self
             .core
             .store
@@ -191,7 +191,7 @@ impl KvFamilyRuntime<'_> {
     ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
             .map_err(|_| format!("invalid route family ID: {family_id}"))?;
-        let column_family = KvActor::resolve_column_family(route_family)?;
+        let column_family = key_layout::resolve_column_family(route_family)?;
         let tx = self
             .core
             .store
@@ -201,7 +201,8 @@ impl KvFamilyRuntime<'_> {
         let mut discovered = Vec::new();
 
         for (key, value) in iterator {
-            let Some((realm, area, resource)) = KvActor::parse_inventory_metadata_key(&key) else {
+            let Some((realm, area, resource)) = key_layout::parse_inventory_metadata_key(&key)
+            else {
                 continue;
             };
             let estimate = decode_estimate(&value)?;
@@ -238,23 +239,22 @@ impl KvFamilyRuntime<'_> {
         let deadline = crate::domains::kv::store::KvStore::write_admission_deadline();
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
             .map_err(|_| format!("invalid route family ID: {family_id}"))?;
-        let column_family = KvActor::resolve_column_family(route_family)?;
+        let column_family = key_layout::resolve_column_family(route_family)?;
         let inventory_gate = self
             .core
             .store
             .inventory_gate_for(column_family, deadline)
             .map_err(|error| error.to_string())?;
         let _inventory_guard = inventory_gate
-            .try_lock_until(deadline)
-            .ok_or_else(crate::domains::kv::store::KvStore::inventory_coordination_timeout)
+            .acquire_until(deadline)
             .map_err(|error| error.to_string())?;
         let mut tx = self
             .core
             .store
             .begin(column_family, crate::domains::kv::TxMode::ReadWrite)
             .map_err(|error| error.to_string())?;
-        let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
-        let metadata_key = KvActor::inventory_metadata_key(realm, area, resource);
+        let resource_prefix = key_layout::realm_resource_prefix(realm, area, resource);
+        let metadata_key = key_layout::inventory_metadata_key(realm, area, resource);
         let original_metadata = tx.get(&metadata_key).map_err(|error| error.to_string())?;
         let mut rows = Self::scan_scoped_prefix(
             &tx,
@@ -360,7 +360,7 @@ mod tests {
             crate::control::admin::read_model::AdminReadModel::new(),
         );
         let mut core = sink.admin_core();
-        let metadata_key = KvActor::inventory_metadata_key("acme", "jobs", "orders");
+        let metadata_key = key_layout::inventory_metadata_key("acme", "jobs", "orders");
         let mut tx = core
             .store
             .begin(1, crate::domains::kv::TxMode::ReadWrite)

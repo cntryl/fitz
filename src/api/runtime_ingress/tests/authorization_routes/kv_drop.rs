@@ -62,3 +62,18 @@ fn should_expand_realm_drop_authorization_to_concrete_kv_depth() {
     // Assert
     assert_eq!(route, "kv://acme/*/*");
 }
+
+#[test]
+fn should_keep_drop_shorthand_out_of_permission_route_canonicalization() {
+    // Arrange
+    let route = "kv://acme/*";
+    let bytes = payload(route);
+
+    // Act
+    let permission = RuntimeIngress::canonicalize_domain_route_str(DispatchDomain::Kv, route);
+    let operation = extract_auth_route_for_domain(DispatchDomain::Kv, 112, &bytes);
+
+    // Assert
+    assert!(permission.is_err());
+    assert_eq!(operation.unwrap().unwrap(), "kv://acme/*/*");
+}

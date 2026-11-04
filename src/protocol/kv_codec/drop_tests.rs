@@ -1,6 +1,9 @@
 use super::*;
-use crate::dispatch::wire::kv::{KvDropTarget, KvMessage, KvResponse};
-use crate::runtime::routing::RouteFamily;
+use crate::dispatch::wire::kv::{KvDropTarget, KvResponse};
+use crate::protocol::frame::ChannelId;
+use crate::protocol::frame_context::FrameContext;
+use crate::protocol::message::MessageType;
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 fn payload(route: &str, tail: &[u8]) -> Vec<u8> {
     let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
@@ -8,6 +11,23 @@ fn payload(route: &str, tail: &[u8]) -> Vec<u8> {
     let mut bytes = encoder.finish();
     bytes.extend_from_slice(tail);
     bytes
+}
+
+fn parse_drop_frame(family: RouteFamily, payload: &[u8]) -> Result<ParsedKvFrame, String> {
+    let ctx = FrameContext::new(
+        7,
+        ChannelId::Pub,
+        MessageType::new(msg_type::DROP),
+        bytes::Bytes::copy_from_slice(payload),
+        family,
+    );
+    parse_frame(
+        &ctx,
+        payload,
+        family,
+        7,
+        RouteAddress::new(family, Route::new("inbox://session/7")),
+    )
 }
 
 #[test]
@@ -28,10 +48,9 @@ fn should_parse_all_drop_scopes_with_explicit_persistence() {
     // Act
     let messages = cases.map(|(route, expected)| {
         let choices = [0, 1].map(|choice| {
-            parse_request(
-                msg_type::DROP,
-                RouteFamily::new(41),
-                &payload(route, &[choice]),
+            (
+                choice,
+                parse_drop_frame(RouteFamily::new(41), &payload(route, &[choice])),
             )
         });
         (choices, expected)
@@ -39,13 +58,18 @@ fn should_parse_all_drop_scopes_with_explicit_persistence() {
 
     // Assert
     for (choices, expected) in messages {
-        for message in choices {
-            let KvMessage::Drop { scope, .. } = message.unwrap() else {
+        for (choice, message) in choices {
+            let ParsedKvFrame::Drop(request) = message.unwrap() else {
                 panic!("expected DROP")
             };
+            let scope = request.scope;
             assert_eq!(scope.route_family, RouteFamily::new(41));
             assert_eq!(scope.realm, "acme");
             assert_eq!(scope.target, expected);
+            assert_eq!(
+                request.persistence,
+                crate::domains::CommitPersistence::decode(choice).unwrap()
+            );
         }
     }
 }
@@ -83,7 +107,7 @@ fn should_reject_drop_with_unsupported_selector_shapes() {
     let results = routes.map(|route| {
         (
             route,
-            parse_request(msg_type::DROP, RouteFamily::new(1), &payload(route, &[1])),
+            parse_drop_frame(RouteFamily::new(1), &payload(route, &[1])),
         )
     });
 
@@ -104,7 +128,7 @@ fn should_reject_malformed_drop_before_authorization_or_dispatch() {
     // Act
     let results = [missing, invalid, trailing, truncated].map(|bytes| {
         (
-            parse_request(msg_type::DROP, RouteFamily::new(1), &bytes),
+            parse_drop_frame(RouteFamily::new(1), &bytes),
             extract_auth_route(msg_type::DROP, &bytes).map(|_| ()),
         )
     });
@@ -114,4 +138,14 @@ fn should_reject_malformed_drop_before_authorization_or_dispatch() {
         assert!(domain.is_err());
         assert!(ingress.is_err());
     }
+}
+
+#[test]
+fn should_reject_drop_as_a_transaction_actor_request() {
+    // Arrange
+    let bytes = payload("kv://acme/*", &[1]);
+    // Act
+    let request = parse_request(msg_type::DROP, RouteFamily::new(1), &bytes);
+    // Assert
+    assert!(request.is_err());
 }

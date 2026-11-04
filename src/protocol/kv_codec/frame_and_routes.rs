@@ -2,7 +2,8 @@
 
 use crate::dispatch::wire::kv::KvError;
 use crate::dispatch::wire::kv::{
-    KvDropScope, KvMessage, KvResourceScope, KvResponse, KvSubscriptionMessage, TxMode,
+    KvDropRequest, KvDropScope, KvMessage, KvResourceScope, KvResponse, KvSubscriptionMessage,
+    TxMode,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadDecoder;
@@ -41,6 +42,7 @@ pub mod msg_type {
 pub enum ParsedKvFrame {
     Op(KvMessage),
     Sub(KvSubscriptionMessage),
+    Drop(KvDropRequest),
 }
 
 /// # Errors
@@ -62,9 +64,15 @@ pub fn parse_frame(
         | msg_type::INSERT
         | msg_type::DELETE
         | msg_type::DELETE_RANGE
-        | msg_type::SCAN
-        | msg_type::DROP => {
+        | msg_type::SCAN => {
             parse_request(ctx.msg_type.0, route_family, payload).map(ParsedKvFrame::Op)
+        }
+        msg_type::DROP => {
+            let drop = decode_drop(payload)?;
+            Ok(ParsedKvFrame::Drop(KvDropRequest {
+                scope: KvDropScope::parse(route_family, drop.route)?,
+                persistence: drop.persistence,
+            }))
         }
         msg_type::SUBSCRIBE => {
             parse_subscribe(route_family, session_id, subscriber, payload).map(ParsedKvFrame::Sub)
@@ -77,7 +85,7 @@ pub fn parse_frame(
     }
 }
 
-/// Parse KV request from bytes.
+/// Parse a resource-scoped KV transaction request from bytes.
 /// Per `CLIENT_SPEC`: all operations now include the full route on wire.
 /// `RouteFamily` is assigned by the session and must be provided by the caller.
 ///
@@ -99,13 +107,6 @@ pub fn parse_request(
         msg_type::DELETE => parse_delete(route_family, payload),
         msg_type::DELETE_RANGE => parse_delete_range(route_family, payload),
         msg_type::SCAN => parse_scan(route_family, payload),
-        msg_type::DROP => {
-            let drop = decode_drop(route_family, payload)?;
-            Ok(KvMessage::Drop {
-                scope: drop.scope,
-                persistence: drop.persistence,
-            })
-        }
         _ => Err(format!("Unknown KV message type: {msg_type}")),
     }
 }
@@ -295,7 +296,7 @@ fn validate_route(route_str: &str) -> Result<(), String> {
 /// Returns an error if the payload is malformed for the given KV message type.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     match msg_type {
-        msg_type::DROP => Ok(Some(decode_drop(RouteFamily::new(1), payload)?.route)),
+        msg_type::DROP => Ok(Some(decode_drop(payload)?.route)),
         msg_type::BEGIN => {
             let route_str = decode_begin(payload)?.route;
             validate_route(route_str)?;
@@ -333,21 +334,15 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 
 struct DropFields<'a> {
     route: &'a str,
-    scope: KvDropScope,
     persistence: crate::domains::CommitPersistence,
 }
 
-fn decode_drop(route_family: RouteFamily, payload: &[u8]) -> Result<DropFields<'_>, String> {
+fn decode_drop(payload: &[u8]) -> Result<DropFields<'_>, String> {
     let mut decoder = PayloadDecoder::new(payload);
     let route = decoder.get_string_ref()?;
-    let scope = KvDropScope::parse(route_family, route)?;
     let persistence = crate::domains::CommitPersistence::decode(decoder.get_u8()?)?;
     ensure_complete(&decoder, "DROP")?;
-    Ok(DropFields {
-        route,
-        scope,
-        persistence,
-    })
+    Ok(DropFields { route, persistence })
 }
 
 fn parse_commit(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {

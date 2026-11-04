@@ -11,10 +11,10 @@ use crate::runtime::routing::{RouteAddress, RouteFamily};
 use crate::runtime::{ClientChannel, ClientFrameMeta, DomainKind, Envelope};
 use bytes::Bytes;
 
-/// Wire/domain DTO contracts used by codecs.
+/// Domain-owned wire contracts used by codecs.
 ///
-/// Protocol codecs reach domain-owned command DTOs only through this adapter
-/// namespace. Keeping these imports here makes the dependency crossing
+/// Protocol codecs reach domain-owned command DTOs and route grammar through
+/// this adapter namespace. Keeping these imports here makes the dependency crossing
 /// explicit and gives architecture checks one allowlisted boundary to audit.
 pub mod wire {
     pub mod kv {
@@ -149,6 +149,9 @@ fn build_kv_envelope(
         }
         crate::protocol::kv::ParsedKvFrame::Sub(message) => {
             crate::domains::kv::KvClientFrame::Sub(message)
+        }
+        crate::protocol::kv::ParsedKvFrame::Drop(request) => {
+            crate::domains::kv::KvClientFrame::Drop(request)
         }
     });
     Envelope::from_route(

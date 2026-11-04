@@ -1,7 +1,8 @@
 //! Atomic prefix deletion, independent of the number of stored rows.
 
 use super::KvStore;
-use crate::domains::kv::{KvActor, KvDropScope, KvError, TxMode};
+use crate::domains::kv::key_layout;
+use crate::domains::kv::{KvDropScope, KvError, TxMode};
 use crate::domains::WritePolicy;
 
 impl KvStore {
@@ -20,15 +21,13 @@ impl KvStore {
         deadline: std::time::Instant,
     ) -> Result<(), KvError> {
         scope.validate().map_err(KvError::InvalidRoute)?;
-        let column_family = KvActor::resolve_column_family(scope.route_family)
+        let column_family = key_layout::resolve_column_family(scope.route_family)
             .map_err(|_| KvError::InvalidRouteFamily)?;
         let inventory_gate = self.inventory_gate_for(column_family, deadline)?;
-        let _inventory_guard = inventory_gate
-            .try_lock_until(deadline)
-            .ok_or_else(Self::inventory_coordination_timeout)?;
+        let _inventory_guard = inventory_gate.acquire_until(deadline)?;
         let mut tx = self.begin(column_family, TxMode::ReadWrite)?;
-        for prefix in KvActor::drop_prefixes(scope) {
-            let end = KvActor::prefix_range_end(&prefix);
+        for prefix in key_layout::drop_prefixes(scope) {
+            let end = crate::utils::storage_key::prefix_range_end(&prefix);
             tx.delete_range(prefix, end)?;
         }
         tx.commit_until(write_policy, deadline)

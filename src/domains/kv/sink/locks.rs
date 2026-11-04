@@ -122,7 +122,7 @@ impl KvFamilyRuntime<'_> {
 
     fn transaction_lock(message: &crate::domains::kv::KvMessage) -> Option<KvTransactionLock> {
         let (tx_id, scope) = match message {
-            KvMessage::Begin { .. } | KvMessage::Drop { .. } => return None,
+            KvMessage::Begin { .. } => return None,
             KvMessage::Commit { tx_id, scope, .. }
             | KvMessage::Rollback { tx_id, scope }
             | KvMessage::Get { tx_id, scope, .. }
