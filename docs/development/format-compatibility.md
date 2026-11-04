@@ -159,6 +159,8 @@ older D4 brokers reject D5 because they cannot honor its deletion cutoffs.
 Rollback after DROP requires restoring the pre-DROP store with the older broker.
 Reclamation progress accepts the original 16-byte row and a 24-byte extension
 that persists a pending rescan without restarting an active sweep.
+A family-local eight-byte DROP revision commits with the deletion and lets
+observability detect its application even when no payload sweep is needed.
 
 ## Schedule delivery modes
 

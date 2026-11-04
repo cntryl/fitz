@@ -47,6 +47,8 @@ pub enum KeyPrefix {
     DropCutoff = 0x17,
     /// Durable progress for bounded reclamation of deleted payloads.
     DropReclamation = 0x18,
+    /// Family-wide change counter for reconciling DROP outcomes.
+    DropRevision = 0x19,
     // --- LEGACY D3 PROTOTYPE PREFIXES; REJECTED BY PRODUCTION VALIDATION ---
     /// Obsolete prototype canonical row. Production code must not write it.
     CanonicalResource = 0x0B,
@@ -107,6 +109,7 @@ impl TryFrom<u8> for KeyPrefix {
             0x16 => Ok(Self::CursorState),
             0x17 => Ok(Self::DropCutoff),
             0x18 => Ok(Self::DropReclamation),
+            0x19 => Ok(Self::DropRevision),
             0xE4 => Ok(Self::CompactAreaPage),
             0xE8 => Ok(Self::CompressedCompactRealmPage),
             0xEA => Ok(Self::CompactResourcePage),
@@ -666,6 +669,7 @@ pub(super) const RESOURCE_VALUE_V2_MARKER: [u8; 2] = [0, 0x91];
 /// D4 is an intentional clean on-disk break. The public layout selection name
 /// remains stable, but the marker and layout id do not accept D3 stores.
 pub(super) const STREAM_LAYOUT_MARKER_VALUE_V2_MARKER: [u8; 2] = [0, 0xD4];
+pub(super) const STREAM_LAYOUT_DROP_MARKER: [u8; 2] = [0, 0xD5];
 pub(super) const COMPACT_AREA_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE5];
 pub(super) const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE9];
 pub(super) const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];

@@ -183,9 +183,6 @@ impl StreamStore {
             #[cfg(test)]
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
-            #[cfg(test)]
-            realm_sequence_states: Arc::new(Mutex::new(HashMap::new())),
-            resource_meta_states: Arc::new(Mutex::new(HashMap::new())),
             family_sequence_guards: Arc::new(Mutex::new(HashMap::new())),
             global_completion_states: Arc::new(Mutex::new(HashMap::new())),
             recovered_global_families: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -415,6 +412,9 @@ impl StreamStore {
             KeyPrefix::DropReclamation => super::drop_reclamation::decode_progress(value)
                 .map(|_| ())
                 .map_err(|error| ("drop_reclamation", error)),
+            KeyPrefix::DropRevision => super::drop_scope::decode_cutoff(value)
+                .map(|_| ())
+                .map_err(|error| ("drop_revision", error)),
             KeyPrefix::GlobalWatermark => WatermarkValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("global_watermark", error)),
@@ -591,6 +591,9 @@ impl StreamStore {
             KeyPrefix::GlobalResourcePostingPage as u8,
             KeyPrefix::GlobalAreaResourcePostingPage as u8,
             KeyPrefix::PayloadBlob as u8,
+            KeyPrefix::DropCutoff as u8,
+            KeyPrefix::DropReclamation as u8,
+            KeyPrefix::DropRevision as u8,
         ];
 
         let iter = crate::storage::domain_scan::scan_domain_rows(

@@ -59,3 +59,31 @@ fn should_publish_area_notification_after_transient_drop_cutoff_read_failure() {
     assert_eq!(event.family_id, actor.family_id);
     assert!(actor.is_idle());
 }
+
+#[test]
+fn should_preserve_a_persisted_area_watermark_after_initial_cutoff_read_failure() {
+    // Arrange
+    let (old_actor, mut context) = make_test_actor_with_watermark(Some(5));
+    StreamStore::fail_next_drop_cutoff_read_for_tests();
+    let mut actor = AreaActor::new(
+        old_actor.family_id,
+        old_actor.realm.clone(),
+        old_actor.area.clone(),
+        old_actor.store.clone(),
+        old_actor.durable_metrics.clone(),
+    );
+
+    // Act
+    actor.handle_batch_committed(6, 6, 6, &mut context);
+
+    // Assert
+    assert_eq!(actor.area_watermark, Some(6));
+    assert_eq!(
+        actor
+            .store
+            .get_persisted_area_watermark(actor.family_id.as_u64(), &actor.realm, &actor.area)
+            .unwrap(),
+        Some(6)
+    );
+    assert!(actor.committed_ranges.is_empty());
+}

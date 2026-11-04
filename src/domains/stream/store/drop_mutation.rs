@@ -47,6 +47,89 @@ fn component_prefix(
     encoder.into_vec()
 }
 
+fn scope_has_rows(
+    transaction: &cntryl_midge::Transaction,
+    scope: &StreamDropScope,
+    kind: super::KeyPrefix,
+) -> Result<bool, String> {
+    let prefix = match &scope.target {
+        StreamDropTarget::Realm => {
+            storage_key::domain_marker_encoder(&scope.realm, DomainKeyspace::Stream, kind as u8, 0)
+                .into_vec()
+        }
+        StreamDropTarget::Area { area } => component_prefix(&scope.realm, kind, area, None),
+        StreamDropTarget::Resource { area, resource } if kind == super::KeyPrefix::ResourceMeta => {
+            return transaction
+                .get(&super::encode_resource_meta_key(
+                    &scope.realm,
+                    area,
+                    resource,
+                ))
+                .map(|value| value.is_some())
+                .map_err(|error| error.to_string());
+        }
+        StreamDropTarget::Resource { area, resource } => {
+            component_prefix(&scope.realm, kind, area, Some(resource))
+        }
+    };
+    transaction
+        .scan(&cntryl_midge::Query::new().prefix(prefix.into()).limit(1))
+        .map_err(|error| error.to_string())?
+        .next()
+        .transpose()
+        .map(|row| row.is_some())
+        .map_err(|error| error.to_string())
+}
+
+fn scope_has_resource_history(
+    transaction: &cntryl_midge::Transaction,
+    scope: &StreamDropScope,
+) -> Result<bool, String> {
+    for kind in [
+        super::KeyPrefix::ResourceMeta,
+        super::KeyPrefix::CompactResourcePage,
+        super::KeyPrefix::Resource,
+    ] {
+        if scope_has_rows(transaction, scope, kind)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn drop_revision_key() -> Vec<u8> {
+    storage_key::domain_marker_encoder(
+        "",
+        DomainKeyspace::Stream,
+        super::KeyPrefix::DropRevision as u8,
+        0,
+    )
+    .into_vec()
+}
+
+fn decode_drop_revision(value: &[u8]) -> Result<u64, String> {
+    let bytes = value
+        .try_into()
+        .map_err(|_| "invalid Stream DROP revision".to_string())?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn advance_drop_revision(transaction: &mut cntryl_midge::Transaction) -> Result<(), String> {
+    let key = drop_revision_key();
+    let value = transaction.get(&key).map_err(|error| error.to_string())?;
+    let revision = value
+        .as_ref()
+        .map_or(Ok(0), |value| decode_drop_revision(value))?
+        .checked_add(1)
+        .ok_or_else(|| "Stream DROP revision exhausted".to_string())?;
+    transaction
+        .assert_value(key.clone(), value.map(|value| value.to_vec()))
+        .map_err(|error| error.to_string())?;
+    transaction
+        .put(key, revision.to_le_bytes().to_vec(), None)
+        .map_err(|error| error.to_string())
+}
+
 fn delete_namespace(
     transaction: &mut cntryl_midge::Transaction,
     scope: &StreamDropScope,
@@ -107,6 +190,20 @@ fn delete_namespace(
 }
 
 impl StreamStore {
+    pub(crate) fn drop_revision(&self, family: u64) -> Result<u64, String> {
+        let transaction = self
+            .db
+            .begin_tx(
+                super::family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .map_err(|error| error.to_string())?;
+        transaction
+            .get(&drop_revision_key())
+            .map_err(|error| error.to_string())?
+            .map_or(Ok(0), |value| decode_drop_revision(&value))
+    }
+
     fn prepare_drop_transaction(
         &self,
         family: u32,
@@ -136,6 +233,10 @@ impl StreamStore {
             .map_err(|error| error.to_string())?;
         let cutoffs = cutoff_snapshot(&transaction, &scope.realm, area, resource)?;
         cutoffs.assert_unchanged(&mut transaction)?;
+        let had_resource_history = scope_has_resource_history(&transaction, scope)?;
+        // Namespace deletes use AbortOnWriteConflict, including resource
+        // metadata ranges. A concurrent first append forces this bounded
+        // existence probe to retry before deciding no payload sweep is needed.
         delete_namespace(&mut transaction, scope)?;
         transaction
             .put(
@@ -146,9 +247,14 @@ impl StreamStore {
             .map_err(|error| error.to_string())?;
         // Older D4 brokers must reject a family whose deletion fences they cannot honor.
         transaction
-            .put(encode_stream_layout_marker_key(), vec![0, 0xD5, 2], None)
+            .put(
+                encode_stream_layout_marker_key(),
+                super::StreamLayoutMarkerValue::new(self.layout).encode_drop_aware(),
+                None,
+            )
             .map_err(|error| error.to_string())?;
-        if head > cutoffs.maximum {
+        advance_drop_revision(&mut transaction)?;
+        if had_resource_history && head > cutoffs.maximum {
             super::drop_reclamation::queue_reclamation(&mut transaction, head)?;
         }
         Ok(transaction)
@@ -212,21 +318,7 @@ impl StreamStore {
                 return Err(timeout());
             }
             match Self::commit_storage_transaction(transaction, options) {
-                Ok(()) => {
-                    self.resource_meta_states.lock().retain(
-                        |(family, realm, area, resource), _| {
-                            *family != scope.route_family.as_u64()
-                                || !scope.matches_parts(scope.route_family, realm, area, resource)
-                        },
-                    );
-                    #[cfg(test)]
-                    self.realm_sequence_states
-                        .lock()
-                        .retain(|(family, realm), _| {
-                            *family != scope.route_family.as_u64() || realm != &scope.realm
-                        });
-                    return Ok(());
-                }
+                Ok(()) => return Ok(()),
                 Err(cntryl_midge::MidgeError::WriteConflict(_)) => {}
                 Err(error)
                     if crate::storage::write_admission::is_l0_admission_rejection(

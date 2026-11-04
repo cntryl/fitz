@@ -83,6 +83,7 @@ fn realm_posting_record(
     entry: &super::PostingEntry,
     cache: &mut CachedRealmPostingPage,
     global_cache: &mut GlobalFragmentCache,
+    cutoffs: &mut super::drop_scope::ReadCutoffCache,
 ) -> Result<Option<super::CompactRealmPageRecord>, String> {
     if cache.as_ref().map(|(start, _)| *start) != Some(entry.parent_fragment_start) {
         let key = encode_compressed_compact_realm_page_key(realm, entry.parent_fragment_start);
@@ -135,7 +136,14 @@ fn realm_posting_record(
     let mut record = page.records.get(index).cloned().ok_or_else(|| {
         "ERR_STREAM_CORRUPT_LOCATOR: realm posting points outside parent fragment".to_string()
     })?;
-    if locator_is_dropped(txn, realm, &record.area, &record.resource, &record.body)? {
+    if locator_is_dropped(
+        txn,
+        realm,
+        &record.area,
+        &record.resource,
+        &record.body,
+        cutoffs,
+    )? {
         return Ok(None);
     }
     hydrate_realm_locator(txn, realm, &mut record, global_cache)?;
@@ -146,6 +154,7 @@ fn global_posting_record(
     txn: &cntryl_midge::Transaction,
     entry: &super::PostingEntry,
     cache: &mut GlobalFragmentCache,
+    cutoffs: &mut super::drop_scope::ReadCutoffCache,
 ) -> Result<Option<super::CompactGlobalPageRecord>, String> {
     let mut record =
         load_global_locator_header(txn, entry.offset, entry.parent_fragment_start, cache)?;
@@ -155,6 +164,7 @@ fn global_posting_record(
         &record.area,
         &record.resource,
         entry.offset,
+        cutoffs,
     )? {
         return Ok(None);
     }
@@ -223,6 +233,7 @@ impl StreamStore {
         let mut cached_parent = None;
         let mut global_cache = GlobalFragmentCache::new();
         let now_epoch_ms = self.now_epoch_ms();
+        let mut cutoffs = super::drop_scope::ReadCutoffCache::default();
         'pages: for (_, value) in rows {
             for entry in PostingPageValue::try_decode(&value)?.entries {
                 let offset = entry.offset;
@@ -248,6 +259,7 @@ impl StreamStore {
                     &entry,
                     &mut cached_parent,
                     &mut global_cache,
+                    &mut cutoffs,
                 )?
                 else {
                     covered_through = Some(offset);
@@ -330,6 +342,7 @@ impl StreamStore {
     ///
     /// Returns an error when activation, posting/page reads, decoding, or
     /// discriminator loading fails.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn read_global_posting(
         &self,
         params: &ReadGlobalPostingParams<'_>,
@@ -359,6 +372,7 @@ impl StreamStore {
         let mut examined = 0usize;
         let mut cached_parent = GlobalFragmentCache::new();
         let now_epoch_ms = self.now_epoch_ms();
+        let mut cutoffs = super::drop_scope::ReadCutoffCache::default();
         'pages: for (_, value) in rows {
             for entry in PostingPageValue::try_decode(&value)?.entries {
                 let offset = entry.offset;
@@ -378,7 +392,9 @@ impl StreamStore {
                     last_examined = offset;
                     continue;
                 }
-                let Some(record) = global_posting_record(&txn, &entry, &mut cached_parent)? else {
+                let Some(record) =
+                    global_posting_record(&txn, &entry, &mut cached_parent, &mut cutoffs)?
+                else {
                     last_examined = offset;
                     continue;
                 };
@@ -471,6 +487,7 @@ impl StreamStore {
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let now_epoch_ms = self.now_epoch_ms();
+        let mut cutoffs = super::drop_scope::ReadCutoffCache::default();
         'pages: for (key, value) in rows {
             let first = decode_realm_offset_from_key(&key)?;
             let page = CompactGlobalPageValue::try_decode(&value)?;
@@ -495,6 +512,7 @@ impl StreamStore {
                         &record.area,
                         &record.resource,
                         offset,
+                        &mut cutoffs,
                     )?
                 {
                     last_examined = offset;

@@ -59,11 +59,6 @@ struct AppendSession {
 pub type SessionId = u64;
 type SequenceGuardKey = (u64, String, String, String);
 type SequenceGuard = Arc<Mutex<()>>;
-#[cfg(test)]
-type RealmSequenceStateKey = (u64, String);
-#[cfg(test)]
-type RealmSequenceStateHandle = Arc<Mutex<RealmSequenceState>>;
-type ResourceMetaStateHandle = Arc<Mutex<ResourceMetaState>>;
 
 #[cfg(test)]
 const ERR_SESSION_ROUTE_FAMILY_MISMATCH: &str = "ERR_SESSION_ROUTE_FAMILY_MISMATCH";
@@ -79,6 +74,7 @@ use wire_budget::{
 pub(super) enum StreamStoreError {
     SessionNotFound,
     ConcurrencyConflict,
+    Dropped,
 }
 
 impl StreamStoreError {
@@ -86,6 +82,7 @@ impl StreamStoreError {
         match self {
             Self::SessionNotFound => "session not found",
             Self::ConcurrencyConflict => "concurrency conflict",
+            Self::Dropped => self.store_code(),
         }
     }
 
@@ -93,22 +90,27 @@ impl StreamStoreError {
         match self {
             Self::SessionNotFound => "ERR_SESSION_NOT_FOUND",
             Self::ConcurrencyConflict => "ERR_CONCURRENCY_CONFLICT",
+            Self::Dropped => "ERR_STREAM_DROPPED",
         }
     }
 
-    const fn client_kind(self) -> crate::domains::stream::StreamClientErrorKind {
+    pub(super) const fn client_kind(self) -> crate::domains::stream::StreamClientErrorKind {
         match self {
             Self::SessionNotFound => crate::domains::stream::StreamClientErrorKind::SessionNotFound,
-            Self::ConcurrencyConflict => {
+            Self::ConcurrencyConflict | Self::Dropped => {
                 crate::domains::stream::StreamClientErrorKind::ConcurrencyConflict
             }
         }
     }
 
     pub(super) fn from_store_message(message: &str) -> Option<Self> {
-        [Self::SessionNotFound, Self::ConcurrencyConflict]
-            .into_iter()
-            .find(|error| message == error.store_code())
+        [
+            Self::SessionNotFound,
+            Self::ConcurrencyConflict,
+            Self::Dropped,
+        ]
+        .into_iter()
+        .find(|error| message == error.store_code())
     }
 }
 
@@ -116,18 +118,6 @@ impl From<StreamStoreError> for crate::domains::stream::StreamClientError {
     fn from(error: StreamStoreError) -> Self {
         Self::new(error.client_kind(), error.client_message())
     }
-}
-
-#[cfg(test)]
-#[derive(Default)]
-struct RealmSequenceState {
-    next_realm_offset: Option<u64>,
-    next_area_offsets: HashMap<String, u64>,
-}
-
-#[derive(Default)]
-struct ResourceMetaState {
-    snapshot: Option<ResourceMetaValue>,
 }
 
 #[derive(Default)]
@@ -416,9 +406,6 @@ pub struct StreamStore {
     #[cfg(test)]
     next_session_id: std::sync::atomic::AtomicU64,
     sequencing_guards: Arc<Mutex<HashMap<SequenceGuardKey, SequenceGuard>>>,
-    #[cfg(test)]
-    realm_sequence_states: Arc<Mutex<HashMap<RealmSequenceStateKey, RealmSequenceStateHandle>>>,
-    resource_meta_states: Arc<Mutex<HashMap<SequenceGuardKey, ResourceMetaStateHandle>>>,
     family_sequence_guards: Arc<Mutex<HashMap<u64, SequenceGuard>>>,
     global_completion_states: Arc<Mutex<HashMap<u64, GlobalCompletionStateHandle>>>,
     recovered_global_families: Arc<Mutex<HashSet<u64>>>,
@@ -488,6 +475,8 @@ impl From<crate::storage::FitzStorageEngine> for StreamDomainStorage {
 #[derive(Default)]
 struct MaintenanceQueueState {
     initialized: bool,
+    prefer_regular: bool,
+    last_group: Option<Vec<u8>>,
     buckets: BTreeSet<Vec<u8>>,
     retry_buckets: BTreeSet<Vec<u8>>,
 }
@@ -815,6 +804,7 @@ mod maintenance;
 mod write_admission;
 #[cfg(test)]
 pub(super) use maintenance::MaintenanceFailureStage;
+pub(crate) use maintenance::StreamMaintenanceKind;
 pub use maintenance::StreamMaintenanceResult;
 mod ordered_reads;
 mod read_support;

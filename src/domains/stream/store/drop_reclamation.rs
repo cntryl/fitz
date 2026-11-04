@@ -137,7 +137,7 @@ fn scrub_record(
     offset: u64,
     record: &mut super::CompactGlobalPageRecord,
     sidecars: &mut BTreeMap<Vec<u8>, BTreeSet<u64>>,
-) -> Result<bool, String> {
+) -> Result<Option<bool>, String> {
     let cutoffs = cutoff_snapshot(
         transaction,
         &record.realm,
@@ -146,7 +146,7 @@ fn scrub_record(
     )?;
     cutoffs.assert_unchanged(transaction)?;
     if offset >= cutoffs.maximum {
-        return Ok(false);
+        return Ok(None);
     }
     // Scoped sidecar offsets may have been reset and reused. A reset already
     // deleted its whole sidecar prefix, so only delete rows in retained axes.
@@ -173,10 +173,12 @@ fn scrub_record(
             .or_default()
             .insert(record.realm_offset);
     }
+    let changed =
+        !record.body.is_empty() || record.metadata.is_some() || record.expires_at != Some(0);
     record.body = Bytes::new();
     record.metadata = None;
     record.expires_at = Some(0);
-    Ok(true)
+    Ok(Some(changed))
 }
 
 fn reclaim_bucket(
@@ -205,11 +207,14 @@ fn reclaim_bucket(
             let offset = first
                 .checked_add(index as u64)
                 .ok_or_else(|| "invalid Stream reclaim offset".to_string())?;
-            if offset < head && scrub_record(transaction, offset, record, &mut reclaimed.sidecars)?
-            {
-                reclaimed.global_offsets.insert(offset);
-                reclaimed.result.records_compacted += 1;
-                changed = true;
+            if offset < head {
+                if let Some(scrubbed) =
+                    scrub_record(transaction, offset, record, &mut reclaimed.sidecars)?
+                {
+                    reclaimed.global_offsets.insert(offset);
+                    reclaimed.result.records_compacted += usize::from(scrubbed);
+                    changed |= scrubbed;
+                }
             }
         }
         reclaimed.result.bytes_examined =

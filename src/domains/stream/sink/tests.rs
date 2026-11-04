@@ -18,6 +18,7 @@ mod drop;
 mod drop_coordination;
 mod drop_reclamation;
 mod drop_snapshots;
+mod review_drop_observability;
 
 const TEST_CLIENT_SESSION_ID: u64 = 1;
 

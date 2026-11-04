@@ -360,9 +360,13 @@ is reclaimed by Midge compaction. Each active sweep finishes its captured
 frontier before a coalesced revisit handles newer deletions; additional DROP
 requests must not continuously restart existing reclamation progress. Both
 the active cursor and a pending revisit survive restart.
-Delayed commits, watermark retries, and
-fragment maintenance must assert the relevant durable deletion fence so they
-cannot restore pre-DROP state after an indeterminate outcome.
+An empty current scope records its deletion fence without queuing a new sweep.
+Reclamation and ordinary fragment compaction take fair turns; a failing DROP
+slice must yield to ordinary maintenance. Deletion fences remain durable after
+payload reclamation. Delayed commits, watermark retries, and fragment maintenance
+must assert them so they cannot restore pre-DROP state after an indeterminate
+outcome. A family-local DROP revision lets observability refresh after a late
+deletion without rebuilding inventory after every cleanup slice.
 
 DROP is idempotent for an empty scope. Live subscriptions remain registered;
 commit notifications are ephemeral hints and may race deletion. DROP does not

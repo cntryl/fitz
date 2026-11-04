@@ -510,7 +510,7 @@ impl StreamStore {
                     )
                     .map_err(PromotionCommitFailure::Resolved)?;
                     let code = if matches!(error, PromotionWriteFailure::Dropped) {
-                        "ERR_STREAM_DROPPED"
+                        super::StreamStoreError::Dropped.store_code()
                     } else {
                         "ERR_STREAM_WRITER_FENCED"
                     };

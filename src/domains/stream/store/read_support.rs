@@ -137,11 +137,12 @@ pub(super) fn locator_is_dropped(
     area: &str,
     resource: &str,
     body: &[u8],
+    cutoffs: &mut super::drop_scope::ReadCutoffCache,
 ) -> Result<bool, String> {
     let Some((global_offset, _)) = super::decode_payload_locator(body)? else {
         return Err("ERR_STREAM_CORRUPT_LOCATOR: ordered record has inline payload".to_string());
     };
-    super::record_is_dropped(txn, realm, area, resource, global_offset)
+    super::record_is_dropped(txn, realm, area, resource, global_offset, cutoffs)
 }
 
 fn find_compacted_global_fragment(

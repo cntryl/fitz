@@ -656,12 +656,14 @@ fn classify_stream_error_message(message: &str) -> StreamClientErrorKind {
         return Kind::Timeout;
     }
 
+    if let Some(error) = super::store::StreamStoreError::from_store_message(message) {
+        return error.client_kind();
+    }
+
     match message {
         "session already active" => Kind::SessionAlreadyActive,
         "session not found" => Kind::SessionNotFound,
-        "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" | "ERR_STREAM_DROPPED" => {
-            Kind::ConcurrencyConflict
-        }
+        "concurrency conflict" => Kind::ConcurrencyConflict,
         "resource not found" => Kind::ResourceNotFound,
         "route family mismatch" => Kind::InvalidRoute,
         "empty pattern" => Kind::InvalidSubscriptionPattern,

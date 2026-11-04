@@ -299,7 +299,7 @@ impl StreamStore {
 
         let cutoff = super::drop_scope::cutoff_snapshot(&txn, realm, Some(area), None)?;
         if cutoff.maximum != expected_drop_cutoff {
-            return Err("ERR_STREAM_DROPPED".to_string());
+            return Err(super::StreamStoreError::Dropped.store_code().to_string());
         }
         cutoff.assert_unchanged(&mut txn)?;
 
@@ -420,7 +420,7 @@ impl StreamStore {
 
         let cutoff = super::drop_scope::cutoff_snapshot(&txn, realm, None, None)?;
         if cutoff.maximum != expected_drop_cutoff {
-            return Err("ERR_STREAM_DROPPED".to_string());
+            return Err(super::StreamStoreError::Dropped.store_code().to_string());
         }
         cutoff.assert_unchanged(&mut txn)?;
 

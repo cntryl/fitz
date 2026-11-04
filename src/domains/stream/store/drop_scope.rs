@@ -5,6 +5,23 @@ use bytes::Bytes;
 #[cfg(test)]
 std::thread_local! {
     static FAIL_NEXT_DROP_CUTOFF_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CUTOFF_GETS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn take_cutoff_gets() -> usize {
+    CUTOFF_GETS.with(|count| count.replace(0))
+}
+
+fn read_cutoff_value(
+    transaction: &cntryl_midge::Transaction,
+    key: &[u8],
+) -> Result<Option<Bytes>, String> {
+    #[cfg(test)]
+    CUTOFF_GETS.with(|count| count.set(count.get() + 1));
+    transaction
+        .get(key)
+        .map_err(|error| format!("read Stream deletion cutoff failed: {error:?}"))
 }
 
 pub(super) struct CutoffSnapshot {
@@ -71,9 +88,7 @@ pub(super) fn cutoff_snapshot(
     let mut values = Vec::with_capacity(keys.len());
     let mut maximum = 0;
     for key in keys {
-        let value = transaction
-            .get(&key)
-            .map_err(|error| format!("read Stream deletion cutoff failed: {error:?}"))?;
+        let value = read_cutoff_value(transaction, &key)?;
         if let Some(bytes) = &value {
             maximum = maximum.max(decode_cutoff(bytes)?);
         }
@@ -177,6 +192,30 @@ pub(super) fn record_is_dropped(
     area: &str,
     resource: &str,
     global_offset: u64,
+    cache: &mut ReadCutoffCache,
 ) -> Result<bool, String> {
-    Ok(global_offset < cutoff_snapshot(txn, realm, Some(area), Some(resource))?.maximum)
+    let mut maximum = 0;
+    for key in [
+        cutoff_key(realm, None, None),
+        cutoff_key(realm, Some(area), None),
+        cutoff_key(realm, Some(area), Some(resource)),
+    ] {
+        let cutoff = if let Some(cutoff) = cache.values.get(&key) {
+            *cutoff
+        } else {
+            let value = read_cutoff_value(txn, &key)?;
+            let cutoff = value.as_ref().map_or(Ok(0), |value| decode_cutoff(value))?;
+            cache.values.insert(key, cutoff);
+            cutoff
+        };
+        maximum = maximum.max(cutoff);
+    }
+    Ok(global_offset < maximum)
+}
+
+/// One replay transaction's deletion state, including absent scope fences.
+/// Never reuse this cache with a newer storage snapshot.
+#[derive(Default)]
+pub(super) struct ReadCutoffCache {
+    values: std::collections::HashMap<Vec<u8>, u64>,
 }

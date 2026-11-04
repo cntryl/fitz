@@ -136,7 +136,7 @@ fn should_finish_payload_reclamation_while_the_same_empty_scope_is_dropped_again
             .unwrap()
             .map(|bytes| super::super::drop_reclamation::decode_progress(&bytes).unwrap());
         restarts.push(progress);
-        store.run_maintenance(1).unwrap();
+        store.run_drop_reclamation(1).unwrap();
     }
 
     // Assert

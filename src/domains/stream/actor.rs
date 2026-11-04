@@ -269,11 +269,11 @@ impl StreamActor {
         ) {
             Ok(response) => response,
             Err(error) => {
-                if error != "ERR_STREAM_DROPPED" {
+                let store_error = StreamStoreError::from_store_message(&error);
+                if store_error != Some(StreamStoreError::Dropped) {
                     self.active_session = Some(session);
                 }
-                return Err(StreamStoreError::from_store_message(&error)
-                    .map_or(error, |error| error.client_message().to_string()));
+                return Err(store_error.map_or(error, |error| error.client_message().to_string()));
             }
         };
 
@@ -382,7 +382,7 @@ impl StreamActor {
         )?;
         if cutoff != session.drop_cutoff {
             self.cleanup_session(owner_session_id);
-            return Err("ERR_STREAM_DROPPED".to_string());
+            return Err(StreamStoreError::Dropped.store_code().to_string());
         }
         Ok(())
     }

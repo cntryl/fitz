@@ -21,18 +21,37 @@ enum ReadScope {
 
 impl StreamFamilyState {
     pub(in crate::domains::stream::sink) fn run_maintenance_slice(&mut self, family: u64) {
-        match self.stream_store.run_maintenance(family) {
-            Ok(_) => {
-                // A late DROP can finish its durable sweep with no fragments
-                // left (for example after TTL expiry) and still reset inventory.
+        if self.stream_store.has_pending_maintenance(family) {
+            match self.stream_store.run_maintenance_classified(family) {
+                Ok((result, crate::domains::stream::store::StreamMaintenanceKind::Regular))
+                    if result.buckets_compacted > 0 =>
+                {
+                    self.mark_committed_admin_snapshot_dirty();
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        domain = "stream",
+                        family,
+                        error,
+                        "Stream maintenance slice failed; queued work will be retried"
+                    );
+                }
+            }
+        }
+        // Observe after maintenance: a delayed DROP may apply while the slice
+        // runs, including a deletion that leaves no payloads to reclaim.
+        match self.stream_store.drop_revision(family) {
+            Ok(revision) if self.observability.observe_drop_revision(revision) => {
                 self.mark_committed_admin_snapshot_dirty();
             }
+            Ok(_) => {}
             Err(error) => {
                 tracing::warn!(
                     domain = "stream",
                     family,
                     error,
-                    "Stream maintenance slice failed; queued work will be retried"
+                    "Stream DROP observation failed; next maintenance tick will retry"
                 );
             }
         }

@@ -40,7 +40,7 @@ fn should_finish_dropped_payload_reclamation_despite_unrelated_appends() {
     let mut progress_after_drop = Vec::new();
 
     // Act
-    for expected in 0..3 {
+    for expected in 0..6 {
         store
             .commit_records(CommitRecordsParams {
                 family: 1,
@@ -87,7 +87,7 @@ fn should_finish_dropped_payload_reclamation_despite_unrelated_appends() {
         })
         .unwrap();
     let retained = event_records(items);
-    assert_eq!(retained.len(), 3);
+    assert_eq!(retained.len(), 6);
     assert!(retained
         .iter()
         .all(|record| record.body.as_ref() == b"retained"));

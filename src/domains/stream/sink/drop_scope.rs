@@ -1,7 +1,7 @@
 //! Standalone deletion belongs to the family, outside live append sessions.
 
 use super::model::{StreamFamilyRuntime, StreamFamilyState};
-use crate::domains::stream::{StreamClientResponseBody, StreamDropRequest, StreamDropTarget};
+use crate::domains::stream::{StreamClientResponseBody, StreamDropRequest};
 use crate::runtime::{ClientFrameMeta, Envelope};
 
 impl StreamFamilyRuntime {
@@ -61,6 +61,7 @@ impl StreamFamilyRuntime {
         ) {
             Ok(()) => {
                 self.forget_dropped_runtime_state(scope);
+                self.core.observability.forget_drop_watermarks(scope);
                 self.core.mark_committed_admin_snapshot_dirty();
                 StreamClientResponseBody::Ok {
                     session_id: None,
@@ -75,25 +76,15 @@ impl StreamFamilyRuntime {
         self.core.actors.retain(|key, _| {
             !scope.matches_parts(key.family, &key.realm, &key.area, &key.resource)
         });
-        let resets_area = |realm: &str, area: &str| {
-            realm == scope.realm
-                && match &scope.target {
-                    StreamDropTarget::Realm => true,
-                    StreamDropTarget::Area { area: selected } => area == selected,
-                    StreamDropTarget::Resource { .. } => false,
-                }
-        };
-        let resets_realm =
-            |realm: &str| realm == scope.realm && matches!(scope.target, StreamDropTarget::Realm);
         self.watermark_coordinators
             .area
-            .retain(|key, _| !resets_area(&key.realm, &key.area));
+            .retain(|key, _| !scope.resets_area(&key.realm, &key.area));
         self.watermark_coordinators
             .realm
-            .retain(|key, _| !resets_realm(&key.realm));
+            .retain(|key, _| !scope.resets_realm(&key.realm));
         for commit in &mut self.pending_watermark_commits {
-            commit.targets.area &= !resets_area(&commit.realm, &commit.area);
-            commit.targets.realm &= !resets_realm(&commit.realm);
+            commit.targets.area &= !scope.resets_area(&commit.realm, &commit.area);
+            commit.targets.realm &= !scope.resets_realm(&commit.realm);
         }
         self.pending_watermark_commits
             .retain(|commit| !commit.targets.is_empty());

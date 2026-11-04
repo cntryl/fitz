@@ -72,6 +72,19 @@ impl StreamDropScope {
                 } => expected_area == area && expected_resource == resource,
             }
     }
+
+    pub(crate) fn resets_realm(&self, realm: &str) -> bool {
+        self.realm == realm && matches!(self.target, StreamDropTarget::Realm)
+    }
+
+    pub(crate) fn resets_area(&self, realm: &str, area: &str) -> bool {
+        self.realm == realm
+            && match &self.target {
+                StreamDropTarget::Realm => true,
+                StreamDropTarget::Area { area: selected } => selected == area,
+                StreamDropTarget::Resource { .. } => false,
+            }
+    }
 }
 
 fn parse_selector(route: &str) -> Result<(String, StreamDropTarget), String> {

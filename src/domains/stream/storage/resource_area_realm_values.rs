@@ -2,7 +2,7 @@ use super::super::store::StreamStorageLayout;
 use super::{
     AreaValue, RealmValue, ResourceValue, StreamLayoutMarkerValue, AREA_VALUE_V2_MARKER,
     OPTIONAL_BYTES_ABSENT, OPTIONAL_OFFSET_ABSENT, REALM_VALUE_V2_MARKER, RESOURCE_VALUE_V2_MARKER,
-    STREAM_LAYOUT_MARKER_VALUE_V2_MARKER,
+    STREAM_LAYOUT_DROP_MARKER, STREAM_LAYOUT_MARKER_VALUE_V2_MARKER,
 };
 use bytes::Bytes;
 
@@ -22,9 +22,18 @@ impl StreamLayoutMarkerValue {
 
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
+        self.encode_marker(STREAM_LAYOUT_MARKER_VALUE_V2_MARKER)
+    }
+
+    #[must_use]
+    pub(crate) fn encode_drop_aware(self) -> Vec<u8> {
+        self.encode_marker(STREAM_LAYOUT_DROP_MARKER)
+    }
+
+    fn encode_marker(self, marker: [u8; 2]) -> Vec<u8> {
         vec![
-            STREAM_LAYOUT_MARKER_VALUE_V2_MARKER[0],
-            STREAM_LAYOUT_MARKER_VALUE_V2_MARKER[1],
+            marker[0],
+            marker[1],
             match self.layout {
                 StreamStorageLayout::PromotionFrontier => 2,
             },
@@ -38,7 +47,7 @@ impl StreamLayoutMarkerValue {
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() != 3
             || !(bytes.starts_with(&STREAM_LAYOUT_MARKER_VALUE_V2_MARKER)
-                || bytes.starts_with(&[0, 0xD5]))
+                || bytes.starts_with(&STREAM_LAYOUT_DROP_MARKER))
         {
             return Err("decode stream layout marker: invalid encoding".to_string());
         }

@@ -259,6 +259,7 @@ impl StreamStore {
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let mut global_cache = GlobalFragmentCache::new();
+        let mut cutoffs = super::drop_scope::ReadCutoffCache::default();
         let now_epoch_ms = self.now_epoch_ms();
 
         'page_scan: for (key_bytes, value_bytes) in results {
@@ -303,6 +304,7 @@ impl StreamStore {
                             params.area,
                             &record.resource,
                             &record.body,
+                            &mut cutoffs,
                         )
                     }
                 },
@@ -435,6 +437,7 @@ impl StreamStore {
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let mut global_cache = GlobalFragmentCache::new();
+        let mut cutoffs = super::drop_scope::ReadCutoffCache::default();
         let now_epoch_ms = self.now_epoch_ms();
 
         'page_scan: for (key_bytes, value_bytes) in results {
@@ -479,6 +482,7 @@ impl StreamStore {
                             &record.area,
                             &record.resource,
                             &record.body,
+                            &mut cutoffs,
                         )
                     }
                 },

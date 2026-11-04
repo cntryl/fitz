@@ -48,6 +48,8 @@ fn drain_maintenance(store: &StreamStore, family: u64) -> StreamMaintenanceResul
 }
 
 mod adversarial_drop;
+mod review_reclamation;
+mod review_storage;
 mod sessions_layout_and_watermarks;
 use sessions_layout_and_watermarks::*;
 mod bounded_replay;
@@ -67,4 +69,5 @@ mod overflow_and_recovery;
 mod ttl_cursor_regressions;
 
 mod adversarial_drop_reads;
+mod review_read_fences;
 mod storage_admission;
