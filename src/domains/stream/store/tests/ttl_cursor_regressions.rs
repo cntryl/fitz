@@ -1,5 +1,49 @@
 use super::*;
 
+#[test]
+fn should_not_advance_past_unexamined_live_records_before_an_expired_tail() {
+    // Arrange
+    let clock = Arc::new(TestStreamClock::new(1_000));
+    let mut store =
+        StreamStore::new(create_test_engine_with_cfs(vec![1])).with_clock_for_tests(clock.clone());
+    let events = vec![
+        EventPayload {
+            body: Bytes::from_static(b"live"),
+            metadata: None,
+            discriminator: None,
+        };
+        65
+    ];
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "north",
+            area: "orders",
+            resource: "created",
+            expected_resource_next_offset: 0,
+            events: &events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Sync,
+        })
+        .expect("commit live history");
+    store.ttl = StreamTTL::with_seconds(1);
+    for offset in 65..73 {
+        commit_ttl_event(&store, offset);
+    }
+    drain_maintenance(&store, 1);
+    clock.set(3_000);
+
+    // Act
+    let (items, cursor) = store
+        .read_area(1, "north", "orders", 0, 64, None)
+        .expect("read the first full page");
+
+    // Assert
+    assert_eq!(items.len(), 64);
+    assert_eq!(cursor.last_area_offset, Some(63));
+    assert!(cursor.has_more);
+}
+
 fn commit_ttl_event(store: &StreamStore, expected_next_offset: u64) {
     store
         .commit_records(CommitRecordsParams {

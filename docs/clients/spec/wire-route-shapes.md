@@ -90,6 +90,7 @@ A request is valid **only if**:
 
 - `stream://{realm}/{area}/{resource}`
 - `stream://{realm}/{area}/*`
+- `stream://{realm}/*` (DROP only)
 - `stream://{realm}/*/*`
 - `stream://{realm}/**`
 - `stream://*/{area}/{resource}`
@@ -106,7 +107,14 @@ A request is valid **only if**:
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
   | `COMMIT` | session_id established by `BEGIN({realm}/{area}/{resource})` |
   | `ROLLBACK` | session_id established by `BEGIN({realm}/{area}/{resource})` |
-  **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on stream operations: BEGIN, APPEND, READ, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK.
+  | `DROP` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*` |
+  **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on stream operations: BEGIN, APPEND, READ, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK, DROP.
+
+`DROP` is standalone and requires an explicit Buffered or Sync persistence mode.
+Its components are literal except for the final whole-segment `*` shown above.
+The realm shorthand expands to `{realm}/*/*` for full-scope write authorization;
+it does not extend READ or subscription selector grammar. See
+[Stream DROP](stream-drop.md) for destructive offset resets and reclamation.
 
 ### Queue Domain
 

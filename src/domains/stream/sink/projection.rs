@@ -51,6 +51,59 @@ impl StreamAdminProjection {
         self.publish_merged(&families);
     }
 
+    pub(super) fn forget_drop_watermarks(&self, scope: &crate::domains::stream::StreamDropScope) {
+        if matches!(
+            scope.target,
+            crate::domains::stream::StreamDropTarget::Resource { .. }
+        ) {
+            return;
+        }
+        let mut families = self.families.lock();
+        let family = scope.route_family.as_u64();
+        for snapshot in families.values_mut() {
+            for detail in &mut snapshot.realm_watermarks {
+                if scope.resets_realm(&detail.realm) {
+                    detail
+                        .family_watermarks
+                        .retain(|value| value.family != family);
+                }
+            }
+            for detail in &mut snapshot.area_watermarks {
+                if scope.resets_area(&detail.realm, &detail.area) {
+                    detail
+                        .family_watermarks
+                        .retain(|value| value.family != family);
+                }
+            }
+        }
+        // Use the same lock as merged publication so an older peer-family
+        // snapshot cannot immediately restore the removed metric observations.
+        self.durable_metrics.forget_drop_watermarks(scope);
+    }
+
+    pub(super) fn replace_family_watermarks(
+        &self,
+        family: u64,
+        realms: Vec<crate::domains::stream::metrics::StreamRealmWatermarkMetric>,
+        areas: Vec<crate::domains::stream::metrics::StreamAreaWatermarkMetric>,
+    ) {
+        let mut families = self.families.lock();
+        for snapshot in families.values_mut() {
+            for detail in &mut snapshot.realm_watermarks {
+                detail
+                    .family_watermarks
+                    .retain(|value| value.family != family);
+            }
+            for detail in &mut snapshot.area_watermarks {
+                detail
+                    .family_watermarks
+                    .retain(|value| value.family != family);
+            }
+        }
+        self.durable_metrics
+            .replace_family_watermarks(family, realms, areas);
+    }
+
     pub(super) fn clear_failed_family_live_sessions(&self, family: u64) {
         let mut families = self.families.lock();
         let Some(snapshot) = families.get_mut(&family) else {

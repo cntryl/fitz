@@ -500,16 +500,21 @@ impl StreamStore {
         let resource_meta_after = loop {
             let mut txn = match self.write_promotion_frontier_batch_rows(&params, &plan) {
                 Ok(txn) => txn,
-                Err(PromotionWriteFailure::WriterFenced) => {
+                Err(
+                    error @ (PromotionWriteFailure::WriterFenced | PromotionWriteFailure::Dropped),
+                ) => {
                     self.resolve_global_range(
                         params.family,
                         params.first_global_offset,
                         end_global_offset,
                     )
                     .map_err(PromotionCommitFailure::Resolved)?;
-                    return Err(PromotionCommitFailure::Resolved(
-                        "ERR_STREAM_WRITER_FENCED".to_string(),
-                    ));
+                    let code = if matches!(error, PromotionWriteFailure::Dropped) {
+                        super::StreamStoreError::Dropped.store_code()
+                    } else {
+                        "ERR_STREAM_WRITER_FENCED"
+                    };
+                    return Err(PromotionCommitFailure::Resolved(code.to_string()));
                 }
                 Err(PromotionWriteFailure::ScopeConflict) => {
                     return Err(PromotionCommitFailure::ScopeConflict);
@@ -640,6 +645,8 @@ impl StreamStore {
             )
             .map_err(|e| PromotionWriteFailure::Other(format!("begin_tx failed: {e:?}")))?;
         txn.set_conflict_policy(cntryl_midge::ConflictPolicy::AbortOnWriteConflict);
+
+        self.guard_append_reset(&mut txn, params)?;
 
         let epoch_key = encode_family_writer_epoch_key();
         let current_epoch = txn

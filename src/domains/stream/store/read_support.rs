@@ -74,6 +74,17 @@ pub(super) fn load_global_locator_record(
     parent_fragment_start: u64,
     cache: &mut GlobalFragmentCache,
 ) -> Result<super::CompactGlobalPageRecord, String> {
+    let mut record = load_global_locator_header(txn, global_offset, parent_fragment_start, cache)?;
+    resolve_blob_payload(txn, &mut record.body, &mut record.metadata)?;
+    Ok(record)
+}
+
+pub(super) fn load_global_locator_header(
+    txn: &cntryl_midge::Transaction,
+    global_offset: u64,
+    parent_fragment_start: u64,
+    cache: &mut GlobalFragmentCache,
+) -> Result<super::CompactGlobalPageRecord, String> {
     if global_offset < parent_fragment_start
         || global_offset.saturating_sub(parent_fragment_start) >= GLOBAL_PAGE_RECORD_LIMIT
     {
@@ -115,11 +126,23 @@ pub(super) fn load_global_locator_record(
         loaded
     };
     let index = usize::try_from(global_offset.saturating_sub(actual_start)).unwrap_or(usize::MAX);
-    let mut record = page.records.get(index).cloned().ok_or_else(|| {
+    page.records.get(index).cloned().ok_or_else(|| {
         "ERR_STREAM_CORRUPT_LOCATOR: global offset outside parent fragment".to_string()
-    })?;
-    resolve_blob_payload(txn, &mut record.body, &mut record.metadata)?;
-    Ok(record)
+    })
+}
+
+pub(super) fn locator_is_dropped(
+    txn: &cntryl_midge::Transaction,
+    realm: &str,
+    area: &str,
+    resource: &str,
+    body: &[u8],
+    cutoffs: &mut super::drop_scope::ReadCutoffCache,
+) -> Result<bool, String> {
+    let Some((global_offset, _)) = super::decode_payload_locator(body)? else {
+        return Err("ERR_STREAM_CORRUPT_LOCATOR: ordered record has inline payload".to_string());
+    };
+    super::record_is_dropped(txn, realm, area, resource, global_offset, cutoffs)
 }
 
 fn find_compacted_global_fragment(

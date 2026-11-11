@@ -1,6 +1,6 @@
 use super::read_support::{
     begin_read_tx, bounded_fragment_rows, bounded_posting_rows, broad_scope_fragment_rows,
-    hydrate_realm_locator, load_global_locator_record, resolve_blob_payload,
+    hydrate_realm_locator, load_global_locator_header, locator_is_dropped, resolve_blob_payload,
     validate_fragment_range, GlobalFragmentCache,
 };
 use super::{
@@ -83,6 +83,7 @@ fn realm_posting_record(
     entry: &super::PostingEntry,
     cache: &mut CachedRealmPostingPage,
     global_cache: &mut GlobalFragmentCache,
+    cutoffs: &mut super::drop_scope::ReadCutoffCache,
 ) -> Result<Option<super::CompactRealmPageRecord>, String> {
     if cache.as_ref().map(|(start, _)| *start) != Some(entry.parent_fragment_start) {
         let key = encode_compressed_compact_realm_page_key(realm, entry.parent_fragment_start);
@@ -135,6 +136,16 @@ fn realm_posting_record(
     let mut record = page.records.get(index).cloned().ok_or_else(|| {
         "ERR_STREAM_CORRUPT_LOCATOR: realm posting points outside parent fragment".to_string()
     })?;
+    if locator_is_dropped(
+        txn,
+        realm,
+        &record.area,
+        &record.resource,
+        &record.body,
+        cutoffs,
+    )? {
+        return Ok(None);
+    }
     hydrate_realm_locator(txn, realm, &mut record, global_cache)?;
     Ok(Some(record))
 }
@@ -143,8 +154,22 @@ fn global_posting_record(
     txn: &cntryl_midge::Transaction,
     entry: &super::PostingEntry,
     cache: &mut GlobalFragmentCache,
+    cutoffs: &mut super::drop_scope::ReadCutoffCache,
 ) -> Result<Option<super::CompactGlobalPageRecord>, String> {
-    load_global_locator_record(txn, entry.offset, entry.parent_fragment_start, cache).map(Some)
+    let mut record =
+        load_global_locator_header(txn, entry.offset, entry.parent_fragment_start, cache)?;
+    if super::record_is_dropped(
+        txn,
+        &record.realm,
+        &record.area,
+        &record.resource,
+        entry.offset,
+        cutoffs,
+    )? {
+        return Ok(None);
+    }
+    resolve_blob_payload(txn, &mut record.body, &mut record.metadata)?;
+    Ok(Some(record))
 }
 
 fn global_posting_keys(
@@ -208,6 +233,7 @@ impl StreamStore {
         let mut cached_parent = None;
         let mut global_cache = GlobalFragmentCache::new();
         let now_epoch_ms = self.now_epoch_ms();
+        let mut cutoffs = super::drop_scope::ReadCutoffCache::default();
         'pages: for (_, value) in rows {
             for entry in PostingPageValue::try_decode(&value)?.entries {
                 let offset = entry.offset;
@@ -233,6 +259,7 @@ impl StreamStore {
                     &entry,
                     &mut cached_parent,
                     &mut global_cache,
+                    &mut cutoffs,
                 )?
                 else {
                     covered_through = Some(offset);
@@ -315,6 +342,7 @@ impl StreamStore {
     ///
     /// Returns an error when activation, posting/page reads, decoding, or
     /// discriminator loading fails.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn read_global_posting(
         &self,
         params: &ReadGlobalPostingParams<'_>,
@@ -344,6 +372,7 @@ impl StreamStore {
         let mut examined = 0usize;
         let mut cached_parent = GlobalFragmentCache::new();
         let now_epoch_ms = self.now_epoch_ms();
+        let mut cutoffs = super::drop_scope::ReadCutoffCache::default();
         'pages: for (_, value) in rows {
             for entry in PostingPageValue::try_decode(&value)?.entries {
                 let offset = entry.offset;
@@ -363,7 +392,9 @@ impl StreamStore {
                     last_examined = offset;
                     continue;
                 }
-                let Some(record) = global_posting_record(&txn, &entry, &mut cached_parent)? else {
+                let Some(record) =
+                    global_posting_record(&txn, &entry, &mut cached_parent, &mut cutoffs)?
+                else {
                     last_examined = offset;
                     continue;
                 };
@@ -456,6 +487,7 @@ impl StreamStore {
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let now_epoch_ms = self.now_epoch_ms();
+        let mut cutoffs = super::drop_scope::ReadCutoffCache::default();
         'pages: for (key, value) in rows {
             let first = decode_realm_offset_from_key(&key)?;
             let page = CompactGlobalPageValue::try_decode(&value)?;
@@ -473,7 +505,16 @@ impl StreamStore {
                 if offset >= watermark {
                     break 'pages;
                 }
-                if record_is_expired(record.expires_at, now_epoch_ms) {
+                if record_is_expired(record.expires_at, now_epoch_ms)
+                    || super::record_is_dropped(
+                        &txn,
+                        &record.realm,
+                        &record.area,
+                        &record.resource,
+                        offset,
+                        &mut cutoffs,
+                    )?
+                {
                     last_examined = offset;
                     continue;
                 }

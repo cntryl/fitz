@@ -6,6 +6,19 @@ use super::{
     ResourceValue, StreamLayoutMarkerValue, StreamStorageLayout, StreamStore, StreamTTL,
     WatermarkValue, REALM_PAGE_RECORD_LIMIT,
 };
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_LAYOUT_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn before_next_layout_commit_for_tests(hook: Box<dyn FnOnce()>) {
+    BEFORE_LAYOUT_COMMIT.with(|pending| {
+        assert!(pending.borrow().is_none());
+        *pending.borrow_mut() = Some(hook);
+    });
+}
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
@@ -170,9 +183,6 @@ impl StreamStore {
             #[cfg(test)]
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
-            #[cfg(test)]
-            realm_sequence_states: Arc::new(Mutex::new(HashMap::new())),
-            resource_meta_states: Arc::new(Mutex::new(HashMap::new())),
             family_sequence_guards: Arc::new(Mutex::new(HashMap::new())),
             global_completion_states: Arc::new(Mutex::new(HashMap::new())),
             recovered_global_families: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -396,6 +406,15 @@ impl StreamStore {
                     .map(|_| ())
                     .map_err(|error| ("global_counter_or_epoch", error))
             }
+            KeyPrefix::DropCutoff => super::drop_scope::decode_cutoff(value)
+                .map(|_| ())
+                .map_err(|error| ("drop_cutoff", error)),
+            KeyPrefix::DropReclamation => super::drop_reclamation::decode_progress(value)
+                .map(|_| ())
+                .map_err(|error| ("drop_reclamation", error)),
+            KeyPrefix::DropRevision => super::drop_scope::decode_cutoff(value)
+                .map(|_| ())
+                .map_err(|error| ("drop_revision", error)),
             KeyPrefix::GlobalWatermark => WatermarkValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("global_watermark", error)),
@@ -442,54 +461,76 @@ impl StreamStore {
         &self,
         family: u64,
     ) -> Result<(), LayoutActivationFailure> {
-        let marker_key = encode_stream_layout_marker_key();
-        let mut txn = self
-            .db
-            .begin_tx(
-                u64_to_u32_saturating(family),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
-            .map_err(|e| LayoutActivationFailure::Other(format!("begin_tx failed: {e:?}")))?;
+        loop {
+            let marker_key = encode_stream_layout_marker_key();
+            let mut txn = self
+                .db
+                .begin_tx(
+                    u64_to_u32_saturating(family),
+                    cntryl_midge::TransactionMode::ReadWrite,
+                )
+                .map_err(|e| LayoutActivationFailure::Other(format!("begin_tx failed: {e:?}")))?;
+            txn.set_conflict_policy(cntryl_midge::ConflictPolicy::AbortOnWriteConflict);
 
-        if let Some(bytes) = txn
-            .get(&marker_key)
-            .map_err(|e| LayoutActivationFailure::Other(format!("get error: {e:?}")))?
-        {
-            if bytes.starts_with(&[0, 0xD3]) {
+            if let Some(bytes) = txn
+                .get(&marker_key)
+                .map_err(|e| LayoutActivationFailure::Other(format!("get error: {e:?}")))?
+            {
+                if bytes.starts_with(&[0, 0xD3]) {
+                    return Err(LayoutActivationFailure::ResetRequired(
+                        Self::stream_d3_reset_required_error(family),
+                    ));
+                }
+                let marker = StreamLayoutMarkerValue::decode(&bytes)
+                    .map_err(LayoutActivationFailure::Other)?;
+                if marker.layout != self.layout {
+                    return Err(LayoutActivationFailure::Mismatch(
+                        Self::stream_layout_mismatch_error(family, marker.layout, self.layout),
+                    ));
+                }
+
+                Self::ensure_cursor_state(&self.db, family, self.sync_write_options)?;
+                return Ok(());
+            }
+
+            if Self::txn_has_stream_data(&txn).map_err(LayoutActivationFailure::Other)? {
                 return Err(LayoutActivationFailure::ResetRequired(
-                    Self::stream_d3_reset_required_error(family),
+                    Self::stream_layout_reset_required_error(family, self.layout),
                 ));
             }
-            let marker =
-                StreamLayoutMarkerValue::decode(&bytes).map_err(LayoutActivationFailure::Other)?;
-            if marker.layout != self.layout {
-                return Err(LayoutActivationFailure::Mismatch(
-                    Self::stream_layout_mismatch_error(family, marker.layout, self.layout),
-                ));
+
+            // A concurrent activation or DROP may install a stronger marker while
+            // this fresh-family transaction is waiting for storage.
+            txn.assert_value(marker_key.clone(), None)
+                .map_err(|error| {
+                    LayoutActivationFailure::Other(format!(
+                        "assert layout marker failed: {error:?}"
+                    ))
+                })?;
+            txn.put(
+                marker_key,
+                StreamLayoutMarkerValue::new(self.layout).encode(),
+                None,
+            )
+            .map_err(|e| LayoutActivationFailure::Other(format!("txn put failed: {e:?}")))?;
+            #[cfg(test)]
+            if let Some(hook) = BEFORE_LAYOUT_COMMIT.with(|pending| pending.borrow_mut().take()) {
+                hook();
+            }
+            match txn.commit(self.sync_write_options) {
+                Ok(()) => {}
+                Err(cntryl_midge::MidgeError::WriteConflict(_)) => continue,
+                Err(error) => {
+                    return Err(LayoutActivationFailure::Other(format!(
+                        "midge commit error: {error:?}"
+                    )))
+                }
             }
 
             Self::ensure_cursor_state(&self.db, family, self.sync_write_options)?;
+
             return Ok(());
         }
-
-        if Self::txn_has_stream_data(&txn).map_err(LayoutActivationFailure::Other)? {
-            return Err(LayoutActivationFailure::ResetRequired(
-                Self::stream_layout_reset_required_error(family, self.layout),
-            ));
-        }
-
-        txn.put(
-            marker_key,
-            StreamLayoutMarkerValue::new(self.layout).encode(),
-            None,
-        )
-        .map_err(|e| LayoutActivationFailure::Other(format!("txn put failed: {e:?}")))?;
-        txn.commit(self.sync_write_options)
-            .map_err(|e| LayoutActivationFailure::Other(format!("midge commit error: {e:?}")))?;
-
-        Self::ensure_cursor_state(&self.db, family, self.sync_write_options)?;
-
-        Ok(())
     }
 
     fn ensure_cursor_state(
@@ -550,6 +591,9 @@ impl StreamStore {
             KeyPrefix::GlobalResourcePostingPage as u8,
             KeyPrefix::GlobalAreaResourcePostingPage as u8,
             KeyPrefix::PayloadBlob as u8,
+            KeyPrefix::DropCutoff as u8,
+            KeyPrefix::DropReclamation as u8,
+            KeyPrefix::DropRevision as u8,
         ];
 
         let iter = crate::storage::domain_scan::scan_domain_rows(

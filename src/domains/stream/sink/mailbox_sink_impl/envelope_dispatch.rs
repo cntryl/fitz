@@ -57,6 +57,7 @@ impl super::super::model::StreamFamilyRuntime {
         let session_mutation = matches!(
             parsed_frame,
             StreamClientFrame::Sub(_)
+                | StreamClientFrame::Drop(_)
                 | StreamClientFrame::Op(
                     crate::domains::stream::protocol::StreamMessage::Begin { .. }
                         | crate::domains::stream::protocol::StreamMessage::Append { .. }
@@ -74,6 +75,10 @@ impl super::super::model::StreamFamilyRuntime {
         self.core.record_operation();
 
         match parsed_frame {
+            StreamClientFrame::Drop(request) => {
+                self.handle_drop_frame(envelope, meta, request_started, &request);
+                Ok(())
+            }
             StreamClientFrame::Sub(sub_msg) => {
                 self.core
                     .handle_subscription_frame(envelope, meta, request_started, sub_msg);
@@ -183,7 +188,7 @@ impl StreamFamilyState {
         }
     }
 
-    pub(super) fn route_stream_response(
+    pub(in crate::domains::stream::sink) fn route_stream_response(
         &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,

@@ -5,6 +5,7 @@ use super::{
     KeyPrefix, PostingEntry, PostingPageValue, StreamStore, GLOBAL_PAGE_RECORD_LIMIT,
 };
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 const FRAGMENT_COMPACTION_THRESHOLD: usize = 8;
 // Maintenance executes on the same synchronous family actor as client Stream
@@ -13,11 +14,30 @@ const FRAGMENT_COMPACTION_THRESHOLD: usize = 8;
 const MAX_BUCKETS_PER_INVOCATION: usize = 1;
 const MAX_BYTES_PER_INVOCATION: usize = 4 * 1024 * 1024;
 
+#[cfg(test)]
+std::thread_local! {
+    static AFTER_SCAN_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn after_next_scan_for_tests(hook: Box<dyn FnOnce()>) {
+    AFTER_SCAN_HOOK.with(|pending| {
+        assert!(pending.borrow().is_none());
+        *pending.borrow_mut() = Some(hook);
+    });
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StreamMaintenanceResult {
     pub buckets_compacted: usize,
     pub records_compacted: usize,
     pub bytes_examined: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamMaintenanceKind {
+    Regular,
+    DropReclamation,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -170,11 +190,14 @@ struct Fragment {
     first_offset: u64,
     generation: u64,
     value: Vec<u8>,
+    reset_fence: Arc<super::drop_scope::CutoffSnapshot>,
 }
+
+type CompactionSource = (Vec<u8>, Vec<u8>, Arc<super::drop_scope::CutoffSnapshot>);
 
 struct CompactedBucket {
     group_key: Vec<u8>,
-    source_keys: Vec<Vec<u8>>,
+    sources: Vec<CompactionSource>,
     bucket_start: u64,
     replacement_generation: u64,
     bytes_examined: usize,
@@ -185,6 +208,32 @@ enum BucketMaintenanceOutcome {
     NotCompactable { bytes: usize },
     OverBudget { bytes: usize },
     Compacted { records: usize, bytes: usize },
+}
+
+fn fragment_reset_fence(
+    txn: &cntryl_midge::Transaction,
+    key: &[u8],
+    plane: Plane,
+) -> Result<Arc<super::drop_scope::CutoffSnapshot>, String> {
+    let (realm, suffix) = crate::utils::storage_key::split_domain_key(
+        key,
+        crate::utils::storage_key::DomainKeyspace::Stream,
+    )
+    .ok_or_else(|| "invalid Stream maintenance key".to_string())?;
+    let mut segments = suffix[1..].split(|byte| *byte == 0);
+    let area = matches!(plane, Plane::Resource | Plane::Area)
+        .then(|| segments.next())
+        .flatten()
+        .map(std::str::from_utf8)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let resource = (plane == Plane::Resource)
+        .then(|| segments.next())
+        .flatten()
+        .map(std::str::from_utf8)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    super::drop_scope::cutoff_snapshot(txn, realm, area, resource).map(Arc::new)
 }
 
 #[cfg(test)]
@@ -216,10 +265,10 @@ fn compactable_plane(prefix: u8) -> Option<Plane> {
     }
 }
 
-fn scan_maintenance_buckets(
+pub(super) fn scan_maintenance_buckets(
     store: &StreamStore,
     family: u64,
-) -> Result<BTreeMap<Vec<u8>, Vec<Fragment>>, String> {
+) -> Result<BTreeMap<Vec<u8>, usize>, String> {
     #[cfg(test)]
     store
         .maintenance_full_scans
@@ -231,7 +280,7 @@ fn scan_maintenance_buckets(
             cntryl_midge::TransactionMode::ReadOnly,
         )
         .map_err(|error| format!("begin Stream maintenance scan failed: {error:?}"))?;
-    let mut buckets: BTreeMap<Vec<u8>, Vec<Fragment>> = BTreeMap::new();
+    let mut buckets: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
     for row in crate::storage::domain_scan::scan_domain_marker_rows(
         &txn,
         crate::utils::storage_key::DomainKeyspace::Stream,
@@ -239,33 +288,22 @@ fn scan_maintenance_buckets(
     )
     .map_err(|error| format!("scan Stream maintenance rows failed: {error:?}"))?
     {
-        let (key, value) =
+        let (key, _) =
             row.map_err(|error| format!("read Stream maintenance row failed: {error:?}"))?;
         let suffix = crate::domains::stream::storage::stream_key_suffix(&key);
-        let Some(plane) = suffix.first().copied().and_then(compactable_plane) else {
+        if suffix
+            .first()
+            .copied()
+            .and_then(compactable_plane)
+            .is_none()
+        {
             continue;
-        };
+        }
         if key.len() < 24 {
             return Err("ERR_STREAM_CORRUPT_FRAGMENT: compactable key too short".to_string());
         }
-        let first_offset = u64::from_be_bytes(
-            key[key.len() - 16..key.len() - 8]
-                .try_into()
-                .map_err(|_| "decode Stream fragment offset failed".to_string())?,
-        );
-        let generation = u64::from_be_bytes(
-            key[key.len() - 8..]
-                .try_into()
-                .map_err(|_| "decode Stream fragment generation failed".to_string())?,
-        );
         let group_key = key[..key.len() - 16].to_vec();
-        buckets.entry(group_key).or_default().push(Fragment {
-            plane,
-            key: key.to_vec(),
-            first_offset,
-            generation,
-            value: value.to_vec(),
-        });
+        *buckets.entry(group_key).or_default() += 1;
     }
     Ok(buckets)
 }
@@ -314,6 +352,7 @@ fn scan_maintenance_bucket(
             first_offset,
             generation,
             value: value.to_vec(),
+            reset_fence: fragment_reset_fence(&txn, &key, plane)?,
         });
     }
     Ok(fragments)
@@ -376,7 +415,10 @@ fn merge_maintenance_bucket(
     let bytes_examined = fragments.iter().map(|fragment| fragment.value.len()).sum();
     Ok(Some(CompactedBucket {
         group_key,
-        source_keys: fragments.into_iter().map(|fragment| fragment.key).collect(),
+        sources: fragments
+            .into_iter()
+            .map(|fragment| (fragment.key, fragment.value, fragment.reset_fence))
+            .collect(),
         bucket_start,
         replacement_generation,
         bytes_examined,
@@ -411,10 +453,12 @@ fn validate_merged_posting(
 
 impl StreamStore {
     pub(crate) fn has_pending_maintenance(&self, family: u64) -> bool {
-        self.maintenance_queues
-            .lock()
-            .get(&family)
-            .is_none_or(|queue| !queue.initialized || !queue.buckets.is_empty())
+        self.has_pending_drop_reclamation(family)
+            || self
+                .maintenance_queues
+                .lock()
+                .get(&family)
+                .is_none_or(|queue| !queue.initialized || !queue.buckets.is_empty())
     }
 
     #[cfg(test)]
@@ -466,7 +510,25 @@ impl StreamStore {
                 let mut queues = self.maintenance_queues.lock();
                 let queue = queues.entry(family).or_default();
                 if queue.initialized {
-                    return Ok(queue.buckets.pop_first().map(|group_key| {
+                    let next = queue
+                        .last_group
+                        .as_ref()
+                        .and_then(|last| {
+                            queue
+                                .buckets
+                                .range::<Vec<u8>, _>((
+                                    std::ops::Bound::Excluded(last),
+                                    std::ops::Bound::Unbounded,
+                                ))
+                                .next()
+                        })
+                        .or_else(|| queue.buckets.first())
+                        .cloned();
+                    return Ok(next.map(|group_key| {
+                        queue.buckets.remove(&group_key);
+                        // Advance before attempting compaction so a malformed
+                        // group cannot win every retry ahead of healthy work.
+                        queue.last_group = Some(group_key.clone());
                         let is_retry = queue.retry_buckets.contains(&group_key);
                         (group_key, is_retry)
                     }));
@@ -479,7 +541,7 @@ impl StreamStore {
                 queue.buckets.extend(
                     discovered
                         .into_iter()
-                        .filter(|(_, fragments)| fragments.len() > FRAGMENT_COMPACTION_THRESHOLD)
+                        .filter(|(_, count)| *count > FRAGMENT_COMPACTION_THRESHOLD)
                         .map(|(group_key, _)| group_key),
                 );
                 queue.initialized = true;
@@ -523,6 +585,10 @@ impl StreamStore {
             });
         }
         let record_count = bucket.merged.len();
+        #[cfg(test)]
+        if let Some(hook) = AFTER_SCAN_HOOK.with(|pending| pending.borrow_mut().take()) {
+            hook();
+        }
         let now_epoch_ms = self.now_epoch_ms();
         let mut merged = bucket.merged;
         merged.prune_expired(now_epoch_ms);
@@ -554,6 +620,13 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadWrite,
             )
             .map_err(|error| format!("begin Stream maintenance tx failed: {error:?}"))?;
+        write_txn.set_conflict_policy(cntryl_midge::ConflictPolicy::AbortOnWriteConflict);
+        for (source_key, source_value, fence) in &bucket.sources {
+            write_txn
+                .assert_value(source_key.clone(), Some(source_value.clone()))
+                .map_err(|error| error.to_string())?;
+            fence.assert_unchanged(&mut write_txn)?;
+        }
         #[cfg(test)]
         self.inject_maintenance_failure(MaintenanceFailureStage::BeforeReplacement)?;
         if retain_expired_range || latest_expiration.is_none_or(|deadline| deadline > now_epoch_ms)
@@ -566,7 +639,7 @@ impl StreamStore {
         self.inject_maintenance_failure(MaintenanceFailureStage::DuringReplacement)?;
         #[cfg(test)]
         self.inject_maintenance_failure(MaintenanceFailureStage::BeforeDeletion)?;
-        for source_key in bucket.source_keys {
+        for (source_key, _, _) in bucket.sources {
             if source_key != replacement_key {
                 write_txn
                     .delete(source_key)
@@ -582,7 +655,7 @@ impl StreamStore {
         })
     }
 
-    /// Runs one bounded synchronous D4 maintenance slice.
+    /// Runs one bounded synchronous D4/D5 maintenance slice.
     ///
     /// Maintenance is separate from append so discovery never adds historical
     /// payload reads to commits. One invocation handles at most one bucket and
@@ -595,7 +668,29 @@ impl StreamStore {
     /// Returns an error for malformed/overlapping fragments or a failed atomic
     /// replacement transaction.
     pub fn run_maintenance(&self, family: u64) -> Result<StreamMaintenanceResult, String> {
+        self.run_maintenance_classified(family)
+            .map(|(result, _)| result)
+    }
+
+    pub(crate) fn run_maintenance_classified(
+        &self,
+        family: u64,
+    ) -> Result<(StreamMaintenanceResult, StreamMaintenanceKind), String> {
         self.ensure_layout_activation_for_family(family)?;
+        // Advance the turn before storage work: even a failing DROP bucket
+        // yields the next invocation to ordinary fragment compaction.
+        let prefer_drop = {
+            let mut queues = self.maintenance_queues.lock();
+            let queue = queues.entry(family).or_default();
+            let prefer_drop = !queue.prefer_regular;
+            queue.prefer_regular = prefer_drop;
+            prefer_drop
+        };
+        if prefer_drop {
+            if let Some(result) = self.run_drop_reclamation(family)? {
+                return Ok((result, StreamMaintenanceKind::DropReclamation));
+            }
+        }
         let mut result = StreamMaintenanceResult::default();
         let mut buckets_examined = 0usize;
         while buckets_examined < MAX_BUCKETS_PER_INVOCATION
@@ -640,6 +735,11 @@ impl StreamStore {
                 }
             }
         }
-        Ok(result)
+        if buckets_examined == 0 && !prefer_drop {
+            if let Some(drop_result) = self.run_drop_reclamation(family)? {
+                return Ok((drop_result, StreamMaintenanceKind::DropReclamation));
+            }
+        }
+        Ok((result, StreamMaintenanceKind::Regular))
     }
 }

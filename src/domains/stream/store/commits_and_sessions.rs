@@ -24,6 +24,19 @@ struct PreparedSessionReservation {
 }
 
 impl StreamStore {
+    /// Commit one resource batch against its current deletion boundary.
+    ///
+    /// # Errors
+    /// Returns an error on an invalid frontier, deletion race, or storage failure.
+    pub fn commit_records(
+        &self,
+        params: CommitRecordsParams<'_>,
+    ) -> Result<CommitResponse, String> {
+        let cutoff =
+            self.resource_drop_cutoff(params.family, params.realm, params.area, params.resource)?;
+        self.commit_records_fenced(params, cutoff)
+    }
+
     fn recover_global_ordering_after_unknown_commit(&self, family: u64) -> Result<(), String> {
         self.recovered_global_families.lock().remove(&family);
         self.recover_global_ordering_once(family)
@@ -79,6 +92,7 @@ impl StreamStore {
                 first_realm_offset,
                 first_global_offset: params.first_global_offset,
                 writer_epoch: params.writer_epoch,
+                expected_drop_cutoff: params.expected_drop_cutoff,
                 events: params.events,
                 committed_size_before: params.committed_size_before,
                 ingest_metadata: params.ingest_metadata.clone(),
@@ -296,9 +310,10 @@ impl StreamStore {
     /// Returns an error if layout activation fails, the batch is empty, the
     /// expected frontier no longer matches persisted state, or the commit write
     /// path fails.
-    pub fn commit_records(
+    pub(crate) fn commit_records_fenced(
         &self,
         params: CommitRecordsParams<'_>,
+        expected_drop_cutoff: u64,
     ) -> Result<CommitResponse, String> {
         self.ensure_layout_activation_for_family(params.family)?;
         let CommitRecordsParams {
@@ -322,11 +337,8 @@ impl StreamStore {
         // Revisit with group commit if per-resource throughput becomes limiting.
         let _sequencing_lock = sequencing_guard.lock();
 
-        let resource_meta_state = self.resource_meta_state(family, realm, area, resource);
-        let mut resource_meta_state = resource_meta_state.lock();
         let (resource_meta_before, _) =
             self.load_resource_meta_snapshot(family, realm, area, resource)?;
-        resource_meta_state.snapshot = Some(resource_meta_before.clone());
         if resource_meta_before.next_offset != expected_resource_next_offset {
             return Err(StreamStoreError::ConcurrencyConflict
                 .store_code()
@@ -358,12 +370,13 @@ impl StreamStore {
                 first_realm_offset,
                 first_global_offset: global_reservation.first_offset,
                 writer_epoch: global_reservation.writer_epoch,
+                expected_drop_cutoff,
                 events,
                 committed_size_before: resource_meta_before.committed_size_bytes,
                 ingest_metadata: ingest_metadata.clone(),
                 mode,
             });
-        let (response, resource_meta_after) = match commit_result {
+        let (response, _) = match commit_result {
             Ok(result) => result,
             Err(PromotionCommitFailure::Ambiguous(error)) => {
                 if let Err(recovery_error) =
@@ -389,7 +402,6 @@ impl StreamStore {
             }
         };
 
-        resource_meta_state.snapshot = Some(resource_meta_after);
         Ok(response)
     }
 
@@ -576,12 +588,6 @@ impl StreamStore {
         // See commit_records: this deliberately spans the durable commit.
         let _sequencing_lock = sequencing_guard.lock();
 
-        let resource_meta_state =
-            self.resource_meta_state(family, &session.realm, &session.area, &session.resource);
-        let mut resource_meta_state = resource_meta_state.lock();
-        let realm_sequence_state = self.realm_sequence_state(family, &session.realm);
-        let mut realm_sequence_state = realm_sequence_state.lock();
-
         let (resource_meta_before, _) = match self.load_resource_meta_snapshot(
             family,
             &session.realm,
@@ -594,8 +600,6 @@ impl StreamStore {
                 return Err(error);
             }
         };
-        resource_meta_state.snapshot = Some(resource_meta_before.clone());
-
         if resource_meta_before.next_offset != first_resource_offset {
             self.sessions.lock().insert(session_id, session);
             return Err(StreamStoreError::ConcurrencyConflict
@@ -603,6 +607,18 @@ impl StreamStore {
                 .to_string());
         }
 
+        let expected_drop_cutoff = match self.resource_drop_cutoff(
+            family,
+            &session.realm,
+            &session.area,
+            &session.resource,
+        ) {
+            Ok(cutoff) => cutoff,
+            Err(error) => {
+                self.sessions.lock().insert(session_id, session);
+                return Err(error);
+            }
+        };
         let prepared =
             match self.prepare_session_reservation(family, &session, first_resource_offset) {
                 Ok(prepared) => prepared,
@@ -624,13 +640,14 @@ impl StreamStore {
             first_realm_offset,
             first_global_offset: global_reservation.first_offset,
             writer_epoch: global_reservation.writer_epoch,
+            expected_drop_cutoff,
             events: &session.staged_events,
             committed_size_before: resource_meta_before.committed_size_bytes,
             ingest_metadata: session.ingest_metadata.clone(),
             mode,
         });
 
-        let (response, resource_meta_after) = match result {
+        let (response, _) = match result {
             Ok(result) => result,
             Err(error) => {
                 if self.preserve_retryable_global_reservation(
@@ -647,13 +664,6 @@ impl StreamStore {
                 return Err(error.into_message());
             }
         };
-
-        resource_meta_state.snapshot = Some(resource_meta_after);
-        realm_sequence_state.next_area_offsets.insert(
-            session.area.clone(),
-            response.last_area_offset.saturating_add(1),
-        );
-        realm_sequence_state.next_realm_offset = Some(response.last_realm_offset.saturating_add(1));
 
         Ok(response)
     }
