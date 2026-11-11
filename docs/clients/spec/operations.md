@@ -186,7 +186,7 @@ changes its ownership.
 
 ### Stream Domain (Log/Event Stream)
 
-**Purpose:** Durable append-only log with commit-time resource, area, and realm ordering.
+**Purpose:** Durable append log with commit-time resource, area, and realm ordering. History is append-only except for explicit scoped `DROP`.
 
 **Canonical Operations:**
 
@@ -198,7 +198,8 @@ changes its ownership.
 | `Subscribe` | 607 | C→S | Watch for new records |
 | `Unsubscribe` | 608 | C→S | Stop watching |
 
-**Additional ops:** Begin, Commit, Rollback (session control; see stream spec)
+**Additional ops:** Begin, Commit, Rollback (session control; see stream spec);
+`Drop` (610) removes resource, area, or realm history (see [stream-drop.md](stream-drop.md))
 
 **Constraints:**
 - Records are strictly ordered by offset within each resource
@@ -694,7 +695,7 @@ Clients MUST NOT automatically retry operations unless:
   **NOT Idempotent (MUST NOT Retry Automatically):**
   Write operations, control operations, and live fanout operations are NOT idempotent:
 - KV: `PUT`, `INSERT`, `DELETE`, `BEGIN`, `COMMIT`, `ROLLBACK`
-- Stream: `APPEND`, `BEGIN`, `COMMIT`, `ROLLBACK`
+- Stream: `APPEND`, `BEGIN`, `COMMIT`, `ROLLBACK`, `DROP`
 - Notice: `PUBLISH`, `SUBSCRIBE`, `UNSUBSCRIBE`
 - Queue: `ENQUEUE`, `RESERVE`, `EXTEND`, `DELETE`
 - RPC: `REQUEST`, `RESPONSE`
