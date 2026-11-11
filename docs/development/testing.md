@@ -91,7 +91,11 @@ Use [domain-boundaries-spec.md](domain-boundaries-spec.md) as the source of trut
 Required coverage patterns:
 
 - Notice: disconnect cleanup, wildcard matching, duplicate subscription handling, RouteFamily isolation, no replay expectation.
-- Stream: append sessions, commit ordering, replay from offsets, watermarks, restart recovery of committed history, no live subscription recovery.
+- Stream: append sessions, commit ordering, replay from offsets, watermarks,
+  restart recovery of committed history, no live subscription recovery, scoped
+  destructive DROP and contained offset resets, shared-index isolation,
+  pre-hydration deletion checks, delayed-application fences, and restartable
+  range-delete reclamation.
 - KV: transaction scope, commit, rollback, stale transaction rejection, RouteFamily isolation, restart recovery of committed values only.
 - Queue: enqueue, reserve, complete, extend, redelivery, dead-letter handling, best-effort acceptance, explicitly flushed recovery, crash-loss boundaries, invalid token rejection.
 - RPC: worker registration, request correlation, timeout, backpressure, streaming sequence, cleanup after disconnect or restart.

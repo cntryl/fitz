@@ -153,6 +153,15 @@ Stream data, operators must export/replay the source events into a fresh store
 or intentionally clear and rebuild persisted Stream state. Rollback requires
 restoring the pre-upgrade store snapshot together with the old broker.
 
+The first successful [Stream DROP](../clients/spec/stream-drop.md) advances that
+family's marker from D4 to D5 (`[0, 0xD5, 2]`). This broker accepts both markers;
+older D4 brokers reject D5 because they cannot honor its deletion cutoffs.
+Rollback after DROP requires restoring the pre-DROP store with the older broker.
+Reclamation progress accepts the original 16-byte row and a 24-byte extension
+that persists a pending rescan without restarting an active sweep.
+A family-local eight-byte DROP revision commits with the deletion and lets
+observability detect its application even when no payload sweep is needed.
+
 ## Schedule delivery modes
 
 Schedule CREATE and CREATE_BATCH now require a delivery-mode byte after the cron

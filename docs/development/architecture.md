@@ -332,10 +332,17 @@ impl Engine {
 ```
 **Key-value schema for each domain:**
 - **KV:** `{realm}/{area}/{resource}/{key}` → `{value}`
-- **Stream:** D4 stores committed history as immutable, 64-offset-bucketed
-  resource, area, realm, and family-global fragments plus durable counters,
+- **Stream:** D4 stores committed history as 64-offset-bucketed resource,
+  area, realm, and family-global fragments plus durable counters,
   watermarks, metadata, discriminators, sparse locators, and checksum-verified
-  single-copy blobs for payloads above 16 KiB. Absolute per-record expirations
+  single-copy blobs for payloads above 16 KiB. Fragments are append-only
+  except for compaction and DROP. The first DROP advances the family marker
+  to D5 and adds per-scope `DropCutoff` rows, a `DropRevision` counter, and a
+  `DropReclamation` progress row. DROP range-deletes scoped rows and records
+  a cutoff; reads hide global records below it. Background reclamation then
+  rewrites affected global fragments in place, replacing payloads with empty
+  expired placeholders that keep offsets and identities, and deletes their
+  blobs and discriminators. Absolute per-record expirations
   remain authoritative across compaction. The public
   `promotion-frontier` selection name remains stable, but D3 data is not read
   or migrated in place.

@@ -55,6 +55,34 @@ std::thread_local! {
     static ADMISSION_BUDGET: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
     static COMMIT_OUTCOMES: std::cell::RefCell<std::collections::VecDeque<Option<cntryl_midge::MidgeError>>> = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     static COMMIT_OUTCOMES_AFTER_APPLY: std::cell::RefCell<std::collections::VecDeque<Option<cntryl_midge::MidgeError>>> = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+    static COMMIT_HOOK: std::cell::RefCell<Option<CommitHook>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+type CommitHook = Box<
+    dyn FnOnce(
+        cntryl_midge::Transaction,
+        cntryl_midge::WriteOptions,
+    ) -> cntryl_midge::MidgeResult<()>,
+>;
+
+#[cfg(test)]
+pub(super) struct CommitHookGuard;
+
+#[cfg(test)]
+impl Drop for CommitHookGuard {
+    fn drop(&mut self) {
+        COMMIT_HOOK.with(|hook| hook.borrow_mut().take());
+    }
+}
+
+#[cfg(test)]
+pub(super) fn inject_commit_hook(hook: CommitHook) -> CommitHookGuard {
+    COMMIT_HOOK.with(|pending| {
+        assert!(pending.borrow().is_none());
+        *pending.borrow_mut() = Some(hook);
+    });
+    CommitHookGuard
 }
 
 #[cfg(test)]
@@ -123,6 +151,10 @@ impl StreamStore {
         transaction: cntryl_midge::Transaction,
         options: cntryl_midge::WriteOptions,
     ) -> cntryl_midge::MidgeResult<()> {
+        #[cfg(test)]
+        if let Some(hook) = COMMIT_HOOK.with(|pending| pending.borrow_mut().take()) {
+            return hook(transaction, options);
+        }
         #[cfg(test)]
         if let Some(Some(error)) =
             COMMIT_OUTCOMES.with(|outcomes| outcomes.borrow_mut().pop_front())

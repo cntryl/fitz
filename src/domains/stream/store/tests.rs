@@ -47,11 +47,17 @@ fn drain_maintenance(store: &StreamStore, family: u64) -> StreamMaintenanceResul
     panic!("Stream maintenance did not drain within the test slice bound");
 }
 
+mod adversarial_drop;
+mod review_reclamation;
+mod review_storage;
 mod sessions_layout_and_watermarks;
 use sessions_layout_and_watermarks::*;
 mod bounded_replay;
 mod commit_persistence;
 mod compacted_locator_cache;
+mod drop_deadlines;
+mod drop_reads;
+mod drop_scope;
 mod event_size;
 mod filters_ttl_and_metadata;
 mod global_ordering;
@@ -62,4 +68,6 @@ mod offsets_and_reads;
 mod overflow_and_recovery;
 mod ttl_cursor_regressions;
 
+mod adversarial_drop_reads;
+mod review_read_fences;
 mod storage_admission;

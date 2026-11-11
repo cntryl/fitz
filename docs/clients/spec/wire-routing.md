@@ -886,6 +886,7 @@ Clients MUST:
 | Stream   | SUBSCRIBE          |       607 | Data          | Subscribe to changes    |
 | Stream   | UNSUBSCRIBE        |       608 | Data          | Unsubscribe             |
 | Stream   | NOTIFY             |       609 | Server→Client | Change notification     |
+| Stream   | DROP               |       610 | Data          | Remove scoped history   |
 | Schedule | CREATE             |       700 | Data          | Create schedule         |
 | Schedule | CANCEL             |       701 | Data          | Cancel schedule         |
 | Schedule | LIST               |       702 | Data          | List schedules          |

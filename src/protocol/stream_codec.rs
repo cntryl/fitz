@@ -8,14 +8,27 @@
 
 use crate::dispatch::wire::stream::{
     IngestMetadata, StreamClientErrorKind, StreamClientFrame, StreamClientResponseBody,
-    StreamDiscriminator, StreamFilterSet, StreamMessage, StreamSubscriptionFailure,
-    StreamSubscriptionMessage, StreamWriteMode, ERR_STREAM_FILTER_INVALID_PAYLOAD,
-    ERR_STREAM_FILTER_UNSUPPORTED_VERSION,
+    StreamDiscriminator, StreamDropRequest, StreamDropScope, StreamFilterSet, StreamMessage,
+    StreamSubscriptionFailure, StreamSubscriptionMessage, StreamWriteMode,
+    ERR_STREAM_FILTER_INVALID_PAYLOAD, ERR_STREAM_FILTER_UNSUPPORTED_VERSION,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
+
+#[cfg(test)]
+mod drop_tests;
+
+fn decode_drop(payload: &[u8]) -> Result<(&str, StreamWriteMode), String> {
+    let mut decoder = PayloadDecoder::new(payload);
+    let route = decoder.get_string_ref()?;
+    let mode = StreamWriteMode::decode(decoder.get_u8()?)?;
+    if !decoder.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+    Ok((route, mode))
+}
 
 fn u64_to_usize_saturating(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
@@ -59,6 +72,13 @@ pub fn parse_request(
             .map(StreamClientFrame::Sub),
         608 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber)
             .map(StreamClientFrame::Sub),
+        610 => {
+            let (route, mode) = decode_drop(payload)?;
+            Ok(StreamClientFrame::Drop(StreamDropRequest {
+                scope: StreamDropScope::parse(route_family, route)?,
+                mode,
+            }))
+        }
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
@@ -73,6 +93,11 @@ pub fn extract_auth_route(
     msg_type: u16,
     payload: &[u8],
 ) -> Result<Option<std::borrow::Cow<'_, str>>, String> {
+    if msg_type == 610 {
+        let (route, _) = decode_drop(payload)?;
+        return StreamDropScope::canonical_authorization_route(route)
+            .map(|route| Some(std::borrow::Cow::Owned(route)));
+    }
     let mut dec = PayloadDecoder::new(payload);
 
     let route = match msg_type {
@@ -173,7 +198,7 @@ pub fn encode_response_into(
                 601 | 602 => {
                     enc.put_bytes(data);
                 }
-                603 | 608 => {}
+                603 | 608 | 610 => {}
                 605 | 606 => {
                     enc.put_raw(data);
                 }

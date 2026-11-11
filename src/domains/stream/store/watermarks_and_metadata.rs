@@ -12,6 +12,35 @@ use super::{
 };
 
 impl StreamStore {
+    /// Persist an advisory area frontier against its current reset boundary.
+    ///
+    /// # Errors
+    /// Returns an error on a concurrent reset or storage failure.
+    pub fn set_watermark(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        watermark: u64,
+    ) -> Result<(), String> {
+        let cutoff = self.area_drop_cutoff(family, realm, area)?;
+        self.set_watermark_fenced(family, realm, area, watermark, cutoff)
+    }
+
+    /// Persist an advisory realm frontier against its current reset boundary.
+    ///
+    /// # Errors
+    /// Returns an error on a concurrent reset or storage failure.
+    pub fn set_realm_watermark(
+        &self,
+        family: u64,
+        realm: &str,
+        watermark: u64,
+    ) -> Result<(), String> {
+        let cutoff = self.realm_drop_cutoff(family, realm)?;
+        self.set_realm_watermark_fenced(family, realm, watermark, cutoff)
+    }
+
     fn load_persisted_global_watermark(&self, family: u64) -> Result<u64, String> {
         let txn = self
             .db
@@ -248,12 +277,13 @@ impl StreamStore {
     ///
     /// Returns an error if layout activation, storage reads or writes,
     /// watermark encoding, or transaction commit fails.
-    pub fn set_watermark(
+    pub(crate) fn set_watermark_fenced(
         &self,
         family: u64,
         realm: &str,
         area: &str,
         watermark: u64,
+        expected_drop_cutoff: u64,
     ) -> Result<(), String> {
         self.ensure_layout_activation_for_family(family)?;
 
@@ -266,6 +296,12 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadWrite,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+
+        let cutoff = super::drop_scope::cutoff_snapshot(&txn, realm, Some(area), None)?;
+        if cutoff.maximum != expected_drop_cutoff {
+            return Err(super::StreamStoreError::Dropped.store_code().to_string());
+        }
+        cutoff.assert_unchanged(&mut txn)?;
 
         // This row is the coordinator's advisory persisted frontier and must
         // not regress relative to an earlier advisory value. The area counter
@@ -363,11 +399,12 @@ impl StreamStore {
     ///
     /// Returns an error if layout activation, storage reads or writes,
     /// watermark encoding, or transaction commit fails.
-    pub fn set_realm_watermark(
+    pub(crate) fn set_realm_watermark_fenced(
         &self,
         family: u64,
         realm: &str,
         watermark: u64,
+        expected_drop_cutoff: u64,
     ) -> Result<(), String> {
         self.ensure_layout_activation_for_family(family)?;
 
@@ -380,6 +417,12 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadWrite,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+
+        let cutoff = super::drop_scope::cutoff_snapshot(&txn, realm, None, None)?;
+        if cutoff.maximum != expected_drop_cutoff {
+            return Err(super::StreamStoreError::Dropped.store_code().to_string());
+        }
+        cutoff.assert_unchanged(&mut txn)?;
 
         // This row is the coordinator's advisory persisted frontier and must
         // not regress relative to an earlier advisory value. The realm

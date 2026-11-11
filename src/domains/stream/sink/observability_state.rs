@@ -6,7 +6,7 @@ use super::projection::{StreamAdminProjection, StreamFamilyAdminSnapshot};
 use crate::domains::stream::metrics::StreamDurableMetrics;
 use crate::runtime::routing::RouteFamily;
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub(super) struct StreamObservability {
@@ -15,6 +15,8 @@ pub(super) struct StreamObservability {
     live_gauges: Arc<StreamLiveGaugeCoordinator>,
     durable_metrics: Arc<StreamDurableMetrics>,
     committed_snapshot: Mutex<Option<super::projection::StreamCommittedAdminSnapshot>>,
+    observed_drop_revision: AtomicU64,
+    drop_watermarks_dirty: AtomicBool,
 }
 
 impl StreamObservability {
@@ -30,6 +32,8 @@ impl StreamObservability {
             live_gauges,
             durable_metrics,
             committed_snapshot: Mutex::new(None),
+            observed_drop_revision: AtomicU64::new(0),
+            drop_watermarks_dirty: AtomicBool::new(false),
         }
     }
 
@@ -81,5 +85,36 @@ impl StreamObservability {
 
     pub(super) fn watermark_generation(&self) -> u64 {
         self.durable_metrics.watermark_generation()
+    }
+
+    pub(super) fn observe_drop_revision(&self, revision: u64) -> bool {
+        if self
+            .observed_drop_revision
+            .swap(revision, Ordering::Relaxed)
+            == revision
+        {
+            return false;
+        }
+        self.drop_watermarks_dirty.store(true, Ordering::Relaxed);
+        true
+    }
+
+    pub(super) fn drop_watermarks_dirty(&self) -> bool {
+        self.drop_watermarks_dirty.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn forget_drop_watermarks(&self, scope: &crate::domains::stream::StreamDropScope) {
+        self.projection.forget_drop_watermarks(scope);
+    }
+
+    pub(super) fn publish_reconciled_watermarks(
+        &self,
+        family: u64,
+        realms: Vec<crate::domains::stream::metrics::StreamRealmWatermarkMetric>,
+        areas: Vec<crate::domains::stream::metrics::StreamAreaWatermarkMetric>,
+    ) {
+        self.projection
+            .replace_family_watermarks(family, realms, areas);
+        self.drop_watermarks_dirty.store(false, Ordering::Relaxed);
     }
 }

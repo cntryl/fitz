@@ -1,6 +1,6 @@
 use super::*;
 
-fn commit_events(
+pub(super) fn commit_events(
     store: &crate::domains::stream::store::StreamStore,
     family: RouteFamily,
     realm: &str,

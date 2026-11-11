@@ -16,6 +16,15 @@ impl StreamStore {
             return Ok(());
         }
 
+        self.recover_global_ordering_locked(family, None)
+    }
+
+    /// The caller holds this family's sequencing mutex.
+    pub(super) fn recover_global_ordering_locked(
+        &self,
+        family: u64,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<(), String> {
         let mut txn = self
             .db
             .begin_tx(
@@ -101,11 +110,41 @@ impl StreamStore {
         txn.commit(self.sync_write_options)
             .map_err(|error| format!("commit global recovery failed: {error:?}"))?;
 
-        let completion = self.global_completion_state(family);
-        let mut completion = completion.lock();
+        self.finish_recovery_cache(family, repaired_head, deadline)
+    }
+
+    fn finish_recovery_cache(
+        &self,
+        family: u64,
+        repaired_head: u64,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<(), String> {
+        let completion = if let Some(deadline) = deadline {
+            let mut states = self
+                .global_completion_states
+                .try_lock_until(deadline)
+                .ok_or_else(super::drop_mutation::timeout)?;
+            states.entry(family).or_default().clone()
+        } else {
+            self.global_completion_state(family)
+        };
+        let mut completion = if let Some(deadline) = deadline {
+            completion
+                .try_lock_until(deadline)
+                .ok_or_else(super::drop_mutation::timeout)?
+        } else {
+            completion.lock()
+        };
         completion.watermark = Some(repaired_head);
         completion.resolved.clear();
-        self.recovered_global_families.lock().insert(family);
+        let mut recovered = if let Some(deadline) = deadline {
+            self.recovered_global_families
+                .try_lock_until(deadline)
+                .ok_or_else(super::drop_mutation::timeout)?
+        } else {
+            self.recovered_global_families.lock()
+        };
+        recovered.insert(family);
         Ok(())
     }
 }

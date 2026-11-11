@@ -383,6 +383,16 @@ impl StreamClientRequest {
 pub enum StreamClientFrame {
     Op(StreamMessage),
     Sub(StreamSubscriptionMessage),
+    Drop(StreamDropRequest),
+}
+
+pub use super::drop_scope::{StreamDropScope, StreamDropTarget};
+
+/// Standalone destructive deletion; independent of an append session.
+#[derive(Debug, Clone)]
+pub struct StreamDropRequest {
+    pub scope: StreamDropScope,
+    pub mode: StreamWriteMode,
 }
 
 /// Client-facing stream response body before transport encoding.
@@ -646,10 +656,14 @@ fn classify_stream_error_message(message: &str) -> StreamClientErrorKind {
         return Kind::Timeout;
     }
 
+    if let Some(error) = super::store::StreamStoreError::from_store_message(message) {
+        return error.client_kind();
+    }
+
     match message {
         "session already active" => Kind::SessionAlreadyActive,
         "session not found" => Kind::SessionNotFound,
-        "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => Kind::ConcurrencyConflict,
+        "concurrency conflict" => Kind::ConcurrencyConflict,
         "resource not found" => Kind::ResourceNotFound,
         "route family mismatch" => Kind::InvalidRoute,
         "empty pattern" => Kind::InvalidSubscriptionPattern,
@@ -785,6 +799,7 @@ mod tests {
             ("session not found", Kind::SessionNotFound),
             ("concurrency conflict", Kind::ConcurrencyConflict),
             ("ERR_CONCURRENCY_CONFLICT", Kind::ConcurrencyConflict),
+            ("ERR_STREAM_DROPPED", Kind::ConcurrencyConflict),
             ("resource not found", Kind::ResourceNotFound),
             ("empty pattern", Kind::InvalidSubscriptionPattern),
             ("event too large", Kind::BadRequest),
@@ -809,6 +824,10 @@ mod tests {
             ("ERR_STREAM_TIMEOUT: midge commit timed out", Kind::Timeout),
             (
                 "backend concurrency conflict diagnostic unavailable",
+                Kind::Backend,
+            ),
+            (
+                "backend ERR_STREAM_DROPPED diagnostic unavailable",
                 Kind::Backend,
             ),
             ("route family mismatch", Kind::InvalidRoute),

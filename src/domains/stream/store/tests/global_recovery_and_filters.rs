@@ -25,6 +25,7 @@ fn should_share_route_segments_across_global_page_batch_records() {
         first_realm_offset: 0,
         first_global_offset: 0,
         writer_epoch: 0,
+        expected_drop_cutoff: 0,
         events: &events,
         committed_size_before: 0,
         ingest_metadata: None,
