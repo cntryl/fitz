@@ -63,3 +63,8 @@ The broker code lives under `src/`. Integration tests in `tests/` spawn broker c
 - Use [docs/operations/release-checklist.md](docs/operations/release-checklist.md).
 - Use [docs/operations/migration-guide.md](docs/operations/migration-guide.md) when compatibility risk exists.
 - Use [docs/development/format-compatibility.md](docs/development/format-compatibility.md) for wire, storage, and serialized format changes.
+## Explain your use case
+
+In your issue or pull request, explain how you use or plan to use this project, what problem you encountered, and how the proposed change helps.
+
+Follow this repository’s setup and validation instructions, and report relevant checks you ran.
