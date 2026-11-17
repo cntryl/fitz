@@ -54,7 +54,7 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["full"] }
 hyper-tungstenite = "0.30"
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
-jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+jsonwebtoken = { version = "12", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 lexkey = { package = "cntryl-lexkey", version = "0.1.0" }
 libc = "0.2"
 lz4_flex = "0.14.0"
