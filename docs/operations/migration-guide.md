@@ -2,6 +2,25 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## 0.4.0 to 0.5.0
+
+Upgrade the broker with your existing Wire 3 SDKs. CONNECT negotiation,
+capabilities, and the payloads for existing operations stay the same on TCP
+and WebSocket. Clients can continue using those operations without a code or
+configuration change. The new [KV DROP](../clients/spec/kv.md#drop-request)
+and [Stream DROP](../clients/spec/stream-drop.md) requests are optional.
+
+Before upgrading, preserve a verified store snapshot. The broker reads existing
+D4 Stream families. The first successful Stream DROP in a family writes a D5
+marker. To roll back after that point, stop the broker and restore the matching
+pre-DROP store with 0.4.0. Restoring that snapshot also rolls back later writes.
+After a DROP, discard checkpoints, revisions, and cursors for scopes whose
+offsets reset. Family-global offsets retain their numbering.
+
+Rust applications embedding the broker crate may need source changes for new
+enum variants and route extractors that now return `Cow<str>`. This applies
+to in-process Rust callers. Network SDKs continue to use Wire 3.
+
 ## Wire 3 coordinated cutover
 
 Wire 3 is the planned final wire compatibility cutover. Issue #508 records the
