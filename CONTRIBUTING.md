@@ -3,12 +3,6 @@
 ## Organization-wide contribution expectations
 
 Fitz follows the [cntryl contribution standards](https://github.com/cntryl/.github/blob/main/CONTRIBUTING.md).
-AI-assisted contributions are welcome, but material AI or generative-tool
-assistance must be disclosed. Explain how you encountered the problem or need,
-why the contribution matters, what the tool assisted, and how its output was
-reviewed and validated. You remain responsible for understanding, testing,
-explaining, and revising the complete submission.
-
 Substantial work requires a linked issue and maintainer agreement on scope before
 implementation. Maintainers may close context-free, duplicate, speculative,
 misleading, mass-produced, or unsupported submissions to protect review capacity.
@@ -63,3 +57,8 @@ The broker code lives under `src/`. Integration tests in `tests/` spawn broker c
 - Use [docs/operations/release-checklist.md](docs/operations/release-checklist.md).
 - Use [docs/operations/migration-guide.md](docs/operations/migration-guide.md) when compatibility risk exists.
 - Use [docs/development/format-compatibility.md](docs/development/format-compatibility.md) for wire, storage, and serialized format changes.
+## Explain your use case
+
+In your issue or pull request, explain how you use or plan to use this project, what problem you encountered, and how the proposed change helps.
+
+Follow this repository’s setup and validation instructions, and report relevant checks you ran.
