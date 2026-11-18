@@ -60,7 +60,8 @@ pub fn verify_jwt_with_hmac_secret(token: &str, secret: &[u8]) -> Result<Value, 
         return Err("unsupported HMAC algorithm; expected HS256".to_string());
     }
 
-    let decoding_key = DecodingKey::from_secret(secret);
+    let decoding_key =
+        DecodingKey::from_secret(secret).map_err(|e| format!("invalid HMAC key: {e}"))?;
     let validation = signature_only_validation(Algorithm::HS256);
 
     let token_data = decode::<serde_json::Value>(token, &decoding_key, &validation)

@@ -396,12 +396,10 @@ impl AdminAuth {
             exp: expires_at.timestamp(),
         };
 
-        let token = jsonwebtoken::encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(settings.jwt_secret.as_bytes()),
-        )
-        .map_err(|_| AuthFailure::Unavailable)?;
+        let key = EncodingKey::from_secret(settings.jwt_secret.as_bytes())
+            .map_err(|_| AuthFailure::Unavailable)?;
+        let token = jsonwebtoken::encode(&Header::default(), &claims, &key)
+            .map_err(|_| AuthFailure::Unavailable)?;
 
         Ok(build_cookie(
             &token,
@@ -446,13 +444,12 @@ impl AdminAuth {
             .ok_or(AuthFailure::Unavailable)?;
         let token =
             extract_cookie_value(req, ADMIN_SESSION_COOKIE).ok_or(AuthFailure::MissingSession)?;
-        let claims = jsonwebtoken::decode::<AdminSessionClaims>(
-            &token,
-            &DecodingKey::from_secret(settings.jwt_secret.as_bytes()),
-            &Validation::default(),
-        )
-        .map_err(|_| AuthFailure::InvalidSession)?
-        .claims;
+        let key = DecodingKey::from_secret(settings.jwt_secret.as_bytes())
+            .map_err(|_| AuthFailure::Unavailable)?;
+        let claims =
+            jsonwebtoken::decode::<AdminSessionClaims>(&token, &key, &Validation::default())
+                .map_err(|_| AuthFailure::InvalidSession)?
+                .claims;
 
         if claims.role != "admin" {
             return Err(AuthFailure::InvalidSession);

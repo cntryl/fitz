@@ -10,6 +10,11 @@ and WebSocket. Clients can continue using those operations without a code or
 configuration change. The new [KV DROP](../clients/spec/kv.md#drop-request)
 and [Stream DROP](../clients/spec/stream-drop.md) requests are optional.
 
+If you use JWT authentication, configure a nonempty HMAC secret for HS256.
+The broker rejects tokens that declare unsupported critical JOSE header
+extensions. A JWKS refresh containing an empty HMAC key fails and the broker
+keeps its previously cached keys until their TTL expires.
+
 Before upgrading, preserve a verified store snapshot. The broker reads existing
 D4 Stream families. The first successful Stream DROP in a family writes a D5
 marker. To roll back after that point, stop the broker and restore the matching

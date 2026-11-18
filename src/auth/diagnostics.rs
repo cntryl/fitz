@@ -291,7 +291,7 @@ mod tests {
                 "roles": ["queue.write"],
                 "scope": "stream.read kv.write"
             }),
-            &EncodingKey::from_secret(b"diagnostic-test-secret"),
+            &EncodingKey::from_secret(b"diagnostic-test-secret").expect("nonempty test secret"),
         )
         .unwrap();
 
@@ -331,7 +331,7 @@ mod tests {
                 "exp": 9_999_999_999_u64,
                 "permissions": permissions
             }),
-            &EncodingKey::from_secret(b"diagnostic-test-secret"),
+            &EncodingKey::from_secret(b"diagnostic-test-secret").expect("nonempty test secret"),
         )
         .unwrap();
 
@@ -365,7 +365,7 @@ mod tests {
                 "exp": 9_999_999_999_u64,
                 "https://fitz.example/claims": {"roles": ["notice.read"]}
             }),
-            &EncodingKey::from_secret(b"diagnostic-test-secret"),
+            &EncodingKey::from_secret(b"diagnostic-test-secret").expect("nonempty test secret"),
         )
         .unwrap();
         let config = AuthClaimsConfig::new(

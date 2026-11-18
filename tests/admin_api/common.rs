@@ -810,7 +810,7 @@ pub(crate) fn expired_admin_cookie() -> String {
     let token = jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
         &claims,
-        &jsonwebtoken::EncodingKey::from_secret(b"jwt-secret"),
+        &jsonwebtoken::EncodingKey::from_secret(b"jwt-secret").expect("nonempty test secret"),
     )
     .unwrap();
     format!("fitz_admin_session={token}")

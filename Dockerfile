@@ -1,4 +1,4 @@
-FROM node:26.13.0-trixie-slim AS frontend
+FROM node:26.13.1-trixie-slim AS frontend
 
 WORKDIR /ui
 
@@ -6,7 +6,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install --global npm@12.2.1
+RUN npm install --global npm@12.2.3
 
 COPY ui/package.json ui/package-lock.json* ./
 
