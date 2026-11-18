@@ -285,15 +285,6 @@ impl Broker {
     #[must_use]
     pub fn start(campaign: &Campaign) -> Self {
         let image = std::env::var("FITZ_TEST_IMAGE").expect("exact source runtime image");
-        Self::start_with_image(campaign, &image)
-    }
-
-    /// Start an explicit immutable image for cross-version migration rehearsal.
-    ///
-    /// # Panics
-    /// Panics on Docker failure or incorrect container resource limits.
-    #[must_use]
-    pub fn start_with_image(campaign: &Campaign, image: &str) -> Self {
         let name = format!("fitz-s3-{}-{}", campaign.id, uuid::Uuid::new_v4());
         let network = std::env::var("FITZ_S3_NETWORK").expect("isolated provider network");
         let readiness_started = Instant::now();
@@ -346,7 +337,7 @@ impl Broker {
                 "FITZ_LOG_LEVEL=info",
                 "--env",
                 "OTEL_ENABLED=false",
-                image,
+                &image,
             ],
         );
         let http = String::from_utf8(command("docker", &["port", &name, "4090/tcp"])).unwrap();
