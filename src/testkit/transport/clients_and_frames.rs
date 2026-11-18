@@ -628,7 +628,8 @@ pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
     encode(
         &header,
         &claims,
-        &EncodingKey::from_secret(TEST_RUNTIME_AUTH_SECRET.as_bytes()),
+        &EncodingKey::from_secret(TEST_RUNTIME_AUTH_SECRET.as_bytes())
+            .expect("nonempty test secret"),
     )
     .unwrap()
 }
@@ -658,7 +659,8 @@ pub fn generate_expired_jwt(realm: &str) -> String {
     encode(
         &header,
         &claims,
-        &EncodingKey::from_secret(TEST_RUNTIME_AUTH_SECRET.as_bytes()),
+        &EncodingKey::from_secret(TEST_RUNTIME_AUTH_SECRET.as_bytes())
+            .expect("nonempty test secret"),
     )
     .unwrap()
 }
@@ -689,7 +691,7 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
     encode(
         &header,
         &claims,
-        &EncodingKey::from_secret("wrong-secret-key".as_bytes()),
+        &EncodingKey::from_secret("wrong-secret-key".as_bytes()).expect("nonempty test secret"),
     )
     .unwrap()
 }

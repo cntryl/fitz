@@ -31,24 +31,24 @@
   "devDependencies": {
     "@askrjs/cli": "0.5.1",
     "@askrjs/vite": "0.5.0",
-    "@playwright/test": "^1.64.1",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
     "autoprefixer": "^10.6.2",
-    "jsdom": "^30.1.3",
-    "postcss": "^8.5.32",
+    "jsdom": "^31.0.1",
+    "postcss": "^8.5.33",
     "typescript": "^7.0.2",
-    "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
-    "vite-plus": "1.4.0"
+    "vite": "npm:@voidzero-dev/vite-plus-core@8.3.8000",
+    "vite-plus": "1.7.0"
   },
   "overrides": {
-    "@vitest/browser-playwright": "5.0.5",
+    "@vitest/browser-playwright": "5.1.0",
     "@xmldom/xmldom": "0.9.12",
-    "glob": "14.0.3",
-    "minimatch": "11.0.4",
+    "glob": "14.0.6",
+    "minimatch": "11.0.9",
     "vite": "$vite",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   },
-  "packageManager": "npm@12.2.1",
+  "packageManager": "npm@12.2.3",
   "allowScripts": {
     "esbuild@0.28.2": true,
     "fsevents@2.3.3": true

@@ -7,7 +7,7 @@
 services:
   fitz-jwks:
     container_name: fitz-jwks
-    image: busybox:1.36
+    image: busybox:1.38.0
     command: ["sh", "-c", "httpd -f -p 8080 -h /srv"]
     ports:
       - "127.0.0.1:${FITZ_JWKS_HOST_PORT:-4280}:8080"

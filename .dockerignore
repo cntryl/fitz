@@ -24,7 +24,7 @@ target
 .env
 .env.local
 tests
-benches
+# cargo-chef discovers the explicitly named Cargo benchmark targets in benches/.
 docs
 # MCP resources are compiled into the broker with include_str!.
 !docs/admin/mcp/domain-guarantees.md
