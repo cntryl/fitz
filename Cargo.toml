@@ -3,11 +3,9 @@ name = "fitz"
 version = "0.4.0"
 edition = "2021"
 autobenches = false
-readme = "README.md"
 license-file = "LICENSE"
 authors = ["smiggleworth"]
 description = "The messaging layer your system was missing"
-homepage = "https://github.com/cntryl/fitz"
 repository = "https://github.com/cntryl/fitz"
 documentation = "https://github.com/cntryl/fitz/blob/main/README.md"
 keywords = ["broker", "kv", "messaging", "queue", "stream"]
@@ -19,9 +17,11 @@ resolver = "2"
 [workspace.lints.clippy]
 pedantic = "deny"
 
+[lints]
+workspace = true
+
 [features]
-# Feature flag to skip admin snapshot syncing in RPC domain for benchmarking
-# Helps identify if snapshot overhead is the dominant bottleneck in scaling collapse
+# Skip non-forced RPC and Schedule admin snapshot updates during benchmarks.
 bench-no-snapshot = []
 # Compile benchmark-only library adapters that intentionally bypass transport.
 benchkit = []
@@ -42,7 +42,7 @@ base64 = "0.23.1"
 brotli = "9"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-cntryl-midge = "0.5.2"
+cntryl-midge = "0.5.3"
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"
 flate2 = "1"
@@ -57,7 +57,7 @@ hyper-util = { version = "0.1", features = ["server", "tokio"] }
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 lexkey = { package = "cntryl-lexkey", version = "0.1.0" }
 libc = "0.2"
-lz4_flex = "0.14.0"
+lz4_flex = "0.14.2"
 num-traits = "0.2"
 once_cell = "1.21"
 opentelemetry = { version = "0.33", features = ["trace"] }
@@ -66,6 +66,14 @@ opentelemetry_sdk = { version = "0.33", features = ["rt-tokio", "trace"] }
 parking_lot = "0.13"
 percent-encoding = "2"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rmcp = { version = "=3.9.0", default-features = false, features = [
+    "client",
+    "server",
+    "transport-child-process",
+    "transport-io",
+    "transport-streamable-http-client-reqwest",
+    "transport-streamable-http-server",
+] }
 rustc-hash = "2.1.3"
 schemars = { version = "1.2.3", features = ["chrono04"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -76,350 +84,287 @@ socket2 = "0.6"
 smallvec = "1.16"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["rt"] }
 tokio-tungstenite = "0.30"
+tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 tracing-opentelemetry = "0.34"
 tracing-subscriber = { version = "0.3", features = ["ansi", "env-filter", "fmt", "json"] }
 tungstenite = "0.30"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
-rmcp = { version = "=3.9.0", default-features = false, features = ["client", "server", "transport-child-process", "transport-io", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
 
 [dev-dependencies]
-crc32c = "0.6"
 cntryl-stress = "0.5.1"
+crc32c = "0.6"
 jsonschema = { version = "0.60.2", default-features = false }
 proptest = "1"
 serial_test = "4.0.1"
 tokio = { version = "1", features = ["test-util"] }
 
-# Tier 1: Hot Path (Infrastructure - Pure sync internals, stress micro mode)
+# Tier 1: Synchronous hot path microbenchmarks
 [[bench]]
 name = "tier1_hotpath_matcher"
 harness = false
-path = "benches/tier1_hotpath_matcher.rs"
 
 [[bench]]
 name = "tier1_hotpath_message"
 harness = false
-path = "benches/tier1_hotpath_message.rs"
 
 [[bench]]
 name = "tier1_hotpath_mux"
 harness = false
-path = "benches/tier1_hotpath_mux.rs"
 
 [[bench]]
 name = "tier1_hotpath_permissions"
 harness = false
-path = "benches/tier1_hotpath_permissions.rs"
 
 [[bench]]
 name = "tier1_hotpath_context"
 harness = false
-path = "benches/tier1_hotpath_context.rs"
 
 [[bench]]
 name = "tier1_hotpath_envelope"
 harness = false
-path = "benches/tier1_hotpath_envelope.rs"
 
 [[bench]]
 name = "tier1_hotpath_routing"
 harness = false
-path = "benches/tier1_hotpath_routing.rs"
 
-# Tier 2: Subsystem (Infrastructure integration, <3s, sync only)
+# Tier 2: Synchronous subsystem benchmarks (<3s)
 [[bench]]
 name = "tier2_subsystem_mailbox"
 harness = false
-path = "benches/tier2_subsystem_mailbox.rs"
 
 [[bench]]
 name = "tier2_subsystem_family_actor_pool"
 harness = false
-path = "benches/tier2_subsystem_family_actor_pool.rs"
 
 [[bench]]
 name = "tier2_subsystem_subscriptions"
 harness = false
-path = "benches/tier2_subsystem_subscriptions.rs"
 
 [[bench]]
 name = "tier2_subsystem_message_pipeline"
 harness = false
-path = "benches/tier2_subsystem_message_pipeline.rs"
 
 [[bench]]
 name = "tier2_subsystem_router"
 harness = false
-path = "benches/tier2_subsystem_router.rs"
 
 [[bench]]
 name = "tier2_subsystem_schedule_scan"
 harness = false
-path = "benches/tier2_subsystem_schedule_scan.rs"
 
 [[bench]]
 name = "tier2_subsystem_schedule_create"
 harness = false
-path = "benches/tier2_subsystem_schedule_create.rs"
 
 [[bench]]
 name = "tier2_subsystem_schedule_churn"
 harness = false
-path = "benches/tier2_subsystem_schedule_churn.rs"
 
 [[bench]]
 name = "tier2_subsystem_schedule_control_latency"
 harness = false
-path = "benches/tier2_subsystem_schedule_control_latency.rs"
 
 [[bench]]
 name = "tier2_subsystem_schedule_fire"
 harness = false
-path = "benches/tier2_subsystem_schedule_fire.rs"
 
 [[bench]]
 name = "tier2_subsystem_queue"
 harness = false
-path = "benches/tier2_subsystem_queue.rs"
 
 [[bench]]
 name = "tier2_subsystem_rpc"
 harness = false
-path = "benches/tier2_subsystem_rpc.rs"
 
 [[bench]]
 name = "tier2_subsystem_lease"
 harness = false
-path = "benches/tier2_subsystem_lease.rs"
 
 [[bench]]
 name = "tier2_subsystem_notice"
 harness = false
-path = "benches/tier2_subsystem_notice.rs"
 
 [[bench]]
 name = "tier2_subsystem_stream"
 harness = false
-path = "benches/tier2_subsystem_stream.rs"
 
-# Tier 3: System (Domain + plumbing, <10s, sync only - one per domain)
+# Tier 3: Synchronous domain and plumbing benchmarks (<10s)
 [[bench]]
 name = "tier3_system_kv"
 harness = false
-path = "benches/tier3_system_kv.rs"
 
 [[bench]]
 name = "tier3_system_lease"
 harness = false
-path = "benches/tier3_system_lease.rs"
 required-features = ["benchkit"]
 
 [[bench]]
 name = "tier3_system_notice"
 harness = false
-path = "benches/tier3_system_notice.rs"
 
 [[bench]]
 name = "tier3_system_queue"
 harness = false
-path = "benches/tier3_system_queue.rs"
 
 [[bench]]
 name = "tier3_system_rpc"
 harness = false
-path = "benches/tier3_system_rpc.rs"
 
 [[bench]]
 name = "tier3_system_stream"
 harness = false
-path = "benches/tier3_system_stream.rs"
 
 [[bench]]
 name = "tier3_system_stream_admin"
 harness = false
-path = "benches/tier3_system_stream_admin.rs"
 
-# Tier 4: Integration characterization (every executable target is explicit)
+# Tier 4: Integration characterization
 [[bench]]
 name = "tier4_kv_gate"
 harness = false
-path = "benches/tier4_kv_gate.rs"
 
 [[bench]]
 name = "tier4_kv_ladder"
 harness = false
-path = "benches/tier4_kv_ladder.rs"
 
 [[bench]]
 name = "tier4_kv_contention"
 harness = false
-path = "benches/tier4_kv_contention.rs"
 
 [[bench]]
 name = "tier4_lease_gate"
 harness = false
-path = "benches/tier4_lease_gate.rs"
 required-features = ["benchkit"]
 
 [[bench]]
 name = "tier4_lease_ladder"
 harness = false
-path = "benches/tier4_lease_ladder.rs"
 required-features = ["benchkit"]
 
 [[bench]]
 name = "tier4_lease_contention"
 harness = false
-path = "benches/tier4_lease_contention.rs"
 required-features = ["benchkit"]
 
 [[bench]]
 name = "tier4_notice_publish"
 harness = false
-path = "benches/tier4_notice_publish.rs"
 
 [[bench]]
 name = "tier4_notice_fanout"
 harness = false
-path = "benches/tier4_notice_fanout.rs"
 
 [[bench]]
 name = "tier4_notice_control"
 harness = false
-path = "benches/tier4_notice_control.rs"
 
 [[bench]]
 name = "tier4_queue_gate"
 harness = false
-path = "benches/tier4_queue_gate.rs"
 
 [[bench]]
 name = "tier4_queue_concurrency"
 harness = false
-path = "benches/tier4_queue_concurrency.rs"
 
 [[bench]]
 name = "tier4_queue_shapes"
 harness = false
-path = "benches/tier4_queue_shapes.rs"
 
 [[bench]]
 name = "tier4_rpc_roundtrip"
 harness = false
-path = "benches/tier4_rpc_roundtrip.rs"
 
 [[bench]]
 name = "tier4_rpc_pipeline"
 harness = false
-path = "benches/tier4_rpc_pipeline.rs"
 
 [[bench]]
 name = "tier4_schedule_lifecycle"
 harness = false
-path = "benches/tier4_schedule_lifecycle.rs"
 
 [[bench]]
 name = "tier4_schedule_concurrency"
 harness = false
-path = "benches/tier4_schedule_concurrency.rs"
 
 [[bench]]
 name = "tier4_schedule_shapes"
 harness = false
-path = "benches/tier4_schedule_shapes.rs"
 
 [[bench]]
 name = "tier4_stream_gate"
 harness = false
-path = "benches/tier4_stream_gate.rs"
 
 [[bench]]
 name = "tier4_stream_concurrency"
 harness = false
-path = "benches/tier4_stream_concurrency.rs"
 
 [[bench]]
 name = "tier4_stream_filters"
 harness = false
-path = "benches/tier4_stream_filters.rs"
 
 [[bench]]
 name = "tier4_stream_ladder"
 harness = false
-path = "benches/tier4_stream_ladder.rs"
 
 [[bench]]
 name = "tier4_stream_mixed"
 harness = false
-path = "benches/tier4_stream_mixed.rs"
 
 [[bench]]
 name = "tier4_stream_shapes"
 harness = false
-path = "benches/tier4_stream_shapes.rs"
 
 [[bench]]
 name = "tier4_stream_compacted"
 harness = false
-path = "benches/tier4_stream_compacted.rs"
 required-features = ["benchkit"]
 
-# Tier 5: Full TCP concurrency/saturation sweeps.
+# Tier 5: TCP concurrency and saturation
 [[bench]]
 name = "tier5_cloud_catalog"
 harness = false
-path = "benches/tier5_cloud_catalog.rs"
 required-features = ["benchkit", "stress-soak", "recovery-qualification"]
 
 [[bench]]
 name = "tier5_queue_drains"
 harness = false
-path = "benches/tier5_queue_drains.rs"
 required-features = ["benchkit", "stress-soak"]
 
 [[bench]]
 name = "tier5_saturation"
 harness = false
-path = "benches/tier5_saturation.rs"
 required-features = ["benchkit", "stress-soak"]
 
 [[bench]]
 name = "queue_pressure"
 harness = false
-path = "benches/queue_pressure.rs"
 required-features = ["benchkit", "stress-soak"]
 
 [[bench]]
 name = "schedule_pressure"
 harness = false
-path = "benches/schedule_pressure.rs"
-required-features = ["benchkit", "stress-soak"]
-
-# Tier 6: Full TCP endurance with bounded workload state.
-[[bench]]
-name = "tier6_endurance"
-harness = false
-path = "benches/tier6_endurance.rs"
 required-features = ["benchkit", "stress-soak"]
 
 [[bench]]
 name = "kv_pressure"
-path = "benches/kv_pressure.rs"
 harness = false
 required-features = ["benchkit", "stress-soak"]
 
 [[bench]]
 name = "lease_pressure"
-path = "benches/lease_pressure.rs"
 harness = false
 required-features = ["benchkit", "stress-soak"]
 
 [[bench]]
 name = "queue_drain_latency"
-path = "benches/queue_drain_latency.rs"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+# Tier 6: TCP endurance with bounded workload state
+[[bench]]
+name = "tier6_endurance"
 harness = false
 required-features = ["benchkit", "stress-soak"]
