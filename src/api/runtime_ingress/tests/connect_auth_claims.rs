@@ -324,7 +324,7 @@ fn should_set_permissions_on_connect_with_issuer_valid_signature() {
     let jwt = jsonwebtoken::encode(
         &header,
         &payload,
-        &EncodingKey::from_secret(secret.as_slice()),
+        &EncodingKey::from_secret(secret.as_slice()).expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -410,7 +410,7 @@ async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#write"]
         }),
-        &EncodingKey::from_secret(secret),
+        &EncodingKey::from_secret(secret).expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -520,8 +520,12 @@ fn should_reject_connect_with_issuer_invalid_signature() {
 
     let signing_secret = b"othersecret";
     let header = Header::new(jsonwebtoken::Algorithm::HS256);
-    let jwt =
-        jsonwebtoken::encode(&header, &payload, &EncodingKey::from_secret(signing_secret)).unwrap();
+    let jwt = jsonwebtoken::encode(
+        &header,
+        &payload,
+        &EncodingKey::from_secret(signing_secret).expect("nonempty test secret"),
+    )
+    .unwrap();
 
     // Cache a different secret under the JWKS URL
     let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"supersecretkey");

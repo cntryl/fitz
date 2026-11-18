@@ -1,5 +1,6 @@
 use base64::Engine;
 use dashmap::DashMap;
+use jsonwebtoken::DecodingKey;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -39,17 +40,10 @@ struct Jwks {
     pub keys: Vec<Jwk>,
 }
 
-/// Lightweight cache representation for a JWK
-#[derive(Debug, Clone)]
-enum CachedJwk {
-    Oct(Vec<u8>),                 // symmetric secret bytes (k)
-    Rsa { n: String, e: String }, // RSA components (base64url strings)
-}
-
 /// Cached JWKS entry with timestamp + TTL
 #[derive(Debug, Clone)]
 struct CachedJwksEntry {
-    pub keys: HashMap<String, CachedJwk>,
+    pub keys: HashMap<String, DecodingKey>,
     pub fetched_at: u64, // epoch seconds
     pub ttl_seconds: u64,
 }
@@ -78,7 +72,7 @@ fn is_cache_entry_stale(entry: &CachedJwksEntry, now: u64) -> bool {
     now > entry.fetched_at.saturating_add(entry.ttl_seconds)
 }
 
-fn usable_key_from_jwk(jwk: Jwk) -> Result<Option<(String, CachedJwk)>, String> {
+fn usable_key_from_jwk(jwk: Jwk) -> Result<Option<(String, DecodingKey)>, String> {
     let kid = jwk.kid.unwrap_or_default();
     match jwk.kty.as_str() {
         "oct" => {
@@ -88,15 +82,17 @@ fn usable_key_from_jwk(jwk: Jwk) -> Result<Option<(String, CachedJwk)>, String> 
             let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(kval)
                 .map_err(|e| format!("invalid oct secret: {e}"))?;
-            Ok(Some((kid, CachedJwk::Oct(secret))))
+            let key = DecodingKey::from_secret(&secret)
+                .map_err(|error| format!("invalid oct secret: {error}"))?;
+            Ok(Some((kid, key)))
         }
         "RSA" | "rsa" => {
             let (Some(n), Some(e)) = (jwk.n, jwk.e) else {
                 return Err("invalid RSA key: missing n or e".to_string());
             };
-            jsonwebtoken::DecodingKey::from_rsa_components(&n, &e)
+            let key = DecodingKey::from_rsa_components(&n, &e)
                 .map_err(|error| format!("invalid RSA key material: {error}"))?;
-            Ok(Some((kid, CachedJwk::Rsa { n, e })))
+            Ok(Some((kid, key)))
         }
         other => {
             tracing::warn!(kty = other, "Skipping unsupported JWKS key type");
@@ -130,7 +126,7 @@ pub fn cache_jwks_from_json_with_ttl(
     let jwks: Jwks =
         serde_json::from_str(jwks_json).map_err(|e| format!("jwks json parse error: {e}"))?;
 
-    let mut map: HashMap<String, CachedJwk> = HashMap::new();
+    let mut map = HashMap::new();
     for jwk in jwks.keys {
         if let Some((kid, cached_jwk)) = usable_key_from_jwk(jwk)? {
             map.insert(kid, cached_jwk);
@@ -167,9 +163,7 @@ pub fn is_jwks_stale(jwks_url: &str) -> bool {
 
 /// Try to get a `jsonwebtoken::DecodingKey` for the given `jwks_url` and kid
 /// from cache.
-pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebtoken::DecodingKey> {
-    use jsonwebtoken::DecodingKey;
-
+pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<DecodingKey> {
     let guard = JWKS_CACHE.get(jwks_url)?;
     if is_cache_entry_stale(&guard, now_epoch_secs()) {
         drop(guard);
@@ -179,19 +173,12 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
     let m = &guard.keys;
 
     // If a specific kid requested, try it; otherwise, fall back to the first available key.
-    let entry = if kid.is_empty() {
+    if kid.is_empty() {
         m.values().next()
     } else {
         m.get(kid).or_else(|| m.get(""))
-    }?;
-
-    match entry {
-        CachedJwk::Oct(secret) => Some(DecodingKey::from_secret(secret.as_slice())),
-        CachedJwk::Rsa { n, e } => {
-            // jsonwebtoken supports creating a key from base64url components
-            DecodingKey::from_rsa_components(n, e).ok()
-        }
     }
+    .cloned()
 }
 
 /// Async fetch JWKS from a well-known JWKS URL and cache the result.
@@ -418,6 +405,23 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("invalid oct secret"));
         assert!(is_jwks_stale("inline://mixed-bad-oct"));
+    }
+
+    #[test]
+    fn should_preserve_cached_key_when_refresh_contains_an_empty_hmac_key() {
+        // Arrange
+        let url = "inline://empty-key-refresh";
+        let initial = r#"{"keys":[{"kty":"oct","kid":"original","k":"dGVzdA"}]}"#;
+        let refresh = r#"{"keys":[{"kty":"oct","kid":"new","k":""}]}"#;
+        cache_jwks_from_json(url, initial).unwrap();
+
+        // Act
+        let result = cache_jwks_from_json(url, refresh);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(get_decoding_key_from_cache(url, "original").is_some());
+        assert!(get_decoding_key_from_cache(url, "new").is_none());
     }
 
     #[test]

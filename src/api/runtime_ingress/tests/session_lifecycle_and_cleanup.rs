@@ -293,7 +293,7 @@ pub(super) fn signed_jwks_jwt(mut payload: serde_json::Value) -> String {
     jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &payload,
-        &EncodingKey::from_secret(TEST_AUTH_SECRET.as_bytes()),
+        &EncodingKey::from_secret(TEST_AUTH_SECRET.as_bytes()).expect("nonempty test secret"),
     )
     .unwrap()
 }

@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         encode(
             &header,
             &payload,
-            &EncodingKey::from_secret(secret.as_bytes())
+            &EncodingKey::from_secret(secret.as_bytes())?
         )?
     );
     Ok(())

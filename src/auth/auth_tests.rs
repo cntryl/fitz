@@ -265,7 +265,12 @@ async fn should_verify_permissions_using_inline_jwks_for_hmac_token() {
     });
 
     let header = Header::new(Algorithm::HS256);
-    let token = jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(secret)).unwrap();
+    let token = jsonwebtoken::encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret(secret).expect("nonempty test secret"),
+    )
+    .unwrap();
 
     // Act
     let issuer = JwksIssuerConfig {
@@ -298,7 +303,7 @@ async fn should_reject_unallowlisted_issuer_even_with_signed_token() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(secret),
+        &EncodingKey::from_secret(secret).expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -332,7 +337,7 @@ async fn should_reject_wrong_audience_for_hmac_tokens() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -361,7 +366,7 @@ async fn should_reject_tokens_that_are_not_yet_valid() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -389,7 +394,7 @@ async fn should_keep_configured_identity_claim_given_other_identity_claims() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -445,7 +450,7 @@ async fn should_use_empty_identity_for_hmac_jwt_given_no_identity_claims() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -476,7 +481,7 @@ async fn should_verify_auth0_org_id_permissions_given_hmac_token() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -509,7 +514,7 @@ async fn should_verify_entra_delegated_scp_given_hmac_token() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -543,7 +548,7 @@ async fn should_verify_entra_app_only_roles_given_hmac_token() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -575,7 +580,7 @@ async fn should_verify_cognito_resource_server_scope_given_hmac_token() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
@@ -609,7 +614,7 @@ async fn should_verify_okta_custom_permissions_given_hmac_token() {
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(b"test-secret-key"),
+        &EncodingKey::from_secret(b"test-secret-key").expect("nonempty test secret"),
     )
     .unwrap();
 
