@@ -10,15 +10,16 @@ use hyper::header::COOKIE;
 use hyper::{Method, StatusCode};
 use serde_json::Value;
 use serial_test::serial;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-fn configure_admin_auth() {
-    std::env::set_var("FITZ_ROOT_PASSWORD", "pwd123");
-    std::env::set_var("FITZ_ADMIN_SESSION_TTL_SECS", "3600");
+fn root_password() -> &'static str {
+    static PASSWORD: OnceLock<String> = OnceLock::new();
+    PASSWORD.get_or_init(|| uuid::Uuid::new_v4().to_string())
 }
 
 fn test_runtime() -> Arc<Runtime> {
-    configure_admin_auth();
+    std::env::set_var("FITZ_ROOT_PASSWORD", root_password());
+    std::env::set_var("FITZ_ADMIN_SESSION_TTL_SECS", "3600");
     let runtime = Runtime::new(Arc::new(Router::new()));
     runtime.mark_storage_ready();
     runtime.mark_domains_ready();
@@ -30,7 +31,7 @@ fn test_runtime() -> Arc<Runtime> {
 fn authenticated_cookie(runtime: &Arc<Runtime>) -> String {
     let principal = runtime
         .admin_auth()
-        .authenticate_credentials("root", "pwd123")
+        .authenticate_credentials("root", root_password())
         .expect("admin principal");
     runtime
         .admin_auth()

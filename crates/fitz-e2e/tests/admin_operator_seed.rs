@@ -1,9 +1,26 @@
+use fitz::api::admin::{
+    KvCommittedValueResponse, LeaseSearchResponse, NoticeDeliveryObservationList,
+    QueueInflightList, RpcCallObservationList, ScheduleExecutionObservationList,
+    ScheduleMissedObservationList, StreamRecordsResponse,
+};
 use fitz_e2e::testkit::{seed_operator_console, OperatorSeedFamily, TestServer};
-use reqwest::Url;
-use serde_json::Value;
+use reqwest::{Client, Url};
+use serde::{de::DeserializeOwned, Deserialize};
 use serial_test::serial;
 use std::collections::BTreeSet;
 use std::time::Duration;
+
+const MAX_ADMIN_RESPONSE_BYTES: usize = 1024 * 1024;
+
+#[derive(Deserialize)]
+struct SearchResponse {
+    results: Vec<SearchHit>,
+}
+
+#[derive(Deserialize)]
+struct SearchHit {
+    route_family: Option<String>,
+}
 
 struct EnvGuard {
     key: &'static str,
@@ -60,11 +77,18 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         })
         .collect::<Vec<_>>();
     wait_for_queue_projection(&server, &seeded_queue_scopes).await;
+    let client = Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("create loopback admin client");
     let first = &seed.families[0];
     let second = &seed.families[1];
 
     // Act
-    let search_first = get_json(
+    let search_first: SearchResponse = get_json(
+        &client,
         &server,
         "/api/v1/search",
         &[
@@ -74,7 +98,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let search_second = get_json(
+    let search_second: SearchResponse = get_json(
+        &client,
         &server,
         "/api/v1/search",
         &[
@@ -84,7 +109,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let search_all = get_json(
+    let search_all: SearchResponse = get_json(
+        &client,
         &server,
         "/api/v1/search",
         &[
@@ -93,7 +119,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let kv_value = get_json(
+    let kv_value: KvCommittedValueResponse = get_json(
+        &client,
         &server,
         &format!(
             "/api/v1/{}/kv/realms/{}/areas/{}/resources/accounts/value",
@@ -105,7 +132,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let wrong_family_value = get_json(
+    let wrong_family_value: KvCommittedValueResponse = get_json(
+        &client,
         &server,
         &format!(
             "/api/v1/{}/kv/realms/{}/areas/{}/resources/accounts/value",
@@ -114,7 +142,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         &[("key", first.kv_key.clone())],
     )
     .await;
-    let stream_records = get_json(
+    let stream_records: StreamRecordsResponse = get_json(
+        &client,
         &server,
         &format!(
             "/api/v1/{}/stream/realms/{}/areas/{}/resources/events/records",
@@ -126,7 +155,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let queue_inflight = get_json(
+    let queue_inflight: QueueInflightList = get_json(
+        &client,
         &server,
         &format!(
             "/api/v1/{}/queue/realms/{}/areas/{}/resources/settlement/inflight",
@@ -135,7 +165,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         &[("family", first.route_family.to_string())],
     )
     .await;
-    let schedule_executions = get_json(
+    let schedule_executions: ScheduleExecutionObservationList = get_json(
+        &client,
         &server,
         &format!(
             "/api/v1/{}/schedule/realms/{}/areas/{}/resources/reconcile/executions",
@@ -147,7 +178,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let schedule_missed = get_json(
+    let schedule_missed: ScheduleMissedObservationList = get_json(
+        &client,
         &server,
         &format!("/api/v1/{}/schedule/missed", first.route_family),
         &[
@@ -156,7 +188,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let lease_search = get_json(
+    let lease_search: LeaseSearchResponse = get_json(
+        &client,
         &server,
         &format!("/api/v1/{}/lease/search", first.route_family),
         &[
@@ -167,7 +200,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let notice_deliveries = get_json(
+    let notice_deliveries: NoticeDeliveryObservationList = get_json(
+        &client,
         &server,
         &format!("/api/v1/{}/notice/deliveries", first.route_family),
         &[
@@ -178,7 +212,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
         ],
     )
     .await;
-    let rpc_calls = get_json(
+    let rpc_calls: RpcCallObservationList = get_json(
+        &client,
         &server,
         &format!("/api/v1/{}/rpc/calls", first.route_family),
         &[
@@ -195,23 +230,31 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     assert_search_route_family(&search_first, first.route_family);
     assert_search_route_family(&search_second, second.route_family);
     assert_search_contains_families(&search_all, &[first.route_family, second.route_family]);
-    assert_eq!(kv_value["found"], true);
-    assert_eq!(kv_value["value"]["utf8"], first.kv_value);
-    assert_eq!(wrong_family_value["found"], false);
-    assert_nonempty_family_array(
-        &stream_records,
-        "records",
-        "route_family",
+    assert!(kv_value.found);
+    assert_eq!(
+        kv_value.value.and_then(|value| value.utf8).as_deref(),
+        Some(first.kv_value.as_str())
+    );
+    assert!(!wrong_family_value.found);
+    assert_family_rows(
+        stream_records
+            .records
+            .iter()
+            .map(|record| record.route_family),
         first.route_family,
     );
-    assert_nonempty_family_array(&queue_inflight, "inflight", "family", first.route_family);
-    assert_nonempty_family_array(
-        &schedule_executions,
-        "observations",
-        "route_family",
+    assert_family_rows(
+        queue_inflight.inflight.iter().map(|item| item.family),
         first.route_family,
     );
-    assert_eq!(schedule_missed["route_family"], first.route_family);
+    assert_family_rows(
+        schedule_executions
+            .observations
+            .iter()
+            .map(|item| item.route_family),
+        first.route_family,
+    );
+    assert_eq!(schedule_missed.route_family, u64::from(first.route_family));
     assert_lease_contention(&lease_search, first.route_family);
     assert_notice_delivery(&notice_deliveries, first.route_family);
     assert_rpc_calls(&rpc_calls, first.route_family);
@@ -279,41 +322,55 @@ async fn wait_for_queue_projection(server: &TestServer, families: &[(u32, &str, 
     );
 }
 
-async fn get_json(server: &TestServer, path: &str, query: &[(&str, String)]) -> Value {
+async fn get_json<T: DeserializeOwned>(
+    client: &Client,
+    server: &TestServer,
+    path: &str,
+    query: &[(&str, String)],
+) -> T {
     let mut url = Url::parse(&format!("http://{}{}", server.ws_addr, path)).expect("admin url");
-    {
-        let mut pairs = url.query_pairs_mut();
-        for (key, value) in query {
-            pairs.append_pair(key, value);
-        }
+    url.query_pairs_mut().extend_pairs(query);
+    let mut response = client
+        .get(url)
+        .send()
+        .await
+        .expect("admin request")
+        .error_for_status()
+        .expect("successful admin response");
+    assert!(
+        response.status().is_success(),
+        "expected success from {path}"
+    );
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.expect("admin response body") {
+        assert!(
+            chunk.len() <= MAX_ADMIN_RESPONSE_BYTES - body.len(),
+            "admin response exceeds the test limit for {path}"
+        );
+        body.extend_from_slice(&chunk);
     }
-    let response = reqwest::get(url).await.expect("admin request");
-    let status = response.status();
-    let body = response.text().await.expect("admin response body");
-    assert!(status.is_success(), "admin request failed: {status} {body}");
-    serde_json::from_str(&body).expect("admin json")
+    serde_json::from_slice(&body)
+        .unwrap_or_else(|error| panic!("invalid admin JSON for {path}: {error}"))
 }
 
-fn assert_search_route_family(payload: &Value, route_family: u32) {
+fn assert_search_route_family(payload: &SearchResponse, route_family: u32) {
     let expected = route_family.to_string();
-    let results = payload["results"].as_array().expect("search results");
     assert!(
-        !results.is_empty(),
+        !payload.results.is_empty(),
         "expected search results for {expected}"
     );
-    assert!(results.iter().all(|result| {
-        result["route_family"]
-            .as_str()
-            .is_some_and(|value| value == expected)
-    }));
+    assert!(payload
+        .results
+        .iter()
+        .all(|result| result.route_family.as_deref() == Some(expected.as_str())));
 }
 
-fn assert_search_contains_families(payload: &Value, route_families: &[u32]) {
-    let actual = payload["results"]
-        .as_array()
-        .expect("search results")
+fn assert_search_contains_families(payload: &SearchResponse, route_families: &[u32]) {
+    let actual = payload
+        .results
         .iter()
-        .filter_map(|result| result["route_family"].as_str())
+        .filter_map(|result| result.route_family.as_deref())
         .collect::<BTreeSet<_>>();
     for route_family in route_families {
         let expected = route_family.to_string();
@@ -324,52 +381,44 @@ fn assert_search_contains_families(payload: &Value, route_families: &[u32]) {
     }
 }
 
-fn assert_nonempty_family_array(
-    payload: &Value,
-    array_key: &str,
-    family_key: &str,
-    route_family: u32,
-) {
-    let items = payload[array_key].as_array().expect("items array");
-    assert!(!items.is_empty(), "expected nonempty {array_key}");
-    assert!(items
-        .iter()
-        .all(|item| item[family_key].as_u64() == Some(u64::from(route_family))));
+fn assert_family_rows(families: impl Iterator<Item = u64>, route_family: u32) {
+    let mut families = families.peekable();
+    assert!(
+        families.peek().is_some(),
+        "expected at least one family row"
+    );
+    assert!(families.all(|family| family == u64::from(route_family)));
 }
 
-fn assert_lease_contention(payload: &Value, route_family: u32) {
-    let items = payload["items"].as_array().expect("lease items");
-    assert!(!items.is_empty(), "expected lease search items");
-    assert!(items.iter().any(|item| {
-        item["route_family"].as_u64() == Some(u64::from(route_family))
-            && item["state"] == "owned_with_waiters"
-            && item["pending_waiters"].as_u64().unwrap_or_default() > 0
+fn assert_lease_contention(payload: &LeaseSearchResponse, route_family: u32) {
+    assert!(payload.items.iter().any(|item| {
+        item.route_family == u64::from(route_family)
+            && item.state == "owned_with_waiters"
+            && item.pending_waiters > 0
     }));
 }
 
-fn assert_notice_delivery(payload: &Value, route_family: u32) {
-    let observations = payload["observations"]
-        .as_array()
-        .expect("notice observations");
-    assert!(!observations.is_empty(), "expected notice observations");
-    assert!(observations.iter().any(|observation| {
-        observation["route_family"].as_u64() == Some(u64::from(route_family))
-            && observation["status"] == "active_subscription"
+fn assert_notice_delivery(payload: &NoticeDeliveryObservationList, route_family: u32) {
+    assert!(payload.observations.iter().any(|observation| {
+        observation.route_family == u64::from(route_family)
+            && observation.status == "active_subscription"
     }));
 }
 
-fn assert_rpc_calls(payload: &Value, route_family: u32) {
-    let observations = payload["observations"]
-        .as_array()
-        .expect("rpc observations");
-    assert!(!observations.is_empty(), "expected rpc observations");
-    assert!(observations.iter().all(|observation| {
-        observation["route_family"].as_u64() == Some(u64::from(route_family))
-    }));
-    assert!(observations
+fn assert_rpc_calls(payload: &RpcCallObservationList, route_family: u32) {
+    assert_family_rows(
+        payload
+            .observations
+            .iter()
+            .map(|observation| observation.route_family),
+        route_family,
+    );
+    assert!(payload
+        .observations
         .iter()
-        .any(|observation| observation["state"] == "worker_registered"));
-    assert!(observations
+        .any(|observation| observation.state == "worker_registered"));
+    assert!(payload
+        .observations
         .iter()
-        .any(|observation| observation["state"] == "pending"));
+        .any(|observation| observation.state == "pending"));
 }
