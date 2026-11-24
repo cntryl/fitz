@@ -104,12 +104,12 @@ Required coverage patterns:
 
 ## Determinism
 
-The storage-runtime Sqrzl recovery fixtures accept
-`FITZ_TEST_SQRZL_ENDPOINT` (default `http://127.0.0.1:9000`). Use an isolated
-compatible emulator when another local service occupies that default address.
-The fixture uses its existing test-only credentials and exercises the provider
-versions used by Midge; an unsupported service version is a fixture failure,
-not a reason to weaken the recovery assertions.
+Set `SQRZL_SECRET_ACCESS_KEY` to your test emulator's secret to run the
+storage-runtime recovery tests. Set `SQRZL_ACCESS_KEY_ID` if the emulator uses
+an access key other than `admin`. The tests use `http://127.0.0.1:9000` by
+default. Set `FITZ_TEST_SQRZL_ENDPOINT` to select an isolated emulator at a
+different address. An explicitly selected endpoint requires the secret and
+fails the test if recovery cannot complete.
 
 - Prefer deterministic clocks and explicit test runtimes.
 - Do not rely on sleeps unless the behavior is explicitly time based and no deterministic clock hook exists.

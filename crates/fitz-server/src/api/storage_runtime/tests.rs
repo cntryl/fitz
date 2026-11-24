@@ -369,6 +369,9 @@ async fn should_return_error_given_cloud_open_failure_when_called_inside_async_r
 #[tokio::test]
 async fn should_recover_marker_from_sqrzl_s3_after_cache_loss() {
     // Arrange
+    if !sqrzl_recovery_configured() {
+        return;
+    }
     let provider = sqrzl_s3_provider("fitz-sqrzl-s3");
 
     // Act
@@ -388,6 +391,9 @@ async fn should_recover_marker_from_sqrzl_s3_after_cache_loss() {
 #[tokio::test]
 async fn should_recover_marker_from_sqrzl_azure_after_cache_loss() {
     // Arrange
+    if !sqrzl_recovery_configured() {
+        return;
+    }
     let provider = sqrzl_azure_provider("fitz-sqrzl-azure");
 
     // Act
@@ -407,6 +413,9 @@ async fn should_recover_marker_from_sqrzl_azure_after_cache_loss() {
 #[tokio::test]
 async fn should_recover_marker_from_sqrzl_gcs_after_cache_loss() {
     // Arrange
+    if !sqrzl_recovery_configured() {
+        return;
+    }
     let provider = sqrzl_gcs_provider("fitz-sqrzl-gcs");
 
     // Act
@@ -505,6 +514,18 @@ async fn recover_marker_from_sqrzl(
 
 fn sqrzl_endpoint_was_selected() -> bool {
     std::env::var_os("FITZ_TEST_SQRZL_ENDPOINT").is_some()
+}
+
+fn sqrzl_recovery_configured() -> bool {
+    let configured = sqrzl_env("SQRZL_SECRET_ACCESS_KEY").is_some();
+    assert!(
+        configured || !sqrzl_endpoint_was_selected(),
+        "FITZ_TEST_SQRZL_ENDPOINT requires a nonempty SQRZL_SECRET_ACCESS_KEY"
+    );
+    if !configured {
+        eprintln!("Skipping Sqrzl recovery test because SQRZL_SECRET_ACCESS_KEY is unset");
+    }
+    configured
 }
 
 fn should_skip_sqrzl_test(error: &str, endpoint_selected: bool) -> bool {
@@ -899,8 +920,21 @@ fn sqrzl_endpoint() -> &'static str {
         .as_str()
 }
 fn sqrzl_access_key() -> &'static str {
-    "admin"
+    static ACCESS_KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ACCESS_KEY
+        .get_or_init(|| sqrzl_env("SQRZL_ACCESS_KEY_ID").unwrap_or_else(|| "admin".to_string()))
+        .as_str()
 }
+
 fn sqrzl_secret_key() -> &'static str {
-    "sqrzl-secret"
+    static SECRET_KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SECRET_KEY
+        .get_or_init(|| {
+            sqrzl_env("SQRZL_SECRET_ACCESS_KEY").unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        })
+        .as_str()
+}
+
+fn sqrzl_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
 }
