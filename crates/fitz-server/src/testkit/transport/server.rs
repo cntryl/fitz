@@ -528,19 +528,20 @@ impl TestServer {
         // Step 1: Initialize storage. A benchmark fixture may provision
         // intermediate column families without adding those families to the
         // runtime actor topology.
-        let storage_boot_config = storage_route_families.as_ref().map_or_else(
-            || boot_config.clone(),
-            |route_families| {
-                let mut config = boot_config.clone();
-                config.route_families.clone_from(route_families);
-                config
-            },
-        );
-        let store = crate::api::storage_runtime::init(&storage_boot_config).await?;
+        let storage_boot_config = storage_route_families.map(|route_families| {
+            let mut config = Box::new(boot_config.clone());
+            config.route_families = route_families;
+            config
+        });
+        let store = crate::api::storage_runtime::init(
+            storage_boot_config.as_deref().unwrap_or(&boot_config),
+        )
+        .await?;
 
         // Step 2: Initialize runtime
-        let (router, ingress, ingress_config, runtime) = if storage_route_families.is_some() {
-            crate::boot::runtime::init_with_test_route_families(&boot_config, &storage_boot_config)?
+        let (router, ingress, ingress_config, runtime) = if let Some(config) = &storage_boot_config
+        {
+            crate::boot::runtime::init_with_test_route_families(&boot_config, config)?
         } else {
             crate::boot::runtime::init(&boot_config)?
         };
