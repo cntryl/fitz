@@ -4,6 +4,7 @@
 //! including common setup helpers, mock factories, and test data generators.
 //! Available when compiled with bench configuration.
 
+pub mod lease;
 pub mod live_sink;
 pub mod queue;
 pub mod runtime;
@@ -15,6 +16,8 @@ pub mod stream_dispatch;
 pub mod stream_response;
 pub mod transport;
 
+#[cfg(any(test, feature = "benchkit"))]
+pub use lease::{create_bench_lease_sweep_fixture, LeaseSweepFixture};
 #[cfg(any(test, feature = "benchkit"))]
 pub use live_sink::DirectLeaseAcquireRelease;
 pub use live_sink::{
