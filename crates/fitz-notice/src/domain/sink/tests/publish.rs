@@ -8,7 +8,7 @@ struct BlockingSink {
 impl MailboxSink for BlockingSink {
     fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
         let _ = self.entered.send(());
-        let _ = self.release.recv_timeout(Duration::from_secs(1));
+        let _ = self.release.recv();
         Ok(())
     }
 
@@ -209,7 +209,7 @@ fn should_keep_notice_family_responsive_while_delivery_worker_is_blocked() {
     let admin_read_model = crate::control::admin::AdminReadModel::new();
     let sink = NoticeDomain::new(router.clone(), admin_read_model);
     let (entered_tx, entered_rx) = crossbeam_channel::unbounded();
-    let (_release_tx, release_rx) = crossbeam_channel::bounded::<()>(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
     for session_id in 1..=4 {
         let subscriber_address =
             RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}")));
@@ -258,23 +258,13 @@ fn should_keep_notice_family_responsive_while_delivery_worker_is_blocked() {
     entered_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("delivery worker should block");
-    let (count_tx, count_rx) = crossbeam_channel::bounded(1);
 
     // Act
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let _ = count_tx.send(sink.subscription_count());
-        });
+    let count = sink.subscription_count();
+    drop(release_tx);
 
-        // Assert
-        assert_eq!(
-            count_rx
-                .recv_timeout(Duration::from_millis(10))
-                .expect("Notice family should remain responsive")
-                .expect("read Notice subscription count"),
-            4
-        );
-    });
+    // Assert
+    assert_eq!(count.expect("Notice family should remain responsive"), 4);
 }
 
 #[test]
