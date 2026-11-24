@@ -1,0 +1,176 @@
+//! KV domain tier 3 system benchmarks using stress
+//!
+//! Concurrent realm/column family contention
+//! Tests impact of state isolation and sharding on performance
+//! Measures concurrent access patterns and lock contention
+//!
+//! Each test measures a single operation with all setup/teardown outside the measurement loop.
+//! Target: ops/sec via `record_completed(count)`
+
+use fitz_core::testkit::stress_config;
+
+use stress_config::StressContextExt;
+
+use bytes::Bytes;
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
+use fitz_core::runtime::routing::RouteFamily;
+use fitz_kv::domain::{KvMessage, KvResourceScope, KvResponse, ScanQuery, TxMode};
+use fitz_kv::testkit::create_test_engine_with_cfs;
+use fitz_kv::testkit::domain_internals::KvActor;
+
+const TRIPLE_FAMILY_PUTS_PER_FAMILY: u64 = 25;
+
+fn configure_kv_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "kv_operations");
+    ctx.parameter("logical_unit", "kv_operation");
+}
+
+fn begin_transaction(
+    actor: &mut KvActor,
+    family_id: u64,
+    resource: &str,
+    mode: TxMode,
+) -> Option<u64> {
+    let response = actor.handle(KvMessage::Begin {
+        scope: KvResourceScope::new(
+            RouteFamily::try_from(family_id).expect("benchmark family must fit in u32"),
+            "system",
+            "kv",
+            resource,
+        ),
+        mode,
+    });
+
+    match response {
+        KvResponse::BeginOk { tx_id } => Some(tx_id),
+        _ => None,
+    }
+}
+
+#[stress(tier = 3)]
+fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
+    ctx.parameter("scenario", "triple_family_contention");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter(
+        "batch_size",
+        format!("{}_puts", 3 * TRIPLE_FAMILY_PUTS_PER_FAMILY),
+    );
+    configure_kv_measurement(ctx);
+
+    // Setup: Actor + three column families
+    let store = create_test_engine_with_cfs(vec![1, 2, 3]);
+    let mut actor = KvActor::new(store);
+    let txs: Vec<(u64, u64, String)> = (1..=3)
+        .map(|family_id| {
+            let resource = format!("f{family_id}");
+            let tx_id = begin_transaction(&mut actor, family_id, &resource, TxMode::ReadWrite)
+                .expect("transaction begin should succeed during setup");
+            (family_id, tx_id, resource)
+        })
+        .collect();
+
+    let iterations = ctx.measure_workload("complete_10_puts_per_3_families", || {
+        for (family_id, tx_id, resource) in &txs {
+            for i in 0..TRIPLE_FAMILY_PUTS_PER_FAMILY {
+                actor.handle(KvMessage::Put {
+                    tx_id: *tx_id,
+                    scope: KvResourceScope::new(
+                        RouteFamily::try_from(*family_id)
+                            .expect("benchmark family must fit in u32"),
+                        "system",
+                        "kv",
+                        resource,
+                    ),
+                    key: Bytes::from(format!("k{i}").into_bytes()),
+                    value: Bytes::from_static(b"v"),
+                });
+            }
+        }
+    });
+
+    for (family_id, tx_id, resource) in txs {
+        actor.handle(KvMessage::Rollback {
+            tx_id,
+            scope: KvResourceScope::new(
+                RouteFamily::try_from(family_id).expect("benchmark family must fit in u32"),
+                "system",
+                "kv",
+                resource,
+            ),
+        });
+    }
+    stress_config::record_completed(ctx, 3 * TRIPLE_FAMILY_PUTS_PER_FAMILY * iterations);
+}
+
+#[stress(tier = 3)]
+fn should_scan_1000_committed_keys(ctx: &mut StressContext) {
+    let store = create_test_engine_with_cfs(vec![1]);
+    let mut actor = KvActor::new(store);
+    let scope = KvResourceScope::new(RouteFamily::new(1), "system", "kv", "scan");
+    let tx_id = begin_transaction(&mut actor, 1, "scan", TxMode::ReadWrite)
+        .expect("scan fixture transaction");
+    let keys = (0..1000)
+        .map(|index| Bytes::from(format!("key-{index:04}-{}", "x".repeat(23))))
+        .collect::<Vec<_>>();
+    let value = Bytes::from_static(b"scan-value-16byt!");
+    for key in &keys {
+        assert!(matches!(
+            actor.handle(KvMessage::Put {
+                tx_id,
+                scope: scope.clone(),
+                key: key.clone(),
+                value: value.clone(),
+            }),
+            KvResponse::PutOk
+        ));
+    }
+    assert!(matches!(
+        actor.handle(KvMessage::Commit {
+            tx_id,
+            scope: scope.clone(),
+            persistence: fitz_storage::domains::CommitPersistence::Buffered,
+        }),
+        KvResponse::CommitOk
+    ));
+    let read_tx =
+        begin_transaction(&mut actor, 1, "scan", TxMode::ReadOnly).expect("scan read transaction");
+    let query = ScanQuery {
+        start: None,
+        end: None,
+        limit: Some(1000),
+        reverse: false,
+        start_exclusive: false,
+    };
+    ctx.parameter("scenario", "committed_range_scan");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("key_size", keys[0].len());
+    ctx.parameter("row_count", keys.len());
+    ctx.parameter("completed_unit", "scan_rows");
+    ctx.parameter("logical_unit", "scan_row");
+    let iterations = ctx.measure_workload("scan_1000_committed_keys", || {
+        let KvResponse::ScanResult { items, has_more } = actor.handle(KvMessage::Scan {
+            tx_id: read_tx,
+            scope: scope.clone(),
+            query: query.clone(),
+        }) else {
+            panic!("scan should return committed rows");
+        };
+        assert!(!has_more);
+        assert_eq!(items.len(), keys.len());
+        for (item, key) in items.iter().zip(&keys) {
+            assert_eq!(&item.key, key);
+            assert_eq!(item.value, value);
+        }
+        black_box(items);
+    });
+    assert!(matches!(
+        actor.handle(KvMessage::Rollback {
+            tx_id: read_tx,
+            scope,
+        }),
+        KvResponse::RollbackOk
+    ));
+    stress_config::record_completed(ctx, 1000 * iterations);
+}
+
+stress_main!();

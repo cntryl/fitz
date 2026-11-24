@@ -1,0 +1,71 @@
+//! Response encoding and best-effort routing back to the requester.
+
+use super::model::ScheduleDomainRuntime;
+#[cfg(test)]
+use crate::wire::frame_context::FrameContext;
+use fitz_core::runtime::Envelope;
+
+impl ScheduleDomainRuntime<'_> {
+    pub(super) fn route_schedule_response(
+        &mut self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        response: &crate::domain::ScheduleResponse,
+        request_started: Option<std::time::Instant>,
+    ) -> bool {
+        #[cfg(test)]
+        let response_ctx = {
+            let mut payload_encoder =
+                crate::wire::payload_codec::PayloadEncoder::with_capacity(256);
+            let response_bytes = crate::wire::schedule_codec::encode_response_into(
+                &mut payload_encoder,
+                meta.message_type,
+                response,
+            );
+            FrameContext::new(
+                meta.session_id,
+                crate::wire::test_support::channel_id_from_client(meta.channel),
+                crate::wire::message::MessageType::new(meta.message_type),
+                bytes::Bytes::from(response_bytes),
+                meta.route_family,
+            )
+            .with_correlation(meta.correlation)
+        };
+
+        #[cfg(not(test))]
+        let response_ctx = crate::domain::ScheduleClientResponse::new(meta, response.clone());
+
+        let delivered = if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            if let Err(error) = self.core.router.route(response_envelope) {
+                if let Some(metrics) = self.core.metrics.as_ref() {
+                    metrics.record_response_drop();
+                } else {
+                    fitz_core::observability::counter_inc(
+                        crate::domain::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                    );
+                }
+                tracing::warn!(
+                    domain = "schedule",
+                    session_id = meta.session_id,
+                    route_family = meta.route_family.as_u64(),
+                    error = %error,
+                    "Dropped best-effort Schedule response"
+                );
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+
+        if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started) {
+            if Self::schedule_response_is_failure(response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
+        }
+        delivered
+    }
+}

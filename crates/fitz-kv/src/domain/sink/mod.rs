@@ -1,0 +1,28 @@
+//! KV runtime sink, admin façade, and behavior-focused internal modules.
+
+mod admin;
+mod cleanup;
+mod commands;
+mod delivery;
+mod drop_scope;
+mod inventory_repair;
+mod lifecycle;
+mod locks;
+mod mailbox;
+mod observability;
+mod operations;
+mod responses;
+mod state;
+mod subscriptions;
+#[cfg(test)]
+mod test_support;
+mod transactions;
+#[cfg(test)]
+mod write_policy;
+
+pub use admin::{AdminKvPrefixScanResult, AdminKvRowsError, AdminKvRowsRequest, AdminKvRowsResult};
+pub(super) use locks::KvResourceLockKey;
+pub use state::KvDomain;
+
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,260 @@
+//! Admin read-model projection and metrics glue.
+
+use super::model::{LeaseFamilyRuntime, LeaseLiveCounts, SinkLeaseState};
+use chrono::Utc;
+use std::collections::VecDeque;
+use std::time::Instant;
+
+#[derive(Clone, Copy)]
+pub(super) enum DeliveryDropKind {
+    Response,
+    Notification,
+}
+
+impl DeliveryDropKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Response => "response",
+            Self::Notification => "notification",
+        }
+    }
+}
+
+impl LeaseFamilyRuntime<'_> {
+    pub(super) fn clear_failed_family_projection(&mut self) {
+        let family_id = self.core.route_family.as_u64();
+        for lease in self
+            .core
+            .admin_read_model
+            .leases_for_route_family(family_id)
+        {
+            self.core.admin_read_model.remove_lease(
+                family_id,
+                &lease.realm,
+                &lease.area,
+                &lease.resource,
+            );
+        }
+
+        let waiter_count = self
+            .core
+            .admin_read_model
+            .set_lease_family_waiter_count(family_id, 0);
+        let active_leases = self.core.admin_read_model.lease_count();
+        self.core
+            .list_snapshots
+            .lock()
+            .retain(|_, snapshot| snapshot.family_id != self.core.route_family);
+
+        if let Some(metrics) = &self.core.metrics {
+            metrics.set_active_leases(active_leases);
+            metrics.set_waiter_depth(waiter_count);
+        } else {
+            fitz_core::observability::gauge_set(
+                crate::domain::metrics::METRIC_ACTIVE_GAUGE,
+                active_leases as u64,
+            );
+            fitz_core::observability::gauge_set(
+                crate::domain::metrics::METRIC_WAITERS_GAUGE,
+                waiter_count as u64,
+            );
+        }
+    }
+
+    pub(super) fn record_dropped_delivery(
+        &mut self,
+        kind: DeliveryDropKind,
+        session_id: u64,
+        route_family: fitz_core::runtime::routing::RouteFamily,
+        error: &impl std::fmt::Display,
+    ) {
+        match (self.core.metrics.as_ref(), kind) {
+            (Some(metrics), DeliveryDropKind::Response) => metrics.record_response_drop(),
+            (Some(metrics), DeliveryDropKind::Notification) => metrics.record_notify_drop(),
+            (None, DeliveryDropKind::Response) => fitz_core::observability::counter_inc(
+                crate::domain::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+            ),
+            (None, DeliveryDropKind::Notification) => fitz_core::observability::counter_inc(
+                crate::domain::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+            ),
+        }
+        tracing::warn!(
+            domain = "lease",
+            delivery_kind = kind.label(),
+            session_id,
+            route_family = route_family.as_u64(),
+            error = %error,
+            "Dropped best-effort Lease delivery"
+        );
+    }
+
+    #[cfg(test)]
+    pub(in crate::domain::sink) fn session_inbox_address(
+        route_family: fitz_core::runtime::routing::RouteFamily,
+        session_id: u64,
+    ) -> fitz_core::runtime::routing::RouteAddress {
+        let route = format!("inbox://session/{session_id}");
+        fitz_core::runtime::routing::RouteAddress::new(
+            route_family,
+            fitz_core::runtime::routing::Route::new(route.as_str()),
+        )
+    }
+
+    pub(in crate::domain::sink) fn lease_info_from_state(
+        key: &crate::domain::protocol::LeaseKey,
+        state: &SinkLeaseState,
+    ) -> crate::control::admin::LeaseInfo {
+        let now = std::time::Instant::now();
+        let expires_at = Utc::now()
+            .checked_add_signed(chrono::TimeDelta::seconds(
+                state
+                    .expiry
+                    .saturating_duration_since(now)
+                    .as_secs()
+                    .cast_signed(),
+            ))
+            .unwrap_or_else(Utc::now)
+            .to_rfc3339();
+        crate::control::admin::LeaseInfo::snapshot(
+            key.family.as_u64(),
+            &key.realm,
+            &key.area,
+            &key.resource,
+            &state.owner_id,
+            &state.acquired_at,
+            expires_at,
+            state.renewals,
+            state.fencing_token,
+        )
+    }
+
+    pub(in crate::domain::sink) fn upsert_admin_lease(
+        &mut self,
+        key: &crate::domain::protocol::LeaseKey,
+        state: &SinkLeaseState,
+    ) {
+        self.core
+            .admin_read_model
+            .upsert_lease(Self::lease_info_from_state(key, state));
+    }
+
+    pub(in crate::domain::sink) fn remove_admin_lease(
+        &mut self,
+        key: &crate::domain::protocol::LeaseKey,
+    ) {
+        self.core.admin_read_model.remove_lease(
+            key.family.as_u64(),
+            &key.realm,
+            &key.area,
+            &key.resource,
+        );
+    }
+
+    pub(in crate::domain::sink) fn refresh_metrics_gauges(&mut self) {
+        let own_counts = self.live_counts();
+        let lease_count = self.core.admin_read_model.lease_count();
+        let waiter_count = self
+            .core
+            .admin_read_model
+            .set_lease_family_waiter_count(self.core.route_family.as_u64(), own_counts.waiters);
+
+        if let Some(metrics) = &mut self.core.metrics {
+            metrics.set_active_leases(lease_count);
+            metrics.set_waiter_depth(waiter_count);
+        } else {
+            fitz_core::observability::gauge_set(
+                crate::domain::metrics::METRIC_ACTIVE_GAUGE,
+                lease_count as u64,
+            );
+            fitz_core::observability::gauge_set(
+                crate::domain::metrics::METRIC_WAITERS_GAUGE,
+                waiter_count as u64,
+            );
+        }
+    }
+
+    pub(in crate::domain::sink) fn counter_inc(&mut self, name: &str) {
+        if let Some(metrics) = &mut self.core.metrics {
+            metrics.counter_inc(name);
+        } else {
+            fitz_core::observability::counter_inc(name);
+        }
+    }
+
+    pub(in crate::domain::sink) fn waiter_count(&mut self) -> usize {
+        self.core.pending_acquires.values().map(VecDeque::len).sum()
+    }
+
+    pub(in crate::domain::sink) fn live_counts(&mut self) -> LeaseLiveCounts {
+        LeaseLiveCounts {
+            leases: self.lease_count(),
+            subscriptions: self.subscription_count(),
+            waiters: self.waiter_count(),
+        }
+    }
+
+    pub fn admin_waiters(&mut self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
+        let now = Instant::now();
+        let mut waiters = Vec::new();
+
+        for (key, queue) in &self.core.pending_acquires {
+            for waiter in queue {
+                let expires_at = Utc::now()
+                    .checked_add_signed(chrono::TimeDelta::seconds(
+                        waiter
+                            .expires_at
+                            .saturating_duration_since(now)
+                            .as_secs()
+                            .cast_signed(),
+                    ))
+                    .unwrap_or_else(Utc::now)
+                    .to_rfc3339();
+
+                waiters.push(crate::control::admin::LeaseWaiterInfo {
+                    route_family: key.family.as_u64(),
+                    realm: key.realm.clone(),
+                    area: key.area.clone(),
+                    resource: key.resource.clone(),
+                    owner_id: waiter.owner_id.clone(),
+                    session_id: waiter.owner_session_id.to_string(),
+                    queued_token: waiter.queued_token,
+                    expires_at,
+                });
+            }
+        }
+
+        waiters
+    }
+
+    pub(in crate::domain::sink) fn lease_response_is_failure(
+        response: &crate::domain::protocol::LeaseResponse,
+    ) -> bool {
+        matches!(
+            response,
+            crate::domain::protocol::LeaseResponse::Timeout
+                | crate::domain::protocol::LeaseResponse::HeldByOther { .. }
+                | crate::domain::protocol::LeaseResponse::AlreadyQueued { .. }
+                | crate::domain::protocol::LeaseResponse::QueueFull { .. }
+                | crate::domain::protocol::LeaseResponse::NotHeld
+                | crate::domain::protocol::LeaseResponse::Expired
+                | crate::domain::protocol::LeaseResponse::Fenced { .. }
+                | crate::domain::protocol::LeaseResponse::NotFound
+                | crate::domain::protocol::LeaseResponse::Error(_)
+                | crate::domain::protocol::LeaseResponse::InvalidSubscriptionRoute(_)
+                | crate::domain::protocol::LeaseResponse::InvalidListPattern(_)
+                | crate::domain::protocol::LeaseResponse::InvalidListCursor
+        )
+    }
+
+    pub(super) fn lease_count(&mut self) -> usize {
+        self.core.leases.len()
+    }
+
+    pub(super) fn subscription_count(&mut self) -> usize {
+        let families = &mut self.core.families;
+        families
+            .values()
+            .map(fitz_core::domains::subscription_state::RoutedSubscriptionSet::subscription_count)
+            .sum()
+    }
+}

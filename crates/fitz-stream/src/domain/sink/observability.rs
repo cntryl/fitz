@@ -1,0 +1,434 @@
+//! Admin read-model projection and metrics glue: when and how live Stream
+//! state is mirrored into the admin snapshot and metric gauges.
+//!
+//! Projection failure must never affect domain correctness.
+
+use super::model::{
+    u64_to_usize_saturating, AdminStreamReadRequest, StreamAreaSnapshot, StreamFamilyState,
+    StreamLiveCounts, StreamRealmSnapshot,
+};
+use super::projection::StreamFamilyAdminSnapshot;
+use crate::domain::{StreamClientResponseBody, StreamReadItem};
+use std::collections::BTreeMap;
+
+type StreamAdminSnapshotMap =
+    BTreeMap<(u64, String, String, String), crate::control::admin::StreamInfo>;
+type StreamRealmSnapshotMap = BTreeMap<String, StreamRealmSnapshot>;
+type StreamAreaSnapshotMap = BTreeMap<(String, String), StreamAreaSnapshot>;
+
+impl StreamFamilyState {
+    pub(in crate::domain::sink) fn mark_admin_snapshot_dirty(&mut self) {
+        self.observability.mark_dirty();
+        self.refresh_metrics_gauges();
+    }
+
+    pub(in crate::domain::sink) fn mark_committed_admin_snapshot_dirty(&mut self) {
+        self.observability.mark_committed_dirty();
+        self.refresh_metrics_gauges();
+    }
+
+    pub(in crate::domain::sink) fn refresh_metrics_gauges(&mut self) {
+        let counts = self.live_counts();
+        self.observability.publish_family(self.family, counts);
+    }
+
+    pub(in crate::domain::sink) fn counter_inc(&mut self, name: &str) {
+        if let Some(metrics) = &mut self.metrics {
+            metrics.counter_inc(name);
+        } else {
+            fitz_core::observability::counter_inc(name);
+        }
+    }
+
+    pub(in crate::domain::sink) fn counter_add(&mut self, name: &str, amount: u64) {
+        if let Some(metrics) = &mut self.metrics {
+            metrics.counter_add(name, amount);
+        } else {
+            fitz_core::observability::counter_add(name, amount);
+        }
+    }
+
+    pub(in crate::domain::sink) fn stream_response_is_failure(
+        response: &StreamClientResponseBody,
+    ) -> bool {
+        matches!(
+            response,
+            StreamClientResponseBody::Error(_) | StreamClientResponseBody::SubscriptionError(_)
+        )
+    }
+
+    pub(in crate::domain::sink) fn refresh_admin_snapshot_if_dirty(&mut self) {
+        if self.observability.is_dirty() {
+            self.sync_admin_snapshot();
+        }
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested route cannot be read or if the stream
+    /// store rejects the read parameters.
+    pub(in crate::domain::sink) fn admin_read_resource_records(
+        &mut self,
+        request: AdminStreamReadRequest<'_>,
+    ) -> Result<(Vec<StreamReadItem>, crate::domain::protocol::ReadCursor), String> {
+        let filter = request
+            .discriminator
+            .map(|value| crate::domain::protocol::StreamFilterSet {
+                clauses: vec![crate::domain::protocol::StreamFilterClause::Equals(value)],
+            });
+        let params = crate::domain::store::ReadResourceParams {
+            family: request.family.as_u64(),
+            realm: request.realm,
+            area: request.area,
+            resource: request.resource,
+            from_offset: request.from_offset,
+            limit: request.limit,
+            max_bytes: None,
+        };
+
+        self.stream_store
+            .read_resource_with_filter(&params, filter.as_ref())
+    }
+
+    pub(in crate::domain::sink) fn sync_admin_snapshot(&mut self) {
+        match self.try_sync_admin_snapshot() {
+            Ok(()) => self.observability.clear_dirty(),
+            Err(error) => {
+                self.observability.mark_dirty();
+                self.counter_inc(crate::domain::metrics::METRIC_ADMIN_PROJECTION_FAILURES_TOTAL);
+                tracing::warn!(
+                    domain = "stream",
+                    error,
+                    "Stream admin projection refresh failed; retaining prior snapshot"
+                );
+            }
+        }
+    }
+
+    fn try_sync_admin_snapshot(&mut self) -> Result<(), String> {
+        if self.observability.drop_watermarks_dirty() {
+            self.reconcile_drop_watermarks()?;
+        }
+        let (mut streams, stream_realm_watermarks, stream_area_watermarks, committed_events_total) =
+            if let Some(snapshot) = self.observability.committed_snapshot() {
+                (
+                    snapshot.streams,
+                    snapshot.realm_watermarks,
+                    snapshot.area_watermarks,
+                    snapshot.committed_events_total,
+                )
+            } else {
+                let (streams, realm_snapshots, area_snapshots, committed_events_total) =
+                    self.collect_committed_stream_snapshots()?;
+                let stream_realm_watermarks =
+                    self.collect_stream_realm_watermarks(realm_snapshots)?;
+                let stream_area_watermarks = self.collect_stream_area_watermarks(area_snapshots)?;
+                self.observability.publish_committed_snapshot(
+                    super::projection::StreamCommittedAdminSnapshot {
+                        streams: streams.clone(),
+                        realm_watermarks: stream_realm_watermarks.clone(),
+                        area_watermarks: stream_area_watermarks.clone(),
+                        committed_events_total,
+                    },
+                );
+                (
+                    streams,
+                    stream_realm_watermarks,
+                    stream_area_watermarks,
+                    committed_events_total,
+                )
+            };
+        self.overlay_live_actor_snapshots_from(&mut streams);
+        self.overlay_live_subscription_snapshots(&mut streams);
+        self.publish_admin_snapshot(
+            streams,
+            stream_realm_watermarks,
+            stream_area_watermarks,
+            committed_events_total,
+        );
+        Ok(())
+    }
+
+    fn reconcile_drop_watermarks(&self) -> Result<(), String> {
+        let family = self.family.as_u64();
+        let (realm_values, area_values) = self
+            .observability
+            .durable_metrics()
+            .family_watermarks(family);
+        let mut realms = Vec::with_capacity(realm_values.len());
+        let mut areas = Vec::with_capacity(area_values.len());
+        // Refresh observations once per durable DROP revision. An empty
+        // resource does not imply its surviving parent's watermark was reset.
+        for mut value in realm_values {
+            if let Some(watermark) = self
+                .stream_store
+                .get_persisted_realm_watermark(family, &value.realm)?
+            {
+                value.watermark = watermark;
+                realms.push(value);
+            }
+        }
+        for mut value in area_values {
+            if let Some(watermark) =
+                self.stream_store
+                    .get_persisted_area_watermark(family, &value.realm, &value.area)?
+            {
+                value.watermark = watermark;
+                areas.push(value);
+            }
+        }
+        self.observability
+            .publish_reconciled_watermarks(family, realms, areas);
+        Ok(())
+    }
+
+    fn collect_committed_stream_snapshots(
+        &mut self,
+    ) -> Result<
+        (
+            StreamAdminSnapshotMap,
+            StreamRealmSnapshotMap,
+            StreamAreaSnapshotMap,
+            usize,
+        ),
+        String,
+    > {
+        let mut streams: StreamAdminSnapshotMap = BTreeMap::new();
+        let mut realm_snapshots: StreamRealmSnapshotMap = BTreeMap::new();
+        let mut area_snapshots: StreamAreaSnapshotMap = BTreeMap::new();
+        let mut committed_events_total = 0usize;
+
+        let mut projection_families = vec![self.family.as_u64()];
+        if self.family == self.admin_unprovisioned_owner {
+            projection_families.extend(
+                self.stream_store
+                    .column_family_ids()?
+                    .into_iter()
+                    .filter(|id| !self.admin_provisioned_families.contains(id)),
+            );
+        }
+        for family_id in projection_families {
+            let records = self.stream_store.list_resource_metadata(family_id)?;
+            for crate::domain::store::StreamAdminRecord {
+                realm,
+                area,
+                resource,
+                next_offset,
+                committed_size_bytes,
+            } in records
+            {
+                committed_events_total =
+                    committed_events_total.saturating_add(u64_to_usize_saturating(next_offset));
+                let last_offset = next_offset.saturating_sub(1);
+                streams.insert(
+                    (family_id, realm.clone(), area.clone(), resource.clone()),
+                    crate::control::admin::StreamInfo::snapshot(
+                        crate::control::admin::StreamInfoSnapshot {
+                            route_family: family_id,
+                            realm: &realm,
+                            area: &area,
+                            resource: &resource,
+                            committed_event_count: next_offset,
+                            offset: last_offset,
+                            watermark: last_offset,
+                            size_bytes: committed_size_bytes,
+                            sessions_active: 0,
+                        },
+                    ),
+                );
+
+                let realm_snapshot = realm_snapshots.entry(realm.clone()).or_default();
+                realm_snapshot.areas.insert(area.clone());
+                realm_snapshot.resource_count = realm_snapshot.resource_count.saturating_add(1);
+                realm_snapshot.families.insert(family_id);
+
+                let area_snapshot = area_snapshots
+                    .entry((realm.clone(), area.clone()))
+                    .or_default();
+                area_snapshot.resource_count = area_snapshot.resource_count.saturating_add(1);
+                area_snapshot.families.insert(family_id);
+            }
+        }
+
+        Ok((
+            streams,
+            realm_snapshots,
+            area_snapshots,
+            committed_events_total,
+        ))
+    }
+
+    fn collect_stream_realm_watermarks(
+        &mut self,
+        realm_snapshots: StreamRealmSnapshotMap,
+    ) -> Result<Vec<crate::control::admin::StreamRealmWatermarkDetail>, String> {
+        realm_snapshots
+            .into_iter()
+            .map(|(realm, snapshot)| {
+                let family_watermarks = snapshot
+                    .families
+                    .into_iter()
+                    .map(|family_id| {
+                        self.stream_store
+                            .get_realm_watermark(family_id, &realm)
+                            .map(|watermark| {
+                                crate::control::admin::StreamRealmWatermark::snapshot(
+                                    family_id, watermark,
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(crate::control::admin::StreamRealmWatermarkDetail::snapshot(
+                    &realm,
+                    snapshot.areas.len(),
+                    snapshot.resource_count,
+                    family_watermarks,
+                ))
+            })
+            .collect()
+    }
+
+    fn collect_stream_area_watermarks(
+        &mut self,
+        area_snapshots: StreamAreaSnapshotMap,
+    ) -> Result<Vec<crate::control::admin::StreamAreaWatermarkDetail>, String> {
+        area_snapshots
+            .into_iter()
+            .map(|((realm, area), snapshot)| {
+                let family_watermarks = snapshot
+                    .families
+                    .into_iter()
+                    .map(|family_id| {
+                        self.stream_store
+                            .get_watermark(family_id, &realm, &area)
+                            .map(|watermark| {
+                                crate::control::admin::StreamAreaWatermark::snapshot(
+                                    family_id, watermark,
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(crate::control::admin::StreamAreaWatermarkDetail::snapshot(
+                    &realm,
+                    &area,
+                    snapshot.resource_count,
+                    family_watermarks,
+                ))
+            })
+            .collect()
+    }
+
+    fn overlay_live_actor_snapshots_from(&mut self, streams: &mut StreamAdminSnapshotMap) {
+        for (key, actor) in &mut self.actors {
+            let last_offset = actor
+                .metadata()
+                .ok()
+                .and_then(|response| response.metadata.last_resource_offset);
+            let sessions_active = usize::from(actor.has_active_session());
+            let stream_key = (
+                key.family.as_u64(),
+                key.realm.clone(),
+                key.area.clone(),
+                key.resource.clone(),
+            );
+            let committed_snapshot = streams.get(&stream_key);
+            if committed_snapshot.is_none() && last_offset.is_none() {
+                continue;
+            }
+            let committed_size_bytes = committed_snapshot.map_or(0, |item| item.size_bytes);
+            let committed_event_count = committed_snapshot.map_or_else(
+                || last_offset.map_or(0, |offset| offset.saturating_add(1)),
+                |item| item.committed_event_count,
+            );
+            let committed_offset = committed_snapshot.map(|item| item.offset);
+            let visible_offset = last_offset.or(committed_offset).unwrap_or(0);
+
+            streams.insert(
+                stream_key,
+                crate::control::admin::StreamInfo::snapshot(
+                    crate::control::admin::StreamInfoSnapshot {
+                        route_family: key.family.as_u64(),
+                        realm: &key.realm,
+                        area: &key.area,
+                        resource: &key.resource,
+                        committed_event_count,
+                        offset: visible_offset,
+                        watermark: visible_offset,
+                        size_bytes: committed_size_bytes,
+                        sessions_active,
+                    },
+                ),
+            );
+        }
+    }
+
+    fn overlay_live_subscription_snapshots(&self, streams: &mut StreamAdminSnapshotMap) {
+        let family = self.family.as_u64();
+        for subscription in self.subscriptions.values() {
+            if let Ok(crate::domain::route_grammar::StreamRouteShape::Resource {
+                realm,
+                area,
+                resource,
+            }) = crate::domain::route_grammar::classify_stream_route_shape(
+                subscription.original.as_ref(),
+            ) {
+                let key = (
+                    family,
+                    realm.to_string(),
+                    area.to_string(),
+                    resource.to_string(),
+                );
+                streams.entry(key).or_insert_with(|| {
+                    crate::control::admin::StreamInfo::snapshot(
+                        crate::control::admin::StreamInfoSnapshot {
+                            route_family: family,
+                            realm,
+                            area,
+                            resource,
+                            committed_event_count: 0,
+                            offset: 0,
+                            watermark: 0,
+                            size_bytes: 0,
+                            sessions_active: 0,
+                        },
+                    )
+                });
+            }
+        }
+
+        for ((family_id, realm, area, resource), stream) in streams.iter_mut() {
+            if *family_id == family {
+                let route = format!("stream://{realm}/{area}/{resource}");
+                stream.subscriptions_active = self.subscriptions.matching_count(&route);
+            }
+        }
+    }
+
+    fn publish_admin_snapshot(
+        &mut self,
+        streams: StreamAdminSnapshotMap,
+        stream_realm_watermarks: Vec<crate::control::admin::StreamRealmWatermarkDetail>,
+        stream_area_watermarks: Vec<crate::control::admin::StreamAreaWatermarkDetail>,
+        committed_events_total: usize,
+    ) {
+        self.observability.publish_admin(
+            self.family.as_u64(),
+            StreamFamilyAdminSnapshot {
+                streams: streams.into_values().collect(),
+                realm_watermarks: stream_realm_watermarks,
+                area_watermarks: stream_area_watermarks,
+                committed_events_total,
+            },
+        );
+    }
+
+    pub(in crate::domain::sink) fn live_counts(&mut self) -> StreamLiveCounts {
+        StreamLiveCounts {
+            streams: self.actors.len(),
+            append_sessions: self.session_owners.len(),
+            subscriptions: self.subscriptions.count(),
+        }
+    }
+}

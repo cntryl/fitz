@@ -1,0 +1,82 @@
+//! Response-envelope construction and routing.
+
+use super::state::KvFamilyRuntime;
+#[cfg(test)]
+use crate::wire::frame_context::FrameContext;
+use fitz_core::runtime::{DeliveryError, Envelope};
+
+impl KvFamilyRuntime<'_> {
+    pub(super) fn route_kv_response(
+        &self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        response: &crate::domain::KvResponse,
+        request_started: std::time::Instant,
+    ) -> Result<(), DeliveryError> {
+        #[cfg(test)]
+        let response_ctx = {
+            let response_bytes = crate::wire::kv::encode_response(response);
+            tracing::trace!(
+                domain = "kv",
+                session = meta.session_id,
+                response_len = response_bytes.len(),
+                "KV response encoded"
+            );
+
+            FrameContext::new(
+                meta.session_id,
+                crate::wire::test_support::channel_id_from_client(meta.channel),
+                crate::wire::message::MessageType::new(meta.message_type),
+                bytes::Bytes::from(response_bytes),
+                meta.route_family,
+            )
+            .with_correlation(meta.correlation)
+        };
+
+        #[cfg(not(test))]
+        let response_ctx = crate::domain::KvClientResponse::new(meta, response.clone());
+
+        let Some(response_envelope) = envelope.try_reply_to(response_ctx) else {
+            self.record_response_metrics(response, request_started);
+            tracing::warn!(
+                domain = "kv",
+                session = meta.session_id,
+                "Cannot route response: envelope has no source address"
+            );
+            return Ok(());
+        };
+
+        match self.core.router.route(response_envelope) {
+            Ok(()) => {
+                self.record_response_metrics(response, request_started);
+                tracing::debug!(
+                    domain = "kv",
+                    session = meta.session_id,
+                    "KV message handled and response routed"
+                );
+                Ok(())
+            }
+            Err(fitz_core::runtime::RouteError::RouteNotFound(_)) => {
+                self.record_response_metrics(response, request_started);
+                tracing::debug!(
+                    domain = "kv",
+                    session = meta.session_id,
+                    "Dropped KV response after the session route closed"
+                );
+                Ok(())
+            }
+            Err(fitz_core::runtime::RouteError::DeliveryFailed(_, delivery_error)) => {
+                self.record_request_metrics(true, request_started);
+                tracing::warn!(
+                    domain = "kv",
+                    session = meta.session_id,
+                    error = %delivery_error,
+                    "Failed to deliver KV response"
+                );
+                // Preserve mailbox occupancy so a transient full inbox is not
+                // misreported as a stopped actor.
+                Err(delivery_error)
+            }
+        }
+    }
+}

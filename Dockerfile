@@ -50,7 +50,7 @@ COPY . .
 # Remove that stub so the final image always contains a binary built from the real sources.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   rm -f target/release/fitz target/release/deps/fitz* \
-  && cargo build --release --locked --bin fitz \
+  && cargo build --release --locked -p fitz --bin fitz \
   && (strip target/release/fitz || true)
 
 FROM debian:trixie-slim AS runtime-fs

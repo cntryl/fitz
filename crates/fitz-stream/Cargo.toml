@@ -1,0 +1,51 @@
+[package]
+name = "fitz-stream"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+autobenches = false
+
+[lib]
+bench = false
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+benchkit = []
+
+[dependencies]
+fitz-core.workspace = true
+fitz-storage.workspace = true
+bytes.workspace = true
+cntryl-midge.workspace = true
+crossbeam-channel.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+hmac.workspace = true
+lz4_flex.workspace = true
+lexkey.workspace = true
+parking_lot.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+fitz-core = { workspace = true, features = ["bench-support"] }
+cntryl-stress.workspace = true
+proptest.workspace = true
+serial_test.workspace = true
+
+[[bench]]
+name = "tier4_stream_compacted"
+harness = false
+required-features = ["benchkit"]
+
+[dev-dependencies.fitz-stream]
+workspace = true
+features = ["test-support"]

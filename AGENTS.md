@@ -1,7 +1,7 @@
 # Fitz Agent Guide
 
 ## Repo Layout
-- Root is a Rust workspace. Main code lives under `src/`.
+- Root is a virtual Rust workspace. The default package is `fitz` under `crates/fitz-server`. Shared runtime and storage live in `fitz-core` and `fitz-storage`. Domain crates own their codecs, state, and projections. Broker integration tests live in `fitz-e2e`.
 - `ui/` is a separate Node/Vite workspace with its own `AGENTS.md` and local `skills/` tree.
 - `public/` contains `openapi.yml` for UI adapter generation and legacy static files; production SPA assets are served from `/app/public`. See [public/README.md](public/README.md).
 - Root workspace skills live under root `skills/`.
@@ -15,8 +15,8 @@
 - [CONTRIBUTING.md](CONTRIBUTING.md) for local setup and validation
 
 ## Hard Constraints
-- Async belongs only at the transport edge in `src/api/`.
-- Keep `src/session/`, `src/runtime/`, `src/protocol/`, and `src/domains/` synchronous.
+- Async belongs only at the transport edge in `crates/fitz-server/src/api/`.
+- Keep server session handling, the shared runtime and protocol, and all domain crates synchronous.
 - Sessions are ephemeral. Disconnect creates a new session.
 - Do not imply durability, replay, exactly-once delivery, recovery, or ownership continuity unless storage and docs explicitly support it.
 - Preserve the domain meanings: Notice = live ephemeral fanout, Stream = durable history/replay, KV = current authoritative state, Queue = work delivery with best-effort persistence, RPC = live request/response, Lease = ephemeral ownership coordination, Schedule = durable timing intent.
@@ -71,7 +71,7 @@ Right:
 
 ## Validation
 
-- Test structure and module sizes: `cntryl-tools validate-tests`, `cntryl-tools check-module-sizes`. Keep these checks in the shared tooling; do not duplicate them in repository tests.
+- Test structure and module sizes: `cntryl-tools validate-tests` from the workspace root and `cntryl-tools check-module-sizes --root <member>` for each crate. Keep these checks in the shared tooling; do not duplicate them in repository tests.
 - Rust: `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic`.
 - UI: run from `ui/` with `npm run test`, `npm run lint`, `npm run type-check`, and `npm run build`.
 

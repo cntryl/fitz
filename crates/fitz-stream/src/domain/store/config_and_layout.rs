@@ -1,0 +1,720 @@
+use super::{
+    decode_staging_value, encode_cursor_state_key, encode_stream_layout_marker_key,
+    AreaCounterValue, AreaValue, BatchLimits, CompactAreaPageValue, CompactGlobalPageValue,
+    CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, LayoutActivationFailure,
+    OffsetCounterValue, PostingPageValue, RealmCounterValue, RealmValue, ResourceMetaValue,
+    ResourceValue, StreamLayoutMarkerValue, StreamStorageLayout, StreamStore, StreamTTL,
+    WatermarkValue, REALM_PAGE_RECORD_LIMIT,
+};
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_LAYOUT_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn before_next_layout_commit_for_tests(hook: Box<dyn FnOnce()>) {
+    BEFORE_LAYOUT_COMMIT.with(|pending| {
+        assert!(pending.borrow().is_none());
+        *pending.borrow_mut() = Some(hook);
+    });
+}
+use parking_lot::Mutex;
+use std::{collections::HashMap, sync::Arc};
+
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+impl StreamStore {
+    #[cfg(test)]
+    pub(crate) fn delay_next_promotion_frontier_commit_for_tests(&self) {
+        self.delay_next_promotion_frontier_commit_ms
+            .store(5_000, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn column_family_ids(&self) -> Result<Vec<u64>, String> {
+        self.db
+            .list_column_families()
+            .map(|families| {
+                families
+                    .into_iter()
+                    .map(|family| u64::from(family.id()))
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn delete_compact_resource_page_for_tests(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        page_start_offset: u64,
+    ) -> Result<(), String> {
+        let family = u32::try_from(family).map_err(|_| "invalid route family".to_string())?;
+        let mut transaction = self
+            .db
+            .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|error| error.to_string())?;
+        transaction
+            .delete(crate::domain::storage::encode_compact_resource_page_key(
+                realm,
+                area,
+                resource,
+                page_start_offset,
+            ))
+            .map_err(|error| error.to_string())?;
+        transaction
+            .commit(cntryl_midge::WriteOptions::sync())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
+        Self::new_with_storage(fitz_storage::storage::FitzStorageEngine::new(db))
+    }
+
+    pub(crate) fn new_with_storage(db: fitz_storage::storage::FitzStorageEngine) -> Self {
+        Self::with_storage_config_and_layout(
+            db,
+            BatchLimits::default(),
+            StreamTTL::default(),
+            StreamStorageLayout::default(),
+        )
+    }
+
+    pub fn with_layout(db: Arc<cntryl_midge::Engine>, layout: StreamStorageLayout) -> Self {
+        Self::with_storage_layout(fitz_storage::storage::FitzStorageEngine::new(db), layout)
+    }
+
+    pub(crate) fn with_storage_layout(
+        db: fitz_storage::storage::FitzStorageEngine,
+        layout: StreamStorageLayout,
+    ) -> Self {
+        Self::with_storage_config_and_layout(
+            db,
+            BatchLimits::default(),
+            StreamTTL::default(),
+            layout,
+        )
+    }
+
+    pub fn with_limits(db: Arc<cntryl_midge::Engine>, limits: BatchLimits) -> Self {
+        Self::with_storage_limits(fitz_storage::storage::FitzStorageEngine::new(db), limits)
+    }
+
+    pub(crate) fn with_storage_limits(
+        db: fitz_storage::storage::FitzStorageEngine,
+        limits: BatchLimits,
+    ) -> Self {
+        Self::with_storage_config_and_layout(
+            db,
+            limits,
+            StreamTTL::default(),
+            StreamStorageLayout::default(),
+        )
+    }
+
+    pub fn with_config(db: Arc<cntryl_midge::Engine>, limits: BatchLimits, ttl: StreamTTL) -> Self {
+        Self::with_storage_config(
+            fitz_storage::storage::FitzStorageEngine::new(db),
+            limits,
+            ttl,
+        )
+    }
+
+    pub(crate) fn with_storage_config(
+        db: fitz_storage::storage::FitzStorageEngine,
+        limits: BatchLimits,
+        ttl: StreamTTL,
+    ) -> Self {
+        Self::with_storage_config_and_layout(db, limits, ttl, StreamStorageLayout::default())
+    }
+
+    pub fn with_config_and_layout(
+        db: Arc<cntryl_midge::Engine>,
+        limits: BatchLimits,
+        ttl: StreamTTL,
+        layout: StreamStorageLayout,
+    ) -> Self {
+        Self::with_storage_config_and_layout(
+            fitz_storage::storage::FitzStorageEngine::new(db),
+            limits,
+            ttl,
+            layout,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_clock_for_tests(
+        mut self,
+        clock: Arc<dyn fitz_core::runtime::clock::Clock>,
+    ) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_maintenance_metrics_for_tests(
+        mut self,
+        metrics: fitz_core::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.maintenance_metrics = metrics;
+        self
+    }
+
+    pub(crate) fn with_storage_config_and_layout(
+        db: fitz_storage::storage::FitzStorageEngine,
+        limits: BatchLimits,
+        ttl: StreamTTL,
+        layout: StreamStorageLayout,
+    ) -> Self {
+        Self {
+            response_payload_limit: super::MAX_STREAM_RESPONSE_PAYLOAD_BYTES,
+            db,
+            sync_write_options: cntryl_midge::WriteOptions::sync(),
+            buffered_write_options: cntryl_midge::WriteOptions::buffered(),
+            limits,
+            layout,
+            #[cfg(test)]
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            ttl,
+            clock: Arc::new(fitz_core::runtime::clock::SystemClock),
+            #[cfg(test)]
+            next_session_id: std::sync::atomic::AtomicU64::new(1),
+            sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
+            family_sequence_guards: Arc::new(Mutex::new(HashMap::new())),
+            global_completion_states: Arc::new(Mutex::new(HashMap::new())),
+            recovered_global_families: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            pending_global_reservations: Arc::new(Mutex::new(HashMap::new())),
+            maintenance_queues: Mutex::new(HashMap::new()),
+            maintenance_metrics: fitz_core::observability::metrics().as_ref().clone(),
+            #[cfg(test)]
+            fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            delay_next_promotion_frontier_commit_ms: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            fence_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            conflict_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fail_next_writer_epoch_recheck: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fence_next_global_reservation: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            maintenance_failure_stage: std::sync::atomic::AtomicU8::new(0),
+            #[cfg(test)]
+            maintenance_full_scans: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_max_message_bytes(mut self, max_message_bytes: usize) -> Self {
+        self.response_payload_limit =
+            max_message_bytes.saturating_sub(fitz_core::protocol::wire2::header::HEADER_LEN);
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_write_options(
+        mut self,
+        sync_write_options: cntryl_midge::WriteOptions,
+        buffered_write_options: cntryl_midge::WriteOptions,
+    ) -> Self {
+        self.sync_write_options = sync_write_options;
+        self.buffered_write_options = buffered_write_options;
+        self
+    }
+
+    pub fn batch_limits(&self) -> BatchLimits {
+        self.limits.clone()
+    }
+
+    pub fn storage_layout(&self) -> StreamStorageLayout {
+        self.layout
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if column families cannot be listed or if any existing
+    /// stream family cannot be activated for the configured layout.
+    pub fn ensure_layout_activation_for_existing_families(&self) -> Result<(), String> {
+        let families = self
+            .db
+            .list_column_families()
+            .map_err(|e| format!("list column families failed: {e:?}"))?;
+
+        for family in families {
+            if family.id() == 0 {
+                continue;
+            }
+            self.inspect_and_activate_layout_for_family_detailed(u64::from(family.id()))
+                .map_err(LayoutActivationFailure::into_string)?;
+        }
+
+        Ok(())
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if column families cannot be listed or if any persisted
+    /// stream row fails validation.
+    pub fn validate_persisted_state_for_existing_families(&self) -> Result<(), String> {
+        let families = self
+            .db
+            .list_column_families()
+            .map_err(|e| format!("list stream column families failed: {e:?}"))?;
+
+        for family in families {
+            if family.id() == 0 {
+                continue;
+            }
+            self.validate_persisted_state_for_family(u64::from(family.id()))?;
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn validate_persisted_state_for_family(&self, family: u64) -> Result<(), String> {
+        let txn = self
+            .db
+            .begin_tx(
+                u64_to_u32_saturating(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .map_err(|e| format!("stream validation failed: family={family} begin_tx: {e:?}"))?;
+        let iter = fitz_storage::storage::domain_scan::scan_domain_rows(
+            &txn,
+            fitz_storage::utils::storage_key::DomainKeyspace::Stream,
+        )
+        .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
+
+        for row in iter {
+            let (key, value) =
+                row.map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
+            let validation = Self::validate_persisted_row(&key, &value);
+            if let Err((category, error)) = validation {
+                return Err(format!(
+                    "stream validation failed: family={family} key_category={category} error={error}"
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn validate_persisted_row(
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), (&'static str, String)> {
+        if key == encode_stream_layout_marker_key() {
+            return StreamLayoutMarkerValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("layout_marker", error));
+        }
+        if key.first().copied() == Some(KeyPrefix::CanonicalResource as u8) {
+            return Err((
+                "canonical_resource",
+                "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
+            ));
+        }
+        if key.first().copied() == Some(KeyPrefix::Staging as u8) {
+            return decode_staging_value(value)
+                .map(|_| ())
+                .map_err(|error| ("staging", error));
+        }
+
+        let Some(suffix) = fitz_storage::utils::storage_key::strip_domain_prefix(
+            key,
+            fitz_storage::utils::storage_key::DomainKeyspace::Stream,
+        ) else {
+            return Ok(());
+        };
+        let Some(prefix) = suffix.first().copied() else {
+            return Err(("empty_key", "stream key suffix is empty".to_string()));
+        };
+
+        Self::validate_domain_row(prefix, value)
+    }
+
+    fn validate_domain_row(prefix: u8, value: &[u8]) -> Result<(), (&'static str, String)> {
+        let Ok(prefix) = KeyPrefix::try_from(prefix) else {
+            return Ok(());
+        };
+        match prefix {
+            KeyPrefix::Resource => ResourceValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("resource", error)),
+            KeyPrefix::Area => AreaValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("area", error)),
+            KeyPrefix::Realm => RealmValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("realm", error)),
+            KeyPrefix::Watermark => WatermarkValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("watermark", error)),
+            KeyPrefix::OffsetCounter => OffsetCounterValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("offset_counter", error)),
+            KeyPrefix::RealmWatermark => WatermarkValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("realm_watermark", error)),
+            KeyPrefix::ResourceMeta => ResourceMetaValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("resource_meta", error)),
+            KeyPrefix::AreaCounter => AreaCounterValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("area_counter", error)),
+            KeyPrefix::RealmCounter => RealmCounterValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("realm_counter", error)),
+            KeyPrefix::CanonicalResource => Err((
+                "canonical_resource",
+                "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
+            )),
+            KeyPrefix::AreaLocator => Err((
+                "area_locator",
+                "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
+            )),
+            KeyPrefix::RealmLocator => Err((
+                "realm_locator",
+                "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
+            )),
+            KeyPrefix::CompactAreaPage => CompactAreaPageValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("compact_area_page", error)),
+            KeyPrefix::CompressedCompactRealmPage => {
+                CompressedCompactRealmPageValue::try_decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("compressed_compact_realm_page", error))
+            }
+            KeyPrefix::CompactResourcePage => CompactResourcePageValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("compact_resource_page", error)),
+            KeyPrefix::CompactGlobalPage => CompactGlobalPageValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("compact_global_page", error)),
+            KeyPrefix::RealmResourcePostingPage
+            | KeyPrefix::GlobalAreaPostingPage
+            | KeyPrefix::GlobalResourcePostingPage
+            | KeyPrefix::GlobalAreaResourcePostingPage => PostingPageValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("posting_page", error)),
+            KeyPrefix::GlobalCounter | KeyPrefix::FamilyWriterEpoch => {
+                RealmCounterValue::decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("global_counter_or_epoch", error))
+            }
+            KeyPrefix::DropCutoff => super::drop_scope::decode_cutoff(value)
+                .map(|_| ())
+                .map_err(|error| ("drop_cutoff", error)),
+            KeyPrefix::DropReclamation => super::drop_reclamation::decode_progress(value)
+                .map(|_| ())
+                .map_err(|error| ("drop_reclamation", error)),
+            KeyPrefix::DropRevision => super::drop_scope::decode_cutoff(value)
+                .map(|_| ())
+                .map_err(|error| ("drop_revision", error)),
+            KeyPrefix::GlobalWatermark => WatermarkValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("global_watermark", error)),
+            KeyPrefix::CursorState => {
+                if value.len() == 2 && value[0] == 1 {
+                    Ok(())
+                } else {
+                    Err((
+                        "cursor_state",
+                        "invalid cursor state version or budget".to_string(),
+                    ))
+                }
+            }
+            KeyPrefix::PayloadBlob => super::decode_payload_blob(value)
+                .map(|_| ())
+                .map_err(|error| ("payload_blob", error)),
+            KeyPrefix::Staging
+            | KeyPrefix::LayoutMarker
+            | KeyPrefix::ResourceDiscriminator
+            | KeyPrefix::AreaDiscriminator
+            | KeyPrefix::RealmDiscriminator
+            | KeyPrefix::GlobalDiscriminator => Ok(()),
+        }
+    }
+
+    pub(super) fn ensure_layout_activation_for_family(&self, family: u64) -> Result<(), String> {
+        // Recovery is recorded only after the layout marker and cursor have
+        // validated, and Midge holds the family's exclusive writer lease for
+        // this store's lifetime. Rechecking those immutable rows on every
+        // operation only adds storage transactions to the hot path.
+        if self.recovered_global_families.lock().contains(&family) {
+            return Ok(());
+        }
+        self.inspect_and_activate_layout_for_family(family)?;
+        self.recover_global_ordering_once(family)
+    }
+
+    pub(super) fn inspect_and_activate_layout_for_family(&self, family: u64) -> Result<(), String> {
+        self.inspect_and_activate_layout_for_family_detailed(family)
+            .map_err(LayoutActivationFailure::into_string)
+    }
+
+    pub(super) fn inspect_and_activate_layout_for_family_detailed(
+        &self,
+        family: u64,
+    ) -> Result<(), LayoutActivationFailure> {
+        loop {
+            let marker_key = encode_stream_layout_marker_key();
+            let mut txn = self
+                .db
+                .begin_tx(
+                    u64_to_u32_saturating(family),
+                    cntryl_midge::TransactionMode::ReadWrite,
+                )
+                .map_err(|e| LayoutActivationFailure::Other(format!("begin_tx failed: {e:?}")))?;
+            txn.set_conflict_policy(cntryl_midge::ConflictPolicy::AbortOnWriteConflict);
+
+            if let Some(bytes) = txn
+                .get(&marker_key)
+                .map_err(|e| LayoutActivationFailure::Other(format!("get error: {e:?}")))?
+            {
+                if bytes.starts_with(&[0, 0xD3]) {
+                    return Err(LayoutActivationFailure::ResetRequired(
+                        Self::stream_d3_reset_required_error(family),
+                    ));
+                }
+                let marker = StreamLayoutMarkerValue::decode(&bytes)
+                    .map_err(LayoutActivationFailure::Other)?;
+                if marker.layout != self.layout {
+                    return Err(LayoutActivationFailure::Mismatch(
+                        Self::stream_layout_mismatch_error(family, marker.layout, self.layout),
+                    ));
+                }
+
+                Self::ensure_cursor_state(&self.db, family, self.sync_write_options)?;
+                return Ok(());
+            }
+
+            if Self::txn_has_stream_data(&txn).map_err(LayoutActivationFailure::Other)? {
+                return Err(LayoutActivationFailure::ResetRequired(
+                    Self::stream_layout_reset_required_error(family, self.layout),
+                ));
+            }
+
+            // A concurrent activation or DROP may install a stronger marker while
+            // this fresh-family transaction is waiting for storage.
+            txn.assert_value(marker_key.clone(), None)
+                .map_err(|error| {
+                    LayoutActivationFailure::Other(format!(
+                        "assert layout marker failed: {error:?}"
+                    ))
+                })?;
+            txn.put(
+                marker_key,
+                StreamLayoutMarkerValue::new(self.layout).encode(),
+                None,
+            )
+            .map_err(|e| LayoutActivationFailure::Other(format!("txn put failed: {e:?}")))?;
+            #[cfg(test)]
+            if let Some(hook) = BEFORE_LAYOUT_COMMIT.with(|pending| pending.borrow_mut().take()) {
+                hook();
+            }
+            match txn.commit(self.sync_write_options) {
+                Ok(()) => {}
+                Err(cntryl_midge::MidgeError::WriteConflict(_)) => continue,
+                Err(error) => {
+                    return Err(LayoutActivationFailure::Other(format!(
+                        "midge commit error: {error:?}"
+                    )))
+                }
+            }
+
+            Self::ensure_cursor_state(&self.db, family, self.sync_write_options)?;
+
+            return Ok(());
+        }
+    }
+
+    fn ensure_cursor_state(
+        db: &fitz_storage::storage::FitzStorageEngine,
+        family: u64,
+        write_options: cntryl_midge::WriteOptions,
+    ) -> Result<(), LayoutActivationFailure> {
+        let mut txn = db
+            .begin_tx(
+                u64_to_u32_saturating(family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
+            .map_err(|error| {
+                LayoutActivationFailure::Other(format!("cursor tx failed: {error:?}"))
+            })?;
+        let key = encode_cursor_state_key();
+        if txn
+            .get(&key)
+            .map_err(|error| {
+                LayoutActivationFailure::Other(format!("cursor read failed: {error:?}"))
+            })?
+            .is_none()
+        {
+            txn.put(key, vec![1, 1], None).map_err(|error| {
+                LayoutActivationFailure::Other(format!("cursor write failed: {error:?}"))
+            })?;
+            txn.commit(write_options).map_err(|error| {
+                LayoutActivationFailure::Other(format!("cursor commit failed: {error:?}"))
+            })?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn txn_has_stream_data(txn: &cntryl_midge::Transaction) -> Result<bool, String> {
+        let stream_prefixes = [
+            KeyPrefix::Resource as u8,
+            KeyPrefix::Area as u8,
+            KeyPrefix::Realm as u8,
+            KeyPrefix::Watermark as u8,
+            KeyPrefix::OffsetCounter as u8,
+            KeyPrefix::RealmWatermark as u8,
+            KeyPrefix::ResourceMeta as u8,
+            KeyPrefix::AreaCounter as u8,
+            KeyPrefix::RealmCounter as u8,
+            KeyPrefix::CanonicalResource as u8,
+            KeyPrefix::AreaLocator as u8,
+            KeyPrefix::RealmLocator as u8,
+            KeyPrefix::CompactAreaPage as u8,
+            KeyPrefix::CompressedCompactRealmPage as u8,
+            KeyPrefix::CompactResourcePage as u8,
+            KeyPrefix::GlobalCounter as u8,
+            KeyPrefix::GlobalWatermark as u8,
+            KeyPrefix::GlobalDiscriminator as u8,
+            KeyPrefix::FamilyWriterEpoch as u8,
+            KeyPrefix::CompactGlobalPage as u8,
+            KeyPrefix::RealmResourcePostingPage as u8,
+            KeyPrefix::GlobalAreaPostingPage as u8,
+            KeyPrefix::GlobalResourcePostingPage as u8,
+            KeyPrefix::GlobalAreaResourcePostingPage as u8,
+            KeyPrefix::PayloadBlob as u8,
+            KeyPrefix::DropCutoff as u8,
+            KeyPrefix::DropReclamation as u8,
+            KeyPrefix::DropRevision as u8,
+        ];
+
+        let iter = fitz_storage::storage::domain_scan::scan_domain_rows(
+            txn,
+            fitz_storage::utils::storage_key::DomainKeyspace::Stream,
+        )
+        .map_err(|e| format!("scan error: {e:?}"))?;
+        for entry in iter {
+            let (key, _value) = entry.map_err(|e| format!("scan error: {e:?}"))?;
+            let suffix = crate::domain::storage::stream_key_suffix(&key);
+            if suffix
+                .first()
+                .is_some_and(|prefix| stream_prefixes.contains(prefix))
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    pub(super) fn stream_layout_mismatch_error(
+        family: u64,
+        stored_layout: StreamStorageLayout,
+        requested_layout: StreamStorageLayout,
+    ) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_LAYOUT_MISMATCH: family={} stored={} requested={} reset required",
+            family,
+            stored_layout.as_str(),
+            requested_layout.as_str()
+        )
+    }
+
+    pub(super) fn stream_layout_reset_required_error(
+        family: u64,
+        requested_layout: StreamStorageLayout,
+    ) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED: family={} requested={} existing unmarked stream data requires export/replay into a fresh D4 store or an intentional reset",
+            family,
+            requested_layout.as_str()
+        )
+    }
+
+    fn stream_d3_reset_required_error(family: u64) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED: family={family} stored=D3 requested=D4; export/replay history into a fresh store or intentionally reset Stream data"
+        )
+    }
+
+    pub(super) fn invalid_compact_realm_page_error(realm_offset: u64, error: &str) -> String {
+        format!("ERR_INVALID_COMPACT_REALM_PAGE: realm_offset={realm_offset} {error}")
+    }
+
+    pub(super) fn invalid_compact_area_page_error(
+        realm: &str,
+        area: &str,
+        area_offset: u64,
+        error: &str,
+    ) -> String {
+        format!(
+            "ERR_INVALID_COMPACT_AREA_PAGE: realm={realm} area={area} area_offset={area_offset} {error}"
+        )
+    }
+
+    pub(super) fn invalid_compact_resource_page_error(
+        realm: &str,
+        area: &str,
+        resource: &str,
+        resource_offset: u64,
+        error: &str,
+    ) -> String {
+        format!(
+            "ERR_INVALID_COMPACT_RESOURCE_PAGE: realm={realm} area={area} resource={resource} resource_offset={resource_offset} {error}"
+        )
+    }
+
+    pub(super) fn build_compact_area_page_prefix(realm: &str, area: &str) -> Vec<u8> {
+        let mut encoder = fitz_storage::utils::storage_key::domain_marker_encoder(
+            realm,
+            fitz_storage::utils::storage_key::DomainKeyspace::Stream,
+            KeyPrefix::CompactAreaPage as u8,
+            area.len() + 1,
+        );
+        fitz_storage::utils::storage_key::encode_bytes_segment_into(&mut encoder, area.as_bytes());
+        encoder.into_vec()
+    }
+
+    pub(super) fn build_compact_resource_page_prefix(
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Vec<u8> {
+        let mut encoder = fitz_storage::utils::storage_key::domain_marker_encoder(
+            realm,
+            fitz_storage::utils::storage_key::DomainKeyspace::Stream,
+            KeyPrefix::CompactResourcePage as u8,
+            area.len() + resource.len() + 2,
+        );
+        fitz_storage::utils::storage_key::encode_bytes_segment_into(&mut encoder, area.as_bytes());
+        fitz_storage::utils::storage_key::encode_bytes_segment_into(
+            &mut encoder,
+            resource.as_bytes(),
+        );
+        encoder.into_vec()
+    }
+
+    pub(super) fn build_compressed_compact_realm_page_prefix(realm: &str) -> Vec<u8> {
+        fitz_storage::utils::storage_key::domain_marker_encoder(
+            realm,
+            fitz_storage::utils::storage_key::DomainKeyspace::Stream,
+            KeyPrefix::CompressedCompactRealmPage as u8,
+            0,
+        )
+        .into_vec()
+    }
+
+    pub(super) fn page_start_offset(offset: u64) -> u64 {
+        offset / REALM_PAGE_RECORD_LIMIT as u64 * REALM_PAGE_RECORD_LIMIT as u64
+    }
+}

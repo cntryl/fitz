@@ -1,0 +1,396 @@
+use super::*;
+use crate::boot::domains::BrokerDomains;
+use crate::domains::kv::KvDomain;
+use crate::domains::lease::LeaseDomain;
+use crate::domains::notice::NoticeDomain;
+use crate::domains::queue::QueueDomain;
+use crate::domains::rpc::RpcDomain;
+use crate::domains::schedule::protocol::parse_concrete_schedule_route;
+use crate::domains::schedule::ScheduleDomain;
+use crate::domains::stream::StreamDomain;
+use crate::runtime::Router;
+use crate::testkit::domain_internals::schedule::{
+    ScheduleFireClaim, ScheduleInsert, ScheduleStore,
+};
+use bytes::Bytes;
+use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn current_epoch_ms() -> u64 {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
+#[test]
+fn should_expose_shared_admin_observation_overload_counter() {
+    // Arrange
+    let runtime = crate::boot::Runtime::new(Arc::new(Router::new()));
+    let before = crate::api::admin::observation_metrics::overload_rejections();
+    crate::api::admin::observation_metrics::record_overload_rejection();
+
+    // Act
+    let metrics = generate_prometheus_metrics(&runtime);
+
+    // Assert
+    assert!(metrics.contains("# TYPE fitz_admin_observation_overload_rejections_total counter"));
+    let recorded = metrics
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("fitz_admin_observation_overload_rejections_total ")
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+        .expect("overload metric sample");
+    assert!(recorded > before);
+}
+
+fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let runtime = Arc::new(Runtime::with_admin_read_model(
+        router.clone(),
+        admin_read_model.clone(),
+    ));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let schedule_store = ScheduleStore::new(store.clone());
+    let route = "schedule://acme/jobs/nightly/run";
+    let payload = Bytes::from_static(b"nightly");
+    let now_ms = current_epoch_ms();
+    let claimed_fire_ms = now_ms.saturating_sub(30_000);
+    let next_fire_ms = now_ms.saturating_add(30_000);
+    let last_fire_ms = Some(now_ms.saturating_sub(1_000));
+    let route_parts = parse_concrete_schedule_route(route).expect("valid schedule route");
+
+    schedule_store
+        .insert(
+            1,
+            ScheduleInsert {
+                route,
+                cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+                payload: &payload,
+                next_fire_ms: claimed_fire_ms,
+                previous_fire_ms: None,
+                last_fire_ms,
+                executions_total: 4,
+            },
+            crate::domains::WritePolicy::Buffered,
+        )
+        .expect("insert schedule");
+    schedule_store
+        .claim_due_batch(
+            1,
+            &[ScheduleFireClaim {
+                route,
+                route_parts: &route_parts,
+                cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+                payload: &payload,
+                claimed_at_ms: claimed_fire_ms,
+                next_fire_ms,
+                previous_fire_ms: claimed_fire_ms,
+                last_fire_ms,
+                executions_total: 4,
+            }],
+            crate::domains::WritePolicy::Buffered,
+        )
+        .expect("claim due schedule");
+
+    let domains = Arc::new(BrokerDomains::new(
+        Arc::new(KvDomain::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.kv.clone(),
+        )),
+        Arc::new(QueueDomain::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.queue.clone(),
+            crate::utils::idempotency::default_dedup_store(),
+        )),
+        Arc::new(NoticeDomain::new(
+            router.clone(),
+            admin_read_model.notice.clone(),
+        )),
+        Arc::new(
+            StreamDomain::try_new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.stream.clone(),
+                crate::domains::stream::StreamStorageWriteOptions::local(),
+            )
+            .expect("create Stream metrics test sink"),
+        ),
+        Arc::new(RpcDomain::new(router.clone(), admin_read_model.rpc.clone())),
+        Arc::new(LeaseDomain::new(
+            router.clone(),
+            admin_read_model.lease.clone(),
+        )),
+        Arc::new(ScheduleDomain::new(
+            crate::testkit::domain_internals::schedule::ScheduleStore::new(store),
+            router,
+            admin_read_model.schedule.clone(),
+        )),
+    ));
+
+    domains
+        .admin_ports()
+        .preload_schedule_families()
+        .expect("preload schedules");
+    runtime.attach_domains(domains);
+    runtime
+}
+
+fn assert_metric_exported(metrics: &str, metric_name: &str) {
+    let prefix = format!("{metric_name} ");
+    let line = metrics
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("missing metric {metric_name}"));
+    let value = line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_else(|| panic!("missing metric value for {metric_name}"));
+    value
+        .parse::<u64>()
+        .unwrap_or_else(|err| panic!("invalid metric value for {metric_name}: {err}"));
+}
+
+fn metric_family_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+
+    let name = trimmed
+        .split(|character: char| character == '{' || character.is_whitespace())
+        .next()?;
+
+    Some(
+        ["_bucket", "_count", "_sum"]
+            .iter()
+            .find_map(|suffix| name.strip_suffix(suffix))
+            .unwrap_or(name)
+            .to_string(),
+    )
+}
+
+fn typed_metric_families(metrics: &str) -> BTreeSet<String> {
+    metrics
+        .lines()
+        .filter_map(|line| line.strip_prefix("# TYPE "))
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
+    // Arrange
+    let runtime = runtime_with_preloaded_schedule_metrics();
+    let metrics = crate::observability::metrics();
+    let latency_before = metrics
+        .histogram_get_buckets("fitz_schedule_latency_ms")
+        .unwrap_or([0; 9]);
+    metrics.histogram_observe_ms("fitz_schedule_latency_ms", 1);
+    metrics.histogram_observe_ms("fitz_schedule_latency_ms", 250);
+
+    // Act
+    let metrics = generate_prometheus_metrics(&runtime);
+
+    // Assert
+    assert!(metrics.contains("fitz_schedule_active 1"));
+    assert!(metrics.contains("fitz_schedule_executions_per_minute 1"));
+    assert!(metrics.contains("fitz_schedule_subscriptions_active 0"));
+    assert!(metrics.contains("fitz_schedule_pending_fire_claims 1"));
+    assert!(metrics.contains("fitz_schedule_pending_ack_retries 0"));
+    let oldest_pending_claim_age_line = metrics
+        .lines()
+        .find(|line| line.starts_with("fitz_schedule_oldest_pending_claim_age_seconds "))
+        .expect("oldest pending claim age gauge");
+    let oldest_pending_claim_age_seconds: u64 = oldest_pending_claim_age_line
+        .split_whitespace()
+        .nth(1)
+        .expect("pending claim age value")
+        .parse()
+        .expect("valid pending claim age value");
+    assert!(oldest_pending_claim_age_seconds >= 30);
+    assert!(metrics.contains("fitz_schedule_notify_failures_total 0"));
+    assert!(metrics.contains("fitz_schedule_ack_failures_total 0"));
+    assert!(metrics.contains("fitz_schedule_overdue_normalizations_total 0"));
+    assert!(metrics.contains("fitz_schedule_latency_ms{le=\"100ms\"}"));
+    assert!(metrics.contains(&format!(
+        "fitz_schedule_latency_ms{{le=\"100ms\"}} {}",
+        latency_before[0] + 1
+    )));
+    assert!(metrics.contains("fitz_schedule_latency_ms_count"));
+    assert_metric_exported(&metrics, "fitz_notice_delivery_drops_total");
+    assert_metric_exported(&metrics, "fitz_notice_response_drops_total");
+    assert_metric_exported(&metrics, "fitz_stream_notify_drops_total");
+    assert_metric_exported(&metrics, "fitz_stream_response_drops_total");
+    assert_metric_exported(&metrics, "fitz_queue_notify_drops_total");
+    assert_metric_exported(&metrics, "fitz_queue_fast_flush_failures_total");
+    assert_metric_exported(&metrics, "fitz_queue_l0_admission_retries_total");
+    assert_metric_exported(&metrics, "fitz_queue_admission_budget_exhausted_total");
+    assert_metric_exported(&metrics, "fitz_kv_inventory_estimate_update_failures_total");
+    assert_metric_exported(&metrics, "fitz_lease_response_drops_total");
+    assert_metric_exported(&metrics, "fitz_lease_notify_drops_total");
+    assert_metric_exported(&metrics, "fitz_schedule_response_drops_total");
+    assert_metric_exported(&metrics, "fitz_rpc_request_timeouts_total");
+    assert_metric_exported(&metrics, "fitz_rpc_backpressure_rejects_total");
+    assert_metric_exported(&metrics, "fitz_rpc_duplicate_correlation_rejects_total");
+    assert_metric_exported(&metrics, "fitz_rpc_wrong_worker_rejects_total");
+    assert_metric_exported(&metrics, "fitz_lease_waiter_depth");
+    assert_metric_exported(&metrics, "fitz_notice_wildcard_limit_rejects_total");
+}
+
+#[test]
+fn should_render_stream_metrics_from_cached_observability_state() {
+    // Arrange
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    metrics.gauge_set(crate::domains::stream::metrics::METRIC_ACTIVE_GAUGE, 7);
+    metrics.gauge_set(
+        crate::domains::stream::metrics::METRIC_APPEND_SESSIONS_GAUGE,
+        5,
+    );
+    metrics.gauge_set(
+        crate::domains::stream::metrics::METRIC_SUBSCRIPTIONS_GAUGE,
+        3,
+    );
+    let read_model = crate::control::admin::read_model::AdminReadModel::new();
+    read_model.replace_stream_events_total(11);
+    let runtime = Arc::new(Runtime::with_admin_read_model(
+        Arc::new(Router::new()),
+        read_model,
+    ));
+
+    // Act
+    let mut payload = String::new();
+    domains::append_stream_metrics_with_collector(&mut payload, &runtime, &metrics);
+
+    // Assert
+    assert!(payload.contains("fitz_stream_active 7"));
+    assert!(payload.contains("fitz_stream_append_sessions_active 5"));
+    assert!(payload.contains("fitz_stream_subscriptions_active 3"));
+    assert!(payload.contains("fitz_stream_events_total 11"));
+}
+
+#[test]
+fn should_export_type_metadata_for_every_metric_family() {
+    // Arrange
+    let metrics = crate::observability::metrics();
+    metrics.counter_inc("fitz_test_typed_counter_total");
+    metrics.gauge_set("fitz_test_typed_gauge", 7);
+    metrics.histogram_observe_ms("fitz_test_typed_latency_ms", 1);
+    let runtime = Arc::new(Runtime::with_admin_read_model(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    ));
+
+    // Act
+    let payload = generate_prometheus_metrics(&runtime);
+
+    // Assert
+    let typed = typed_metric_families(&payload);
+    let untyped = payload
+        .lines()
+        .filter_map(metric_family_name)
+        .filter(|family| !typed.contains(family))
+        .collect::<BTreeSet<_>>();
+
+    assert!(untyped.is_empty(), "untyped metric families: {untyped:?}");
+}
+
+#[test]
+fn should_export_registered_queue_admission_counters_once() {
+    // Arrange
+    use crate::domains::queue::metrics::{
+        METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL, METRIC_L0_ADMISSION_RETRIES_TOTAL,
+    };
+    let names = [
+        METRIC_L0_ADMISSION_RETRIES_TOTAL,
+        METRIC_ADMISSION_BUDGET_EXHAUSTED_TOTAL,
+    ];
+    let collector = crate::observability::metrics();
+    for name in names {
+        collector.counter_inc(name);
+    }
+    let runtime = Runtime::with_admin_read_model(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    // Act
+    let payload = generate_prometheus_metrics(&runtime);
+    let all_samples = structured_samples(&payload, None);
+    let family_samples = structured_samples(&payload, Some(1));
+    let counts = names.map(|name| {
+        let count_lines = |prefix: &str| {
+            payload
+                .lines()
+                .filter(|line| line.starts_with(prefix))
+                .count()
+        };
+        (
+            count_lines(&format!("# HELP {name} ")),
+            count_lines(&format!("# TYPE {name} ")),
+            count_lines(&format!("{name} ")),
+            all_samples
+                .iter()
+                .filter(|sample| sample.name == name)
+                .count(),
+            family_samples
+                .iter()
+                .filter(|sample| sample.name == name)
+                .count(),
+        )
+    });
+
+    // Assert
+    assert_eq!(
+        counts,
+        [(1, 1, 1, 1, 0); 2],
+        "HELP/TYPE/text/all/family counts for {names:?}"
+    );
+    assert!(all_samples
+        .iter()
+        .filter(|sample| names.contains(&sample.name.as_str()))
+        .all(|sample| sample.kind == "counter" && sample.labels.is_empty()));
+}
+
+#[test]
+fn should_bound_family_attributable_metrics_snapshot() {
+    // Arrange
+    let model = crate::control::admin::read_model::AdminReadModel::new();
+    model.replace_rpc_workers(
+        (0..300)
+            .map(|id| {
+                crate::control::admin::RpcWorker::snapshot(
+                    1,
+                    id,
+                    "acme",
+                    &format!("rpc://acme/app/work-{id}/run"),
+                    "2026-10-04T00:00:00Z",
+                    0,
+                    0.0,
+                )
+            })
+            .collect(),
+    );
+    let runtime = Runtime::with_admin_read_model(Arc::new(Router::new()), model);
+
+    // Act
+    let samples = family_attributable_samples(&runtime, 1);
+
+    // Assert
+    let workers = samples
+        .iter()
+        .find(|sample| sample.name == "fitz_rpc_workers_registered")
+        .expect("family worker metric");
+    assert_eq!(workers.value, 100.0);
+}

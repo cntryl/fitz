@@ -16,6 +16,7 @@
 
 # Rust build artifacts
 target
+crates/*/target
 # Keep Cargo.lock for reproducible builds
 *.rlib
 *.rmeta

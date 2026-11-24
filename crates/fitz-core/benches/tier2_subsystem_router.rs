@@ -1,0 +1,54 @@
+#![allow(deprecated)]
+#[path = "../src/testkit/stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
+use fitz_core::runtime::envelope::Envelope;
+use fitz_core::runtime::mailbox::Mailbox;
+use fitz_core::runtime::router::Router;
+use fitz_core::runtime::routing::{Route, RouteAddress, RouteFamily};
+use std::sync::Arc;
+
+const MAILBOX_ROUTE_BATCH_SIZE: usize = 32_768;
+
+fn configure_route_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "routed_messages");
+    ctx.parameter("logical_unit", "message_route");
+}
+
+fn test_address(family: u64, route: &str) -> RouteAddress {
+    RouteAddress::new(
+        RouteFamily::try_from(family).expect("benchmark family must fit in u32"),
+        Route::new(route),
+    )
+}
+
+#[stress(tier = 2, name = "route_exact_mailbox_32768_messages_primary")]
+fn should_route_exact_mailbox_32768_messages_primary(ctx: &mut StressContext) {
+    let router = Router::new();
+    let address = test_address(1, "rpc://acme/router/mailbox/target");
+    let mailbox = Arc::new(Mailbox::new(1));
+    router.register(address.clone(), mailbox.clone());
+    let mut seq = 0_u64;
+    configure_route_measurement(ctx);
+
+    tier2_stress::measure_iterations(
+        ctx,
+        "route_exact_mailbox_32768_messages_primary",
+        MAILBOX_ROUTE_BATCH_SIZE as u64,
+        || {
+            for _ in 0..MAILBOX_ROUTE_BATCH_SIZE {
+                router
+                    .route(Envelope::new(black_box(address.clone()), black_box(seq)))
+                    .expect("mailbox route should succeed");
+                let _ = mailbox
+                    .receiver()
+                    .try_recv()
+                    .expect("mailbox route should enqueue message");
+                seq = seq.wrapping_add(1);
+            }
+        },
+    );
+}
+
+stress_main!();

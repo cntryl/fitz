@@ -1,0 +1,131 @@
+//! Test-only controls for observing and driving the family-owned KV state.
+
+use super::commands::KvDomainCommand;
+use super::locks::KvResourceLockKey;
+use super::state::KvDomain;
+
+impl KvDomain {
+    pub(super) fn run_on_family_for_tests<T: Send + 'static>(
+        &self,
+        family: fitz_core::runtime::routing::RouteFamily,
+        operation: impl FnOnce(&mut super::state::KvFamilyRuntime<'_>) -> T + Send + 'static,
+    ) -> T {
+        let (result_tx, result_rx) = crossbeam_channel::bounded(1);
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        self.try_send(
+            family,
+            fitz_core::runtime::FamilyActorLane::Control,
+            KvDomainCommand::InspectForTests(
+                Box::new(move |core| {
+                    let mut runtime = super::state::KvFamilyRuntime { core };
+                    let _ = result_tx.send(operation(&mut runtime));
+                }),
+                done_tx,
+            ),
+        )
+        .expect("enqueue KV family test operation");
+        done_rx.recv().expect("receive KV family test completion");
+        result_rx.recv().expect("receive KV family test result")
+    }
+
+    /// Stop the mailbox actor without changing the sink's active flag.
+    pub(super) fn stop_actor_for_tests(&self) {
+        self.family_runtime.stop();
+    }
+
+    /// Report whether the sink has not been stopped.
+    pub(super) fn is_active_for_tests(&self) -> bool {
+        use std::sync::atomic::Ordering;
+
+        self.active.load(Ordering::Relaxed)
+    }
+
+    /// Seed one session actor for state-cleanup regressions.
+    pub(super) fn insert_actor_for_tests(&self, session_id: u64, actor: crate::domain::KvActor) {
+        let started_at = chrono::Utc::now().to_rfc3339();
+        let transactions = actor
+            .active_transaction_snapshots()
+            .into_iter()
+            .map(|snapshot| {
+                crate::control::admin::KvTransaction::snapshot(
+                    snapshot.scope.route_family.as_u64(),
+                    snapshot.tx_id,
+                    session_id,
+                    &snapshot.scope.realm,
+                    &snapshot.scope.area,
+                    &snapshot.scope.resource,
+                    &started_at,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.inspect_for_tests(move |core| {
+            for transaction in &transactions {
+                core.active_transactions
+                    .upsert(session_id, transaction, None);
+            }
+            core.actors.insert(session_id, actor);
+        });
+    }
+
+    /// Report whether all watch registries are empty.
+    pub(super) fn watch_registries_are_empty_for_tests(&self) -> bool {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.inspect_for_tests(move |core| {
+            let _ = reply_tx.send(core.watch_registries.is_empty());
+        });
+        reply_rx.recv().expect("receive watch-registry inspection")
+    }
+
+    /// Report whether all session actors are absent.
+    pub(super) fn actors_are_empty_for_tests(&self) -> bool {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.inspect_for_tests(move |core| {
+            let _ = reply_tx.send(core.actors.is_empty());
+        });
+        reply_rx.recv().expect("receive actor inspection")
+    }
+
+    /// Report whether all write locks are absent.
+    pub(super) fn resource_locks_are_empty_for_tests(&self) -> bool {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.inspect_for_tests(move |core| {
+            let _ = reply_tx.send(core.resource_locks.is_empty());
+        });
+        reply_rx.recv().expect("receive lock inspection")
+    }
+
+    /// Rebuild the admin projection through the mailbox actor.
+    pub(super) fn sync_admin_snapshot(&self) {
+        let _ = self.request_actor(
+            self.route_families[0],
+            "sync_admin_snapshot",
+            KvDomainCommand::SyncAdminSnapshot,
+        );
+    }
+
+    /// Read the latency snapshots for one resource through the mailbox actor.
+    pub(super) fn latency_snapshots(
+        &self,
+        resource_key: &KvResourceLockKey,
+    ) -> (
+        crate::control::admin::KvLatencySnapshot,
+        crate::control::admin::KvLatencySnapshot,
+    ) {
+        self.request_actor(self.route_families[0], "latency_snapshots", |reply| {
+            KvDomainCommand::ReadLatencySnapshots(resource_key.clone(), reply)
+        })
+        .unwrap_or_default()
+    }
+
+    /// Resolve COMMIT persistence through the family mailbox.
+    pub(super) fn resolve_commit_persistence(
+        &self,
+        persistence: fitz_storage::domains::CommitPersistence,
+    ) -> Option<fitz_storage::domains::WritePolicy> {
+        self.request_actor(
+            self.route_families[0],
+            "resolve_commit_persistence",
+            |reply| KvDomainCommand::ResolveCommitPersistence(persistence, reply),
+        )
+    }
+}

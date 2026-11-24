@@ -1,0 +1,315 @@
+//! Envelope ingress: validate an inbound envelope, parse it into an RPC
+//! message, and dispatch to the registration/delivery/response layers.
+
+use super::state_model::{
+    RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RPC_MSG_TYPE_CANCELLATION,
+    RPC_MSG_TYPE_REQUEST,
+};
+use crate::domain::protocol::{RpcClientResponseBody, RpcMessage};
+use fitz_core::runtime::SessionScoped as _;
+use fitz_core::runtime::{DeliveryError, Envelope};
+use std::time::Instant;
+
+impl RpcFamilyRuntime<'_> {
+    pub(super) fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        if self.handle_cleanup_envelope(envelope) {
+            return Ok(());
+        }
+        self.ensure_active()?;
+        Self::log_delivery(envelope);
+
+        let ingress_request = Self::extract_request(envelope)?;
+        let request = ingress_request.request;
+        let received_at = ingress_request.received_at;
+        let meta = request.meta;
+        let request_started = (meta.message_type != RPC_MSG_TYPE_CANCELLATION)
+            .then(|| self.record_request_start())
+            .flatten();
+
+        if !Self::valid_request_envelope(envelope, meta) {
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_rpc_client_response(
+                envelope,
+                response_meta,
+                &RpcClientResponseBody::Error("route family mismatch".to_string()),
+            );
+            return Ok(());
+        }
+
+        // This request was already queued (on the normal lane) before this
+        // session's disconnect cleanup ran (on the high-priority lane) and
+        // jumped ahead of it. Reject rather than silently recreating a worker
+        // registration or pending request for a session that is already gone
+        // and will never be cleaned up again.
+        if self.is_cleaned_up_request(meta.session_id, envelope) {
+            if meta.message_type == RPC_MSG_TYPE_CANCELLATION {
+                return Ok(());
+            }
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_rpc_client_response(
+                envelope,
+                response_meta,
+                &RpcClientResponseBody::Error("session already closed".to_string()),
+            );
+            return Ok(());
+        }
+
+        if meta.message_type == RPC_MSG_TYPE_CANCELLATION {
+            self.handle_cancellation_frame(&meta, &request.raw_payload);
+            return Ok(());
+        }
+
+        Self::log_parse_start(meta);
+
+        let Some(rpc_msg) = self.parse_request_message(
+            envelope,
+            meta,
+            request.message,
+            &request.raw_payload,
+            request_started,
+        ) else {
+            return Ok(());
+        };
+
+        if !Self::valid_rpc_message(meta, &rpc_msg) {
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_rpc_client_response(
+                envelope,
+                response_meta,
+                &RpcClientResponseBody::Error("route family mismatch".to_string()),
+            );
+            return Ok(());
+        }
+
+        let registration = match &rpc_msg {
+            RpcMessage::RegisterWorker { worker_addr, .. } => Some((
+                worker_addr.clone(),
+                self.core
+                    .state
+                    .contains_registration(worker_addr, meta.session_id),
+            )),
+            _ => None,
+        };
+        let (response, snapshot_policy, request_failed) =
+            self.handle_rpc_message(envelope, &meta, rpc_msg, &request.raw_payload, received_at);
+
+        let response_delivered = self.complete_request(
+            envelope,
+            meta,
+            response,
+            snapshot_policy,
+            request_failed,
+            request_started,
+        );
+        if let Some((worker_addr, _)) = registration.filter(|(_, existed)| !*existed) {
+            if response_delivered && !request_failed {
+                self.dispatch_queued_requests_for_family(*worker_addr.family());
+            } else {
+                let cleanup = self.apply_worker_unsubscribe(&worker_addr, meta.session_id);
+                self.forward_worker_disconnect_errors(cleanup.disconnect_deliveries);
+                self.refresh_metrics_gauges();
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_rpc_message(
+        &mut self,
+        envelope: &Envelope,
+        meta: &fitz_core::runtime::ClientFrameMeta,
+        rpc_msg: RpcMessage,
+        raw_payload: &[u8],
+        received_at: Instant,
+    ) -> DeliveryOutcome {
+        match rpc_msg {
+            RpcMessage::RegisterWorker {
+                worker_addr,
+                max_concurrent,
+            } => {
+                let supports_cancellation =
+                    crate::wire::rpc_codec::extract_registration_cancellation_support(raw_payload)
+                        .unwrap_or(false);
+                self.handle_register_worker_message(
+                    envelope,
+                    meta,
+                    worker_addr,
+                    max_concurrent,
+                    supports_cancellation,
+                )
+            }
+            RpcMessage::UnregisterWorker { worker_addr } => {
+                self.handle_unregister_worker_message(meta, worker_addr)
+            }
+            RpcMessage::Request(req) => {
+                let remaining_budget_ms =
+                    crate::wire::rpc_codec::extract_request_remaining_budget_ms(raw_payload)
+                        .ok()
+                        .flatten();
+                self.handle_request_message(envelope, meta, req, remaining_budget_ms, received_at)
+            }
+            RpcMessage::Response(resp) => self.handle_response_message(envelope, meta, &resp),
+        }
+    }
+
+    fn ensure_active(&mut self) -> Result<(), DeliveryError> {
+        fitz_core::runtime::ingress_support::ensure_actor_active(self.active)
+    }
+
+    fn log_delivery(envelope: &Envelope) {
+        fitz_core::runtime::ingress_support::log_envelope_received(
+            "rpc",
+            "RPC domain sink: received envelope",
+            envelope,
+        );
+    }
+
+    fn extract_request(
+        envelope: &Envelope,
+    ) -> Result<crate::domain::protocol::RpcClientRequestIngress, DeliveryError> {
+        Self::request_from_envelope(envelope).ok_or_else(|| {
+            tracing::warn!(domain = "rpc", "Envelope payload was not RpcClientRequest");
+            DeliveryError::ActorStopped
+        })
+    }
+
+    fn record_request_start(&mut self) -> Option<Instant> {
+        self.core
+            .metrics
+            .as_ref()
+            .map(crate::domain::RpcMetrics::record_request_start)
+    }
+
+    fn log_parse_start(meta: fitz_core::runtime::ClientFrameMeta) {
+        tracing::debug!(
+            domain = "rpc",
+            session = meta.session_id,
+            msg_type = meta.message_type,
+            "RPC: parsing request"
+        );
+    }
+
+    fn parse_request_message(
+        &mut self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        message: Result<
+            crate::domain::protocol::RpcMessage,
+            crate::domain::protocol::RpcDecodeError,
+        >,
+        raw_payload: &[u8],
+        request_started: Option<Instant>,
+    ) -> Option<crate::domain::protocol::RpcMessage> {
+        match message {
+            Ok(msg) => Some(msg),
+            Err(e) => {
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
+                {
+                    metrics.record_failure(started_at);
+                }
+                tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
+                let (error_code, error_message) = match &e {
+                    crate::domain::protocol::RpcDecodeError::InvalidCallRoute(_) => (
+                        crate::wire::error_codes::rpc::ERR_INVALID_ROUTE,
+                        "Invalid RPC call route",
+                    ),
+                    crate::domain::protocol::RpcDecodeError::InvalidRegistrationPattern(_) => (
+                        crate::wire::error_codes::rpc::ERR_INVALID_SUBSCRIPTION_PATTERN,
+                        "Invalid RPC registration pattern",
+                    ),
+                    crate::domain::protocol::RpcDecodeError::StructurallyUndecodable(_) => (
+                        crate::wire::error_codes::rpc::ERR_BAD_REQUEST,
+                        "RPC message parse failed",
+                    ),
+                };
+                if meta.message_type == RPC_MSG_TYPE_REQUEST {
+                    if let Ok(correlation_id) =
+                        crate::wire::rpc_codec::extract_request_correlation_id(raw_payload)
+                    {
+                        self.route_rpc_terminal_error_response(
+                            envelope,
+                            Self::response_meta_for_source(envelope, meta),
+                            correlation_id,
+                            error_code,
+                            error_message,
+                        );
+                        return None;
+                    }
+                }
+                self.route_rpc_client_response(
+                    envelope,
+                    Self::response_meta_for_source(envelope, meta),
+                    &RpcClientResponseBody::CodeError {
+                        code: error_code,
+                        message: error_message.to_string(),
+                    },
+                );
+                None
+            }
+        }
+    }
+
+    fn valid_request_envelope(
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+    ) -> bool {
+        meta.route_family == *envelope.destination().family()
+            && envelope
+                .source()
+                .is_none_or(|source| *source.family() == meta.route_family)
+    }
+
+    pub(super) fn response_meta_for_source(
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+    ) -> fitz_core::runtime::ClientFrameMeta {
+        envelope.source().map_or(meta, |source| {
+            let mut response_meta = meta;
+            response_meta.route_family = *source.family();
+            response_meta
+        })
+    }
+
+    fn valid_rpc_message(
+        meta: fitz_core::runtime::ClientFrameMeta,
+        message: &crate::domain::protocol::RpcMessage,
+    ) -> bool {
+        use crate::domain::protocol::RpcMessage;
+
+        match message {
+            RpcMessage::RegisterWorker { worker_addr, .. }
+            | RpcMessage::UnregisterWorker { worker_addr } => {
+                *worker_addr.family() == meta.route_family
+            }
+            RpcMessage::Request(request) => request.family_id == meta.route_family,
+            RpcMessage::Response(_) => true,
+        }
+    }
+
+    fn complete_request(
+        &mut self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        response: Option<RpcClientResponseBody>,
+        snapshot_policy: Option<bool>,
+        request_failed: bool,
+        request_started: Option<Instant>,
+    ) -> bool {
+        if let Some(force_snapshot) = snapshot_policy {
+            self.schedule_admin_snapshot(force_snapshot);
+        }
+
+        let response_delivered = response
+            .is_none_or(|response| self.route_rpc_client_response(envelope, meta, &response));
+
+        if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started) {
+            if request_failed {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
+        }
+        response_delivered
+    }
+}

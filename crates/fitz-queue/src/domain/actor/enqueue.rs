@@ -1,0 +1,581 @@
+use super::{
+    obs, Bytes, DelayedMessage, Duration, Instant, MessageId, QueueActor, QueueCommit, QueueRecord,
+    QueueResponse, ReadyRange, Reverse,
+};
+
+struct SendTiming {
+    delay_ms: u64,
+    visible_at_ms: u64,
+    visible_at: Instant,
+}
+
+struct BatchSendPlan {
+    ids: Vec<MessageId>,
+    post_commit: Vec<(MessageId, QueueRecord, Bytes, Instant)>,
+    staged_ready_ids: Vec<MessageId>,
+    staged_delayed: Vec<(MessageId, u64)>,
+    staged_ready_add: usize,
+    staged_next_delayed_visibility: Option<u64>,
+    next_id: u64,
+    reserved_limit: Option<u64>,
+}
+
+impl QueueActor {
+    /// Refuse a body that no RESERVE shape could ever return.
+    ///
+    /// Accepting it would tell the producer the message is stored and then
+    /// dead-letter it at reserve time, turning a rejectable write into a loss
+    /// the consumer discovers instead.
+    fn validate_deliverable_body(&self, body_len: usize) -> Result<(), String> {
+        let route_len = "queue://".len()
+            + self.queue_key.realm.len()
+            + 1
+            + self.queue_key.area.len()
+            + 1
+            + self.queue_key.resource.len();
+        let limit = crate::domain::protocol::max_deliverable_body_bytes(
+            route_len,
+            self.response_payload_limit,
+        );
+        if body_len > limit {
+            return Err(format!(
+                "ERR_MESSAGE_TOO_LARGE: body is {body_len} bytes, exceeding the {limit}-byte \
+                 limit a reserve response can return for this queue"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Enqueue without the deliverable-body check, to stand in for records
+    /// written before that limit existed. The reserve-time dead-letter path
+    /// still has to handle those, so it still needs coverage.
+    #[cfg(test)]
+    pub(crate) fn handle_send_unvalidated_for_tests(
+        &mut self,
+        body: Bytes,
+        delay_seconds: Option<u64>,
+    ) -> QueueResponse {
+        self.send_inner(body, delay_seconds)
+    }
+
+    /// Handle send operation
+    pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        self.handle_send_with_ttl(body, delay_seconds, None)
+    }
+
+    pub fn handle_send_with_ttl(
+        &mut self,
+        body: Bytes,
+        delay_seconds: Option<u64>,
+        ttl_hours: Option<std::num::NonZeroU32>,
+    ) -> QueueResponse {
+        if self.storage_outcome_is_unknown() {
+            return Self::unknown_outcome_response();
+        }
+        if let Err(reason) = self.validate_deliverable_body(body.len()) {
+            return QueueResponse::BadRequest { reason };
+        }
+        self.send_inner_with_ttl(body, delay_seconds, ttl_hours)
+    }
+
+    #[cfg(test)]
+    fn send_inner(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        self.send_inner_with_ttl(body, delay_seconds, None)
+    }
+
+    fn send_inner_with_ttl(
+        &mut self,
+        body: Bytes,
+        delay_seconds: Option<u64>,
+        ttl_hours: Option<std::num::NonZeroU32>,
+    ) -> QueueResponse {
+        if !self.has_message_id_capacity(1) {
+            return QueueResponse::Error {
+                message: "queue message id space exhausted".to_string(),
+            };
+        }
+
+        // Track empty state before send for notification
+        let was_empty = self.ready_count == 0;
+
+        let now_instant = self.clock.now_instant();
+        let now_epoch_ms = self.clock.now_epoch_ms();
+        let timing = match Self::send_timing(delay_seconds, now_instant, now_epoch_ms) {
+            Ok(timing) => timing,
+            Err(response) => return response,
+        };
+        let mut txn = match self.begin_enqueue_tx() {
+            Ok(txn) => txn,
+            Err(response) => return response,
+        };
+
+        // Allocate message ID
+        let id = MessageId::new(self.next_id);
+        let cached_body = body;
+        let reserved_limit = self.reserved_id_limit_for(1);
+        let staged_next_id = reserved_limit.unwrap_or(self.next_id_limit);
+        let is_ready = timing.visible_at <= now_instant;
+        let mut record = QueueRecord::enqueued(id, timing.visible_at_ms, is_ready, now_epoch_ms);
+        if let Err(response) = self.set_publish_deadline(&mut record, ttl_hours) {
+            return response;
+        }
+        let staged_ready_count = self
+            .persisted_ready_count
+            .saturating_add(usize::from(is_ready));
+        let staged_delayed_count = self
+            .persisted_delayed
+            .len()
+            .saturating_add(usize::from(!is_ready));
+        let staged_next_delayed_visibility = if is_ready {
+            self.min_persisted_delayed_visibility_ms()
+        } else {
+            Some(
+                self.min_persisted_delayed_visibility_ms()
+                    .map_or(timing.visible_at_ms, |current| {
+                        current.min(timing.visible_at_ms)
+                    }),
+            )
+        };
+        let ready_index_write = if is_ready {
+            let tail = self.persisted_ready_shards[Self::shard_for_id(id)]
+                .back()
+                .copied();
+            Some(Self::prepare_persisted_ready_append(tail, id))
+        } else {
+            None
+        };
+
+        let prepare = |txn: &mut super::recovery_store::QueueTransaction| {
+            self.write_send_record(
+                txn,
+                id,
+                &cached_body,
+                &record,
+                ready_index_write,
+                timing.visible_at_ms,
+            )?;
+            self.write_enqueue_meta(
+                txn,
+                reserved_limit,
+                staged_next_id,
+                staged_ready_count,
+                staged_delayed_count,
+                staged_next_delayed_visibility,
+            )
+        };
+        if let Err(response) = prepare(&mut txn) {
+            return response;
+        }
+
+        // Admission retries retain Queue's unconditional best-effort persistence.
+        let commit_start = Instant::now();
+        let result = self.commit_prepared_with_admission_retry(txn, QueueCommit::Enqueue, |txn| {
+            prepare(txn).map_err(Self::enqueue_staging_error)
+        });
+        if let Err(error) = result {
+            return error
+                .with_context("Failed to commit transaction")
+                .into_response();
+        }
+        Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
+
+        self.apply_send_post_commit(
+            id,
+            record,
+            cached_body,
+            timing.visible_at,
+            reserved_limit,
+            is_ready,
+        );
+
+        // Mark queue-local waiters for wakeup if the queue transitioned from empty to non-empty
+        // (only for immediately visible messages, not delayed ones).
+        if was_empty && is_ready && self.ready_count > 0 {
+            self.needs_wake_waiters = true;
+        }
+
+        self.enqueue_success_window.record(now_epoch_ms, 1);
+
+        QueueResponse::Sent { id }
+    }
+
+    /// Send multiple messages in one transaction (batch).
+    /// Same semantics as `N×handle_send`; use for throughput when the caller has many messages.
+    pub fn handle_send_batch(&mut self, items: &[(Bytes, Option<u64>)]) -> QueueResponse {
+        if self.storage_outcome_is_unknown() {
+            return Self::unknown_outcome_response();
+        }
+        if items.is_empty() {
+            return QueueResponse::SentBatch { ids: vec![] };
+        }
+        // Validate the whole batch first: a partially-applied batch would
+        // leave the producer unable to tell which items were stored.
+        for (body, _) in items {
+            if let Err(reason) = self.validate_deliverable_body(body.len()) {
+                return QueueResponse::BadRequest { reason };
+            }
+        }
+        if !self.has_message_id_capacity(Self::usize_to_u64(items.len())) {
+            return QueueResponse::Error {
+                message: "queue message id space exhausted".to_string(),
+            };
+        }
+
+        let was_empty = self.ready_count == 0;
+        let now_instant = self.clock.now_instant();
+        let now_epoch_ms = self.clock.now_epoch_ms();
+        let mut txn = match self.begin_enqueue_tx() {
+            Ok(txn) => txn,
+            Err(response) => return response,
+        };
+
+        let prepare = |txn: &mut super::recovery_store::QueueTransaction| {
+            let mut tails = self
+                .persisted_ready_shards
+                .iter()
+                .map(|ranges| ranges.back().copied())
+                .collect::<Vec<_>>();
+            let plan = self.stage_batch_send(txn, items, now_instant, now_epoch_ms, &mut tails)?;
+            self.write_enqueue_meta(
+                txn,
+                plan.reserved_limit,
+                plan.reserved_limit.unwrap_or(self.next_id_limit),
+                self.persisted_ready_count
+                    .saturating_add(plan.staged_ready_add),
+                self.persisted_delayed
+                    .len()
+                    .saturating_add(plan.staged_delayed.len()),
+                plan.staged_next_delayed_visibility,
+            )?;
+            Ok(plan)
+        };
+        let plan = match prepare(&mut txn) {
+            Ok(plan) => plan,
+            Err(response) => return response,
+        };
+
+        let commit_start = Instant::now();
+        let result = self.commit_prepared_with_admission_retry(txn, QueueCommit::Enqueue, |txn| {
+            prepare(txn)
+                .map(|_| ())
+                .map_err(Self::enqueue_staging_error)
+        });
+        if let Err(error) = result {
+            return error
+                .with_context("Failed to commit transaction")
+                .into_response();
+        }
+        Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
+
+        self.next_id = plan.next_id;
+        if let Some(limit) = plan.reserved_limit {
+            self.next_id_limit = limit;
+        }
+        for (id, record, cached_body, visible_at) in plan.post_commit {
+            let visible_at_ms = record.visible_at_ms;
+            self.cache_record(id, record);
+            self.cache_body(id, cached_body);
+            if visible_at <= now_instant {
+                self.push_ready(id);
+            } else {
+                self.delayed.push(Reverse(DelayedMessage {
+                    id,
+                    enqueue_seq: id.as_u64(),
+                    visible_at,
+                    visible_at_ms,
+                }));
+                if visible_at < self.next_delayed_deadline {
+                    self.next_delayed_deadline = visible_at;
+                }
+            }
+        }
+        for id in plan.staged_ready_ids {
+            self.push_persisted_ready(id);
+        }
+        for (id, visible_at_ms) in plan.staged_delayed {
+            self.insert_persisted_delayed(id, visible_at_ms);
+        }
+        if !self.index_meta_written {
+            self.index_meta_written = true;
+        }
+        if was_empty && plan.staged_ready_add > 0 && self.ready_count > 0 {
+            self.needs_wake_waiters = true;
+        }
+
+        self.enqueue_success_window
+            .record(now_epoch_ms, Self::usize_to_u64(plan.ids.len()));
+
+        QueueResponse::SentBatch { ids: plan.ids }
+    }
+
+    fn enqueue_staging_error(response: QueueResponse) -> String {
+        match response {
+            QueueResponse::Error { message } => message,
+            other => format!("Failed to restage queue enqueue: {other:?}"),
+        }
+    }
+
+    fn begin_enqueue_tx(&self) -> Result<super::recovery_store::QueueTransaction, QueueResponse> {
+        self.persistence
+            .store
+            .begin(
+                self.queue_key.family.id(),
+                super::recovery_store::QueueTransactionMode::ReadWrite,
+            )
+            .map_err(|error| Self::store_error_response(&error, "Failed to begin transaction"))
+    }
+
+    fn store_error_response(
+        error: &super::recovery_store::QueueStoreError,
+        context: &str,
+    ) -> QueueResponse {
+        let timed_out = error.is_timeout();
+        let message = format!("{context}: {error:?}");
+        if timed_out {
+            QueueResponse::Timeout { message }
+        } else {
+            QueueResponse::Error { message }
+        }
+    }
+
+    fn send_timing(
+        delay_seconds: Option<u64>,
+        now_instant: Instant,
+        now_epoch_ms: u64,
+    ) -> Result<SendTiming, QueueResponse> {
+        let Some(delay_ms) = delay_seconds.unwrap_or(0).checked_mul(1_000) else {
+            return Err(QueueResponse::BadRequest {
+                reason: "delay_seconds is too large".to_string(),
+            });
+        };
+        let Some(visible_at_ms) = now_epoch_ms.checked_add(delay_ms) else {
+            return Err(QueueResponse::BadRequest {
+                reason: "delay_seconds is too large".to_string(),
+            });
+        };
+        let Some(visible_at) = now_instant.checked_add(Duration::from_millis(delay_ms)) else {
+            return Err(QueueResponse::BadRequest {
+                reason: "delay_seconds is too large".to_string(),
+            });
+        };
+
+        Ok(SendTiming {
+            delay_ms,
+            visible_at_ms,
+            visible_at,
+        })
+    }
+
+    fn write_send_record(
+        &self,
+        txn: &mut super::recovery_store::QueueTransaction,
+        id: MessageId,
+        body: &Bytes,
+        record: &QueueRecord,
+        ready_index_write: Option<(usize, ReadyRange)>,
+        visible_at_ms: u64,
+    ) -> Result<(), QueueResponse> {
+        txn.put(
+            self.cached_header_key(id),
+            Self::encode_record_header(record),
+            self.record_ttl_seconds(record),
+        )
+        .map_err(|error| {
+            Self::store_error_response(&error, "Failed to add message header to transaction")
+        })?;
+        txn.put(
+            self.cached_body_key(id),
+            body.to_vec(),
+            self.record_ttl_seconds(record),
+        )
+        .map_err(|error| {
+            Self::store_error_response(&error, "Failed to add message body to transaction")
+        })?;
+
+        if let Some((shard, range)) = ready_index_write {
+            txn.put(
+                self.ready_range_key(shard, range.next),
+                Self::encode_ready_range_value(range),
+                None,
+            )
+            .map_err(|error| {
+                Self::store_error_response(&error, "Failed to update queue ready index")
+            })?;
+        } else {
+            txn.put(
+                self.delayed_index_key(visible_at_ms, id),
+                Self::index_expiry_value(record.retention_expires_at_ms),
+                self.record_ttl_seconds(record),
+            )
+            .map_err(|error| {
+                Self::store_error_response(&error, "Failed to update queue delayed index")
+            })?;
+        }
+
+        Ok(())
+    }
+
+    fn write_enqueue_meta(
+        &self,
+        txn: &mut super::recovery_store::QueueTransaction,
+        reserved_limit: Option<u64>,
+        staged_next_id: u64,
+        staged_ready_count: usize,
+        staged_delayed_count: usize,
+        staged_next_delayed_visibility: Option<u64>,
+    ) -> Result<(), QueueResponse> {
+        if let Some(limit) = reserved_limit {
+            txn.put(
+                self.persistence.recovery.meta_key.clone(),
+                limit.to_le_bytes().to_vec(),
+                None,
+            )
+            .map_err(|error| QueueResponse::Error {
+                message: format!("Failed to update queue meta: {error:?}"),
+            })?;
+        }
+
+        txn.put(
+            self.persistence.recovery.index_meta_key.clone(),
+            Self::encode_index_meta(
+                staged_next_id,
+                Self::usize_to_u64(staged_ready_count),
+                Self::usize_to_u64(staged_delayed_count),
+                staged_next_delayed_visibility,
+            ),
+            None,
+        )
+        .map_err(|error| QueueResponse::Error {
+            message: format!("Failed to update queue index meta: {error:?}"),
+        })?;
+
+        Ok(())
+    }
+
+    fn apply_send_post_commit(
+        &mut self,
+        id: MessageId,
+        record: QueueRecord,
+        cached_body: Bytes,
+        visible_at: Instant,
+        reserved_limit: Option<u64>,
+        is_ready: bool,
+    ) {
+        self.next_id = self.next_id.saturating_add(1);
+        if let Some(limit) = reserved_limit {
+            self.next_id_limit = limit;
+        }
+        self.cache_record(id, record);
+        self.cache_body(id, cached_body);
+
+        if is_ready {
+            self.push_ready(id);
+            self.push_persisted_ready(id);
+        } else {
+            let visible_at_ms = self
+                .records
+                .get(&id)
+                .map_or(0, |stored_record| stored_record.visible_at_ms);
+            self.delayed.push(Reverse(DelayedMessage {
+                id,
+                enqueue_seq: id.as_u64(),
+                visible_at,
+                visible_at_ms,
+            }));
+            if visible_at < self.next_delayed_deadline {
+                self.next_delayed_deadline = visible_at;
+            }
+            self.insert_persisted_delayed(id, visible_at_ms);
+        }
+        if !self.index_meta_written {
+            self.index_meta_written = true;
+        }
+    }
+
+    fn stage_batch_send(
+        &self,
+        txn: &mut super::recovery_store::QueueTransaction,
+        items: &[(Bytes, Option<u64>)],
+        now_instant: Instant,
+        now_epoch_ms: u64,
+        staged_ready_tails: &mut [Option<ReadyRange>],
+    ) -> Result<BatchSendPlan, QueueResponse> {
+        let mut ids = Vec::with_capacity(items.len());
+        let mut post_commit = Vec::with_capacity(items.len());
+        let mut staged_ready_ids = Vec::with_capacity(items.len());
+        let mut staged_delayed = Vec::with_capacity(items.len());
+        let mut staged_ready_add = 0usize;
+        let mut staged_next_delayed_visibility = self.min_persisted_delayed_visibility_ms();
+        let mut next_id = self.next_id;
+        let reserved_limit = self.reserved_id_limit_for(Self::usize_to_u64(items.len()));
+
+        for (body, delay_seconds) in items {
+            let timing = Self::send_timing(*delay_seconds, now_instant, now_epoch_ms)?;
+            let id = MessageId::new(next_id);
+            let mut record =
+                QueueRecord::enqueued(id, timing.visible_at_ms, timing.delay_ms == 0, now_epoch_ms);
+            self.set_publish_deadline(&mut record, None)?;
+            let ready_index_write = if timing.delay_ms == 0 {
+                let (shard, range) = Self::prepare_persisted_ready_append(
+                    staged_ready_tails[Self::shard_for_id(id)],
+                    id,
+                );
+                staged_ready_tails[shard] = Some(range);
+                staged_ready_ids.push(id);
+                staged_ready_add += 1;
+                Some((shard, range))
+            } else {
+                staged_delayed.push((id, timing.visible_at_ms));
+                staged_next_delayed_visibility = Some(
+                    staged_next_delayed_visibility.map_or(timing.visible_at_ms, |current| {
+                        current.min(timing.visible_at_ms)
+                    }),
+                );
+                None
+            };
+
+            self.write_send_record(
+                txn,
+                id,
+                body,
+                &record,
+                ready_index_write,
+                timing.visible_at_ms,
+            )?;
+            ids.push(id);
+            post_commit.push((id, record, body.clone(), timing.visible_at));
+            next_id = next_id.saturating_add(1);
+        }
+
+        Ok(BatchSendPlan {
+            ids,
+            post_commit,
+            staged_ready_ids,
+            staged_delayed,
+            staged_ready_add,
+            staged_next_delayed_visibility,
+            next_id,
+            reserved_limit,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QueueActor;
+    use crate::domain::{actor::recovery_store::QueueStoreError, QueueResponse};
+
+    #[test]
+    fn should_preserve_timeout_when_queue_storage_fails_before_commit() {
+        // Arrange
+        let error = QueueStoreError::from_midge(cntryl_midge::MidgeError::Timeout(
+            "begin deadline elapsed".to_string(),
+        ));
+
+        // Act
+        let response = QueueActor::store_error_response(&error, "Failed to begin transaction");
+
+        // Assert
+        assert!(matches!(response, QueueResponse::Timeout { .. }));
+    }
+}

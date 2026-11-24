@@ -1,0 +1,318 @@
+//! Storage-backed admin prefix and paginated row scans.
+
+use super::super::locks::KvResourceLockKey;
+use super::super::state::KvFamilyRuntime;
+use super::{
+    AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsError, AdminKvRowsRequest,
+    AdminKvRowsResult,
+};
+use crate::domain::key_layout;
+use crate::domain::KvActor;
+
+fn parse_kv_resource_route(route: &str) -> Option<(&str, &str, &str)> {
+    let rest = route.strip_prefix("kv://")?;
+    let (realm, rest) = rest.split_once('/')?;
+    let (area, resource) = rest.split_once('/')?;
+    if realm.is_empty() || area.is_empty() || resource.is_empty() || resource.contains('/') {
+        return None;
+    }
+    Some((realm, area, resource))
+}
+
+impl KvFamilyRuntime<'_> {
+    pub(in crate::domain::sink) fn capture_kv_snapshot(
+        &self,
+        selector: &crate::snapshot::SnapshotSelector,
+    ) -> Result<crate::snapshot::SnapshotArtifact, String> {
+        if selector.domain() != crate::snapshot::SnapshotDomain::Kv {
+            return Err("KV snapshot capture requires a KV selector".to_string());
+        }
+        let mut resources = self.admin_snapshot_committed_resources(selector)?;
+        if selector.is_exact_resource() && resources.is_empty() {
+            let route = selector.route_pattern();
+            let parts =
+                fitz_core::runtime::routing::route_exact_triplet(route).ok_or_else(|| {
+                    "KV snapshot selector must name one concrete resource".to_string()
+                })?;
+            if [parts.realm, parts.area, parts.resource]
+                .iter()
+                .any(|part| part.is_empty() || part.contains('*'))
+            {
+                return Err("KV snapshot selector must name one concrete resource".to_string());
+            }
+            resources.push(crate::snapshot::SnapshotKvResource {
+                route: route.to_string(),
+                entries: Vec::new(),
+            });
+        }
+        crate::snapshot::SnapshotArtifact::from_kv_resources(selector, resources)
+    }
+
+    pub(crate) fn restore_kv_snapshot(
+        &mut self,
+        artifact: &crate::snapshot::SnapshotArtifact,
+    ) -> Result<Vec<String>, String> {
+        if artifact.domain() != crate::snapshot::SnapshotDomain::Kv {
+            return Err("KV snapshot restore requires a KV artifact".to_string());
+        }
+        let family = fitz_core::runtime::routing::RouteFamily::try_from(artifact.route_family())
+            .map_err(|_| "snapshot route family is invalid".to_string())?;
+        let selector = crate::snapshot::SnapshotSelector::new(
+            crate::snapshot::SnapshotDomain::Kv,
+            family,
+            artifact.selector(),
+        )?;
+        let mut resources = std::collections::BTreeMap::new();
+        let mut existing_keys = std::collections::BTreeMap::new();
+        for resource in KvActor::snapshot_committed_resources(&self.core.store, &selector)? {
+            existing_keys.insert(
+                resource.route.clone(),
+                resource
+                    .entries
+                    .iter()
+                    .map(|entry| entry.key.clone())
+                    .collect::<Vec<_>>(),
+            );
+            resources.insert(resource.route, Vec::new());
+        }
+        for resource in artifact.kv_resources() {
+            resources.insert(resource.route.clone(), resource.entries.clone());
+        }
+
+        self.reject_restore_of_locked_resources(family, resources.keys())?;
+
+        let column_family = key_layout::resolve_column_family(family)?;
+        let mut completed = Vec::new();
+        for (route, entries) in resources {
+            let Some((realm, area, name)) = parse_kv_resource_route(&route) else {
+                return Err(format!("invalid KV resource route in snapshot: {route}"));
+            };
+            let prefix = key_layout::realm_resource_prefix(realm, area, name);
+            let record_count = u64::try_from(entries.len()).unwrap_or(u64::MAX);
+            let keys_to_delete = existing_keys.get(&route).map_or(&[][..], Vec::as_slice);
+            let mutation_count = u64::try_from(keys_to_delete.len())
+                .unwrap_or(u64::MAX)
+                .saturating_add(record_count);
+            let mut tx = self
+                .core
+                .store
+                .begin(column_family, crate::domain::TxMode::ReadWrite)
+                .map_err(|error| {
+                    format!("restore failed after resources {completed:?}: {error}")
+                })?;
+            for key in keys_to_delete {
+                let scoped_key = key_layout::encode_scoped_key(&prefix, key);
+                tx.delete(scoped_key).map_err(|error| {
+                    format!("restore failed after resources {completed:?}: {error}")
+                })?;
+            }
+            let mut storage_bytes = 0_u64;
+            for entry in entries {
+                storage_bytes = storage_bytes.saturating_add(
+                    u64::try_from(entry.key.len().saturating_add(entry.value.len()))
+                        .unwrap_or(u64::MAX),
+                );
+                tx.put(
+                    key_layout::encode_scoped_key(&prefix, &entry.key),
+                    entry.value,
+                )
+                .map_err(|error| {
+                    format!("restore failed after resources {completed:?}: {error}")
+                })?;
+            }
+            let estimate = crate::domain::inventory::KvInventoryEstimate {
+                estimated_record_count: record_count,
+                estimated_storage_bytes: storage_bytes,
+                estimate_complete: true,
+            };
+            tx.put(
+                key_layout::inventory_metadata_key(realm, area, name),
+                crate::domain::inventory::encode_estimate(estimate),
+            )
+            .map_err(|error| format!("restore failed after resources {completed:?}: {error}"))?;
+            tx.commit(self.core.sync_write_policy).map_err(|error| {
+                format!("restore failed after resources {completed:?}: {error}")
+            })?;
+            if mutation_count > 0 {
+                self.route_kv_notification(
+                    &KvResourceLockKey::new(family.as_u64(), realm, area, name),
+                    mutation_count,
+                );
+            }
+            completed.push(route);
+        }
+        Ok(completed)
+    }
+
+    /// Rejects a restore before any mutation while an open read-write
+    /// transaction holds the lock on one of the target resources.
+    ///
+    /// Every target is checked before any idle lock is expired. A restore that
+    /// is rejected on a later resource therefore leaves earlier idle
+    /// transactions alive. Once no target is actively locked, idle locks are
+    /// expired like a read-write `BEGIN`. The family actor runs the restore to
+    /// completion, so no lock can be taken mid-restore.
+    fn reject_restore_of_locked_resources<'a>(
+        &mut self,
+        family: fitz_core::runtime::routing::RouteFamily,
+        routes: impl Iterator<Item = &'a String>,
+    ) -> Result<(), String> {
+        let mut lock_keys = Vec::new();
+        for route in routes {
+            let Some((realm, area, name)) = parse_kv_resource_route(route) else {
+                return Err(format!("invalid KV resource route in snapshot: {route}"));
+            };
+            let lock_key = KvResourceLockKey::new(family.as_u64(), realm, area, name);
+            let active = self
+                .core
+                .resource_locks
+                .get(&lock_key)
+                .is_some_and(|owner| !owner.is_idle(self.core.idle_transaction_ttl));
+            if active {
+                return Err(format!(
+                    "restore rejected: KV resource {route} is locked by an open transaction"
+                ));
+            }
+            lock_keys.push(lock_key);
+        }
+        for lock_key in &lock_keys {
+            self.expire_resource_lock_if_idle(lock_key);
+        }
+        Ok(())
+    }
+
+    pub(super) fn admin_snapshot_committed_resources(
+        &self,
+        selector: &crate::snapshot::SnapshotSelector,
+    ) -> Result<Vec<crate::snapshot::SnapshotKvResource>, String> {
+        KvActor::snapshot_committed_resources(&self.core.store, selector)
+    }
+
+    pub(super) fn admin_scan_committed_prefix(
+        &self,
+        route_family: fitz_core::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key_prefix: &[u8],
+        limit: usize,
+    ) -> Result<AdminKvPrefixScanResult, String> {
+        let started_at = std::time::Instant::now();
+        let column_family = key_layout::resolve_column_family(route_family)?;
+        let tx = self
+            .core
+            .store
+            .begin(column_family, crate::domain::TxMode::ReadOnly)
+            .map_err(|error| error.to_string())?;
+        let resource_prefix = key_layout::realm_resource_prefix(realm, area, resource);
+        let scoped_prefix = key_layout::encode_scoped_key(&resource_prefix, key_prefix);
+        let mut rows = Self::scan_scoped_prefix(
+            &tx,
+            &resource_prefix,
+            &scoped_prefix,
+            &scoped_prefix,
+            limit.saturating_add(1),
+        )?;
+
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        self.record_read_latency(
+            &KvResourceLockKey::new(route_family.as_u64(), realm, area, resource),
+            started_at,
+        );
+        Ok(AdminKvPrefixScanResult {
+            items: rows,
+            has_more,
+        })
+    }
+
+    pub(super) fn admin_scan_committed_rows(
+        &self,
+        request: &AdminKvRowsRequest<'_>,
+    ) -> Result<AdminKvRowsResult, AdminKvRowsError> {
+        let started_at = std::time::Instant::now();
+        if let Some(cursor) = request.cursor {
+            if !cursor.starts_with(request.starts_with) {
+                return Err(AdminKvRowsError::InvalidCursorPrefix);
+            }
+        }
+
+        let column_family = key_layout::resolve_column_family(request.route_family)
+            .map_err(AdminKvRowsError::Backend)?;
+        let tx = self
+            .core
+            .store
+            .begin(column_family, crate::domain::TxMode::ReadOnly)
+            .map_err(|error| AdminKvRowsError::Backend(error.to_string()))?;
+        let resource_prefix =
+            key_layout::realm_resource_prefix(request.realm, request.area, request.resource);
+        let scoped_prefix = key_layout::encode_scoped_key(&resource_prefix, request.starts_with);
+        let scoped_start = request.cursor.map_or_else(
+            || scoped_prefix.clone(),
+            |cursor| key_layout::encode_scoped_key(&resource_prefix, cursor),
+        );
+        let mut rows = Self::scan_scoped_prefix(
+            &tx,
+            &resource_prefix,
+            &scoped_prefix,
+            &scoped_start,
+            request.limit.saturating_add(1),
+        )
+        .map_err(AdminKvRowsError::Backend)?;
+        rows.retain(|item| {
+            request
+                .cursor
+                .is_none_or(|cursor| item.key.as_slice() > cursor)
+        });
+
+        let has_more = rows.len() > request.limit;
+        rows.truncate(request.limit);
+        let next_cursor = if has_more {
+            rows.last().map(|item| item.key.clone())
+        } else {
+            None
+        };
+        self.record_read_latency(
+            &KvResourceLockKey::new(
+                request.route_family.as_u64(),
+                request.realm,
+                request.area,
+                request.resource,
+            ),
+            started_at,
+        );
+        Ok(AdminKvRowsResult {
+            items: rows,
+            next_cursor,
+            has_more,
+        })
+    }
+
+    pub(super) fn scan_scoped_prefix(
+        tx: &crate::domain::store::KvTransaction,
+        resource_prefix: &[u8],
+        scoped_prefix: &[u8],
+        scoped_start: &[u8],
+        limit: usize,
+    ) -> Result<Vec<AdminKvCommittedPair>, String> {
+        let iterator = tx
+            .scan(
+                scoped_prefix,
+                scoped_start.to_vec(),
+                fitz_storage::utils::storage_key::prefix_range_end(scoped_prefix),
+                limit,
+                false,
+            )
+            .map_err(|error| error.to_string())?;
+        let mut rows = Vec::new();
+        for (scoped_key, value) in iterator {
+            if let Some(user_key) = key_layout::strip_scoped_prefix(resource_prefix, &scoped_key) {
+                rows.push(AdminKvCommittedPair {
+                    key: user_key,
+                    value: value.to_vec(),
+                });
+            }
+        }
+        Ok(rows)
+    }
+}

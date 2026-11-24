@@ -6,10 +6,10 @@ These guidelines define how Fitz tests are written and reviewed.
 
 Use Rust's normal split between unit and integration tests.
 
-- Unit tests live next to the module they exercise under `src/`.
-- Integration tests live under `tests/`.
-- Domain end-to-end flows use `tests/*_e2e.rs`.
-- Cross-domain semantic boundary checks live under `tests/multi_domain_e2e.rs`.
+- Unit tests live next to the module they exercise in each crate's `src/`.
+- Direct integration tests live in the owning crate's `tests/`.
+- Broker end-to-end flows live under `crates/fitz-e2e/tests/`.
+- Cross-domain semantic boundary checks live in `crates/fitz-e2e/tests/multi_domain_e2e.rs`.
 
 Cover backend behavior in Rust and UI behavior in TypeScript. Use the existing
 test runners; do not add Python files or standalone scripts to reproduce or
@@ -29,7 +29,7 @@ oracle is test-only and does not call Fitz transition helpers.
 Run the focused generated models with:
 
 ```bash
-PROPTEST_CASES=256 cargo test --locked --lib state_model
+PROPTEST_CASES=256 cargo test --locked --workspace --lib state_model
 ```
 
 Proptest prints a reproducible seed and minimizes a failing operation sequence.
@@ -118,12 +118,14 @@ not a reason to weaken the recovery assertions.
 ## Validation Commands
 
 `cntryl-tools` owns test-structure conventions and module-size checks. Run those
-checks directly; do not reproduce them with source-scanning tests. CI installs
-the pinned revision documented in `CONTRIBUTING.md`.
+checks directly. The revision in `CONTRIBUTING.md` discovers all Cargo members
+when you run `validate-tests` from the workspace root.
 
 ```sh
 cntryl-tools validate-tests
-cntryl-tools check-module-sizes
+for fitz_member in crates/*; do
+  cntryl-tools check-module-sizes --root "$fitz_member" || exit 1
+done
 cargo fmt --all -- --check
 cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic

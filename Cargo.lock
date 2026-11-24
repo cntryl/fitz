@@ -708,6 +708,15 @@ dependencies = [
  "crc32c",
  "crossbeam-channel",
  "dashmap",
+ "fitz-core",
+ "fitz-kv",
+ "fitz-lease",
+ "fitz-notice",
+ "fitz-queue",
+ "fitz-rpc",
+ "fitz-schedule",
+ "fitz-storage",
+ "fitz-stream",
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
@@ -750,6 +759,260 @@ dependencies = [
  "tungstenite",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "fitz-core"
+version = "0.5.1"
+dependencies = [
+ "ahash",
+ "bytes",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "dashmap",
+ "getrandom 0.4.3",
+ "once_cell",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "serde",
+ "serial_test",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-e2e"
+version = "0.5.1"
+dependencies = [
+ "ahash",
+ "argon2",
+ "async-trait",
+ "base64 0.23.1",
+ "brotli",
+ "bytes",
+ "chrono",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crc32c",
+ "crossbeam-channel",
+ "dashmap",
+ "fitz",
+ "fitz-core",
+ "flate2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hex",
+ "hmac",
+ "http-body-util",
+ "hyper",
+ "hyper-tungstenite",
+ "hyper-util",
+ "jsonschema",
+ "jsonwebtoken",
+ "libc",
+ "lz4_flex",
+ "num-traits",
+ "once_cell",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "parking_lot 0.13.0",
+ "percent-encoding",
+ "proptest",
+ "reqwest",
+ "rmcp",
+ "rustc-hash",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "sha1",
+ "sha2",
+ "smallvec",
+ "socket2",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "tungstenite",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "fitz-kv"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "fitz-kv",
+ "fitz-storage",
+ "hex",
+ "parking_lot 0.13.0",
+ "proptest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-lease"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "getrandom 0.4.3",
+ "parking_lot 0.13.0",
+ "proptest",
+ "serde",
+ "serial_test",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-notice"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "serde",
+ "serial_test",
+ "smallvec",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "fitz-queue"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "dashmap",
+ "fitz-core",
+ "fitz-queue",
+ "fitz-storage",
+ "hex",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "fitz-rpc"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "schemars",
+ "serde",
+ "serial_test",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "fitz-schedule"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "fitz-schedule",
+ "fitz-storage",
+ "hex",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "schemars",
+ "serde",
+ "serial_test",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-storage"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "fitz-core",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-stream"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "fitz-storage",
+ "fitz-stream",
+ "getrandom 0.4.3",
+ "hex",
+ "hmac",
+ "lz4_flex",
+ "parking_lot 0.13.0",
+ "proptest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "sha2",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

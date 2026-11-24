@@ -1,0 +1,650 @@
+//! Schedule domain codec for durable timing intent.
+//!
+//! Encodes and decodes Schedule payloads for definition management and live
+//! notifications.
+
+use crate::domain::protocol::{
+    ScheduleCreateEntry, ScheduleDeliveryMode, ScheduleFailure, ScheduleFailureCategory,
+    ScheduleMessage, ScheduleResponse,
+};
+use crate::wire::frame_context::FrameContext;
+use crate::wire::payload_codec::{PayloadDecoder, PayloadEncoder};
+use fitz_core::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz_core::session::SessionId;
+
+const MAX_SCHEDULE_LIST_LIMIT: u64 = 1_000;
+
+/// Parse an incoming Schedule payload.
+///
+/// `route_family`, `session_id`, and `subscriber` are injected by the
+/// session layer — they are never read from the wire payload.
+///
+/// # Errors
+///
+/// Returns an error when the schedule message type is unsupported or the
+/// payload cannot be decoded as the requested schedule operation.
+pub fn parse_request(
+    ctx: &FrameContext,
+    payload: &[u8],
+    route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<ScheduleMessage, ScheduleFailure> {
+    let mut dec = PayloadDecoder::new(payload);
+
+    match ctx.msg_type.0 {
+        700 => parse_create(&mut dec),
+        701 => parse_cancel(&mut dec),
+        702 => parse_list(&mut dec),
+        703 => parse_subscribe(&mut dec, route_family, session_id, subscriber),
+        704 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber),
+        706 => parse_create_batch(&mut dec),
+        _ => Err(ScheduleFailure::parse(format!(
+            "Unknown operation: {}",
+            ctx.msg_type.0
+        ))),
+    }
+}
+
+/// Extract the schedule route or pattern needed for authorization.
+///
+/// # Errors
+///
+/// Returns an error when the payload is malformed, has trailing data, or the
+/// message type is unsupported for schedule authorization extraction.
+pub fn extract_auth_route(
+    msg_type: u16,
+    payload: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, str>>, String> {
+    let mut dec = PayloadDecoder::new(payload);
+
+    let route = match msg_type {
+        700 => {
+            let route = dec.get_string_ref()?;
+            dec.get_string_ref()?;
+            dec.get_u8()?;
+            dec.skip_bytes()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        701 | 703 | 704 => {
+            let route = dec.get_string_ref()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        706 => Err("schedule batch create requires multi-route authorization".to_string()),
+        702 => {
+            if dec.remaining() > 0 {
+                dec.get_optional_string()?;
+                if let Some(limit) = dec.get_optional_u64()? {
+                    if limit > MAX_SCHEDULE_LIST_LIMIT {
+                        return Err(format!(
+                            "schedule LIST limit must be at most {MAX_SCHEDULE_LIST_LIMIT}"
+                        ));
+                    }
+                }
+                if !dec.is_complete() {
+                    return Err("Trailing data in message".to_string());
+                }
+            }
+            Ok(None)
+        }
+        _ => Err(format!("Unknown operation: {msg_type}")),
+    }?;
+    route.map(canonical_auth_route).transpose()
+}
+
+fn canonical_auth_route(route: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    crate::wire::auth_route::canonicalize("schedule", route, crate::domain::canonical_auth_route)
+}
+
+/// # Errors
+///
+/// Returns an error when the batch payload is malformed or contains trailing data.
+pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<std::borrow::Cow<'_, str>>, String> {
+    let mut dec = PayloadDecoder::new(payload);
+    let entry_count = dec.get_u32()? as usize;
+    let mut routes = Vec::with_capacity(entry_count.min(256));
+
+    for _ in 0..entry_count {
+        let route = dec.get_string_ref()?;
+        dec.get_string_ref()?;
+        dec.get_u8()?;
+        dec.skip_bytes()?;
+        routes.push(route);
+    }
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    routes.into_iter().map(canonical_auth_route).collect()
+}
+
+/// Encode a domain response payload.
+#[must_use]
+pub fn encode_response(message_type: u16, response: &ScheduleResponse) -> Vec<u8> {
+    let mut enc = PayloadEncoder::new();
+    encode_response_into(&mut enc, message_type, response)
+}
+
+pub fn encode_response_into(
+    enc: &mut PayloadEncoder,
+    _message_type: u16,
+    response: &ScheduleResponse,
+) -> Vec<u8> {
+    enc.clear();
+
+    match response {
+        ScheduleResponse::Ok => {
+            enc.put_u8(0); // success flag
+        }
+        ScheduleResponse::SubscribeOk { subscription_id } => {
+            enc.put_u8(0); // success flag
+            enc.put_optional_u64(Some(*subscription_id));
+        }
+        ScheduleResponse::ListPage {
+            entries,
+            has_more,
+            continuation,
+        } => {
+            enc.put_u8(0);
+            enc.put_u8(1); // response version
+            enc.put_u8(u8::from(*has_more));
+            enc.put_optional_string(continuation.as_deref());
+            for entry in entries.iter() {
+                enc.put_u8(1);
+                enc.put_string(&entry.route);
+                enc.put_string(&entry.cron);
+                enc.put_u8(entry.delivery_mode as u8);
+                enc.put_bytes(&entry.payload);
+            }
+            enc.put_u8(0);
+        }
+        ScheduleResponse::Error(e) => {
+            return crate::wire::error_codes::encode_error_body_into(
+                e.category.code(),
+                &e.message,
+                enc,
+            );
+        }
+    }
+
+    enc.finish()
+}
+
+// ===== Helper Parsers =====
+
+/// Parse CREATE message
+/// Wire format: [string route][string cron][u8 mode][bytes payload]
+fn parse_create(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
+    let route = dec.get_string()?;
+    let cron = dec.get_string()?;
+    let delivery_mode = ScheduleDeliveryMode::try_from(dec.get_u8()?).map_err(|message| {
+        ScheduleFailure::new(ScheduleFailureCategory::InvalidDeliveryMode, message)
+    })?;
+    let payload = dec.get_bytes()?;
+
+    if !dec.is_complete() {
+        return Err(ScheduleFailure::parse("Trailing data in message"));
+    }
+
+    Ok(ScheduleMessage::Create {
+        route,
+        cron,
+        delivery_mode,
+        payload,
+    })
+}
+
+fn parse_create_batch(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
+    let entry_count = dec.get_u32()? as usize;
+    let mut entries = Vec::with_capacity(entry_count.min(256));
+
+    for _ in 0..entry_count {
+        entries.push(ScheduleCreateEntry {
+            route: dec.get_string()?,
+            cron: dec.get_string()?,
+            delivery_mode: ScheduleDeliveryMode::try_from(dec.get_u8()?).map_err(|message| {
+                ScheduleFailure::new(ScheduleFailureCategory::InvalidDeliveryMode, message)
+            })?,
+            payload: dec.get_bytes()?,
+        });
+    }
+
+    if !dec.is_complete() {
+        return Err(ScheduleFailure::parse("Trailing data in message"));
+    }
+
+    Ok(ScheduleMessage::CreateBatch { entries })
+}
+
+/// Parse CANCEL message
+/// Wire format: [string route]
+fn parse_cancel(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
+    let route = dec.get_string()?;
+
+    if !dec.is_complete() {
+        return Err(ScheduleFailure::parse("Trailing data in message"));
+    }
+
+    Ok(ScheduleMessage::Cancel { route })
+}
+
+/// Parse LIST message
+/// Parse LIST: `[optional string cursor][optional u64 limit]`, or an empty
+/// payload for the first page with the default limit.
+fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
+    if dec.remaining() == 0 {
+        return Ok(ScheduleMessage::List {
+            cursor: None,
+            limit: 100,
+        });
+    }
+    let cursor = dec.get_optional_string()?;
+    let limit = dec.get_optional_u64()?.unwrap_or(100);
+    if limit > MAX_SCHEDULE_LIST_LIMIT {
+        return Err(ScheduleFailure::new(
+            ScheduleFailureCategory::Limit,
+            format!("schedule LIST limit must be at most {MAX_SCHEDULE_LIST_LIMIT}"),
+        ));
+    }
+    if !dec.is_complete() {
+        return Err(ScheduleFailure::parse("Trailing data in message"));
+    }
+    Ok(ScheduleMessage::List { cursor, limit })
+}
+
+/// Parse SUBSCRIBE message.
+/// Wire format: [string `route_pattern`]
+fn parse_subscribe(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<ScheduleMessage, ScheduleFailure> {
+    let route_str = dec.get_string()?;
+    let route = Route::new(route_str);
+
+    if !dec.is_complete() {
+        return Err(ScheduleFailure::parse("Trailing data in message"));
+    }
+
+    Ok(ScheduleMessage::Subscribe {
+        family_id: route_family,
+        route,
+        session_id: session_id.0,
+        subscriber,
+    })
+}
+
+/// Parse UNSUBSCRIBE message.
+/// Wire format: [string `route_pattern`]
+fn parse_unsubscribe(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<ScheduleMessage, ScheduleFailure> {
+    let route_str = dec.get_string()?;
+    let route = Route::new(route_str);
+
+    if !dec.is_complete() {
+        return Err(ScheduleFailure::parse("Trailing data in message"));
+    }
+
+    Ok(ScheduleMessage::Unsubscribe {
+        family_id: route_family,
+        route,
+        session_id: session_id.0,
+        subscriber,
+    })
+}
+
+/// Encode an ephemeral `SCHEDULE_NOTIFY` (705) payload.
+///
+/// Wire format: [u64 `subscription_id`][string exact_route][bytes payload]
+/// Payload is the stored schedule payload handed to the live notify path. The
+/// notification itself is not durably replayed as a delivery artifact.
+#[must_use]
+pub fn encode_notify(subscription_id: u64, route: &str, payload: &[u8]) -> Vec<u8> {
+    let mut enc = PayloadEncoder::new();
+    encode_notify_into(&mut enc, subscription_id, route, payload)
+}
+
+pub fn encode_notify_into(
+    enc: &mut PayloadEncoder,
+    subscription_id: u64,
+    route: &str,
+    payload: &[u8],
+) -> Vec<u8> {
+    enc.clear();
+    enc.put_u64(subscription_id);
+    enc.put_string(route);
+    enc.put_bytes(payload);
+    enc.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        encode_notify, encode_response, extract_batch_auth_routes, parse_create, parse_request,
+        ScheduleDeliveryMode, ScheduleFailure, ScheduleFailureCategory,
+    };
+    use crate::domain::protocol::ScheduleResponse;
+    use crate::wire::error_codes::schedule as schedule_error_codes;
+    use crate::wire::frame::ChannelId;
+    use crate::wire::frame_context::FrameContext;
+    use crate::wire::message::MessageType;
+    use crate::wire::payload_codec::PayloadEncoder;
+    use bytes::Bytes;
+    use fitz_core::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use fitz_core::session::SessionId;
+
+    #[test]
+    fn should_encode_subscribe_response_with_subscription_id() {
+        // Arrange
+        let payload = encode_response(
+            703,
+            &ScheduleResponse::SubscribeOk {
+                subscription_id: 42,
+            },
+        );
+
+        // Act
+
+        // Assert
+        assert_eq!(payload[0], 0);
+        assert_eq!(payload[1], 1);
+        assert_eq!(&payload[2..10], &42u64.to_be_bytes());
+    }
+
+    #[test]
+    fn should_encode_schedule_notify_with_subscription_id() {
+        // Arrange
+        let payload = encode_notify(7, "schedule://acme/jobs/report/run", b"fire");
+
+        // Act
+
+        // Assert
+        assert_eq!(&payload[0..8], &7u64.to_be_bytes());
+        let route = b"schedule://acme/jobs/report/run";
+        let route_len = u32::try_from(route.len()).expect("route length fits u32");
+        assert_eq!(&payload[8..12], &route_len.to_be_bytes());
+        assert_eq!(&payload[12..12 + route.len()], route);
+        assert_eq!(
+            &payload[12 + route.len()..16 + route.len()],
+            &(4u32).to_be_bytes()
+        );
+        assert_eq!(&payload[16 + route.len()..], b"fire");
+    }
+
+    #[test]
+    fn should_encode_typed_schedule_list_error_for_known_failure() {
+        // Arrange
+        let response = ScheduleResponse::Error(ScheduleFailure::new(
+            ScheduleFailureCategory::NotFound,
+            "schedule not found",
+        ));
+
+        // Act
+        let payload = encode_response(702, &response);
+
+        // Assert
+        assert_eq!(
+            crate::wire::error_codes::decode_error_body(&payload)
+                .expect("error envelope")
+                .0,
+            schedule_error_codes::ERR_SCHEDULE_NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn should_encode_schedule_timeout_as_indeterminate_timeout() {
+        // Arrange
+        let persistence_error = crate::domain::store::SchedulePersistenceError::midge(
+            "commit failed",
+            cntryl_midge::MidgeError::Timeout("deadline elapsed".to_string()),
+        );
+        let operation_error: String = persistence_error.into();
+        let failure = ScheduleFailure::operation_error(operation_error);
+
+        // Act
+        let payload = encode_response(700, &ScheduleResponse::Error(failure));
+
+        // Assert
+        let error = crate::wire::error_codes::decode_wire_error(&payload)
+            .expect("schedule timeout error envelope");
+        assert_eq!(error.code, schedule_error_codes::ERR_TIMEOUT);
+        assert_eq!(
+            error.effect,
+            crate::wire::wire2::envelope::Effect::Indeterminate
+        );
+    }
+
+    #[test]
+    fn should_encode_schedule_backend_failure_as_indeterminate_backend() {
+        // Arrange
+        let failure =
+            ScheduleFailure::operation_error("SCHEDULE_BACKEND: commit failed: outcome unknown");
+
+        // Act
+        let payload = encode_response(700, &ScheduleResponse::Error(failure));
+
+        // Assert
+        let error = crate::wire::error_codes::decode_wire_error(&payload)
+            .expect("schedule backend error envelope");
+        assert_eq!(error.code, schedule_error_codes::ERR_BACKEND_ERROR);
+        assert_eq!(
+            error.effect,
+            crate::wire::wire2::envelope::Effect::Indeterminate
+        );
+    }
+
+    #[test]
+    fn should_keep_unclassified_schedule_input_errors_as_bad_request() {
+        // Arrange
+        let failure = ScheduleFailure::operation_error("invalid cron expression");
+
+        // Act
+        let payload = encode_response(700, &ScheduleResponse::Error(failure));
+
+        // Assert
+        let error = crate::wire::error_codes::decode_wire_error(&payload)
+            .expect("schedule bad request error envelope");
+        assert_eq!(error.code, schedule_error_codes::ERR_BAD_REQUEST);
+        assert_eq!(
+            error.effect,
+            crate::wire::wire2::envelope::Effect::NotApplied
+        );
+    }
+
+    #[test]
+    fn should_encode_coded_schedule_error_for_every_operation() {
+        // Arrange
+        let response = ScheduleResponse::Error(ScheduleFailure::new(
+            ScheduleFailureCategory::NotFound,
+            "schedule not found",
+        ));
+
+        // Act
+        let payloads = [700, 701, 702, 703, 704, 706].map(|op| encode_response(op, &response));
+
+        // Assert
+        for payload in payloads {
+            let (code, message) =
+                crate::wire::error_codes::decode_error_body(&payload).expect("coded error");
+            assert_eq!(code, schedule_error_codes::ERR_SCHEDULE_NOT_FOUND);
+            assert_eq!(message, "schedule not found");
+        }
+    }
+
+    #[test]
+    fn should_preserve_schedule_wire_golden_vectors() {
+        // Arrange
+        let route = "schedule://r/a/x";
+        let request = [
+            0, 0, 0, 16, b's', b'c', b'h', b'e', b'd', b'u', b'l', b'e', b':', b'/', b'/', b'r',
+            b'/', b'a', b'/', b'x',
+        ];
+
+        // Act
+        let parsed_route =
+            super::extract_auth_route(701, &request).expect("parse golden schedule cancel request");
+        let response = encode_response(703, &ScheduleResponse::SubscribeOk { subscription_id: 7 });
+        let notification = encode_notify(7, route, b"hi");
+        let error = encode_response(
+            702,
+            &ScheduleResponse::Error(ScheduleFailure::new(
+                ScheduleFailureCategory::NotFound,
+                "gone",
+            )),
+        );
+
+        // Assert
+        assert_eq!(parsed_route.as_deref(), Some(route));
+        assert_eq!(response, [0, 1, 0, 0, 0, 0, 0, 0, 0, 7]);
+        assert_eq!(
+            notification,
+            [
+                0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 16, b's', b'c', b'h', b'e', b'd', b'u', b'l',
+                b'e', b':', b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i',
+            ]
+        );
+        let decoded = crate::wire::error_codes::decode_wire_error(&error).expect("error");
+        assert_eq!(
+            (decoded.code, decoded.message.as_str()),
+            (schedule_error_codes::ERR_SCHEDULE_NOT_FOUND, "gone")
+        );
+    }
+
+    #[test]
+    fn should_extract_schedule_batch_auth_routes() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_u32(2);
+        enc.put_string("acme/jobs/backup/run");
+        enc.put_string("0 2 * * *");
+        enc.put_u8(ScheduleDeliveryMode::Broadcast as u8);
+        enc.put_bytes(b"backup");
+        enc.put_string("schedule://acme/jobs/report/run");
+        enc.put_string("15 6 * * *");
+        enc.put_u8(ScheduleDeliveryMode::Single as u8);
+        enc.put_bytes(b"report");
+        let payload = enc.finish();
+
+        // Act
+        let routes = extract_batch_auth_routes(&payload).expect("batch auth routes");
+
+        // Assert
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0], "schedule://acme/jobs/backup/run");
+        assert_eq!(routes[1], "schedule://acme/jobs/report/run");
+    }
+
+    #[test]
+    fn should_reject_schedule_batch_if_any_authorization_route_uses_a_foreign_scheme() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_u32(2);
+        for route in [
+            "schedule://acme/jobs/backup/run",
+            "notice://acme/jobs/report/run",
+        ] {
+            enc.put_string(route);
+            enc.put_string("0 2 * * *");
+            enc.put_u8(ScheduleDeliveryMode::Broadcast as u8);
+            enc.put_bytes(b"job");
+        }
+        let payload = enc.finish();
+
+        // Act
+        let routes = extract_batch_auth_routes(&payload);
+
+        // Assert
+        assert!(routes.is_err());
+    }
+
+    #[test]
+    fn should_keep_schedule_list_authorization_without_a_route() {
+        // Arrange
+        let payload = [];
+        // Act
+        let route = super::extract_auth_route(702, &payload).unwrap();
+        // Assert
+        assert!(route.is_none());
+    }
+
+    #[test]
+    fn should_reject_unknown_schedule_delivery_mode() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_string("schedule://acme/jobs/backup/run");
+        enc.put_string("0 2 * * *");
+        enc.put_u8(2);
+        enc.put_bytes(b"backup");
+        let payload = enc.finish();
+        let mut decoder = crate::wire::payload_codec::PayloadDecoder::new(&payload);
+
+        // Act
+        let result = parse_create(&mut decoder);
+
+        // Assert
+        let failure = result.expect_err("invalid mode");
+        assert_eq!(failure.message, "invalid schedule delivery mode");
+        assert_eq!(
+            failure.category.code(),
+            schedule_error_codes::ERR_INVALID_DELIVERY_MODE
+        );
+    }
+
+    #[test]
+    fn should_reject_legacy_create_without_delivery_mode() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_string("schedule://acme/jobs/backup/run");
+        enc.put_string("0 2 * * *");
+        enc.put_bytes(b"backup");
+        let payload = enc.finish();
+        let mut decoder = crate::wire::payload_codec::PayloadDecoder::new(&payload);
+
+        // Act
+        let result = parse_create(&mut decoder);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn should_never_panic_given_arbitrary_schedule_payload(
+            message_type in 700_u16..=706,
+            payload in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..512),
+        ) {
+            // Arrange
+            let family = RouteFamily::new(1);
+            let context = FrameContext::new(
+                1,
+                ChannelId::Pub,
+                MessageType::new(message_type),
+                Bytes::copy_from_slice(&payload),
+                family,
+            );
+            let subscriber = RouteAddress::new(family, Route::new("inbox://session/1"));
+
+            // Act
+            let _ = parse_request(&context, &payload, family, SessionId(1), subscriber);
+
+            // Assert
+        }
+    }
+}
+
+#[path = "schedule_envelope.rs"]
+mod envelope_build;
+
+pub use envelope_build::build_envelope;

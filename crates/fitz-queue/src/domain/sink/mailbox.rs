@@ -1,0 +1,154 @@
+//! Mailbox entry points: `MailboxSink`, the domain actor's `receive` loop, and
+//! the thin runtime-to-core delegation used by both.
+
+use super::model::{QueueDomain, QueueDomainCommand, QueueFamilyRuntime};
+use crate::domain::actor::{QUEUE_ACTOR_REPLY_TIMEOUT, QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT};
+#[cfg(test)]
+use fitz_core::runtime::SessionScoped as _;
+use fitz_core::runtime::{DeliveryError, Envelope, MailboxSink};
+use std::sync::atomic::Ordering;
+use std::time::Instant;
+
+pub(super) struct RuntimeSweepPendingReset<'a>(pub(super) &'a std::sync::atomic::AtomicBool);
+
+impl Drop for RuntimeSweepPendingReset<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+impl MailboxSink for QueueDomain {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver_to_actor(envelope, false)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver_to_actor(envelope, true)
+    }
+}
+
+impl QueueFamilyRuntime {
+    pub(super) fn receive_command(&mut self, msg: QueueDomainCommand) {
+        match msg {
+            QueueDomainCommand::Deliver(envelope, reply, admission) => {
+                let started_at = Instant::now();
+                let outcome = self.core.deliver_envelope(&envelope);
+                super::model::record_service_sample(&self.core.delivery_service_us, started_at);
+                let _ = reply.send(outcome);
+                // Explicit: the slot is released here, once the work is
+                // actually done, and not when the caller gave up waiting.
+                drop(admission);
+            }
+            QueueDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                self.core.refresh_admin_snapshot_if_dirty();
+                let _ = reply.send(());
+            }
+            QueueDomainCommand::ReadLiveCounts(reply) => {
+                let _ = reply.send(self.core.live_counts());
+            }
+            #[cfg(test)]
+            QueueDomainCommand::CleanupSession(session_id, reply) => {
+                self.core.cleanup_session(session_id);
+                let _ = reply.send(());
+            }
+            QueueDomainCommand::SweepRuntimeStateAt(now, Some(reply)) => {
+                self.core.sweep_runtime_state_at(now);
+                self.core.refresh_admin_snapshot_if_dirty();
+                let _ = reply.send(());
+            }
+            QueueDomainCommand::SweepRuntimeStateAt(now, None) => {
+                let pending = self.core.runtime_sweep_pending.clone();
+                let _pending_reset = RuntimeSweepPendingReset(&pending);
+                self.core.sweep_runtime_state_at(now);
+                self.core.refresh_admin_snapshot_if_dirty();
+            }
+            QueueDomainCommand::ReplayDeadLetter(key, id, reply) => {
+                let _ = reply.send(self.core.replay_dead_letter(&key, id));
+            }
+            QueueDomainCommand::InspectDeadLetter(key, id, reply) => {
+                let _ = reply.send(self.core.inspect_dead_letter(&key, id));
+            }
+            QueueDomainCommand::PurgeDeadLetter(key, id, reply) => {
+                let _ = reply.send(self.core.purge_dead_letter(&key, id));
+            }
+            QueueDomainCommand::PanicForFailpoint => {
+                panic!("injected Queue domain actor panic");
+            }
+            #[cfg(test)]
+            QueueDomainCommand::InspectForTests(inspect, reply) => {
+                inspect(&mut self.core);
+                let _ = reply.send(());
+            }
+        }
+    }
+}
+
+impl QueueDomain {
+    fn deliver_to_actor(
+        &self,
+        envelope: Envelope,
+        high_priority: bool,
+    ) -> Result<(), DeliveryError> {
+        let envelope = self.config.router.retain_session_work(envelope);
+        let family = *envelope.destination().family();
+        let service = &self.config.delivery_service_us[&family.id()];
+        // Admit BEFORE enqueueing so surplus load is refused as never-enqueued
+        // (retryable) rather than accepted then timed out. Control-plane work
+        // bypasses the window - cleanup arrives on the normal lane yet must
+        // never be rationed by client load. See `admit_client_delivery`.
+        let is_control_plane =
+            high_priority || fitz_core::runtime::session_cleanup_id(&envelope).is_some();
+        let client_deadline = envelope.deadline();
+        if !is_control_plane && client_deadline.is_some_and(|deadline| deadline <= Instant::now()) {
+            return Err(super::model::classify_admission_failure(
+                DeliveryError::MailboxFull {
+                    capacity: 1,
+                    current_len: 1,
+                },
+                self.family_runtime.is_family_running(family),
+            ));
+        }
+        let admission = if is_control_plane {
+            None
+        } else {
+            Some(super::model::admit_client_delivery(
+                &self.inflight_client_deliveries,
+                service,
+                self.family_runtime
+                    .is_family_running(*envelope.destination().family()),
+            )?)
+        };
+
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let lane = if high_priority {
+            fitz_core::runtime::FamilyActorLane::Control
+        } else {
+            fitz_core::runtime::FamilyActorLane::Normal
+        };
+        #[cfg(feature = "benchkit")]
+        let envelope = {
+            let mut envelope = envelope;
+            envelope.mark_queued(Instant::now());
+            envelope
+        };
+        let command = QueueDomainCommand::Deliver(envelope, reply_tx, admission);
+        self.family_runtime
+            .try_enqueue(family, lane, command)
+            .map_err(fitz_core::runtime::family_actor_enqueue_error_to_delivery_error)?;
+
+        let reply_timeout = if is_control_plane {
+            QUEUE_ACTOR_REPLY_TIMEOUT
+        } else {
+            client_deadline.map_or(QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT, |deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(QUEUE_CLIENT_ACTOR_REPLY_TIMEOUT)
+            })
+        };
+        reply_rx
+            .recv_timeout(reply_timeout)
+            .unwrap_or_else(|error| {
+                Err(fitz_core::runtime::reply_wait::map_reply_wait_error(error))
+            })
+    }
+}

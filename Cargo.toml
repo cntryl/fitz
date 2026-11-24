@@ -1,40 +1,34 @@
-[package]
-name = "fitz"
-version = "0.5.1"
-edition = "2021"
-autobenches = false
-license-file = "LICENSE"
-authors = ["smiggleworth"]
-description = "The messaging layer your system was missing"
-repository = "https://github.com/cntryl/fitz"
-documentation = "https://github.com/cntryl/fitz/blob/main/README.md"
-keywords = ["broker", "kv", "messaging", "queue", "stream"]
-categories = ["message-broker"]
-
 [workspace]
 resolver = "2"
+members = [
+    "crates/fitz-core",
+    "crates/fitz-storage",
+    "crates/fitz-kv",
+    "crates/fitz-lease",
+    "crates/fitz-notice",
+    "crates/fitz-queue",
+    "crates/fitz-rpc",
+    "crates/fitz-schedule",
+    "crates/fitz-stream",
+    "crates/fitz-server",
+    "crates/fitz-e2e",
+]
+default-members = ["crates/fitz-server"]
+
+[workspace.package]
+version = "0.5.1"
+edition = "2021"
+license-file = "LICENSE"
+repository = "https://github.com/cntryl/fitz"
 
 [workspace.lints.clippy]
 pedantic = "deny"
-
-[lints]
-workspace = true
-
-[features]
-# Skip non-forced RPC and Schedule admin snapshot updates during benchmarks.
-bench-no-snapshot = []
-# Compile benchmark-only library adapters that intentionally bypass transport.
-benchkit = []
-# Opt in to long-running saturation and endurance benchmark targets.
-stress-soak = []
-# Expose pinned Midge fixture codecs only to the external recovery driver.
-recovery-qualification = ["cntryl-midge/internal-testing"]
 
 [profile.release]
 lto = true
 codegen-units = 1
 
-[dependencies]
+[workspace.dependencies]
 ahash = "0.8"
 argon2 = "0.6"
 async-trait = "0.1"
@@ -92,284 +86,19 @@ tracing-subscriber = { version = "0.3", features = ["ansi", "env-filter", "fmt",
 tungstenite = "0.30"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
-
-[dev-dependencies]
 cntryl-stress = "0.5.1"
 crc32c = "0.6"
 jsonschema = { version = "0.61.2", default-features = false }
 proptest = "1"
 serial_test = "4.0.1"
-tokio = { version = "1", features = ["test-util"] }
 
-# Tier 1: Synchronous hot path microbenchmarks
-[[bench]]
-name = "tier1_hotpath_matcher"
-harness = false
-
-[[bench]]
-name = "tier1_hotpath_message"
-harness = false
-
-[[bench]]
-name = "tier1_hotpath_mux"
-harness = false
-
-[[bench]]
-name = "tier1_hotpath_permissions"
-harness = false
-
-[[bench]]
-name = "tier1_hotpath_context"
-harness = false
-
-[[bench]]
-name = "tier1_hotpath_envelope"
-harness = false
-
-[[bench]]
-name = "tier1_hotpath_routing"
-harness = false
-
-# Tier 2: Synchronous subsystem benchmarks (<3s)
-[[bench]]
-name = "tier2_subsystem_mailbox"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_family_actor_pool"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_subscriptions"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_message_pipeline"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_router"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_schedule_scan"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_schedule_create"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_schedule_churn"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_schedule_control_latency"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_schedule_fire"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_queue"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_rpc"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_lease"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_notice"
-harness = false
-
-[[bench]]
-name = "tier2_subsystem_stream"
-harness = false
-
-# Tier 3: Synchronous domain and plumbing benchmarks (<10s)
-[[bench]]
-name = "tier3_system_kv"
-harness = false
-
-[[bench]]
-name = "tier3_system_lease"
-harness = false
-required-features = ["benchkit"]
-
-[[bench]]
-name = "tier3_system_notice"
-harness = false
-
-[[bench]]
-name = "tier3_system_queue"
-harness = false
-
-[[bench]]
-name = "tier3_system_rpc"
-harness = false
-
-[[bench]]
-name = "tier3_system_stream"
-harness = false
-
-[[bench]]
-name = "tier3_system_stream_admin"
-harness = false
-
-# Tier 4: Integration characterization
-[[bench]]
-name = "tier4_kv_gate"
-harness = false
-
-[[bench]]
-name = "tier4_kv_ladder"
-harness = false
-
-[[bench]]
-name = "tier4_kv_contention"
-harness = false
-
-[[bench]]
-name = "tier4_lease_gate"
-harness = false
-required-features = ["benchkit"]
-
-[[bench]]
-name = "tier4_lease_ladder"
-harness = false
-required-features = ["benchkit"]
-
-[[bench]]
-name = "tier4_lease_contention"
-harness = false
-required-features = ["benchkit"]
-
-[[bench]]
-name = "tier4_notice_publish"
-harness = false
-
-[[bench]]
-name = "tier4_notice_fanout"
-harness = false
-
-[[bench]]
-name = "tier4_notice_control"
-harness = false
-
-[[bench]]
-name = "tier4_queue_gate"
-harness = false
-
-[[bench]]
-name = "tier4_queue_concurrency"
-harness = false
-
-[[bench]]
-name = "tier4_queue_shapes"
-harness = false
-
-[[bench]]
-name = "tier4_rpc_roundtrip"
-harness = false
-
-[[bench]]
-name = "tier4_rpc_pipeline"
-harness = false
-
-[[bench]]
-name = "tier4_schedule_lifecycle"
-harness = false
-
-[[bench]]
-name = "tier4_schedule_concurrency"
-harness = false
-
-[[bench]]
-name = "tier4_schedule_shapes"
-harness = false
-
-[[bench]]
-name = "tier4_stream_gate"
-harness = false
-
-[[bench]]
-name = "tier4_stream_concurrency"
-harness = false
-
-[[bench]]
-name = "tier4_stream_filters"
-harness = false
-
-[[bench]]
-name = "tier4_stream_ladder"
-harness = false
-
-[[bench]]
-name = "tier4_stream_mixed"
-harness = false
-
-[[bench]]
-name = "tier4_stream_shapes"
-harness = false
-
-[[bench]]
-name = "tier4_stream_compacted"
-harness = false
-required-features = ["benchkit"]
-
-[[bench]]
-name = "stream_subscription_capacity"
-harness = false
-required-features = ["benchkit"]
-
-# Tier 5: TCP concurrency and saturation
-[[bench]]
-name = "tier5_cloud_catalog"
-harness = false
-required-features = ["benchkit", "stress-soak", "recovery-qualification"]
-
-[[bench]]
-name = "tier5_queue_drains"
-harness = false
-required-features = ["benchkit", "stress-soak"]
-
-[[bench]]
-name = "tier5_saturation"
-harness = false
-required-features = ["benchkit", "stress-soak"]
-
-[[bench]]
-name = "queue_pressure"
-harness = false
-required-features = ["benchkit", "stress-soak"]
-
-[[bench]]
-name = "schedule_pressure"
-harness = false
-required-features = ["benchkit", "stress-soak"]
-
-[[bench]]
-name = "kv_pressure"
-harness = false
-required-features = ["benchkit", "stress-soak"]
-
-[[bench]]
-name = "lease_pressure"
-harness = false
-required-features = ["benchkit", "stress-soak"]
-
-[[bench]]
-name = "queue_drain_latency"
-harness = false
-required-features = ["benchkit", "stress-soak"]
-
-# Tier 6: TCP endurance with bounded workload state
-[[bench]]
-name = "tier6_endurance"
-harness = false
-required-features = ["benchkit", "stress-soak"]
+fitz-core = { path = "crates/fitz-core", version = "0.5.1" }
+fitz-storage = { path = "crates/fitz-storage", version = "0.5.1" }
+fitz-kv = { path = "crates/fitz-kv", version = "0.5.1" }
+fitz-lease = { path = "crates/fitz-lease", version = "0.5.1" }
+fitz-notice = { path = "crates/fitz-notice", version = "0.5.1" }
+fitz-queue = { path = "crates/fitz-queue", version = "0.5.1" }
+fitz-rpc = { path = "crates/fitz-rpc", version = "0.5.1" }
+fitz-schedule = { path = "crates/fitz-schedule", version = "0.5.1" }
+fitz-stream = { path = "crates/fitz-stream", version = "0.5.1" }
+fitz = { path = "crates/fitz-server", version = "0.5.1" }

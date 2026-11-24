@@ -1,0 +1,35 @@
+//! Direct committed-value inspection for the admin façade.
+
+use super::super::locks::KvResourceLockKey;
+use super::super::state::KvFamilyRuntime;
+use crate::domain::key_layout;
+
+impl KvFamilyRuntime<'_> {
+    pub(super) fn admin_get_committed_value(
+        &self,
+        route_family: fitz_core::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, String> {
+        let started_at = std::time::Instant::now();
+        let column_family = key_layout::resolve_column_family(route_family)?;
+        let tx = self
+            .core
+            .store
+            .begin(column_family, crate::domain::TxMode::ReadOnly)
+            .map_err(|error| error.to_string())?;
+        let prefix = key_layout::realm_resource_prefix(realm, area, resource);
+        let scoped_key = key_layout::encode_scoped_key(&prefix, key);
+        let value = tx
+            .get(&scoped_key)
+            .map(|value| value.map(|value| value.as_ref().to_vec()))
+            .map_err(|error| error.to_string())?;
+        self.record_read_latency(
+            &KvResourceLockKey::new(route_family.as_u64(), realm, area, resource),
+            started_at,
+        );
+        Ok(value)
+    }
+}

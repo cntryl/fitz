@@ -1,0 +1,62 @@
+//! KV request, outcome, latency, and live-state metric collection.
+
+use fitz_core::observability::metrics::{DomainMetricSet, MetricsCollector};
+use std::time::Instant;
+
+pub const METRIC_REQUESTS_TOTAL: &str = "fitz_kv_requests_total";
+pub const METRIC_SUCCESS_TOTAL: &str = "fitz_kv_success_total";
+pub const METRIC_FAILURE_TOTAL: &str = "fitz_kv_failure_total";
+pub const METRIC_LATENCY_MS: &str = "fitz_kv_latency_ms";
+pub const METRIC_ACTIVE_GAUGE: &str = "fitz_kv_active_gauge";
+pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_kv_subscriptions_gauge";
+pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_kv_notify_drops_total";
+/// Post-commit inventory estimate updates that failed and were queued for repair.
+pub const METRIC_INVENTORY_UPDATE_FAILURES_TOTAL: &str =
+    "fitz_kv_inventory_estimate_update_failures_total";
+pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_kv_family_failed_closed_total";
+
+#[derive(Clone)]
+pub(crate) struct KvMetrics {
+    metrics: DomainMetricSet,
+}
+
+impl KvMetrics {
+    #[must_use]
+    pub(crate) fn new(collector: MetricsCollector) -> Self {
+        Self {
+            metrics: DomainMetricSet::new(
+                collector,
+                METRIC_REQUESTS_TOTAL,
+                METRIC_SUCCESS_TOTAL,
+                METRIC_FAILURE_TOTAL,
+                METRIC_LATENCY_MS,
+            ),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn record_request_start(&self) -> Instant {
+        self.metrics.record_request_start()
+    }
+
+    pub(crate) fn record_success(&self, started_at: Instant) {
+        self.metrics.record_success(started_at);
+    }
+
+    pub(crate) fn record_failure(&self, started_at: Instant) {
+        self.metrics.record_failure(started_at);
+    }
+
+    pub(crate) fn counter_inc(&self, name: &str) {
+        self.metrics.counter_inc(name);
+    }
+
+    pub(crate) fn set_active_transactions(&self, count: usize) {
+        self.metrics.gauge_set(METRIC_ACTIVE_GAUGE, count as u64);
+    }
+
+    pub(crate) fn set_subscription_count(&self, count: usize) {
+        self.metrics
+            .gauge_set(METRIC_SUBSCRIPTIONS_GAUGE, count as u64);
+    }
+}

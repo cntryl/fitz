@@ -1,0 +1,80 @@
+[package]
+name = "fitz-core"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+autobenches = false
+
+[lints]
+workspace = true
+
+[dependencies]
+ahash.workspace = true
+bytes.workspace = true
+crossbeam-channel.workspace = true
+dashmap.workspace = true
+getrandom.workspace = true
+once_cell.workspace = true
+parking_lot.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+smallvec.workspace = true
+tracing.workspace = true
+
+cntryl-stress = { workspace = true, optional = true }
+
+[dev-dependencies]
+cntryl-stress.workspace = true
+proptest.workspace = true
+serial_test.workspace = true
+
+[[bench]]
+name = "tier1_hotpath_matcher"
+harness = false
+
+[[bench]]
+name = "tier1_hotpath_message"
+harness = false
+
+[[bench]]
+name = "tier1_hotpath_mux"
+harness = false
+
+[[bench]]
+name = "tier1_hotpath_context"
+harness = false
+
+[[bench]]
+name = "tier1_hotpath_envelope"
+harness = false
+
+[[bench]]
+name = "tier1_hotpath_routing"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_mailbox"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_family_actor_pool"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_subscriptions"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_message_pipeline"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_router"
+harness = false
+
+[features]
+bench-support = ["dep:cntryl-stress"]
+
+[lib]
+bench = false

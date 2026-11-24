@@ -1,0 +1,198 @@
+//! Sink construction, pre-registration configuration, and family lifecycle.
+
+use super::commands::KvDomainCommand;
+use super::state::{KvDomain, KvDomainConfig, KvFamilyRuntime, KvFamilyState};
+use fitz_core::runtime::routing::RouteFamily;
+use fitz_core::runtime::Router;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+impl KvFamilyState {
+    fn new(config: &KvDomainConfig) -> Self {
+        Self {
+            store: config.store.clone(),
+            actors: HashMap::new(),
+            resource_locks: HashMap::new(),
+            watch_registries: HashMap::new(),
+            cleaned_up_sessions: fitz_core::runtime::CleanedUpSessions::new(
+                fitz_core::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            ),
+            router: config.router.clone(),
+            projection: config.projection.clone(),
+            active_transactions: config.active_transactions.clone(),
+            metrics: config.metrics.clone(),
+            sync_write_policy: config.sync_write_policy,
+            buffered_write_policy: config.buffered_write_policy,
+            idle_transaction_ttl: config.idle_transaction_ttl,
+            pending_inventory_repairs: HashMap::new(),
+            next_inventory_repair_at: None,
+        }
+    }
+}
+
+impl KvDomain {
+    pub(super) fn admin_core(&self) -> KvFamilyState {
+        KvFamilyState::new(&self.config)
+    }
+
+    #[must_use]
+    #[allow(private_bounds)]
+    pub fn new(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::AdminReadModel>,
+    ) -> Self {
+        Self::new_with_families(
+            store,
+            router,
+            admin_read_model,
+            &[RouteFamily::new(1), RouteFamily::new(2)],
+        )
+    }
+
+    pub fn new_with_families(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::AdminReadModel>,
+        route_families: &[RouteFamily],
+    ) -> Self {
+        Self::new_with_store(store.into(), router, admin_read_model, route_families)
+    }
+
+    pub(crate) fn new_with_store(
+        store: crate::domain::store::KvStore,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::AdminReadModel>,
+        route_families: &[RouteFamily],
+    ) -> Self {
+        assert!(
+            !route_families.is_empty(),
+            "KV route families must not be empty"
+        );
+        let config = KvDomainConfig {
+            store,
+            router,
+            projection: Arc::new(crate::domain::admin_projection::KvAdminProjection::new(
+                admin_read_model,
+            )),
+            active_transactions: Arc::default(),
+            metrics: None,
+            sync_write_policy: fitz_storage::domains::WritePolicy::Sync,
+            buffered_write_policy: fitz_storage::domains::WritePolicy::Buffered,
+            idle_transaction_ttl: std::time::Duration::from_mins(5),
+        };
+        let active = Arc::new(AtomicBool::new(true));
+        let family_runtime =
+            Self::spawn_family_runtime(config.clone(), active.clone(), route_families);
+        Self {
+            family_runtime,
+            route_families: route_families.to_vec(),
+            active,
+            config,
+        }
+    }
+
+    fn spawn_family_runtime(
+        config: KvDomainConfig,
+        active: Arc<AtomicBool>,
+        route_families: &[RouteFamily],
+    ) -> fitz_core::runtime::FamilyActorPoolRuntime<KvDomainCommand> {
+        let pool = fitz_core::runtime::FamilyActorPool::new(route_families)
+            .expect("validated KV family actor pool configuration");
+        fitz_core::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
+            pool,
+            active,
+            move |_family| KvFamilyState::new(&config),
+            |state, _, _, command| KvFamilyRuntime { core: state }.receive(command),
+            crate::domain::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
+        )
+    }
+
+    fn rebuild_family_runtime(&mut self) {
+        self.family_runtime.stop();
+        self.active = Arc::new(AtomicBool::new(true));
+        self.family_runtime = Self::spawn_family_runtime(
+            self.config.clone(),
+            self.active.clone(),
+            &self.route_families,
+        );
+    }
+
+    pub(super) fn try_send(
+        &self,
+        family: RouteFamily,
+        lane: fitz_core::runtime::FamilyActorLane,
+        command: KvDomainCommand,
+    ) -> Result<(), fitz_core::runtime::DeliveryError> {
+        self.family_runtime
+            .try_enqueue(family, lane, command)
+            .map_err(fitz_core::runtime::family_actor_enqueue_error_to_delivery_error)
+    }
+
+    #[must_use]
+    pub fn with_write_policies(
+        mut self,
+        sync_write_policy: fitz_storage::domains::WritePolicy,
+        buffered_write_policy: fitz_storage::domains::WritePolicy,
+    ) -> Self {
+        self.config.sync_write_policy = sync_write_policy;
+        self.config.buffered_write_policy = buffered_write_policy;
+        self.rebuild_family_runtime();
+        self
+    }
+
+    #[must_use]
+    pub fn with_idle_transaction_ttl(mut self, ttl: std::time::Duration) -> Self {
+        self.config.idle_transaction_ttl = ttl;
+        self.rebuild_family_runtime();
+        self
+    }
+
+    #[must_use]
+    pub fn with_metrics(
+        mut self,
+        collector: fitz_core::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.config.metrics = Some(crate::domain::metrics::KvMetrics::new(collector));
+        self.rebuild_family_runtime();
+        self
+    }
+
+    pub fn stop(&self) {
+        self.active.store(false, Ordering::Relaxed);
+        self.family_runtime.stop();
+    }
+
+    /// Pool availability uses the existing aggregate flags without copying family health rows.
+    pub fn has_usable_family(&self) -> bool {
+        self.family_runtime.is_running()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn family_health_snapshot(
+        &self,
+    ) -> fitz_core::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {
+        self.family_runtime.health_snapshot()
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_actor_running(&self) -> bool {
+        self.family_runtime.is_running()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mark_actor_permanently_failed_for_tests(&self) {
+        self.family_runtime.fail_closed();
+    }
+
+    pub fn panic_actor_for_failpoint(&self) {
+        for family in &self.route_families {
+            let _ = self.try_send(
+                *family,
+                fitz_core::runtime::FamilyActorLane::Control,
+                KvDomainCommand::PanicForFailpoint,
+            );
+        }
+    }
+}
