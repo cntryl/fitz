@@ -88,7 +88,7 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 cntryl-stress = "0.5.1"
 crc32c = "0.6"
-jsonschema = { version = "0.61.2", default-features = false }
+jsonschema = { version = "0.62.0", default-features = false }
 proptest = "1"
 serial_test = "4.0.1"
 
