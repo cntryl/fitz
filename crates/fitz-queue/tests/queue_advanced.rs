@@ -105,7 +105,7 @@ fn should_reserve_disjoint_batches_for_distinct_consumer_sessions() {
         let QueueResponse::Received { messages } =
             actor.handle_receive_for_session(session_id, 30, Some(2))
         else {
-            panic!("expected batch for session {session_id}");
+            panic!("expected a reservation batch");
         };
         messages
             .into_iter()
