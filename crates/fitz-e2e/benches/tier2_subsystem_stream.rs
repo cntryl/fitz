@@ -5,8 +5,9 @@ use fitz_core::testkit::stress as tier2_stress;
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::BenchDomainHandle;
 use fitz::benchkit::{
-    build_stream_subscribe, create_bench_stream_sink, drain_frame_queue_sinks_after_each_count,
-    extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
+    build_stream_append, build_stream_begin, build_stream_commit, build_stream_subscribe,
+    create_bench_stream_sink, drain_frame_queue_sinks_after_each_count, extract_single_tlv_field,
+    parse_stream_session_id, register_session_counting_sink, register_session_queue_sink,
     route_frame, wait_for_counting_sinks_each_count, CountingSink, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
@@ -25,6 +26,8 @@ const COMMIT_NOTIFY_REPEAT_COUNT: u64 = 2_048;
 const EXACT_ROUTE_64_COMMIT_NOTIFY_REPEAT_COUNT: u64 = 8_192;
 const SINGLE_STAR_16_COMMIT_NOTIFY_REPEAT_COUNT: u64 = 262_144;
 const COMMIT_NOTIFY_CHUNK_SIZE: u64 = 512;
+const STREAM_NOTIFY_TARGETS_PER_BURST: u64 = 65_536;
+const DELIVERY_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const SUBSCRIBE_DESTINATION: &str = "stream://realm/area/control/append";
 const COMMIT_NOTIFY_ROUTE: &str = "stream://realm/area/orders";
 
@@ -60,7 +63,7 @@ impl PreparedStreamNotifyCase {
         let delivery_count = wait_for_counting_sinks_each_count(
             &self.subscriber_sinks,
             expected_per_subscriber,
-            Duration::from_secs(1),
+            DELIVERY_DRAIN_TIMEOUT,
         );
         assert_eq!(
             delivery_count,
@@ -92,6 +95,8 @@ fn encode_commit_notify_payload() -> Bytes {
             "last_area_offset": 0,
             "first_realm_offset": 0,
             "last_realm_offset": 0,
+            "first_global_offset": 0,
+            "last_global_offset": 0,
             "batch_size": 1,
         })
         .to_string(),
@@ -155,11 +160,46 @@ fn assert_stream_subscribe_success(response: &[u8]) {
     );
 }
 
+fn seed_notify_commit(router: &Arc<Router>, family: RouteFamily) {
+    let (source, inbox) = register_session_queue_sink(router, family, CLIENT_SESSION_ID);
+    let request = |frame: &[u8]| {
+        let (message_type, payload) = extract_single_tlv_field(frame);
+        route_frame(
+            router,
+            &source,
+            COMMIT_NOTIFY_ROUTE,
+            CLIENT_SESSION_ID,
+            ChannelId::Pub,
+            message_type,
+            payload,
+            family,
+        )
+        .expect("send Stream fixture command");
+        let response = inbox
+            .drain_after_count(1, Duration::from_secs(5))
+            .pop()
+            .expect("Stream fixture command response");
+        assert_eq!(response.msg_type.as_u16(), message_type);
+        assert_eq!(
+            response.payload.first(),
+            Some(&0),
+            "Stream fixture command failed for message type {message_type}"
+        );
+        response.payload
+    };
+    let begin = request(&build_stream_begin(COMMIT_NOTIFY_ROUTE));
+    let session_id = parse_stream_session_id(&begin).expect("Stream fixture session");
+    request(&build_stream_append(session_id, 0, b"benchmark event"));
+    request(&build_stream_commit(session_id, 1));
+}
+
 fn prepare_notify_case(subscriber_count: usize, pattern: &str) -> PreparedStreamNotifyCase {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
     let sink = create_bench_stream_sink(router.clone());
     router.register_domain_pattern("stream", sink.clone() as Arc<dyn MailboxSink>);
+    // Wildcard notifications consult the committed scope watermarks.
+    seed_notify_commit(&router, family);
     let (subscribe_msg_type, subscribe_payload) = build_stream_subscribe_request(pattern);
 
     let mut subscriber_sinks = Vec::with_capacity(subscriber_count);
@@ -249,10 +289,18 @@ fn should_subscribe_register_2048_sessions_x4_cases_primary(ctx: &mut StressCont
 fn commit_notify(ctx: &mut StressContext, name: &str, subscriber_count: usize, pattern: &str) {
     let case = prepare_notify_case(subscriber_count, pattern);
     let repeat_count = commit_notify_repeat_count(subscriber_count, pattern);
+    // Keep even a full burst within the Stream delivery queue's target budget.
+    let subscribers = u64::try_from(subscriber_count).expect("subscriber count fits u64");
+    let publishes_per_chunk =
+        COMMIT_NOTIFY_CHUNK_SIZE.min(STREAM_NOTIFY_TARGETS_PER_BURST / subscribers);
+    assert!(
+        publishes_per_chunk > 0,
+        "one commit must fit in the delivery queue"
+    );
     let mut remaining = repeat_count;
     let mut total = Duration::ZERO;
     while remaining > 0 {
-        let chunk = remaining.min(COMMIT_NOTIFY_CHUNK_SIZE);
+        let chunk = remaining.min(publishes_per_chunk);
         case.reset_subscriber_counts();
         let start = Instant::now();
         for _ in 0..chunk {
@@ -266,12 +314,7 @@ fn commit_notify(ctx: &mut StressContext, name: &str, subscriber_count: usize, p
         case.reset_subscriber_counts();
         remaining -= chunk;
     }
-    tier2_stress::record_duration(
-        ctx,
-        name,
-        total,
-        repeat_count.saturating_mul(subscriber_count as u64),
-    );
+    tier2_stress::record_duration(ctx, name, total, repeat_count.saturating_mul(subscribers));
 }
 
 fn commit_notify_repeat_count(subscriber_count: usize, pattern: &str) -> u64 {

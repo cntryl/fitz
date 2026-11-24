@@ -146,6 +146,7 @@ impl TestServer {
             default_test_route_family_mappings(),
             max_message_bytes,
             crate::domains::queue::retention::QueueRetention::default(),
+            None,
         )
         .await
     }
@@ -254,6 +255,41 @@ impl TestServer {
                 .into_iter()
                 .map(|(identity, family)| (identity.into(), family))
                 .collect(),
+        )
+        .await
+    }
+
+    /// Start an authenticated benchmark server with separate storage and
+    /// runtime family sets. Runtime families may be sparse while the storage
+    /// set provisions the matching Midge column-family IDs up to its ceiling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if storage, runtime, or listeners cannot be initialized.
+    pub async fn start_with_auth_route_families_and_storage_families<I, S>(
+        route_families: Vec<u32>,
+        storage_family_ceiling: u32,
+        route_family_mappings: I,
+    ) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        I: IntoIterator<Item = (S, u32)>,
+        S: Into<String>,
+    {
+        Self::start_with_options_and_message_limit(
+            true,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+            false,
+            crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
+            route_families,
+            route_family_mappings
+                .into_iter()
+                .map(|(identity, family)| (identity.into(), family))
+                .collect(),
+            16_777_216,
+            crate::domains::queue::retention::QueueRetention::default(),
+            Some((1..=storage_family_ceiling).collect()),
         )
         .await
     }
@@ -370,6 +406,7 @@ impl TestServer {
             route_family_mappings,
             16_777_216,
             crate::domains::queue::retention::QueueRetention::default(),
+            None,
         )
         .await
     }
@@ -386,6 +423,7 @@ impl TestServer {
         route_family_mappings: Vec<(String, u32)>,
         max_message_bytes: usize,
         queue_retention: crate::domains::queue::retention::QueueRetention,
+        storage_route_families: Option<Vec<u32>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let permit = test_server_semaphore()
             .clone()
@@ -487,11 +525,26 @@ impl TestServer {
             drain_config_error: None,
         };
 
-        // Step 1: Initialize storage
-        let store = crate::api::storage_runtime::init(&boot_config).await?;
+        // Step 1: Initialize storage. A benchmark fixture may provision
+        // intermediate column families without adding those families to the
+        // runtime actor topology.
+        let storage_boot_config = storage_route_families.map(|route_families| {
+            let mut config = Box::new(boot_config.clone());
+            config.route_families = route_families;
+            config
+        });
+        let store = crate::api::storage_runtime::init(
+            storage_boot_config.as_deref().unwrap_or(&boot_config),
+        )
+        .await?;
 
         // Step 2: Initialize runtime
-        let (router, ingress, ingress_config, runtime) = crate::boot::runtime::init(&boot_config)?;
+        let (router, ingress, ingress_config, runtime) = if let Some(config) = &storage_boot_config
+        {
+            crate::boot::runtime::init_with_test_route_families(&boot_config, config)?
+        } else {
+            crate::boot::runtime::init(&boot_config)?
+        };
 
         runtime.mark_auth_config_ready();
 

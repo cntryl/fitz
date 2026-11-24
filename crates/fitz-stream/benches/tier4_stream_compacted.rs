@@ -8,19 +8,23 @@ use fitz_stream::domain::protocol::StreamWriteMode;
 use fitz_stream::domain::StreamReadItem;
 use fitz_stream::testkit::create_write_heavy_bench_store;
 use fitz_stream::testkit::domain_internals::{
-    encode_compact_global_page_key, CommitRecordsParams, CompactGlobalPageValue, EventPayload,
-    StreamStore,
+    decode_resource_offset_from_key, encode_compact_global_page_key,
+    encode_compact_resource_page_key, CommitRecordsParams, CompactGlobalPageValue,
+    CompactResourcePageValue, EventPayload, ReadResourceParams, StreamStore,
 };
 use std::time::Instant;
 use tier4_support::measure_operations;
 
+cntryl_stress::stress_allocator!();
+
 #[derive(Clone, Copy)]
 enum Scope {
+    Resource,
     Area,
     Realm,
 }
 
-fn command_history(size: usize) -> (StreamStore, Vec<EventPayload>) {
+fn command_history(size: usize) -> (StreamStore, Vec<EventPayload>, usize) {
     let engine = create_write_heavy_bench_store();
     let store = StreamStore::new(engine.clone());
     let events = (0..64_u64)
@@ -89,10 +93,38 @@ fn command_history(size: usize) -> (StreamStore, Vec<EventPayload>) {
                 64,
                 "fixture must merge the complete global bucket"
             );
-            return (store, events);
+            return (store, events, resource_decoder_copy_bytes(&txn));
         }
     }
     panic!("fixture must finish compaction");
+}
+
+fn resource_decoder_copy_bytes(txn: &cntryl_midge::Transaction) -> usize {
+    let start_key = encode_compact_resource_page_key("replay", "orders", "order-123", 0);
+    let mut prefix = start_key.clone();
+    prefix.truncate(prefix.len() - 24);
+    let rows: Vec<_> = txn
+        .scan(
+            &cntryl_midge::Query::new()
+                .prefix(Bytes::from(prefix))
+                .start_key(Bytes::from(start_key))
+                .limit(2),
+        )
+        .expect("inspect exact-resource replacement")
+        .try_collect()
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "resource history must compact to one fragment"
+    );
+    assert_eq!(decode_resource_offset_from_key(&rows[0].0).unwrap(), 0);
+    let page = CompactResourcePageValue::try_decode(&rows[0].1).unwrap();
+    assert_eq!(page.records.len(), 64);
+    page.records
+        .iter()
+        .map(|record| record.body.len() + record.metadata.as_ref().map_or(0, Bytes::len))
+        .sum()
 }
 
 fn measure_projection(
@@ -103,7 +135,7 @@ fn measure_projection(
     limit: u64,
     name: &'static str,
 ) {
-    let (store, events) = command_history(size);
+    let (store, events, baseline_decoder_copy_bytes) = command_history(size);
     ctx.parameter("scenario", "compacted_command_projection");
     ctx.parameter("measurement_scope", "direct_store");
     ctx.parameter("storage_profile", "memory");
@@ -112,6 +144,7 @@ fn measure_projection(
     ctx.parameter(
         "read_scope",
         match scope {
+            Scope::Resource => "resource",
             Scope::Area => "area",
             Scope::Realm => "realm",
         },
@@ -119,12 +152,53 @@ fn measure_projection(
     ctx.parameter("payload_size", size);
     ctx.parameter("from_offset", from);
     ctx.parameter("read_limit", limit);
+    if matches!(scope, Scope::Resource) {
+        let expected_inline_bytes: usize = events
+            .iter()
+            .map(|event| event.body.len() + event.metadata.as_ref().map_or(0, Bytes::len))
+            .sum();
+        let candidate_decoder_copy_bytes = if baseline_decoder_copy_bytes < expected_inline_bytes {
+            0
+        } else {
+            events
+                .iter()
+                .skip(usize::try_from(from).unwrap())
+                .take(usize::try_from(limit).unwrap())
+                .map(|event| event.body.len() + event.metadata.as_ref().map_or(0, Bytes::len))
+                .sum()
+        };
+        ctx.parameter(
+            "baseline_decoder_copy_bytes_per_request",
+            baseline_decoder_copy_bytes,
+        );
+        ctx.parameter(
+            "candidate_decoder_copy_bytes_per_request",
+            candidate_decoder_copy_bytes,
+        );
+        ctx.parameter(
+            "baseline_blob_reference_copy_bytes_per_request",
+            if baseline_decoder_copy_bytes < expected_inline_bytes {
+                baseline_decoder_copy_bytes
+            } else {
+                0
+            },
+        );
+    }
     ctx.parameter("filter_selectivity", "unfiltered");
     ctx.parameter("logical_unit", "read_request");
     ctx.parameter("read_requests_per_logical_operation", 1);
     measure_operations(ctx, name, 1, |latencies| {
         let started = Instant::now();
         let (items, cursor) = match scope {
+            Scope::Resource => store.read_resource(&ReadResourceParams {
+                family: 1,
+                realm: "replay",
+                area: "orders",
+                resource: "order-123",
+                from_offset: from,
+                limit,
+                max_bytes: None,
+            }),
             Scope::Area => store.read_area(1, "replay", "orders", from, limit, None),
             Scope::Realm => store.read_realm(1, "replay", from, limit, None),
         }
@@ -140,7 +214,7 @@ fn measure_projection(
             assert_eq!(record.area_offset, Some(offset));
             assert_eq!(
                 record.realm_offset,
-                matches!(scope, Scope::Realm).then_some(offset)
+                matches!(scope, Scope::Realm | Scope::Resource).then_some(offset)
             );
             assert_eq!(record.global_offset, None);
             assert_eq!(record.route.as_str(), "stream://replay/orders/order-123");
@@ -149,6 +223,7 @@ fn measure_projection(
         }
         let last = from + limit - 1;
         match scope {
+            Scope::Resource => assert_eq!(cursor.last_resource_offset, last),
             Scope::Area => assert_eq!(cursor.last_area_offset, Some(last)),
             Scope::Realm => assert_eq!(cursor.last_realm_offset, Some(last)),
         }
@@ -173,6 +248,38 @@ projection_row!(
     0,
     48,
     "compacted_area_small_events"
+);
+projection_row!(
+    should_replay_compacted_resource_small_inline_checkpoint,
+    Resource,
+    64,
+    31,
+    3,
+    "compacted_resource_small_inline_checkpoint"
+);
+projection_row!(
+    should_replay_compacted_resource_large_inline_checkpoint,
+    Resource,
+    15 * 1024,
+    31,
+    3,
+    "compacted_resource_large_inline_checkpoint"
+);
+projection_row!(
+    should_replay_compacted_resource_blob_checkpoint,
+    Resource,
+    17 * 1024,
+    31,
+    3,
+    "compacted_resource_blob_checkpoint"
+);
+projection_row!(
+    should_replay_compacted_resource_small_inline_full_read,
+    Resource,
+    64,
+    0,
+    64,
+    "compacted_resource_small_inline_full_read_control"
 );
 projection_row!(
     should_replay_compacted_realm_small_events,

@@ -742,7 +742,7 @@ pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
 }
 
 #[cfg(any(test, feature = "benchkit"))]
-fn create_raw_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomain> {
+pub(super) fn create_raw_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomain> {
     Arc::new(LeaseDomain::new(
         router,
         fitz_lease::control::admin::AdminReadModel::new(),

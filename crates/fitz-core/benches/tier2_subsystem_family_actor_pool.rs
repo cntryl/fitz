@@ -4,7 +4,7 @@ mod tier2_stress;
 
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz_core::runtime::family_actor_pool::{
-    FamilyActorLane, FamilyActorPool, FamilyActorPoolRuntime,
+    shard_count_for_family_count, FamilyActorLane, FamilyActorPool, FamilyActorPoolRuntime,
 };
 use fitz_core::runtime::routing::RouteFamily;
 use std::sync::atomic::AtomicBool;
@@ -15,6 +15,13 @@ const FAMILY_COUNT: usize = 8;
 const BATCH_SIZE: usize = 1024;
 const BURST_WAVE_COUNT: usize = 1024;
 const IDLE_WAKE_SAMPLES: usize = 128;
+const DISPATCH_SHAPES: [(&str, usize, bool); 5] = [
+    ("dispatch_hot_family_1", 1, true),
+    ("dispatch_hot_family_8", 8, true),
+    ("dispatch_hot_family_32", 32, true),
+    ("dispatch_hot_family_128", 128, true),
+    ("dispatch_even_families_128", 128, false),
+];
 
 fn provisioned_families() -> Vec<RouteFamily> {
     (1..=FAMILY_COUNT)
@@ -149,6 +156,60 @@ fn should_dispatch_coalesced_burst(ctx: &mut StressContext) {
             }
         },
     );
+}
+
+#[stress(tier = 2, name = "family_actor_dispatch_shapes")]
+fn should_measure_family_actor_dequeue_by_family_shape(ctx: &mut StressContext) {
+    for (name, family_count, hot) in DISPATCH_SHAPES {
+        let shard_count = shard_count_for_family_count(family_count);
+        let families = (0..family_count)
+            .map(|index| {
+                let id = index * shard_count + 1;
+                RouteFamily::new(u32::try_from(id).expect("family id fits"))
+            })
+            .collect::<Vec<_>>();
+        let mut pool = FamilyActorPool::<u64>::new(&families).expect("family actor pool");
+        let ingress = pool.ingress();
+        let enqueue_started = Instant::now();
+        for value in 0..BATCH_SIZE {
+            let family = if hot {
+                families[0]
+            } else {
+                families[value % families.len()]
+            };
+            ingress
+                .try_enqueue(family, FamilyActorLane::Normal, value as u64)
+                .expect("normal lane has room");
+        }
+        let enqueue_elapsed = enqueue_started.elapsed();
+        ctx.parameter("family_count", family_count);
+        ctx.parameter("distribution", if hot { "one_hot_family" } else { "even" });
+        ctx.parameter("measured_phase", "enqueue_only");
+        tier2_stress::record_duration(
+            ctx,
+            &format!("{name}_enqueue"),
+            enqueue_elapsed,
+            BATCH_SIZE as u64,
+        );
+
+        let mut shard = pool.take_shard(0).expect("collocated benchmark shard");
+        assert_eq!(shard.families().len(), family_count);
+        let dequeue_started = Instant::now();
+        let completed = (0..BATCH_SIZE)
+            .filter(|_| shard.try_next().is_some())
+            .count();
+        assert_eq!(completed, BATCH_SIZE);
+        let dequeue_elapsed = dequeue_started.elapsed();
+        ctx.parameter("family_count", family_count);
+        ctx.parameter("distribution", if hot { "one_hot_family" } else { "even" });
+        ctx.parameter("measured_phase", "dequeue_only");
+        tier2_stress::record_duration(
+            ctx,
+            &format!("{name}_dequeue"),
+            dequeue_elapsed,
+            BATCH_SIZE as u64,
+        );
+    }
 }
 
 stress_main!();
