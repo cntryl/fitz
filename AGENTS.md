@@ -45,6 +45,7 @@ Right:
 ## Working Rules
 - Keep changes small and focused.
 - Do not overwrite unrelated user edits.
+- Use the `gh` CLI for all GitHub operations.
 - Prefer the nearest file that controls the behavior over broad refactors.
 - Keep files small. No file should exceed 1,000 lines, and files should be split or refactored before they approach that limit.
 - Optimize for simplicity. Complexity, DRY, and clarity are mandatory design constraints.

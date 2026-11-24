@@ -28,7 +28,7 @@ does not weaken an explicit Sync choice. Client COMMIT accepts only these two
 choices, rather than internal BestEffort or cloud policy variants.
 
 Conversion from the resolved Fitz policy to Midge `WriteOptions` lives in
-`src/storage/write_policy.rs`. Domain stores use that resolved policy when
+`crates/fitz-storage/src/storage/write_policy.rs`. Domain stores use that resolved policy when
 committing engine transactions. Midge remains the concrete storage engine
 behind those adapters. Queue persistence is always best effort.
 

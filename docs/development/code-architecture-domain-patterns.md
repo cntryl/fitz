@@ -1,7 +1,7 @@
 # Fitz Code Architecture Domain Patterns
 
 **Status**: Source-structure reference
-**Scope**: Domain implementation layout under `src/domains`
+**Scope**: Domain implementation layout in the domain crates
 
 Fitz domains share implementation patterns, but each domain owns only its own
 guarantees. Shared code shape must not blur domain semantics.

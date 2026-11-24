@@ -1,8 +1,26 @@
 # Benchmark targets
 
-The Cargo manifest is the source of target names and tier membership. Each
-benchmark workflow is manually dispatched and uploads its report. These
+Each crate's Cargo manifest registers its benchmark targets. The benchmark
+workflows run on a schedule, support manual runs, and upload reports. These
 workloads are diagnostic and are not a pull-request performance gate.
+
+- **Benchmark Nightly** runs Tiers 1–4 daily. For a manual run, choose a tier or
+  `all`, then select the measurement profile. Manual runs default to Tier 1.
+- **Benchmark Tier 5 Saturation** runs weekly.
+- **Benchmark Tier 6 Endurance** runs monthly.
+
+Scheduled saturation and endurance runs use the extended profile (3,600-second
+duration setting). Manual runs default to standard (600 seconds).
+
+To start a Tier 4 smoke run from the command line, use the nightly workflow.
+
+```sh
+gh workflow run nightly.yml -f tier=tier4 -f profile=smoke
+```
+
+If a nightly target is already running on the same ref, a repeat queues behind
+it. GitHub keeps the newest pending request for that target. Other targets can
+run in parallel.
 
 Targets requiring explicit setup:
 
@@ -24,9 +42,6 @@ Targets requiring explicit setup:
   resource envelope.
 - `lease_pressure`: use `cargo bench -p fitz-e2e --bench lease_pressure` with an explicit
   resource envelope.
-
-Other targets are grouped by tier in `.github/workflows/bench-tier*.yml` and
-registered in `Cargo.toml`.
 
 The `tier1_hotpath_message` target also compares Wire 2 and Wire 3 core-only
 frame decoding, measures a small unknown extension, and scans a valid Wire 3

@@ -11,12 +11,12 @@ guarantees beyond the authoritative domain documents.
 ```mermaid
 sequenceDiagram
     participant Main as main/bootstrap caller
-    participant Boot as src/boot/mod.rs
+    participant Boot as fitz-server boot
     participant Config as BootConfig
     participant Runtime as runtime init
     participant HTTP as HTTP listener
     participant Storage as Midge storage
-    participant Domains as src/boot/domains.rs
+    participant Domains as fitz-server boot/domains.rs
     participant Router as runtime Router
     participant Background as api/background.rs
 
@@ -43,14 +43,14 @@ readiness still requires storage, domain registration, and startup completion.
 
 ```mermaid
 sequenceDiagram
-    participant Transport as src/api/handlers
+    participant Transport as fitz-server API handlers
     participant Ingress as RuntimeIngress
     participant Auth as session_authenticator.rs
     participant Registry as session_registry.rs
     participant Policy as dispatch_policy.rs
     participant Dispatcher as domain_frame_dispatcher.rs
-    participant Codec as src/protocol
-    participant Router as src/runtime/router.rs
+    participant Codec as Domain crate codec
+    participant Router as fitz-core Router
     participant Sink as domain sink
 
     Transport->>Ingress: on_frame(session, channel, type, payload)
@@ -102,12 +102,12 @@ sessions, or queue inflight ownership.
 
 ```mermaid
 flowchart LR
-    MANIFEST["src/runtime/domain_manifest.rs"]
+    MANIFEST["fitz-core runtime/domain_manifest.rs"]
     ALL["DomainKind::ALL<br/>KV, Queue, Notice, Stream, RPC, Lease, Schedule"]
     CLEANUP["SESSION_CLEANUP_ORDER<br/>KV, Notice, RPC, Stream, Schedule, Lease, Queue"]
     DESCRIPTOR["DomainDescriptor<br/>scheme, inbound route, cleanup route"]
-    BOOT["src/boot/domains.rs"]
-    INGRESS["src/api/runtime_ingress"]
+    BOOT["fitz-server boot/domains.rs"]
+    INGRESS["fitz-server api/runtime_ingress"]
 
     MANIFEST --> ALL
     MANIFEST --> CLEANUP

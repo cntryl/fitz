@@ -28,7 +28,7 @@ fn usize_to_u32_saturating(value: usize) -> u32 {
 }
 
 /// Wire-encoded byte cost of one item, matching `encode_list_page_into` in
-/// `src/protocol/lease_codec.rs` exactly: four length-prefixed fields plus
+/// `lease_codec.rs` exactly: four length-prefixed fields plus
 /// three fixed-width ones.
 fn encoded_item_bytes(item: &LeaseListItem) -> usize {
     4 + item.route.as_str().len()

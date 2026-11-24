@@ -2,7 +2,7 @@
 
 Released Wire 2 assignments remain unchanged in Wire 3. Wire 3 adds NACK (210),
 gated by capability 2. Reserved identifiers are not valid operations. The broker manifest
-in `src/protocol/manifest.rs` is the implementation source of truth. Wire 3
+in `crates/fitz-core/src/protocol/manifest.rs` is the implementation source of truth. Wire 3
 extension fields are registered separately in
 [extension-registry.md](extension-registry.md).
 

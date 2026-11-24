@@ -41,4 +41,4 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Test cloud integration
-        run: cargo test --locked --test cloud_integration -- --ignored
+        run: cargo test --locked -p fitz-e2e --test cloud_integration -- --ignored

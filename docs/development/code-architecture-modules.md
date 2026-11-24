@@ -1,7 +1,7 @@
 # Fitz Code Architecture Modules
 
 **Status**: Source-structure reference
-**Scope**: Rust broker workspace under `src/`
+**Scope**: Rust broker workspace under `crates/`
 
 This document describes how the code is organized. It is not a replacement for
 the domain contracts in [domain-boundaries-spec.md](domain-boundaries-spec.md)
@@ -12,14 +12,14 @@ or the behavioral diagrams in
 
 ```mermaid
 flowchart TB
-    subgraph BOOT["src/boot"]
-        BOOTMOD["mod.rs<br/>startup and shutdown orchestration"]
+    subgraph BOOT["fitz-server boot"]
+        BOOTMOD["api/broker.rs<br/>startup and shutdown orchestration"]
         BOOTRT["runtime/<br/>BootConfig and env parsing"]
         BOOTDOM["domains.rs<br/>domain sink construction"]
-        BOOTSTOR["storage.rs<br/>Midge engine open"]
+        BOOTSTOR["api/storage_runtime.rs<br/>Midge engine open"]
     end
 
-    subgraph API["src/api"]
+    subgraph API["fitz-server API"]
         HANDLERS["handlers/<br/>HTTP, TCP, WebSocket listeners"]
         INGRESS["runtime_ingress/<br/>auth, session registry, domain dispatch"]
         ADMIN["admin/<br/>operator APIs, assets, metrics, topology"]
@@ -27,18 +27,18 @@ flowchart TB
         OUTBOUND["outbound.rs<br/>session response delivery"]
     end
 
-    subgraph AUTHSESSION["auth and session"]
+    subgraph AUTHSESSION["fitz-server auth and session"]
         AUTH["src/auth<br/>JWT, claims, permissions, route-family resolver"]
         SESSION["src/session<br/>session actor and permission checks"]
     end
 
-    subgraph PROTO["src/protocol"]
-        MESSAGE["message.rs, wire2 and frame modules"]
-        CODECS["domain codecs<br/>kv, notice, queue, rpc, lease, stream, schedule"]
-        DISPATCH["dispatch adapter<br/>decode, commands, responses"]
+    subgraph PROTO["wire handling"]
+        MESSAGE["fitz-core framing<br/>message.rs and wire2"]
+        CODECS["domain crate codecs<br/>kv, notice, queue, rpc, lease, stream, schedule"]
+        DISPATCH["fitz-server dispatch adapter<br/>decode, commands, responses"]
     end
 
-    subgraph RUNTIME["src/runtime"]
+    subgraph RUNTIME["fitz-core runtime"]
         ROUTING["routing.rs<br/>RouteFamily, Route, RouteAddress"]
         ROUTER["router.rs<br/>MailboxSink delivery"]
         MANIFEST["protocol/manifest.rs<br/>exact message IDs and authorization"]
@@ -46,7 +46,7 @@ flowchart TB
         EVENTS["domain_event.rs<br/>DomainPublishEvent, SessionCleanup"]
     end
 
-    subgraph DOMAINS["src/domains"]
+    subgraph DOMAINS["domain crates"]
         KV["kv"]
         QUEUE["queue"]
         NOTICE["notice"]
@@ -54,15 +54,15 @@ flowchart TB
         RPC["rpc"]
         LEASE["lease"]
         SCHEDULE["schedule"]
-        SUBSTATE["subscription_state.rs<br/>shared routed subscription set"]
+        SUBSTATE["fitz-core subscription_state.rs<br/>shared routed subscription set"]
     end
 
     subgraph SUPPORT["supporting code"]
-        STORAGE["src/storage wrapper<br/>FitzStorageEngine"]
-        CONTROL["src/control<br/>admin read model and health models"]
-        OBS["src/observability<br/>metrics and tracing helpers"]
-        TESTKIT["src/testkit and src/benchkit"]
-        CLIENT["src/client"]
+        STORAGE["fitz-storage wrapper<br/>FitzStorageEngine"]
+        CONTROL["fitz-server control<br/>admin read model and health models"]
+        OBS["fitz-server observability<br/>metrics and tracing helpers"]
+        TESTKIT["crate test fixtures and fitz-server benchkit"]
+        CLIENT["fitz-server client"]
     end
 
     BOOTMOD --> BOOTRT
@@ -164,18 +164,19 @@ flowchart LR
 
 Important boundaries:
 
-- `src/api` owns async I/O and the async/sync transition.
-- `src/runtime` owns synchronous routing primitives, not domain behavior.
-- `src/domains` owns domain mechanics and may use runtime types for addressing
-  and delivery.
-- `src/protocol` owns wire DTOs, codecs, IDs, error encoding, and the exact
-  message manifest. It does not own authorization policy or domain state.
+- `fitz-server` owns async I/O and the async/sync transition in `src/api`.
+- `fitz-core` owns synchronous routing primitives, framing, message IDs, error
+  encoding, and the exact message manifest.
+- Each domain crate owns its payload codec and domain mechanics. It uses core
+  runtime types for addressing and delivery.
+- `fitz-server` applies authorization policy using the exact message manifest
+  and session permissions.
 - The dispatch adapter is the only runtime seam that turns protocol values
   into synchronous domain commands and turns domain responses back into frames.
-- `src/control` and `src/api/admin` expose read models and operator views; they
-  must not define correctness behavior.
-- `src/observability` records what happened; disabling it must not change broker
-  behavior.
+- `fitz-server` exposes read models and operator views in `src/control` and
+  `src/api/admin`. These views reflect runtime and domain state.
+- `fitz-server` records metrics and traces in `src/observability`. Broker
+  behavior is independent of whether observability is enabled.
 
 ## Route And Dispatch Ownership
 

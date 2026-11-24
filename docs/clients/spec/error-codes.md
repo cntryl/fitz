@@ -2,7 +2,7 @@
 
 Status: **authoritative for 0.3.0 and the 1.0.0 wire format**. Codes are
 append-only: a code is never renamed, reused, or given a new meaning. The
-broker's catalog in `src/protocol/wire2/catalog.rs` is the implementation of
+broker's catalog in `crates/fitz-core/src/protocol/wire2/catalog.rs` is the implementation of
 this page; the two must agree and the conformance vectors prove it.
 
 Every error travels in the common envelope from

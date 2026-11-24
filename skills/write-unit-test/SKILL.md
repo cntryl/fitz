@@ -218,5 +218,5 @@ fn should_return_begin_ok_given_valid_realm() {
 
 ## Reference Examples in Codebase
 
-- Behavior-focused tests: [src/protocol/manifest.rs](../../src/protocol/manifest.rs)
-- AAA structure: [KV wire-budget tests](../../src/domains/kv/actor/tests/wire_budget.rs)
+- Behavior-focused tests: [protocol manifest tests](../../crates/fitz-core/src/protocol/manifest.rs)
+- AAA structure: [KV wire-budget tests](../../crates/fitz-kv/src/domain/actor/tests/wire_budget.rs)

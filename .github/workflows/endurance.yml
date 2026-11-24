@@ -1,4 +1,5 @@
-name: Benchmark Tier 6
+name: Benchmark Tier 6 Endurance
+run-name: Endurance benchmarks (${{ inputs.profile || 'extended' }})
 
 on:
   workflow_dispatch:
@@ -39,12 +40,14 @@ jobs:
       RUST_LOG: "off"
       FITZ_LOG_LEVEL: "off"
       OTEL_ENABLED: "false"
+      STRESS_OUTPUT_DIR: ${{ github.workspace }}/target/stress
       STRESS_PROFILE: smoke
       STRESS_SAMPLES: "1"
       STRESS_WARMUP_SAMPLES: "0"
       STRESS_COOLDOWN_SAMPLES: "0"
       FITZ_STRESS_STORAGE_PROFILE: local_disk
       STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
+      # Scheduled runs use the extended settings.
       FITZ_TIER6_DURATION_SECS: ${{ inputs.profile == 'smoke' && '60' || inputs.profile == 'standard' && '600' || '3600' }}
       STRESS_TIMEOUT_SECS: ${{ inputs.profile == 'smoke' && '960' || inputs.profile == 'standard' && '1500' || '4500' }}
 
@@ -56,7 +59,7 @@ jobs:
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
       - name: Run benchmarks
-        run: cargo bench --locked --bench tier6_endurance --features benchkit,stress-soak -- --workload '${{ matrix.workload }}'
+        run: cargo bench --locked -p fitz-e2e --bench tier6_endurance --features benchkit,stress-soak -- --workload '${{ matrix.workload }}'
 
       - name: Upload benchmark reports
         if: always()
