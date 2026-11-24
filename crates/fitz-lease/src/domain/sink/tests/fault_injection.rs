@@ -1,0 +1,239 @@
+//! Fault-injection tests for the Lease ACQUIRE/RELEASE ownership-mutation
+//! and waiter-promotion boundary crossings described in the 2026-09
+//! correctness audit's `notice_lease` slice.
+
+use super::*;
+
+struct FailingSink;
+
+impl fitz_core::runtime::MailboxSink for FailingSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), fitz_core::runtime::DeliveryError> {
+        Err(fitz_core::runtime::DeliveryError::ActorStopped)
+    }
+
+    fn deliver_high_priority(
+        &self,
+        envelope: Envelope,
+    ) -> Result<(), fitz_core::runtime::DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[test]
+fn should_leave_lease_unheld_when_direct_acquire_grant_reply_reports_actor_stopped() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let route = "lease://acme/locks/undeliverable-actor-stopped";
+    let client = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let router = Arc::new(Router::new());
+    // Unlike the existing MailboxFull-based rollback coverage, this client's
+    // sink always fails with ActorStopped.
+    router.register(client.clone(), Arc::new(FailingSink));
+    let sink = LeaseDomain::new(router, crate::control::admin::AdminReadModel::new());
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        client,
+        destination,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(400),
+            encode_lease_acquire(route, "", 30),
+            family,
+        ),
+    ))
+    .expect("deliver acquire");
+    wait_for_lease_count(&sink, 0);
+
+    // Assert
+    // Nobody is left holding a lease that its owner never learned
+    // about.
+    assert_eq!(sink.lease_count(), 0);
+}
+
+#[test]
+fn should_leave_lease_held_when_release_is_attempted_by_a_non_owner_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let owner_session_id = 7;
+    let other_session_id = 8;
+    let route = "lease://acme/locks/release-non-owner";
+    let key = lease_key(family, route);
+    let owner_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let other_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let router = Arc::new(Router::new());
+    let owner_mailbox = Arc::new(Mailbox::new(8));
+    let other_mailbox = Arc::new(Mailbox::new(8));
+    router.register(owner_address.clone(), owner_mailbox.clone());
+    router.register(other_address.clone(), other_mailbox.clone());
+    let sink = LeaseDomain::new(router, crate::control::admin::AdminReadModel::new());
+    sink.deliver(Envelope::from_route(
+        owner_address,
+        destination.clone(),
+        FrameContext::new(
+            owner_session_id,
+            ChannelId::Sub,
+            MessageType::new(400),
+            encode_lease_acquire(route, "shared", 30),
+            family,
+        ),
+    ))
+    .expect("deliver acquire");
+    let _acquire_ack = receive_envelope(&owner_mailbox, "acquire ack");
+    assert_eq!(sink.lease_count(), 1);
+
+    // Act
+    // A different session, even reusing the same client-supplied
+    // owner_id string, is scoped by session and so is not the owner.
+    sink.deliver(Envelope::from_route(
+        other_address,
+        destination,
+        FrameContext::new(
+            other_session_id,
+            ChannelId::Sub,
+            MessageType::new(402),
+            encode_lease_release(route, "shared", 1),
+            family,
+        ),
+    ))
+    .expect("deliver release");
+    let _release_ack = receive_envelope(&other_mailbox, "release ack");
+
+    // Assert
+    // The lease is untouched and still tracked against its real
+    // owner.
+    assert_eq!(sink.lease_count(), 1);
+    assert!(sink.session_leases_contain_for_tests(owner_session_id, &key));
+}
+
+#[test]
+fn should_leave_lease_held_when_release_carries_a_stale_fencing_token() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let owner_session_id = 7;
+    let route = "lease://acme/locks/release-stale-token";
+    let key = lease_key(family, route);
+    let owner_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let router = Arc::new(Router::new());
+    let owner_mailbox = Arc::new(Mailbox::new(8));
+    router.register(owner_address.clone(), owner_mailbox.clone());
+    let sink = LeaseDomain::new(router, crate::control::admin::AdminReadModel::new());
+    sink.deliver(Envelope::from_route(
+        owner_address.clone(),
+        destination.clone(),
+        FrameContext::new(
+            owner_session_id,
+            ChannelId::Sub,
+            MessageType::new(400),
+            encode_lease_acquire(route, "owner", 30),
+            family,
+        ),
+    ))
+    .expect("deliver acquire");
+    let _acquire_ack = receive_envelope(&owner_mailbox, "acquire ack");
+    assert_eq!(sink.lease_count(), 1);
+
+    // Act
+    // The correct owner/session, but a fencing token that does not
+    // match the live one (e.g. replayed from a superseded acquisition).
+    sink.deliver(Envelope::from_route(
+        owner_address,
+        destination,
+        FrameContext::new(
+            owner_session_id,
+            ChannelId::Sub,
+            MessageType::new(402),
+            encode_lease_release(route, "owner", u64::MAX),
+            family,
+        ),
+    ))
+    .expect("deliver release");
+    let _release_ack = receive_envelope(&owner_mailbox, "release ack");
+
+    // Assert
+    // Fencing rejects the stale-token release and ownership is
+    // unaffected.
+    assert_eq!(sink.lease_count(), 1);
+    assert!(sink.session_leases_contain_for_tests(owner_session_id, &key));
+}
+
+#[test]
+fn should_reject_previous_fencing_token_after_same_owner_reacquires_expired_lease() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let route = "lease://acme/locks/reacquire-after-expiry";
+    let key = lease_key(family, route);
+    let admin_read_model = crate::control::admin::AdminReadModel::new();
+    let sink = LeaseDomain::new(Arc::new(Router::new()), admin_read_model.clone());
+    let LeaseResponse::Acquired {
+        fencing_token: old_token,
+    } = sink.acquire_for_bench(&key, session_id, "owner", 30, family)
+    else {
+        panic!("expected first acquisition");
+    };
+    assert!(sink.expire_lease_for_tests(&key));
+    let LeaseResponse::Acquired {
+        fencing_token: new_token,
+    } = sink.acquire_for_bench(&key, session_id, "owner", 30, family)
+    else {
+        panic!("expected reacquisition");
+    };
+
+    // Act
+    let stale_release = sink.release_for_bench(&key, "owner", old_token);
+    let current_leases = admin_read_model.leases(None);
+
+    // Assert
+    assert_ne!(new_token, old_token);
+    assert_eq!(
+        stale_release,
+        LeaseResponse::Fenced {
+            current_token: new_token
+        }
+    );
+    assert_eq!(current_leases.len(), 1);
+    assert_eq!(current_leases[0].fencing_token, new_token);
+}
+
+#[test]
+fn should_reject_stale_lease_renewal_after_reacquire_domain_invariant() {
+    // Arrange
+    let route = "lease://acme/locks/resource";
+    let frames = [
+        (400, encode_lease_acquire(route, "owner", 30)),
+        (402, encode_lease_release(route, "owner", 1)),
+        (400, encode_lease_acquire(route, "owner", 30)),
+        (401, encode_lease_extend(route, "owner", 1, 60)),
+        (401, encode_lease_extend(route, "owner", 2, 60)),
+    ];
+
+    // Act
+    for prepared in [false, true] {
+        let responses = lease_response_payloads(prepared, &frames);
+
+        // Assert
+        let encode = crate::wire::lease_codec::encode_domain_response;
+        assert_eq!(
+            responses[0].as_ref(),
+            encode(&LeaseResponse::Acquired { fencing_token: 1 })
+        );
+        assert_eq!(
+            responses[2].as_ref(),
+            encode(&LeaseResponse::Acquired { fencing_token: 2 })
+        );
+        assert_eq!(
+            responses[3].as_ref(),
+            encode(&LeaseResponse::Fenced { current_token: 2 })
+        );
+        assert_eq!(
+            responses[4].as_ref(),
+            encode(&LeaseResponse::Extended { fencing_token: 2 })
+        );
+    }
+}

@@ -1,0 +1,60 @@
+[package]
+name = "fitz-schedule"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+autobenches = false
+
+[lib]
+bench = false
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+benchkit = []
+bench-no-snapshot = []
+
+[dependencies]
+fitz-core.workspace = true
+fitz-storage.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+cntryl-midge.workspace = true
+crossbeam-channel.workspace = true
+hex.workspace = true
+lexkey.workspace = true
+parking_lot.workspace = true
+rustc-hash.workspace = true
+schemars.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+cntryl-stress.workspace = true
+proptest.workspace = true
+serial_test.workspace = true
+tempfile.workspace = true
+fitz-core = { workspace = true, features = ["bench-support"] }
+
+[[bench]]
+name = "tier2_subsystem_schedule_scan"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_schedule_create"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_schedule_churn"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_schedule_control_latency"
+harness = false
+
+[dev-dependencies.fitz-schedule]
+workspace = true
+features = ["test-support"]

@@ -1,0 +1,645 @@
+use super::*;
+use crate::domain::metrics::{
+    METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
+    METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
+};
+use crate::domain::protocol::ScheduleCreateEntry;
+use crate::domain::store::{ScheduleInsert, SchedulePersistenceError, ScheduleStore};
+use crate::testkit::{create_in_memory_test_engine_with_cfs, create_test_engine_with_cfs};
+use bytes::Bytes;
+use chrono::TimeZone;
+use fitz_core::runtime::clock::Clock;
+use fitz_core::runtime::routing::RouteFamily;
+use serial_test::serial;
+use std::cmp::Reverse;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+#[derive(Clone)]
+struct MockClock {
+    state: Arc<Mutex<MockClockState>>,
+}
+
+#[derive(Clone, Copy)]
+struct MockClockState {
+    instant: Instant,
+    epoch_ms: u64,
+}
+
+impl MockClock {
+    fn new(epoch_ms: u64) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(MockClockState {
+                instant: Instant::now(),
+                epoch_ms,
+            })),
+        }
+    }
+
+    fn advance(&self, duration: Duration) {
+        let mut state = self.state.lock().expect("lock mock clock");
+        state.instant += duration;
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_add(u128_to_u64_saturating(duration.as_millis()));
+    }
+}
+
+impl Clock for MockClock {
+    fn now_instant(&self) -> Instant {
+        self.state.lock().expect("lock mock clock").instant
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        self.state.lock().expect("lock mock clock").epoch_ms
+    }
+}
+
+fn epoch_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> u64 {
+    let millis = chrono::Utc
+        .with_ymd_and_hms(year, month, day, hour, minute, second)
+        .single()
+        .expect("valid datetime")
+        .timestamp_millis();
+    u64::try_from(millis).expect("test datetime should be after unix epoch")
+}
+
+fn make_actor() -> ScheduleActor {
+    let store = create_test_engine_with_cfs(vec![1]);
+    ScheduleActor::new(
+        RouteFamily::new(1),
+        ScheduleStore::new(store),
+        fitz_storage::domains::WritePolicy::Buffered,
+    )
+}
+
+fn make_actor_with_clock(clock: Arc<dyn Clock>) -> ScheduleActor {
+    let store = create_test_engine_with_cfs(vec![1]);
+    ScheduleActor::new_with_clock(
+        RouteFamily::new(1),
+        ScheduleStore::new(store),
+        fitz_storage::domains::WritePolicy::Buffered,
+        clock,
+    )
+}
+
+fn metric_counter(name: &str) -> u64 {
+    fitz_core::observability::metrics().counter_get(name)
+}
+
+#[test]
+fn should_normalize_overdue_persisted_schedule_forward_on_preload() {
+    // Arrange
+    let db = create_test_engine_with_cfs(vec![1]);
+    let store = ScheduleStore::new(db.clone());
+    let route = "schedule://acme/jobs/normalize/run";
+    let payload = Bytes::from_static(b"payload");
+    let overdue_ms = ScheduleActor::current_epoch_ms().saturating_sub(4 * 60 * 60 * 1000);
+
+    store
+        .insert(
+            1,
+            ScheduleInsert {
+                route,
+                cron: "* * * * *",
+                delivery_mode: crate::domain::ScheduleDeliveryMode::Broadcast,
+                payload: &payload,
+                next_fire_ms: overdue_ms,
+                previous_fire_ms: None,
+                last_fire_ms: None,
+                executions_total: 0,
+            },
+            fitz_storage::domains::WritePolicy::Buffered,
+        )
+        .expect("insert overdue schedule");
+
+    // Act
+    let actor = ScheduleActor::try_new(
+        RouteFamily::new(1),
+        store,
+        fitz_storage::domains::WritePolicy::Buffered,
+    )
+    .expect("load actor");
+
+    // Assert
+    let schedule = actor
+        .schedules
+        .get(route)
+        .expect("persisted schedule should be loaded");
+    assert!(schedule.next_fire_ms > overdue_ms);
+}
+
+#[test]
+fn should_fail_closed_given_impossible_persisted_cron() {
+    // Arrange
+    let db = create_test_engine_with_cfs(vec![1]);
+    let store = ScheduleStore::new(db.clone());
+    let route = "schedule://acme/jobs/impossible/run";
+    let cron = "0 0 31 2 *";
+    let payload = Bytes::from_static(b"payload");
+    store
+        .insert(
+            1,
+            ScheduleInsert {
+                route,
+                cron,
+                delivery_mode: crate::domain::ScheduleDeliveryMode::Broadcast,
+                payload: &payload,
+                next_fire_ms: ScheduleActor::current_epoch_ms(),
+                previous_fire_ms: None,
+                last_fire_ms: None,
+                executions_total: 0,
+            },
+            fitz_storage::domains::WritePolicy::Buffered,
+        )
+        .expect("seed invalid persisted schedule");
+
+    // Act
+    let result = ScheduleActor::try_new(
+        RouteFamily::new(1),
+        store,
+        fitz_storage::domains::WritePolicy::Buffered,
+    );
+    let Err(error) = result else {
+        panic!("invalid persisted cron must stop recovery");
+    };
+
+    // Assert
+    assert!(error.contains(route));
+    assert!(error.contains(cron));
+    assert!(error.contains("no possible fire time"));
+}
+
+#[test]
+fn should_skip_missed_execution_given_overdue_schedule_on_preload() {
+    // Arrange
+    let db = create_test_engine_with_cfs(vec![1]);
+    let store = ScheduleStore::new(db.clone());
+    let route = "schedule://acme/jobs/skip/run";
+    let payload = Bytes::from_static(b"payload");
+    let now = Instant::now();
+    let overdue_at = now.checked_sub(Duration::from_mins(2)).unwrap();
+    let overdue_ms = ScheduleActor::instant_to_ms_at(overdue_at, now);
+
+    store
+        .insert(
+            1,
+            ScheduleInsert {
+                route,
+                cron: "* * * * *",
+                delivery_mode: crate::domain::ScheduleDeliveryMode::Broadcast,
+                payload: &payload,
+                next_fire_ms: overdue_ms,
+                previous_fire_ms: None,
+                last_fire_ms: None,
+                executions_total: 0,
+            },
+            fitz_storage::domains::WritePolicy::Buffered,
+        )
+        .expect("insert overdue schedule");
+
+    let mut actor = ScheduleActor::try_new_at(
+        RouteFamily::new(1),
+        store,
+        fitz_storage::domains::WritePolicy::Buffered,
+        now,
+    )
+    .expect("load actor");
+    actor.last_scan_time = now
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .unwrap();
+
+    // Act
+    let fired = actor.collect_due_occurrences_for_publish_at(now);
+
+    // Assert
+    assert!(
+        fired.is_empty(),
+        "overdue schedules should normalize forward instead of replaying missed executions"
+    );
+    assert!(actor.schedules.get(route).expect("schedule").next_fire_time > now);
+}
+
+#[test]
+fn should_preserve_pending_due_occurrence_given_identical_create_retry_at_due_boundary() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/retry/run".to_string();
+    let cron = "* * * * *".to_string();
+    let payload = Bytes::from_static(b"payload");
+    let created_at = Instant::now();
+
+    actor
+        .create_schedule_at(route.clone(), cron.clone(), payload.clone(), created_at)
+        .expect("create schedule");
+
+    let original = actor.schedules.get(&route).expect("schedule").clone();
+
+    // Act
+    let changed = actor
+        .create_schedule_at(route.clone(), cron, payload, original.next_fire_time)
+        .expect("retry identical create");
+
+    // Assert
+    assert!(
+        !changed,
+        "identical retry should remain idempotent at due time"
+    );
+    let schedule = actor.schedules.get(&route).expect("schedule");
+    assert_eq!(schedule.next_fire_ms, original.next_fire_ms);
+    assert_eq!(schedule.next_fire_time, original.next_fire_time);
+}
+
+#[test]
+fn should_preserve_pending_due_occurrence_given_identical_batch_retry_at_due_boundary() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/batch-retry/run".to_string();
+    let cron = "* * * * *".to_string();
+    let payload = Bytes::from_static(b"payload");
+    let created_at = Instant::now();
+
+    actor
+        .create_schedule_at(route.clone(), cron.clone(), payload.clone(), created_at)
+        .expect("create schedule");
+
+    let original = actor.schedules.get(&route).expect("schedule").clone();
+    let entries = vec![ScheduleCreateEntry {
+        route: route.clone(),
+        cron,
+        delivery_mode: crate::domain::ScheduleDeliveryMode::Broadcast,
+        payload,
+    }];
+
+    // Act
+    let changed = actor
+        .create_schedules_at(entries, original.next_fire_time)
+        .expect("retry identical batch create");
+
+    // Assert
+    assert_eq!(
+        changed, 0,
+        "identical batch retry should not rewrite the schedule"
+    );
+    let schedule = actor.schedules.get(&route).expect("schedule");
+    assert_eq!(schedule.next_fire_ms, original.next_fire_ms);
+    assert_eq!(schedule.next_fire_time, original.next_fire_time);
+}
+
+#[test]
+fn should_not_advance_in_memory_or_fire_when_reschedule_persist_fails() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/failure/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+
+    let before = actor.schedules.get(route).expect("schedule").next_fire_ms;
+
+    // Act
+    actor.store.fail_next_commit_for_tests();
+    let fired = actor.collect_due_occurrences_for_publish();
+
+    // Assert
+    assert!(fired.is_empty(), "scan should not emit on persist failure");
+    assert_eq!(
+        actor.schedules.get(route).expect("schedule").next_fire_ms,
+        before,
+        "in-memory schedule should not advance when persistence fails"
+    );
+}
+
+#[test]
+fn should_report_execution_state_given_acknowledged_pending_fire() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/execution-state/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    let claimed_fire_ms = actor.schedules.get(route).expect("schedule").next_fire_ms;
+    let now = Instant::now();
+    actor.last_scan_time = now
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .unwrap();
+
+    // Act
+    let fired = actor.collect_due_occurrences_for_publish_at(now);
+    actor
+        .ack_pending_fire_claims(&[(claimed_fire_ms, route.to_string())])
+        .expect("ack pending fire");
+    let snapshot = actor.admin_snapshot();
+
+    // Assert
+    assert_eq!(fired.len(), 1, "scan should claim one due occurrence");
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].executions_total, 1);
+    assert!(snapshot[0].last_run.is_some());
+}
+
+#[test]
+fn should_report_oldest_pending_claim_age_given_pending_fire() {
+    // Arrange
+    let clock = Arc::new(MockClock::new(epoch_ms(2026, 3, 31, 5, 59, 30)));
+    let mut actor = make_actor_with_clock(clock.clone());
+    let route = "schedule://acme/jobs/pending/run".to_string();
+
+    actor
+        .create_schedule_at(
+            route.clone(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+            clock.now_instant(),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+
+    // Act
+    let claimed = actor.bench_claim_due_fires();
+    assert_eq!(claimed.len(), 1);
+    clock.advance(Duration::from_secs(45));
+
+    // Assert
+    assert_eq!(
+        actor.oldest_pending_claim_age_seconds(clock.now_epoch_ms()),
+        45
+    );
+}
+
+#[test]
+fn should_claim_every_due_route_once_across_bounded_scans() {
+    // Arrange
+    let clock = Arc::new(MockClock::new(epoch_ms(2026, 8, 28, 19, 13, 0)));
+    let mut actor = make_actor_with_clock(clock.clone());
+    for sequence in 0..33 {
+        actor
+            .create_schedule_at(
+                format!("schedule://acme/storm/jobs/job-{sequence:02}"),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+                clock.now_instant(),
+            )
+            .expect("create storm schedule");
+    }
+    actor.bench_prepare_scan(33);
+
+    // Act
+    let first = actor.bench_claim_due_fires();
+    clock.advance(actor.scan_dedup_window + Duration::from_millis(1));
+    let second = actor.bench_claim_due_fires();
+
+    // Assert
+    assert_eq!(first.len(), 32, "one scan must claim a bounded batch");
+    assert_eq!(
+        second.len(),
+        1,
+        "the next scan must claim remaining due work"
+    );
+    let routes: std::collections::HashSet<_> = first
+        .iter()
+        .chain(&second)
+        .map(|claim| claim.route.as_str())
+        .collect();
+    assert_eq!(routes.len(), 33, "every due route must be claimed once");
+}
+
+#[test]
+fn should_compact_ready_heap_given_repeated_schedule_upserts() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/compact/run".to_string();
+    let now = Instant::now();
+    actor
+        .create_schedule_at(
+            route.clone(),
+            "0 2 * * *".to_string(),
+            Bytes::from_static(b"one"),
+            now,
+        )
+        .expect("create schedule");
+    actor
+        .create_schedule_at(
+            route.clone(),
+            "0 3 * * *".to_string(),
+            Bytes::from_static(b"two"),
+            now,
+        )
+        .expect("first upsert");
+
+    // Act
+    actor
+        .create_schedule_at(
+            route.clone(),
+            "0 4 * * *".to_string(),
+            Bytes::from_static(b"three"),
+            now,
+        )
+        .expect("second upsert");
+
+    // Assert
+    assert_eq!(actor.schedule_count(), 1);
+    assert_eq!(actor.ready_heap.len(), 1);
+    assert_eq!(
+        actor.schedules.get(&route).expect("schedule").cron,
+        "0 4 * * *"
+    );
+}
+
+#[test]
+fn should_clear_ready_heap_given_last_schedule_delete() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/delete-compact/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+
+    // Act
+    let deleted = actor.delete_schedule(route).expect("delete schedule");
+
+    // Assert
+    assert!(deleted);
+    assert!(actor.ready_heap.is_empty());
+    assert_eq!(actor.schedule_count(), 0);
+}
+
+#[test]
+fn should_ignore_stale_heap_entries_left_by_upsert() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/stale/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "0 2 * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+
+    let now = Instant::now();
+    let stale_fire_ms = ScheduleActor::instant_to_ms_at(now, now).saturating_sub(1);
+    let current_fire_ms =
+        ScheduleActor::instant_to_ms_at(now.checked_add(Duration::from_mins(1)).unwrap(), now);
+
+    {
+        let schedule = actor.schedules.get_mut(route).expect("schedule");
+        schedule.next_fire_time = now.checked_add(Duration::from_mins(1)).unwrap();
+        schedule.next_fire_ms = current_fire_ms;
+    }
+    actor.ready_heap.clear();
+    actor
+        .ready_heap
+        .push((Reverse(stale_fire_ms), route.to_string()));
+    actor.last_scan_time = now
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .unwrap();
+
+    // Act
+    let fired = actor.collect_due_occurrences_for_publish_at(now);
+
+    // Assert
+    assert!(
+        fired.is_empty(),
+        "stale heap entry should not fire when definition has moved forward"
+    );
+    assert_eq!(
+        actor.schedules.get(route).expect("schedule").next_fire_ms,
+        current_fire_ms
+    );
+}
+
+#[test]
+fn should_not_fire_deleted_schedule_given_stale_ready_heap_entry() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/cancel/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    actor.delete_schedule(route).expect("delete schedule");
+
+    let now = Instant::now();
+    actor.last_scan_time = now
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .unwrap();
+
+    // Act
+    let fired = actor.collect_due_occurrences_for_publish_at(now);
+
+    // Assert
+    assert!(
+        fired.is_empty(),
+        "deleted schedules should not ghost-fire from stale heap entries"
+    );
+    assert_eq!(actor.schedule_count(), 0);
+}
+
+#[test]
+fn should_not_fire_future_occurrence_given_cancel_after_due_scan() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/cancel-after-scan/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+
+    let first_scan_at = Instant::now();
+    actor.last_scan_time = first_scan_at
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .unwrap();
+
+    // Act
+    let first_fired = actor.collect_due_occurrences_for_publish_at(first_scan_at);
+    let next_fire_time = actor.schedules.get(route).expect("schedule").next_fire_time;
+    actor.delete_schedule(route).expect("delete schedule");
+    actor.last_scan_time = next_fire_time
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .unwrap();
+    let second_fired = actor.collect_due_occurrences_for_publish_at(next_fire_time);
+
+    // Assert
+    assert_eq!(
+        first_fired.len(),
+        1,
+        "scan should claim the due occurrence once"
+    );
+    assert!(
+        second_fired.is_empty(),
+        "cancel after the due scan should suppress all future occurrences"
+    );
+    assert_eq!(actor.schedule_count(), 0);
+}
+
+#[test]
+fn should_delete_pending_occurrence_given_cancel_after_due_claim() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/cancel-pending/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    let scan_at = Instant::now();
+    actor.last_scan_time = scan_at
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .expect("scan time");
+    let claimed = actor.collect_due_occurrences_for_publish_at(scan_at);
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(actor.pending_fire_count(), 1);
+    assert_eq!(actor.pending_fire_times_for_route(route).len(), 1);
+
+    // Act
+    actor.delete_schedule(route).expect("cancel schedule");
+
+    // Assert
+    assert_eq!(actor.pending_fire_count(), 0);
+    assert_eq!(actor.pending_fire_times_for_route(route), Vec::<u64>::new());
+    assert_eq!(
+        actor
+            .store
+            .load_pending_fire_claims(actor.family.as_u64())
+            .expect("load pending claims"),
+        Vec::new()
+    );
+}
+
+include!("tests/more.rs");
+
+mod cache_retention;
+
+mod invariants;
+
+mod state_model;

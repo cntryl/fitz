@@ -1,0 +1,22 @@
+use super::model::LeaseFamilyRuntime;
+use std::time::{Duration, Instant};
+
+impl LeaseFamilyRuntime<'_> {
+    pub(super) fn lease_expiry(
+        now: Instant,
+        ttl_secs: u64,
+    ) -> Result<Instant, crate::domain::protocol::LeaseResponse> {
+        if ttl_secs == 0 {
+            return Err(crate::domain::protocol::LeaseResponse::Error(
+                "ttl_secs must be greater than zero".to_string(),
+            ));
+        }
+
+        now.checked_add(Duration::from_secs(ttl_secs))
+            .ok_or_else(|| {
+                crate::domain::protocol::LeaseResponse::Error(
+                    "ttl_secs exceeds the supported lease duration".to_string(),
+                )
+            })
+    }
+}

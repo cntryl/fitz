@@ -1,0 +1,220 @@
+use bytes::Bytes;
+
+use fitz_storage::domains::WritePolicy;
+
+use crate::domain::protocol::ScheduleDeliveryMode;
+use crate::domain::route_grammar::ConcreteScheduleRoute;
+
+pub(super) const DEFINITION_VALUE_VERSION_V3: u8 = 3;
+pub(super) const BODY_VALUE_VERSION_V2: u8 = 2;
+pub(super) const PENDING_FIRE_VALUE_VERSION_V3: u8 = 3;
+pub(super) const DEFINITION_PREFIX: &[u8] = &[0x01];
+pub(super) const BODY_PREFIX: &[u8] = &[0x02];
+pub(super) const DUE_PREFIX: &[u8] = &[0x03];
+pub(super) const PENDING_FIRE_PREFIX: &[u8] = &[0x04];
+pub(super) const DUE_INDEX_VALUE: &[u8] = &[1];
+
+pub struct ScheduleBatchInsert {
+    pub route: String,
+    pub cron: String,
+    pub delivery_mode: ScheduleDeliveryMode,
+    pub payload: Bytes,
+    pub next_fire_ms: u64,
+    pub previous_fire_ms: Option<u64>,
+    pub last_fire_ms: Option<u64>,
+    pub executions_total: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct ScheduleInsert<'a> {
+    pub route: &'a str,
+    pub cron: &'a str,
+    pub delivery_mode: ScheduleDeliveryMode,
+    pub payload: &'a Bytes,
+    pub next_fire_ms: u64,
+    pub previous_fire_ms: Option<u64>,
+    pub last_fire_ms: Option<u64>,
+    pub executions_total: u64,
+}
+
+pub(super) struct ScheduleDefinitionData<'a> {
+    pub(super) next_fire_ms: u64,
+    pub(super) last_fire_ms: Option<u64>,
+    pub(super) executions_total: u64,
+    pub(super) cron: &'a str,
+    pub(super) delivery_mode: ScheduleDeliveryMode,
+    pub(super) payload: &'a Bytes,
+}
+
+pub struct ScheduleFireClaim<'a> {
+    pub route: &'a str,
+    pub route_parts: &'a ConcreteScheduleRoute,
+    pub cron: &'a str,
+    pub payload: &'a Bytes,
+    pub delivery_mode: ScheduleDeliveryMode,
+    pub claimed_at_ms: u64,
+    pub next_fire_ms: u64,
+    pub previous_fire_ms: u64,
+    pub last_fire_ms: Option<u64>,
+    pub executions_total: u64,
+}
+
+pub struct SchedulePendingFireClaimAck<'a> {
+    pub route: &'a str,
+    pub fire_ms: u64,
+    pub acknowledged_at_ms: u64,
+    pub definition: Option<ScheduleAckDefinition<'a>>,
+}
+
+pub struct ScheduleAckDefinition<'a> {
+    pub next_fire_ms: u64,
+    pub cron: &'a str,
+    pub payload: &'a Bytes,
+    pub executions_total: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedSchedule {
+    pub route: String,
+    pub cron: String,
+    pub delivery_mode: ScheduleDeliveryMode,
+    pub payload: Bytes,
+    pub next_fire_ms: u64,
+    pub last_fire_ms: Option<u64>,
+    pub executions_total: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedPendingFireClaim {
+    pub route: String,
+    pub payload: Bytes,
+    pub delivery_mode: ScheduleDeliveryMode,
+    pub claimed_at_ms: u64,
+    pub fire_ms: u64,
+}
+
+#[derive(Clone)]
+pub struct ScheduleStore {
+    pub(super) db: fitz_storage::storage::FitzStorageEngine,
+    pub(super) unknown_commit_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    #[cfg(test)]
+    pub(super) fail_next_commit: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    pub(super) stall_next_commit: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    pub(super) unknown_after_apply: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[derive(Debug)]
+pub struct SchedulePersistenceError {
+    operation: &'static str,
+    source: Option<cntryl_midge::MidgeError>,
+    detail: Option<String>,
+}
+
+impl SchedulePersistenceError {
+    pub(crate) const fn midge(operation: &'static str, source: cntryl_midge::MidgeError) -> Self {
+        Self {
+            operation,
+            source: Some(source),
+            detail: None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_write_stall(&self) -> bool {
+        matches!(self.source, Some(cntryl_midge::MidgeError::WriteStall(_)))
+    }
+
+    fn classified_message(&self) -> String {
+        let category = if matches!(&self.source, Some(cntryl_midge::MidgeError::Timeout(_))) {
+            "SCHEDULE_TIMEOUT:"
+        } else {
+            "SCHEDULE_BACKEND:"
+        };
+        format!("{category} {self}")
+    }
+}
+
+impl std::fmt::Display for SchedulePersistenceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(source) = &self.source {
+            return write!(formatter, "{}: {source:?}", self.operation);
+        }
+        formatter.write_str(self.detail.as_deref().unwrap_or(self.operation))
+    }
+}
+
+impl std::error::Error for SchedulePersistenceError {}
+
+impl From<String> for SchedulePersistenceError {
+    fn from(detail: String) -> Self {
+        Self {
+            operation: "schedule persistence failed",
+            source: None,
+            detail: Some(detail),
+        }
+    }
+}
+
+impl From<SchedulePersistenceError> for String {
+    fn from(error: SchedulePersistenceError) -> Self {
+        error.classified_message()
+    }
+}
+
+/// Narrow persistence boundary used by schedule claim and acknowledgement policy.
+///
+/// Success follows the supplied write policy. An error does not generally prove
+/// that no durable effect occurred; callers retain recovery state and retry only
+/// the explicitly classified admission failure.
+pub trait SchedulePersistence {
+    /// # Errors
+    ///
+    /// Returns an error when the claim batch cannot be committed.
+    fn persist_claims(
+        &self,
+        family_id: u64,
+        claims: &[ScheduleFireClaim<'_>],
+        write_policy: WritePolicy,
+    ) -> Result<(), SchedulePersistenceError>;
+
+    /// # Errors
+    ///
+    /// Returns an error when the acknowledgement batch cannot be committed.
+    fn acknowledge_claims(
+        &self,
+        family_id: u64,
+        claims: &[SchedulePendingFireClaimAck<'_>],
+        write_policy: WritePolicy,
+    ) -> Result<(), SchedulePersistenceError>;
+}
+
+impl SchedulePersistence for ScheduleStore {
+    fn persist_claims(
+        &self,
+        family_id: u64,
+        claims: &[ScheduleFireClaim<'_>],
+        write_policy: WritePolicy,
+    ) -> Result<(), SchedulePersistenceError> {
+        self.claim_due_batch(family_id, claims, write_policy)
+    }
+
+    fn acknowledge_claims(
+        &self,
+        family_id: u64,
+        claims: &[SchedulePendingFireClaimAck<'_>],
+        write_policy: WritePolicy,
+    ) -> Result<(), SchedulePersistenceError> {
+        self.ack_pending_fire_claims(family_id, claims, write_policy)
+    }
+}
+
+pub(super) type ScheduleRows = Vec<(Vec<u8>, Vec<u8>)>;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct DecodedDefinitionRow {
+    pub(super) next_fire_ms: u64,
+    pub(super) last_fire_ms: Option<u64>,
+    pub(super) executions_total: u64,
+}

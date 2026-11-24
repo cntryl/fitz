@@ -1,0 +1,138 @@
+use super::{Instant, OperationOutcome, QueueFamilyState, QueueOpKind};
+use crate::domain::sink::model::PendingQueueReserve;
+use fitz_core::runtime::routing::RouteFamily;
+use std::collections::VecDeque;
+
+impl QueueFamilyState {
+    fn pending_reserve_matches_route(
+        message: &crate::domain::protocol::QueueMessage,
+        family: RouteFamily,
+        concrete_route: &fitz_core::runtime::routing::Route,
+    ) -> bool {
+        let crate::domain::protocol::QueueMessage::Receive {
+            family_id, route, ..
+        } = message
+        else {
+            return false;
+        };
+        if *family_id != family {
+            return false;
+        }
+        if !route.as_str().contains('*') {
+            return route == concrete_route;
+        }
+        Self::wildcard_queue_selector(route).is_ok_and(|pattern| pattern.matches(concrete_route))
+    }
+
+    fn empty_reserve_response(
+        message: &crate::domain::protocol::QueueMessage,
+    ) -> crate::domain::QueueResponse {
+        if matches!(
+            message,
+            crate::domain::protocol::QueueMessage::Receive { route, .. }
+                if route.as_str().contains('*')
+        ) {
+            crate::domain::QueueResponse::ReceivedRouted {
+                messages: Vec::new(),
+            }
+        } else {
+            crate::domain::QueueResponse::Received {
+                messages: Vec::new(),
+            }
+        }
+    }
+
+    fn finish_pending_reserve(&mut self, pending: &PendingQueueReserve, outcome: OperationOutcome) {
+        if outcome.mark_admin_snapshot_dirty {
+            self.mark_admin_snapshot_dirty();
+            if let Some(family_id) = Self::queue_message_family(&pending.message) {
+                self.mark_fast_flush_dirty(family_id);
+            }
+        }
+        for (key, notification) in outcome.ready_notifications {
+            self.route_queue_ready_notification(&key, notification);
+        }
+        let delivered =
+            self.route_queue_response(&pending.envelope, pending.meta, &outcome.response);
+        if !delivered {
+            if let crate::domain::protocol::QueueMessage::Receive {
+                family_id, route, ..
+            } = &pending.message
+            {
+                self.rollback_undeliverable_receive(
+                    *family_id,
+                    route,
+                    pending.meta.session_id,
+                    &outcome.response,
+                );
+            }
+        }
+        self.record_operation_metrics(
+            pending.request_started,
+            &outcome.response,
+            QueueOpKind::Receive,
+        );
+    }
+
+    pub(in crate::domain::sink) fn wake_pending_reserves_for_route(
+        &mut self,
+        family: RouteFamily,
+        concrete_route: &fitz_core::runtime::routing::Route,
+        now: Instant,
+    ) {
+        let mut pending = self.reservation_book.take_pending();
+        let mut still_waiting = VecDeque::new();
+        while let Some(reserve) = pending.pop_front() {
+            if reserve.deadline <= now {
+                let response = Self::empty_reserve_response(&reserve.message);
+                self.route_queue_response(&reserve.envelope, reserve.meta, &response);
+                self.record_operation_metrics(
+                    reserve.request_started,
+                    &response,
+                    QueueOpKind::Receive,
+                );
+                continue;
+            }
+            if !Self::pending_reserve_matches_route(&reserve.message, family, concrete_route) {
+                still_waiting.push_back(reserve);
+                continue;
+            }
+            let Some(outcome) = self.dispatch_actor_operation(
+                &reserve.envelope,
+                reserve.meta,
+                reserve.request_started,
+                reserve.message.clone(),
+            ) else {
+                continue;
+            };
+            let empty = matches!(
+                &outcome.response,
+                crate::domain::QueueResponse::Received { messages } if messages.is_empty()
+            ) || matches!(
+                &outcome.response,
+                crate::domain::QueueResponse::ReceivedRouted { messages } if messages.is_empty()
+            );
+            if empty {
+                still_waiting.push_back(reserve);
+            } else {
+                self.finish_pending_reserve(&reserve, outcome);
+            }
+        }
+        self.reservation_book.restore_pending(&mut still_waiting);
+    }
+
+    pub(in crate::domain::sink) fn expire_pending_reserves_at(&mut self, now: Instant) {
+        let mut pending = self.reservation_book.take_pending();
+        let mut still_waiting = VecDeque::new();
+        while let Some(reserve) = pending.pop_front() {
+            if reserve.deadline > now {
+                still_waiting.push_back(reserve);
+                continue;
+            }
+            let response = Self::empty_reserve_response(&reserve.message);
+            self.route_queue_response(&reserve.envelope, reserve.meta, &response);
+            self.record_operation_metrics(reserve.request_started, &response, QueueOpKind::Receive);
+        }
+        self.reservation_book.restore_pending(&mut still_waiting);
+    }
+}

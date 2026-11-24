@@ -1,0 +1,229 @@
+//! Subscribe/unsubscribe message handling: mutation of the live subscription
+//! index in response to a client request.
+
+use super::model::{LeaseFamilyRuntime, LeaseSubscription};
+use fitz_core::runtime::Envelope;
+use std::sync::atomic::Ordering;
+
+impl LeaseFamilyRuntime<'_> {
+    pub(super) fn handle_subscription_frame(
+        &mut self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        sub_msg: &crate::domain::protocol::LeaseSubscriptionMessage,
+    ) {
+        use crate::domain::protocol::LeaseSubscriptionMessage;
+
+        let new_subscription = match sub_msg {
+            LeaseSubscriptionMessage::Subscribe {
+                family_id,
+                route,
+                session_id,
+                ..
+            } => {
+                let exists = self
+                    .core
+                    .families
+                    .get(&family_id.as_u64())
+                    .and_then(|state| state.find_existing_id(*session_id, route.as_str()))
+                    .is_some();
+                (!exists).then_some((*family_id, *session_id))
+            }
+            LeaseSubscriptionMessage::Unsubscribe { .. } => None,
+        };
+
+        let response = match sub_msg {
+            LeaseSubscriptionMessage::Subscribe {
+                family_id,
+                route,
+                session_id,
+                subscriber,
+            } => self.handle_lease_subscribe(
+                envelope,
+                meta,
+                *family_id,
+                route,
+                *session_id,
+                subscriber,
+            ),
+            LeaseSubscriptionMessage::Unsubscribe {
+                family_id,
+                route,
+                session_id,
+                subscriber,
+            } => self.handle_lease_unsubscribe(
+                envelope,
+                meta,
+                *family_id,
+                route,
+                *session_id,
+                subscriber,
+            ),
+        };
+
+        self.refresh_metrics_gauges();
+        let delivered = self.route_lease_response(envelope, meta, &response, request_started);
+        if !delivered {
+            if let (
+                crate::domain::protocol::LeaseResponse::SubscribeOk { subscription_id },
+                Some((family_id, session_id)),
+            ) = (&response, new_subscription)
+            {
+                self.rollback_undeliverable_subscription(family_id, session_id, *subscription_id);
+            }
+        }
+    }
+
+    fn rollback_undeliverable_subscription(
+        &mut self,
+        family_id: fitz_core::runtime::routing::RouteFamily,
+        session_id: u64,
+        subscription_id: u64,
+    ) {
+        let families = &mut self.core.families;
+        let remove_family = families.get_mut(&family_id.as_u64()).is_some_and(|state| {
+            state.remove_subscription_for_session(family_id, session_id, subscription_id);
+            state.is_empty()
+        });
+        if remove_family {
+            families.remove(&family_id.as_u64());
+        }
+        self.refresh_metrics_gauges();
+    }
+
+    fn handle_lease_subscribe(
+        &mut self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        family_id: fitz_core::runtime::routing::RouteFamily,
+        route: &fitz_core::runtime::routing::Route,
+        session_id: u64,
+        subscriber: &fitz_core::runtime::routing::RouteAddress,
+    ) -> crate::domain::protocol::LeaseResponse {
+        use crate::domain::protocol::LeaseResponse;
+
+        if Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
+            let compiled = match Self::compile_lease_subscription_route(route) {
+                Ok(compiled) => compiled,
+                Err(response) => return response,
+            };
+            let families = &mut self.core.families;
+            let state = families.entry(family_id.as_u64()).or_default();
+            if let Some(subscription_id) = state.find_existing_id(session_id, route.as_str()) {
+                return LeaseResponse::SubscribeOk { subscription_id };
+            }
+            if let Some(limit) = state.registration_limit_for_session(session_id, &compiled) {
+                let (metric, limit, message) = match limit {
+                    fitz_core::domains::subscription_state::RegistrationLimit::Total => (
+                        "fitz_lease_registration_limit_rejects_total",
+                        fitz_core::domains::subscription_state::MAX_TOTAL_REGISTRATIONS_PER_SESSION,
+                        "Rejected lease subscription because the total session registration limit was exceeded",
+                    ),
+                    fitz_core::domains::subscription_state::RegistrationLimit::Wildcard => (
+                        "fitz_lease_wildcard_limit_rejects_total",
+                        fitz_core::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+                        "Rejected wildcard lease subscription because the session limit was exceeded",
+                    ),
+                };
+                tracing::warn!(
+                    domain = "lease",
+                    session = session_id,
+                    pattern = route.as_str(),
+                    limit,
+                    reason = %message,
+                    "Rejected lease subscription because the session registration limit was exceeded"
+                );
+                fitz_core::observability::counter_inc(metric);
+                return LeaseResponse::Error(
+                    "subscription registration limit exceeded".to_string(),
+                );
+            }
+            if let Ok(subscription_id) =
+                self.core
+                    .next_sub_id
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                        current.checked_add(1)
+                    })
+            {
+                state.insert(
+                    family_id,
+                    LeaseSubscription {
+                        route: compiled,
+                        session_id,
+                        route_address: subscriber.clone(),
+                        subscription_id,
+                    },
+                );
+                LeaseResponse::SubscribeOk { subscription_id }
+            } else {
+                if state.is_empty() {
+                    families.remove(&family_id.as_u64());
+                }
+                LeaseResponse::Error("subscription ID space exhausted".to_string())
+            }
+        } else {
+            LeaseResponse::Error("route family mismatch".to_string())
+        }
+    }
+
+    fn handle_lease_unsubscribe(
+        &mut self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        family_id: fitz_core::runtime::routing::RouteFamily,
+        route: &fitz_core::runtime::routing::Route,
+        session_id: u64,
+        subscriber: &fitz_core::runtime::routing::RouteAddress,
+    ) -> crate::domain::protocol::LeaseResponse {
+        use crate::domain::protocol::LeaseResponse;
+
+        if Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
+            if let Err(response) = Self::compile_lease_subscription_route(route) {
+                return response;
+            }
+            let families = &mut self.core.families;
+            let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                state.remove_session_pattern(family_id, session_id, route.as_str());
+                state.is_empty()
+            } else {
+                false
+            };
+            if remove_family {
+                families.remove(&family_id.as_u64());
+            }
+            LeaseResponse::UnsubscribeOk
+        } else {
+            LeaseResponse::Error("route family mismatch".to_string())
+        }
+    }
+
+    fn compile_lease_subscription_route(
+        route: &fitz_core::runtime::routing::Route,
+    ) -> Result<fitz_core::runtime::matcher::Pattern, crate::domain::protocol::LeaseResponse> {
+        use crate::domain::protocol::LeaseResponse;
+
+        // The shared depth-three selector grammar lives on the Lease
+        // descriptor so ingress and this sink accept exactly the same
+        // patterns (routing-design.md §4). Exact `ACQUIRE`/`EXTEND`/`RELEASE`
+        // are unaffected: they parse routes through `LeaseKey`, which still
+        // rejects any wildcard segment.
+        fitz_core::runtime::DomainKind::Lease
+            .descriptor()
+            .compile_registration_pattern(route.as_str())
+            .map_err(LeaseResponse::InvalidSubscriptionRoute)
+    }
+
+    fn valid_subscription_request(
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        family_id: fitz_core::runtime::routing::RouteFamily,
+        session_id: u64,
+        subscriber: &fitz_core::runtime::routing::RouteAddress,
+    ) -> bool {
+        family_id == meta.route_family
+            && *subscriber.family() == family_id
+            && session_id == meta.session_id
+            && envelope.source().is_none_or(|source| source == subscriber)
+    }
+}

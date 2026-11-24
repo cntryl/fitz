@@ -695,19 +695,25 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 name = "fitz"
 version = "0.5.1"
 dependencies = [
- "ahash",
  "argon2",
  "async-trait",
  "base64 0.23.1",
  "brotli",
  "bytes",
  "chrono",
- "cntryl-lexkey",
  "cntryl-midge",
  "cntryl-stress",
- "crc32c",
  "crossbeam-channel",
  "dashmap",
+ "fitz-core",
+ "fitz-kv",
+ "fitz-lease",
+ "fitz-notice",
+ "fitz-queue",
+ "fitz-rpc",
+ "fitz-schedule",
+ "fitz-storage",
+ "fitz-stream",
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
@@ -720,7 +726,6 @@ dependencies = [
  "jsonschema",
  "jsonwebtoken",
  "libc",
- "lz4_flex",
  "num-traits",
  "once_cell",
  "opentelemetry",
@@ -728,17 +733,14 @@ dependencies = [
  "opentelemetry_sdk",
  "parking_lot 0.13.0",
  "percent-encoding",
- "proptest",
  "reqwest",
  "rmcp",
- "rustc-hash",
  "schemars",
  "serde",
  "serde_json",
  "serial_test",
  "sha1",
  "sha2",
- "smallvec",
  "socket2",
  "tempfile",
  "tokio",
@@ -750,6 +752,209 @@ dependencies = [
  "tungstenite",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "fitz-core"
+version = "0.5.1"
+dependencies = [
+ "ahash",
+ "bytes",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "dashmap",
+ "once_cell",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "serde",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-e2e"
+version = "0.5.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz",
+ "fitz-core",
+ "futures-util",
+ "hex",
+ "hyper",
+ "jsonwebtoken",
+ "libc",
+ "parking_lot 0.13.0",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tungstenite",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "fitz-kv"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "fitz-kv",
+ "fitz-storage",
+ "hex",
+ "parking_lot 0.13.0",
+ "proptest",
+ "serde",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-lease"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "crossbeam-channel",
+ "fitz-core",
+ "getrandom 0.4.3",
+ "parking_lot 0.13.0",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-notice"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "crossbeam-channel",
+ "fitz-core",
+ "parking_lot 0.13.0",
+ "rustc-hash",
+ "serde",
+ "smallvec",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "fitz-queue"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "crossbeam-channel",
+ "dashmap",
+ "fitz-core",
+ "fitz-queue",
+ "fitz-storage",
+ "hex",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "fitz-rpc"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "crossbeam-channel",
+ "fitz-core",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "schemars",
+ "serde",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "fitz-schedule"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "fitz-schedule",
+ "fitz-storage",
+ "hex",
+ "parking_lot 0.13.0",
+ "proptest",
+ "rustc-hash",
+ "schemars",
+ "serde",
+ "serial_test",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "fitz-storage"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "fitz-core",
+ "tempfile",
+]
+
+[[package]]
+name = "fitz-stream"
+version = "0.5.1"
+dependencies = [
+ "bytes",
+ "cntryl-lexkey",
+ "cntryl-midge",
+ "cntryl-stress",
+ "crossbeam-channel",
+ "fitz-core",
+ "fitz-storage",
+ "fitz-stream",
+ "getrandom 0.4.3",
+ "hex",
+ "hmac",
+ "lz4_flex",
+ "parking_lot 0.13.0",
+ "proptest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

@@ -15,7 +15,7 @@ the authoritative documents.
 
 ```mermaid
 flowchart TB
-    subgraph L1["Layer 1: src/api transport edge (async I/O)"]
+    subgraph L1["Layer 1: fitz-server transport edge (async I/O)"]
         WS["WebSocket listener"]
         TCP["TCP listener"]
         HTTP["HTTP upgrade and admin probes"]
@@ -28,14 +28,14 @@ flowchart TB
         DISPATCH["Manifest-backed domain frame dispatcher"]
     end
 
-    subgraph L3["Layer 3: src/runtime core (sync)"]
+    subgraph L3["Layer 3: fitz-core runtime (sync)"]
         ROUTER["Router"]
         ADDR["RouteAddress = (RouteFamily, Route)"]
         MANIFEST["Exact message manifest: ID, direction, scheme, auth"]
         ACTORS["Family actor pools: fixed affinity and bounded lanes"]
     end
 
-    subgraph L4["Layer 4: src/domains (sync domain sinks and actors)"]
+    subgraph L4["Layer 4: domain crates (sync sinks and actors)"]
         KV["KV"]
         QUEUE["Queue"]
         NOTICE["Notice"]

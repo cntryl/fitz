@@ -1,0 +1,95 @@
+[package]
+name = "fitz"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+autobenches = false
+authors = ["smiggleworth"]
+description = "The messaging layer your system was missing"
+documentation = "https://github.com/cntryl/fitz/blob/main/README.md"
+keywords = ["broker", "kv", "messaging", "queue", "stream"]
+categories = ["message-broker"]
+
+[lints]
+workspace = true
+
+[dependencies]
+argon2.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+brotli.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+cntryl-midge.workspace = true
+crossbeam-channel.workspace = true
+dashmap.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+hmac.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-tungstenite.workspace = true
+hyper-util.workspace = true
+jsonwebtoken.workspace = true
+libc.workspace = true
+num-traits.workspace = true
+once_cell.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
+parking_lot.workspace = true
+percent-encoding.workspace = true
+reqwest.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+socket2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber.workspace = true
+tungstenite.workspace = true
+url.workspace = true
+uuid.workspace = true
+fitz-core.workspace = true
+fitz-storage.workspace = true
+fitz-kv.workspace = true
+fitz-lease.workspace = true
+fitz-notice.workspace = true
+fitz-queue.workspace = true
+fitz-rpc.workspace = true
+fitz-schedule.workspace = true
+fitz-stream.workspace = true
+
+[dev-dependencies]
+fitz-kv = { workspace = true, features = ["test-support"] }
+fitz-lease = { workspace = true, features = ["test-support", "benchkit"] }
+fitz-notice = { workspace = true, features = ["test-support"] }
+fitz-queue = { workspace = true, features = ["test-support"] }
+fitz-rpc = { workspace = true, features = ["test-support"] }
+fitz-schedule = { workspace = true, features = ["test-support"] }
+fitz-stream = { workspace = true, features = ["test-support"] }
+cntryl-stress.workspace = true
+jsonschema.workspace = true
+serial_test.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+bench-no-snapshot = ["fitz-rpc/bench-no-snapshot", "fitz-schedule/bench-no-snapshot"]
+benchkit = ["fitz-stream/benchkit", "fitz-lease/benchkit", "fitz-queue/benchkit"]
+stress-soak = []
+recovery-qualification = ["cntryl-midge/internal-testing"]
+test-support = ["fitz-kv/test-support", "fitz-lease/test-support", "fitz-notice/test-support", "fitz-queue/test-support", "fitz-rpc/test-support", "fitz-schedule/test-support", "fitz-stream/test-support"]
+
+[[bench]]
+name = "tier1_hotpath_permissions"
+harness = false

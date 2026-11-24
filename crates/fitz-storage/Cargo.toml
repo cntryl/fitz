@@ -1,0 +1,21 @@
+[package]
+name = "fitz-storage"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+autobenches = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+cntryl-midge.workspace = true
+fitz-core.workspace = true
+lexkey.workspace = true
+
+tempfile.workspace = true
+
+[lib]
+bench = false

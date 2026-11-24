@@ -17,8 +17,24 @@ For the strict internal contract that defines what each domain is allowed to do,
 
 `RouteFamily` and `realm` are orthogonal identifiers. `RouteFamily` is the broker-internal routing and isolation key for session assignment, delivery partitioning, and storage partitioning. `realm` is the opaque application-visible namespace label used in Fitz routes, permissions, and admin/API payloads. `realm` and `RouteFamily` are separate axes and must never be inferred, aliased, substituted, or used as fallback values for each other.
 
-The async/sync boundary keeps transport I/O in `src/api/`. Core routing,
+The async/sync boundary keeps transport I/O in `crates/fitz-server/src/api/`. Core routing,
 protocol, session, and domain behavior stays synchronous.
+## Cargo Workspace
+
+| Crate | Ownership |
+| --- | --- |
+| `fitz-core` | Synchronous actor infrastructure, routing, mailboxes, session IDs, framing, and the exact message manifest |
+| `fitz-storage` | Shared Midge adapters, keyspaces, and write-policy conversion |
+| `fitz-{kv,queue,schedule,stream}` | Durable-domain codecs, family state, projections, and stored formats |
+| `fitz-{notice,lease,rpc}` | Ephemeral-domain codecs, family state, and projections |
+| `fitz` in `crates/fitz-server` | Composition, authorization, transport, combined admin queries, portable snapshots, and both binaries |
+| `fitz-e2e` | Broker integration suites and mixed and transport benchmarks |
+
+The server picks a domain envelope builder through the exact manifest in
+`crates/fitz-core/src/protocol/manifest.rs`. KV and Stream capture and restore
+typed data through their family actors. The server encodes and validates the
+portable snapshot envelope.
+
 ## System Architecture
 ### Layered Design
 ```
@@ -75,7 +91,7 @@ This design keeps async scheduling at the API edge while preserving synchronous 
 
 ### Exact Protocol Manifest And Dispatch
 
-`src/protocol/manifest.rs` is the single message contract. Every manifest entry
+`crates/fitz-core/src/protocol/manifest.rs` is the single message contract. Every manifest entry
 declares the message ID, domain, direction, required route scheme, authorization
 policy, and decoder/adapter. Authentication-route extraction, authorization,
 dispatch, and unsupported/reserved-ID rejection all consult this manifest;
@@ -141,7 +157,7 @@ This is a hard Fitz rule:
 
 ## Layer Responsibilities
 ### Layer 1: Transport
-**Files:** `src/api/handlers/tcp_listener.rs`, `src/api/handlers/tcp_session.rs`, `src/api/handlers/websocket.rs`, `src/api/handlers/http_listener.rs`
+**Files:** `crates/fitz-server/src/api/handlers/tcp_listener.rs`, `crates/fitz-server/src/api/handlers/tcp_session.rs`, `crates/fitz-server/src/api/handlers/websocket.rs`, `crates/fitz-server/src/api/handlers/http_listener.rs`
 **Responsibility:** Socket I/O and framing.
 **Behavior:**
 - Accept connections (WebSocket/HTTP: port 4090; TCP: port 4091 when enabled)
@@ -158,7 +174,7 @@ This is a hard Fitz rule:
 - **TCP:** `[u32 BE length][payload bytes]`
 - **WebSocket:** Each binary message is a complete frame
 ### Layer 2: Session
-**Files:** `src/session/session.rs`, `src/session/permissions.rs`, `src/api/runtime_ingress.rs`, `src/api/session.rs`
+**Files:** `crates/fitz-server/src/session/session.rs`, `crates/fitz-server/src/session/permissions.rs`, `crates/fitz-server/src/api/runtime_ingress.rs`, `crates/fitz-server/src/api/session.rs`
 **Responsibility:** Connection authentication, permission enforcement, frame routing.
 **Behavior:**
 - Receive raw frame from transport
@@ -235,7 +251,7 @@ READY
 - MUST validate JWT signature (use external JWT library; do NOT implement JWT validation manually)
 - MUST reject expired JWTs (check `exp` claim)
 ### Layer 3: Runtime
-**Files:** `src/runtime/router.rs`, `src/runtime/actor.rs`, `src/runtime/family_actor_pool.rs`, `src/runtime/routing.rs`, `src/runtime/subscriptions.rs`
+**Files:** `crates/fitz-core/src/runtime/router.rs`, `crates/fitz-core/src/runtime/actor.rs`, `crates/fitz-core/src/runtime/family_actor_pool.rs`, `crates/fitz-core/src/runtime/routing.rs`, `crates/fitz-core/src/runtime/subscriptions.rs`
 **Responsibility:** Message routing, subscription indexing, actor scheduling.
 **Components:**
 #### Router
@@ -267,7 +283,7 @@ API-edge session management:
 - Cleans up resources on disconnect
 - May perform bounded async waits at the `src/api` edge for authentication, cleanup retry dispatch, or transient domain mailbox backpressure
 **Constraints:**
-- `src/runtime`, `src/domains`, `src/protocol`, and `src/session` remain synchronous core modules with no `.await`, Tokio primitives, or futures dependencies
+- The shared runtime, wire framing, server session layer, and all domain crates remain synchronous
 - Async ingress code stays under `src/api`
 - Queue and Stream sinks wait for synchronous actor replies. Transport dispatch
   runs those waits on blocking workers. Stream retains its separate 64 permits
@@ -283,7 +299,7 @@ API-edge session management:
 - Use parking_lot or DashMap for concurrency
 - Bound transport waiting; respond when the domain operation completes
 ### Layer 4: Domains
-**Files:** `src/domains/kv/`, `src/domains/queue/`, `src/domains/notice/`, etc.
+**Files:** `crates/fitz-kv/src/domain/`, `crates/fitz-queue/src/domain/`, `crates/fitz-notice/src/domain/`, etc.
 **Responsibility:** Domain-specific business logic.
 
 Use [domain-boundaries-spec.md](domain-boundaries-spec.md) as the authoritative boundary contract when deciding whether behavior belongs in a domain at all. This architecture guide explains where domains live in the system; the boundary specification explains what each domain is allowed to own.
@@ -309,9 +325,9 @@ impl XFamilyState {
 }
 ```
 **Per-domain files:**
-- `src/domains/{domain}/sink/` - crate-private endpoint, commands, family state, outcomes, and admin port
-- `src/protocol/{domain}_codec.rs` - message encode/decode
-- `src/domains/{domain}/store/` - the sole durable-storage adapter when the domain is durable
+- `crates/fitz-{domain}/src/domain/sink/` - crate-private endpoint, commands, family state, outcomes, and admin port
+- `crates/fitz-{domain}/src/{domain}_codec*` - message encode/decode
+- `crates/fitz-{domain}/src/domain/store*` - the sole durable-storage adapter when the domain is durable
 **Constraints:**
 - NEVER call `.await`
 - NEVER use tokio types (tokio::spawn, tokio::sync, etc.)
@@ -352,8 +368,8 @@ impl Engine {
 Lease has no Layer 5 persistent storage schema. Lease ownership, waiters, TTL state, and fencing tokens are live broker coordination state only.
 ## Wire Protocol Implementation
 ### Payload encoding (domain message bodies)
-**Location:** `src/protocol/payload_codec.rs`
-Sequential typed fields: fixed-order scalars and length-prefixed strings/bytes. Used by domain codecs to encode request/response bodies. The fixed frame header is in `src/protocol/wire2/header.rs`.
+**Location:** `crates/fitz-core/src/protocol/payload_codec.rs`
+Sequential typed fields: fixed-order scalars and length-prefixed strings/bytes. Used by domain codecs to encode request/response bodies. The fixed frame header is in `crates/fitz-core/src/protocol/wire2/header.rs`.
 **Implementation pattern:**
 ```rust
 pub struct PayloadDecoder<'a> {
@@ -480,7 +496,7 @@ pub fn encode_response(response: &DomainResponse) -> Vec<u8> {
 }
 ```
 ### KV Domain Example
-**File:** `src/domains/kv/mod.rs`
+**File:** `crates/fitz-kv/src/domain/mod.rs`
 ```rust
 pub enum KvMessage {
     Begin { resource: String, mode: TxMode },
@@ -521,7 +537,7 @@ impl KvActor {
     }
 }
 ```
-**Codec** (`src/protocol/kv_codec.rs`):
+**Codec** (`crates/fitz-kv/src/kv_codec/`):
 ```rust
 pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<KvMessage, String> {
     let mut dec = PayloadDecoder::new(payload);
@@ -567,7 +583,7 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 }
 ```
 ### Notice Domain (Live Fanout)
-**Current files:** `src/domains/notice/sink.rs`, `src/domains/notice/mod.rs`
+**Current files:** `crates/fitz-notice/src/domain/sink.rs`, `crates/fitz-notice/src/domain/mod.rs`
 
 Current Notice behavior is intentionally ephemeral:
 - `NoticeDomain` keeps subscription indexes entirely in memory for the current broker process
@@ -727,7 +743,7 @@ Brokers SHOULD NOT expose session IDs to clients in standard responses. Session 
 - Discard on disconnect
 ## Boot & Initialization
 ### Boot Flow
-**File:** `src/boot/mod.rs`
+**File:** `crates/fitz-server/src/boot/mod.rs`
 ```rust
 pub async fn boot(config: BootConfig) -> Result<()> {
     // 1. Register SIGINT/SIGTERM before any blocking startup work
@@ -906,11 +922,11 @@ See [error-handling.md](error-handling.md) for transport closure rules,
 domain response errors, and retry/idempotency guidance.
 ## References
 - Protocol specification: [client-spec.md](../clients/client-spec.md)
-- Transport implementation: `src/api/`
-- Domain implementations: `src/domains/`
-- Routing: `src/runtime/router.rs`
-- Codecs: `src/protocol/*_codec.rs`
-- Boot: `src/boot/mod.rs`
+- Transport implementation: `crates/fitz-server/src/api/`
+- Domain implementations: `crates/fitz-<domain>/src/domain/`
+- Routing: `crates/fitz-core/src/runtime/router.rs`
+- Codecs: `crates/fitz-<domain>/src/<domain>_codec*`
+- Boot: `crates/fitz-server/src/boot/mod.rs`
 - Tests: `tests/`
 
 Derived Schedule parse and Stream actor retention is described in

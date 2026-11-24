@@ -1,0 +1,203 @@
+//! Subscribe/unsubscribe message handling: mutation of the live subscription
+//! index in response to a client request.
+
+use super::{
+    subscription_limit_error, Arc, NoticeFamilyState, NoticeSubscription, Ordering,
+    RoutedSubscriptionSet,
+};
+
+impl NoticeFamilyState {
+    pub(super) fn rollback_undeliverable_subscribe(
+        &mut self,
+        family_id: fitz_core::runtime::routing::RouteFamily,
+        session_id: u64,
+        response: &crate::domain::NoticeResponse,
+    ) -> bool {
+        let crate::domain::NoticeResponse::SubscribeOk { subscription_id } = response else {
+            return false;
+        };
+        let removed = {
+            let families = &mut self.families;
+            let removed = families.get_mut(&family_id).is_some_and(|state| {
+                state.remove_subscription_for_session(family_id, session_id, *subscription_id)
+            });
+            if families
+                .get(&family_id)
+                .is_some_and(RoutedSubscriptionSet::is_empty)
+            {
+                families.remove(&family_id);
+            }
+            removed
+        };
+        if removed {
+            self.mark_admin_snapshot_dirty();
+        }
+        removed
+    }
+
+    pub(super) fn dispatch_notice_message(
+        &mut self,
+        notice_msg: crate::domain::protocol::NotificationMessage,
+    ) -> (Option<crate::domain::NoticeResponse>, bool) {
+        use crate::domain::protocol::NotificationMessage;
+        use crate::domain::NoticeResponse;
+
+        match notice_msg {
+            NotificationMessage::Publish(pub_msg) => {
+                self.publish_route_payload(pub_msg.family_id, &pub_msg.route, &pub_msg.payload);
+                (None, false)
+            }
+            NotificationMessage::Subscribe(sub_msg) => self.handle_subscribe_message(&sub_msg),
+            NotificationMessage::Unsubscribe(unsub_msg) => {
+                let family_id = unsub_msg.family_id;
+                let families = &mut self.families;
+                let removed = if let Some(state) = families.get_mut(&family_id) {
+                    let removed = state.remove_subscription_for_session(
+                        unsub_msg.family_id,
+                        unsub_msg.session_id.0,
+                        unsub_msg.subscription_id,
+                    );
+                    if state.is_empty() {
+                        families.remove(&family_id);
+                    }
+                    removed
+                } else {
+                    false
+                };
+                if removed {
+                    self.counter_add("fitz_notice_unsubscribes_total", 1);
+                }
+                (Some(NoticeResponse::Ok), removed)
+            }
+            NotificationMessage::UnsubscribeAll(unsub_all) => {
+                let session_id = unsub_all.session_id.0;
+                let removed = self.unsubscribe_all_for_session(session_id);
+                tracing::debug!(
+                    domain = "notice",
+                    session = session_id,
+                    "All subscriptions removed for session"
+                );
+                (Some(NoticeResponse::Ok), removed > 0)
+            }
+            NotificationMessage::Deliver(_) => (Some(NoticeResponse::Ok), false),
+        }
+    }
+
+    fn handle_subscribe_message(
+        &mut self,
+        sub_msg: &crate::domain::protocol::SubscribeMessage,
+    ) -> (Option<crate::domain::NoticeResponse>, bool) {
+        if let Some(response) = self.try_reuse_existing(sub_msg) {
+            return (Some(response), false);
+        }
+        let compiled = match Self::compile_pattern(sub_msg) {
+            Ok(compiled) => compiled,
+            Err(response) => return (Some(response), false),
+        };
+        let (response, state_changed) = self.allocate_and_insert(sub_msg, compiled);
+        (Some(response), state_changed)
+    }
+
+    fn compile_pattern(
+        sub_msg: &crate::domain::protocol::SubscribeMessage,
+    ) -> Result<fitz_core::runtime::matcher::Pattern, crate::domain::NoticeResponse> {
+        fitz_core::runtime::DomainKind::Notice
+            .descriptor()
+            .compile_registration_pattern(sub_msg.pattern.as_str())
+            .map_err(|error| {
+                tracing::warn!(
+                    domain = "notice",
+                    session = sub_msg.session_id.0,
+                    "Rejected invalid subscription pattern"
+                );
+                crate::domain::NoticeResponse::Error(
+                    crate::domain::NoticeClientError::invalid_pattern(error),
+                )
+            })
+    }
+
+    fn try_reuse_existing(
+        &mut self,
+        sub_msg: &crate::domain::protocol::SubscribeMessage,
+    ) -> Option<crate::domain::NoticeResponse> {
+        let families = &self.families;
+        let id = families.get(&sub_msg.family_id).and_then(|state| {
+            state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str())
+        })?;
+        tracing::debug!(
+            domain = "notice",
+            session = sub_msg.session_id.0,
+            subscription_id = id,
+            pattern = sub_msg.pattern.as_str(),
+            "Notice subscription already exists (idempotent)"
+        );
+        Some(crate::domain::NoticeResponse::SubscribeOk {
+            subscription_id: id,
+        })
+    }
+
+    fn allocate_and_insert(
+        &mut self,
+        sub_msg: &crate::domain::protocol::SubscribeMessage,
+        compiled: fitz_core::runtime::matcher::Pattern,
+    ) -> (crate::domain::NoticeResponse, bool) {
+        use crate::domain::NoticeResponse;
+
+        let families = &mut self.families;
+        let session_subscription_count = families
+            .values()
+            .map(|state| state.subscription_count_for_session(sub_msg.session_id.0))
+            .sum::<usize>();
+        let state = families.entry(sub_msg.family_id).or_default();
+
+        let (response, state_changed) = if let Some(error) =
+            subscription_limit_error(state, session_subscription_count, sub_msg, &compiled)
+        {
+            (error, false)
+        } else {
+            let Ok(new_id) =
+                self.next_sub_id
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                        current.checked_add(1)
+                    })
+            else {
+                let state_empty = state.is_empty();
+                if state_empty {
+                    families.remove(&sub_msg.family_id);
+                }
+                return (
+                    NoticeResponse::Error(crate::domain::NoticeClientError::backend(
+                        "subscription ID space exhausted",
+                    )),
+                    false,
+                );
+            };
+            state.insert(
+                sub_msg.family_id,
+                NoticeSubscription {
+                    pattern: compiled,
+                    pattern_route: Arc::from(sub_msg.pattern.as_str()),
+                    session_id: sub_msg.session_id.0,
+                    subscription_id: new_id,
+                    subscriber: sub_msg.subscriber.clone(),
+                },
+            );
+
+            tracing::debug!(
+                domain = "notice",
+                session = sub_msg.session_id.0,
+                subscription_id = new_id,
+                pattern = sub_msg.pattern.as_str(),
+                "Notice subscription added"
+            );
+            (
+                NoticeResponse::SubscribeOk {
+                    subscription_id: new_id,
+                },
+                true,
+            )
+        };
+
+        (response, state_changed)
+    }
+}

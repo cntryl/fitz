@@ -1,0 +1,166 @@
+//! KV metrics, latency, and admin-projection updates.
+
+use super::locks::KvResourceLockKey;
+use super::state::{KvAdminTransactionUpdate, KvFamilyRuntime};
+#[cfg(test)]
+use chrono::Utc;
+
+impl KvFamilyRuntime<'_> {
+    pub(super) fn counter_inc(&self, name: &str) {
+        if let Some(metrics) = &self.core.metrics {
+            metrics.counter_inc(name);
+        } else {
+            fitz_core::observability::counter_inc(name);
+        }
+    }
+
+    pub(super) fn record_response_metrics(
+        &self,
+        response: &crate::domain::KvResponse,
+        started_at: std::time::Instant,
+    ) {
+        self.record_request_metrics(
+            matches!(response, crate::domain::KvResponse::Error { .. }),
+            started_at,
+        );
+    }
+
+    pub(super) fn record_request_metrics(&self, failed: bool, started_at: std::time::Instant) {
+        if let Some(metrics) = &self.core.metrics {
+            if failed {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
+            return;
+        }
+
+        fitz_core::observability::counter_inc(if failed {
+            crate::domain::metrics::METRIC_FAILURE_TOTAL
+        } else {
+            crate::domain::metrics::METRIC_SUCCESS_TOTAL
+        });
+        let elapsed_ms = u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        fitz_core::observability::metrics()
+            .histogram_observe_ms(crate::domain::metrics::METRIC_LATENCY_MS, elapsed_ms);
+    }
+
+    #[cfg(test)]
+    pub(super) fn sync_admin_snapshot(&self) {
+        let started_at = Utc::now().to_rfc3339();
+        let actors: Vec<_> = self
+            .core
+            .actors
+            .iter()
+            .map(|(session_id, actor)| (*session_id, actor.active_transaction_snapshots()))
+            .collect();
+        let transactions = actors
+            .iter()
+            .flat_map(|(session_id, snapshots)| {
+                snapshots.iter().map(|snapshot| {
+                    crate::control::admin::KvTransaction::snapshot(
+                        snapshot.scope.route_family.as_u64(),
+                        snapshot.tx_id,
+                        *session_id,
+                        &snapshot.scope.realm,
+                        &snapshot.scope.area,
+                        &snapshot.scope.resource,
+                        &started_at,
+                    )
+                })
+            })
+            .collect();
+        self.core.projection.mark_dirty();
+        self.core.projection.refresh_if_dirty(|| transactions);
+        self.refresh_metrics_gauges();
+    }
+
+    pub(super) fn apply_admin_transaction_update(&self, update: KvAdminTransactionUpdate) {
+        match update {
+            KvAdminTransactionUpdate::None => return,
+            KvAdminTransactionUpdate::Upsert {
+                session_id,
+                transaction,
+            } => {
+                self.core.active_transactions.upsert(
+                    session_id,
+                    &transaction,
+                    self.core.metrics.as_ref(),
+                );
+                self.core.projection.upsert_transaction(transaction);
+            }
+            KvAdminTransactionUpdate::Remove { session_id, tx_id } => {
+                self.core
+                    .active_transactions
+                    .remove(session_id, tx_id, self.core.metrics.as_ref());
+                self.core.projection.remove_transaction(session_id, tx_id);
+            }
+        }
+        self.refresh_metrics_gauges();
+    }
+
+    pub(super) fn refresh_metrics_gauges(&self) {
+        if let Some(metrics) = &self.core.metrics {
+            self.core.active_transactions.refresh_gauge(metrics);
+            metrics.set_subscription_count(self.subscription_count());
+        }
+    }
+
+    pub(super) fn subscription_count(&self) -> usize {
+        self.core
+            .watch_registries
+            .values()
+            .map(crate::domain::watch_registry::KvWatchRegistry::subscription_count)
+            .sum()
+    }
+
+    pub(super) fn active_transactions_for_resource(
+        &self,
+        resource_key: &KvResourceLockKey,
+    ) -> usize {
+        self.core
+            .active_transactions
+            .count_for_resource(resource_key)
+    }
+
+    pub(super) fn latency_snapshots(
+        &self,
+        resource_key: &KvResourceLockKey,
+    ) -> (
+        crate::control::admin::KvLatencySnapshot,
+        crate::control::admin::KvLatencySnapshot,
+    ) {
+        self.core.projection.latency_snapshots(resource_key)
+    }
+
+    pub(super) fn record_read_latency(
+        &self,
+        resource_key: &KvResourceLockKey,
+        started_at: std::time::Instant,
+    ) {
+        self.core
+            .projection
+            .record_read_latency(resource_key, started_at.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    pub(super) fn record_write_latency(
+        &self,
+        resource_key: &KvResourceLockKey,
+        started_at: std::time::Instant,
+    ) {
+        self.core
+            .projection
+            .record_write_latency(resource_key, started_at.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    #[cfg(test)]
+    pub(super) fn session_inbox_address(
+        family_id: fitz_core::runtime::routing::RouteFamily,
+        session_id: u64,
+    ) -> fitz_core::runtime::routing::RouteAddress {
+        fitz_core::runtime::routing::RouteAddress::new(
+            family_id,
+            fitz_core::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+        )
+    }
+}

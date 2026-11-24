@@ -1,0 +1,190 @@
+use super::{
+    DlqReason, MessageId, QueueActor, QueueActorLiveCounts, QueueAdminSnapshot,
+    QueueDeadLetterSnapshot, QueueInflightSnapshot, QueueState,
+};
+use crate::control::admin::QueueAgeBuckets;
+
+impl QueueActor {
+    #[must_use]
+    pub fn ready_len(&self) -> usize {
+        self.ready_count
+    }
+
+    #[must_use]
+    pub(crate) fn live_counts(&self) -> QueueActorLiveCounts {
+        QueueActorLiveCounts {
+            ready: self.ready_count,
+            delayed: self.persisted_delayed.len(),
+            inflight: self.inflight.len(),
+            dead_letters: self.persisted_dlq.len(),
+        }
+    }
+
+    fn backlog_age_metrics(&self, now_epoch_ms: u64) -> (QueueAgeBuckets, u64) {
+        let mut buckets = QueueAgeBuckets::default();
+        let mut oldest_backlog_age_seconds = 0u64;
+
+        for record in self.records.values() {
+            if matches!(record.state, QueueState::Ready | QueueState::Delayed) {
+                let age_seconds = now_epoch_ms.saturating_sub(record.first_enqueued_at_ms) / 1_000;
+                buckets.record_age_seconds(age_seconds);
+                oldest_backlog_age_seconds = oldest_backlog_age_seconds.max(age_seconds);
+            }
+        }
+
+        (buckets, oldest_backlog_age_seconds)
+    }
+
+    fn delay_age_metrics(&self, now_epoch_ms: u64) -> QueueAgeBuckets {
+        let mut buckets = QueueAgeBuckets::default();
+
+        for record in self.records.values() {
+            if matches!(record.state, QueueState::Delayed) {
+                let age_seconds = now_epoch_ms.saturating_sub(record.first_enqueued_at_ms) / 1_000;
+                buckets.record_age_seconds(age_seconds);
+            }
+        }
+
+        buckets
+    }
+
+    #[must_use]
+    pub fn admin_snapshot(&self) -> QueueAdminSnapshot {
+        let now_epoch_ms = self.clock.now_epoch_ms();
+        let (backlog_age_buckets, oldest_backlog_age_seconds) =
+            self.backlog_age_metrics(now_epoch_ms);
+        let delay_age_buckets = self.delay_age_metrics(now_epoch_ms);
+        QueueAdminSnapshot {
+            messages_ready: self.ready_count,
+            messages_delayed: self.persisted_delayed.len(),
+            messages_inflight: self.inflight.len(),
+            messages_dead_lettered: self.persisted_dlq.len(),
+            messages_total: self.ready_count
+                + self.inflight.len()
+                + self.persisted_delayed.len()
+                + self.persisted_dlq.len(),
+            oldest_message_age_seconds: self.oldest_ready_enqueued_at_ms.map_or(0, |timestamp| {
+                now_epoch_ms.saturating_sub(timestamp) / 1_000
+            }),
+            oldest_backlog_age_seconds,
+            backlog_age_buckets,
+            delay_age_buckets,
+            enqueue_success_total: self.enqueue_success_window.total(),
+            complete_success_total: self.complete_success_window.total(),
+            in_rate_per_second: self.enqueue_success_window.rate_per_second(now_epoch_ms),
+            out_rate_per_second: self.complete_success_window.rate_per_second(now_epoch_ms),
+        }
+    }
+
+    #[must_use]
+    pub fn admin_inflight(&self) -> Vec<QueueInflightSnapshot> {
+        let now_instant = self.clock.now_instant();
+        let now_epoch_ms = self.clock.now_epoch_ms();
+
+        self.inflight
+            .iter()
+            .map(|(id, inflight)| QueueInflightSnapshot {
+                message_id: id.as_u64(),
+                inflight_token: inflight.token,
+                session_id: inflight.owner_session_id,
+                expires_at_epoch_ms: now_epoch_ms.saturating_add(
+                    u64::try_from(
+                        inflight
+                            .expires_at
+                            .saturating_duration_since(now_instant)
+                            .as_millis(),
+                    )
+                    .unwrap_or(u64::MAX),
+                ),
+                attempts: usize::try_from(inflight.attempts).unwrap_or(usize::MAX),
+            })
+            .collect()
+    }
+
+    ///
+    /// # Errors
+    /// Returns an error if the persisted message or its payload cannot be read.
+    pub fn admin_dead_letter(
+        &self,
+        id: MessageId,
+    ) -> Result<Option<QueueDeadLetterSnapshot>, String> {
+        let record = if let Some(record) = self.records.get(&id).cloned() {
+            record
+        } else {
+            match self.load_record_metadata_from_store(id) {
+                Ok(record) => record,
+                Err(error) if error == format!("Message {id} disappeared from storage") => {
+                    return Ok(None)
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        if !matches!(record.state, QueueState::Dlq) || self.record_has_expired(&record) {
+            return Ok(None);
+        }
+        Ok(Some(QueueDeadLetterSnapshot {
+            message_id: id.as_u64(),
+            dead_lettered_at_epoch_ms: record
+                .dead_lettered_at_ms
+                .or_else(|| self.persisted_dlq.get(&id).copied())
+                .unwrap_or(record.first_enqueued_at_ms),
+            attempts: usize::try_from(record.attempts).unwrap_or(usize::MAX),
+            reason: record.dlq_reason.map_or("unknown", DlqReason::as_str),
+        }))
+    }
+
+    #[must_use]
+    pub fn admin_dead_letters(&self) -> Vec<QueueDeadLetterSnapshot> {
+        let mut dead_letters: Vec<_> = self
+            .persisted_dlq
+            .iter()
+            .filter_map(|(id, &dead_lettered_at_epoch_ms)| {
+                let record = self
+                    .records
+                    .get(id)
+                    .cloned()
+                    .filter(|record| matches!(record.state, QueueState::Dlq))
+                    .or_else(|| {
+                        self.load_record_metadata_from_store(*id)
+                            .ok()
+                            .filter(|record| matches!(record.state, QueueState::Dlq))
+                    })?;
+                if self.record_has_expired(&record) {
+                    return None;
+                }
+
+                let attempts = record.attempts as usize;
+                let dead_lettered_at_epoch_ms = record
+                    .dead_lettered_at_ms
+                    .unwrap_or(dead_lettered_at_epoch_ms);
+                let reason = record.dlq_reason.map_or("unknown", DlqReason::as_str);
+
+                Some(QueueDeadLetterSnapshot {
+                    message_id: id.as_u64(),
+                    dead_lettered_at_epoch_ms,
+                    attempts,
+                    reason,
+                })
+            })
+            .collect();
+
+        dead_letters.sort_by(|left, right| {
+            (left.dead_lettered_at_epoch_ms, left.message_id)
+                .cmp(&(right.dead_lettered_at_epoch_ms, right.message_id))
+        });
+        dead_letters
+    }
+
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
+    #[must_use]
+    pub fn ready_contains(&self, id: MessageId) -> bool {
+        !self.expired_ready.contains(&id) && self.ready.iter().any(|entry| entry.id == id)
+    }
+
+    /// Returns true if queue-local waiters should be re-checked.
+    /// Clears the flag. Used by the domain sink after state-changing operations.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
+    pub fn take_needs_wake_waiters(&mut self) -> bool {
+        std::mem::take(&mut self.needs_wake_waiters)
+    }
+}

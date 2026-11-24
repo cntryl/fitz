@@ -1,0 +1,29 @@
+[package]
+name = "fitz-lease"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+autobenches = false
+
+[lib]
+bench = false
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+benchkit = []
+
+[dependencies]
+fitz-core.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+crossbeam-channel.workspace = true
+getrandom.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]

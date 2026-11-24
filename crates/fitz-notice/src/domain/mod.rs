@@ -1,0 +1,47 @@
+//! Notification domain: fire-and-forget pub/sub with wildcard routing
+//!
+//! # Architecture
+//!
+//! - **`NoticeDomain`** (`sink/state.rs`): Broker-local state
+//! - **Mailbox adapter** (`sink/mailbox_sink_impl.rs`): Actor ingress
+//! - **Domain dispatch** (`sink/ingress.rs`): Validation and response routing
+//! - **Notice family runtime** (`sink/actor_runtime.rs`): family-affine production actors that own broker-local subscription state for the current process
+//! - Subscriptions are session-scoped and cleaned up on disconnect
+//!
+//! # Semantics
+//!
+//! - **Fire-and-forget**: Publish acknowledgement only means the broker accepted the request, not that any subscriber received it
+//! - **Best-effort**: Messages are delivered only to subscribers alive at publish time
+//! - **Broker-local**: Subscription IDs and admin views describe only the running broker process
+//! - **Non-durable**: No replay, restart recovery, or persisted subscriber state
+//! - **Session-scoped**: Subscriptions vanish on disconnect, and clients must re-subscribe after reconnect or broker restart
+//! - **Isolated**: All messaging is scoped to `(RouteFamilyId, route)` pairs
+//!
+//! # Wildcard Routing
+//!
+//! - `*` matches a single path segment
+//! - `**` matches zero or more path segments
+//! - Wildcards apply only within the same `RouteFamily`
+
+pub mod metrics;
+pub mod protocol;
+pub(crate) mod sink;
+pub use sink::NoticeDomain;
+
+pub use metrics::NoticeMetrics;
+pub use protocol::{
+    DeliverMessage, NoticeClientError, NoticeClientErrorKind, NoticeClientNotification,
+    NoticeClientRequest, NoticeClientResponse, NoticeResponse, NotificationMessage,
+};
+
+/// Canonicalize a Notice route for authorization: scheme-qualified as given.
+///
+/// # Errors
+///
+/// Never fails; the `Result` matches the other domains' canonicalizers.
+#[allow(clippy::unnecessary_wraps)]
+pub fn canonical_auth_route(route: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    Ok(fitz_core::runtime::auth_route::scheme_prefixed_route(
+        "notice", route,
+    ))
+}

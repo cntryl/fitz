@@ -1,0 +1,90 @@
+//! Key-Value domain: durable committed data with session-scoped transaction
+//! state over Midge.
+//!
+//! # Architecture
+//!
+//! The KV domain provides a thin, strict wrapper over Midge transactions.
+//! Committed writes persist according to the explicit `CommitPersistence` selected
+//! at `commit`. Open `tx_id` handles, uncommitted writes, and resource-lock
+//! coordination are live broker-local state only and disappear on disconnect or
+//! broker restart.
+//!
+//! It enforces:
+//! - Data operations execute within a resource-scoped transaction
+//! - Standalone DROP commits scope-wide data and inventory deletion atomically
+//! - Transactions are scoped to a single resource (table)
+//! - Explicit `RouteFamily` -> `ColumnFamily` mapping (no default CF)
+//! - Original Midge transaction and snapshot retained during bounded write
+//!   admission; submitted commits are not retried
+//!
+//! # Routes
+//!
+//! Format: `kv://{realm}/{area}/{resource}`
+//!
+//! Transaction control:
+//! - `begin` - Start a transaction bound to `{resource}`
+//! - `commit` - Commit the active transaction
+//! - `rollback` - Abort the active transaction
+//! - `drop` - Delete a resource, an area's resources, or a realm's KV resources
+//!   with explicit persistence and no open transaction handle
+//!
+//! KV operations (require active transaction):
+//! - `get` - Retrieve value by key
+//! - `put` - Upsert key-value pair
+//! - `insert` - Insert key-value pair (fails if exists)
+//! - `delete` - Delete key
+//! - `delete_range` - Delete range of keys
+//! - `scan` - Scan range of keys
+//!
+//! # KV Watches
+//!
+//! Clients can watch KV resources for committed mutations:
+//! - `KvDomain` owns ephemeral watch state for the current broker process
+//! - Watches target `kv://{realm}/{area}/{resource}` and wildcard resource patterns
+//! - Notifications are emitted only after a transaction commits at least one mutating operation,
+//!   or after a snapshot restore replaces a resource with at least one row deleted or written
+//! - Uncommitted writes, empty commits, disconnect cleanup, and broker restart do not replay notifications
+//!
+//! # Column Family Mapping
+//!
+//! KV domain uses explicit `RouteFamily` -> `ColumnFamily` mapping:
+//! - `ColumnFamilyId` = `RouteFamily`.id (cast to `u32`)
+//! - Default column family (CF=0) is FORBIDDEN
+//! - All KV persistence MUST specify explicit CF via `RouteFamily`
+
+pub(crate) mod actor;
+mod admin_projection;
+mod drop_scope;
+mod inventory;
+pub(crate) mod key_layout;
+pub mod metrics;
+pub mod protocol;
+mod scan_wire_budget;
+pub(crate) mod sink;
+pub use sink::KvDomain;
+
+/// Admin read port: request/response types for operator KV inspection.
+pub mod admin {
+    pub use super::sink::{
+        AdminKvPrefixScanResult, AdminKvRowsError, AdminKvRowsRequest, AdminKvRowsResult,
+    };
+}
+mod store;
+mod watch_registry;
+
+pub(crate) use actor::KvActor;
+pub use drop_scope::{KvDropScope, KvDropTarget};
+pub use protocol::{
+    KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvDropRequest, KvError,
+    KvMessage, KvNotification, KvPair, KvResourceScope, KvResponse, KvSubscriptionMessage,
+    ScanQuery, TxMode,
+};
+
+/// Canonicalize a KV route for authorization: exactly `realm/area/resource`.
+///
+/// # Errors
+///
+/// Returns a message when the route is not an exact non-empty triplet.
+pub fn canonical_auth_route(route: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    fitz_core::runtime::auth_route::canonical_triplet_route("kv", route, true)
+}

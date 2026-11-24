@@ -1,0 +1,304 @@
+//! Envelope intake: classify what arrived, hand it to the right frame
+//! handler, and route the reply back to the client session.
+
+#[cfg(test)]
+use super::FrameContext;
+use super::{
+    DeliveryError, Envelope, Ordering, StreamClientFrame, StreamClientRequest,
+    StreamClientResponseBody, StreamFamilyState, STREAM_OPERATIONS_TOTAL,
+};
+#[cfg(test)]
+use super::{Route, RouteAddress};
+use fitz_core::runtime::SessionScoped as _;
+
+impl super::super::model::StreamFamilyRuntime {
+    pub(in crate::domain::sink) fn deliver_envelope(
+        &mut self,
+        envelope: &Envelope,
+    ) -> Result<(), DeliveryError> {
+        if self.core.handle_cleanup_envelope(envelope) {
+            return Ok(());
+        }
+        self.core.ensure_active()?;
+
+        if self.core.handle_domain_publish_envelope(envelope) {
+            return Ok(());
+        }
+
+        let Some(request) = StreamFamilyState::extract_request(envelope)? else {
+            return Ok(());
+        };
+        let meta = request.meta;
+        let request_started = self.core.record_request_start();
+
+        if meta.route_family != *envelope.destination().family()
+            || envelope
+                .source()
+                .is_some_and(|source| *source.family() != meta.route_family)
+        {
+            let response = StreamFamilyState::stream_error_response("route family mismatch");
+            let response_meta = envelope.source().map_or(meta, |source| {
+                let mut response_meta = meta;
+                response_meta.route_family = *source.family();
+                response_meta
+            });
+            self.core
+                .route_stream_response(envelope, response_meta, &response, request_started);
+            return Ok(());
+        }
+
+        let Some(parsed_frame) =
+            self.core
+                .parse_request_frame(envelope, meta, request.frame, request_started)
+        else {
+            return Ok(());
+        };
+
+        let session_mutation = matches!(
+            parsed_frame,
+            StreamClientFrame::Sub(_)
+                | StreamClientFrame::Drop(_)
+                | StreamClientFrame::Op(
+                    crate::domain::protocol::StreamMessage::Begin { .. }
+                        | crate::domain::protocol::StreamMessage::Append { .. }
+                        | crate::domain::protocol::StreamMessage::Commit { .. }
+                        | crate::domain::protocol::StreamMessage::Rollback { .. }
+                )
+        );
+        if session_mutation && self.core.is_cleaned_up_request(meta.session_id, envelope) {
+            let response = StreamFamilyState::stream_error_response("session has been cleaned up");
+            self.core
+                .route_stream_response(envelope, meta, &response, request_started);
+            return Ok(());
+        }
+
+        self.core.record_operation();
+
+        match parsed_frame {
+            StreamClientFrame::Drop(request) => {
+                self.handle_drop_frame(envelope, meta, request_started, &request);
+                Ok(())
+            }
+            StreamClientFrame::Sub(sub_msg) => {
+                self.core
+                    .handle_subscription_frame(envelope, meta, request_started, sub_msg);
+                Ok(())
+            }
+            StreamClientFrame::Op(stream_msg) => {
+                self.handle_actor_operation_frame(envelope, meta, request_started, stream_msg);
+                Ok(())
+            }
+        }
+    }
+}
+
+impl StreamFamilyState {
+    fn ensure_active(&mut self) -> Result<(), DeliveryError> {
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        Ok(())
+    }
+
+    fn handle_domain_publish_envelope(&mut self, envelope: &Envelope) -> bool {
+        if let Some(event) = envelope.payload::<fitz_core::runtime::DomainPublishEvent>() {
+            if *envelope.destination().family() != event.family_id {
+                fitz_core::observability::counter_inc("fitz_stream_publish_family_mismatch_total");
+                return true;
+            }
+            self.handle_domain_publish(event);
+            return true;
+        }
+
+        false
+    }
+
+    fn extract_request(envelope: &Envelope) -> Result<Option<StreamClientRequest>, DeliveryError> {
+        Ok(Some(
+            Self::request_from_envelope(envelope).ok_or(DeliveryError::ActorStopped)?,
+        ))
+    }
+
+    fn record_request_start(&mut self) -> Option<std::time::Instant> {
+        self.metrics
+            .as_ref()
+            .map(crate::domain::StreamMetrics::record_request_start)
+    }
+
+    fn parse_request_frame(
+        &mut self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        frame: Result<StreamClientFrame, String>,
+        request_started: Option<std::time::Instant>,
+    ) -> Option<StreamClientFrame> {
+        match frame {
+            Ok(frame) => Some(frame),
+            Err(error) => {
+                let response = Self::stream_error_response(error);
+                self.route_stream_response(envelope, meta, &response, request_started);
+                None
+            }
+        }
+    }
+
+    fn record_operation(&mut self) {
+        if let Some(metrics) = &mut self.metrics {
+            metrics.counter_inc(STREAM_OPERATIONS_TOTAL);
+        } else {
+            fitz_core::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
+        }
+    }
+
+    pub(super) fn request_from_envelope(envelope: &Envelope) -> Option<StreamClientRequest> {
+        if let Some(request) = envelope.payload::<StreamClientRequest>() {
+            return Some(request.clone());
+        }
+
+        #[cfg(test)]
+        {
+            let frame_ctx = envelope.payload::<FrameContext>()?.clone();
+            let subscriber = envelope.source().cloned().unwrap_or_else(|| {
+                RouteAddress::new(
+                    *envelope.destination().family(),
+                    Route::new(format!("inbox://session/{}", frame_ctx.session_id)),
+                )
+            });
+            let meta = fitz_core::runtime::ClientFrameMeta::new(
+                frame_ctx.session_id,
+                test_client_channel_from_protocol(frame_ctx.channel_id),
+                frame_ctx.msg_type.as_u16(),
+                frame_ctx.route_family,
+            )
+            .with_correlation(frame_ctx.correlation);
+            let parsed = crate::wire::stream_codec::parse_request(
+                &frame_ctx,
+                &frame_ctx.payload,
+                *envelope.destination().family(),
+                fitz_core::session::SessionId(frame_ctx.session_id),
+                subscriber,
+            );
+            Some(StreamClientRequest::new(meta, parsed))
+        }
+
+        #[cfg(not(test))]
+        {
+            None
+        }
+    }
+
+    pub(in crate::domain::sink) fn route_stream_response(
+        &mut self,
+        envelope: &Envelope,
+        meta: fitz_core::runtime::ClientFrameMeta,
+        response: &StreamClientResponseBody,
+        request_started: Option<std::time::Instant>,
+    ) -> bool {
+        // One request gets exactly one terminal frame. Stream `deliver` blocks
+        // on the actor for the lane's reply timeout, so a stalled actor
+        // lets ingress answer the request as indeterminate while this response
+        // is still in flight. Without the claim both reach the wire, and a
+        // client matching responses positionally stays desynchronized for the
+        // life of the connection - not just for this request.
+        if envelope.source().is_none() || !envelope.try_claim_reply() {
+            tracing::debug!(
+                domain = "stream",
+                session = meta.session_id,
+                "Suppressed Stream response after another terminal response won"
+            );
+            return false;
+        }
+
+        #[cfg(test)]
+        let response_ctx = {
+            let mut payload_encoder =
+                fitz_core::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+            let response_bytes = crate::wire::stream_codec::encode_response_into(
+                &mut payload_encoder,
+                meta.message_type,
+                response,
+            );
+            FrameContext::new(
+                meta.session_id,
+                test_protocol_channel_from_client(meta.channel),
+                fitz_core::protocol::message::MessageType::new(meta.message_type),
+                bytes::Bytes::from(response_bytes),
+                meta.route_family,
+            )
+            .with_correlation(meta.correlation)
+        };
+
+        #[cfg(not(test))]
+        let response_ctx = crate::domain::StreamClientResponse::new(meta, response.clone());
+
+        let delivered = if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            if let Err(error) = self.router.route(response_envelope) {
+                if let Some(metrics) = self.metrics.as_ref() {
+                    metrics.record_response_drop();
+                } else {
+                    fitz_core::observability::counter_inc(
+                        crate::domain::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                    );
+                }
+                tracing::warn!(
+                    domain = "stream",
+                    session_id = meta.session_id,
+                    route_family = meta.route_family.as_u64(),
+                    error = %error,
+                    "Dropped best-effort Stream response"
+                );
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::stream_response_is_failure(response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
+        }
+        delivered
+    }
+}
+
+#[cfg(test)]
+fn test_client_channel_from_protocol(
+    channel: fitz_core::protocol::frame::ChannelId,
+) -> fitz_core::runtime::ClientChannel {
+    match channel {
+        fitz_core::protocol::frame::ChannelId::Control => {
+            fitz_core::runtime::ClientChannel::Control
+        }
+        fitz_core::protocol::frame::ChannelId::Pub => fitz_core::runtime::ClientChannel::Pub,
+        fitz_core::protocol::frame::ChannelId::Sub => fitz_core::runtime::ClientChannel::Sub,
+        fitz_core::protocol::frame::ChannelId::Rpc => fitz_core::runtime::ClientChannel::Rpc,
+        fitz_core::protocol::frame::ChannelId::Lease => fitz_core::runtime::ClientChannel::Lease,
+        fitz_core::protocol::frame::ChannelId::Internal => {
+            fitz_core::runtime::ClientChannel::Internal
+        }
+    }
+}
+
+#[cfg(test)]
+fn test_protocol_channel_from_client(
+    channel: fitz_core::runtime::ClientChannel,
+) -> fitz_core::protocol::frame::ChannelId {
+    match channel {
+        fitz_core::runtime::ClientChannel::Control => {
+            fitz_core::protocol::frame::ChannelId::Control
+        }
+        fitz_core::runtime::ClientChannel::Pub => fitz_core::protocol::frame::ChannelId::Pub,
+        fitz_core::runtime::ClientChannel::Sub => fitz_core::protocol::frame::ChannelId::Sub,
+        fitz_core::runtime::ClientChannel::Rpc => fitz_core::protocol::frame::ChannelId::Rpc,
+        fitz_core::runtime::ClientChannel::Lease => fitz_core::protocol::frame::ChannelId::Lease,
+        fitz_core::runtime::ClientChannel::Internal => {
+            fitz_core::protocol::frame::ChannelId::Internal
+        }
+    }
+}

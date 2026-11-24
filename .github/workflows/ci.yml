@@ -19,12 +19,13 @@ permissions:
   contents: read
 
 jobs:
-  backend:
+  backend-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
     env:
-      RUST_LOG: "off"
-      FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
       RUSTUP_TOOLCHAIN: "1.99.1"
     steps:
       - name: Checkout repository
@@ -35,35 +36,89 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "ci"
 
       - name: Format check
         run: cargo fmt --all -- --check
 
       - name: Install cntryl-tools
-        run: cargo install --locked --git https://github.com/cntryl/tools --rev bc2d07782cf6873e1a4962fe8fe91396daa81a24 cntryl-tools
+        run: cargo install --locked --git https://github.com/cntryl/tools --rev 4fd7f318c1f8c24bdb5d4bbea1b05d85b10f4bb5 cntryl-tools
 
-      - name: Validate test conventions
-        run: cntryl-tools validate-tests
+      - name: Validate workspace test conventions and module sizes
+        run: |
+          cntryl-tools validate-tests
+          cargo metadata --locked --no-deps --format-version 1 \
+            | jq -er '.packages[].manifest_path' \
+            | while IFS= read -r manifest; do
+                cntryl-tools check-module-sizes \
+                  --root "$(dirname "$manifest")" \
+                  --config "$PWD/.cntryl/repository.toml"
+              done
 
-      - name: Check module sizes
-        run: cntryl-tools check-module-sizes
-
-      - name: Validate benchmark contract
-        run: cntryl-tools validate-benchmarks
-
-      - name: Pedantic lint
+      # Clippy checks benchmark targets. Benchmark contract validation needs virtual workspace support in cntryl-tools.
+      - name: Lint all workspace targets and features
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 
-      - name: Build
-        run: cargo build --locked --workspace --all-features
+  backend-crates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.1"
+      FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
+      RUST_LOG: "off"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-      - name: Test
-        run: cargo test --locked --workspace
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build broker and MCP binaries
+        run: cargo build --locked -p fitz --bins
+
+      - name: Test server and library crates
+        run: cargo test --locked --workspace --exclude fitz-e2e
+
+  backend-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.1"
+      FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
+      RUST_LOG: "off"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test broker integration
+        run: cargo test --locked -p fitz-e2e
 
       - name: Queue diagnostic artifact regressions
-        run: cargo test --locked --features benchkit,stress-soak --test queue_drain_latency_artifacts --test queue_pressure_accounting --test queue_pacing --test queue_pressure_envelopes
+        run: >
+          cargo test --locked -p fitz-e2e --features benchkit,stress-soak
+          --test queue_drain_latency_artifacts
+          --test queue_pressure_accounting
+          --test queue_pacing
+          --test queue_pressure_envelopes
+
+  backend:
+    if: always()
+    needs: [backend-checks, backend-crates, backend-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all backend jobs to pass
+        env:
+          BACKEND_RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: test "$BACKEND_RESULTS" = "success success success"
 
   frontend:
     runs-on: ubuntu-latest

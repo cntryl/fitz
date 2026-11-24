@@ -1,0 +1,44 @@
+[package]
+name = "fitz-kv"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+autobenches = false
+
+[lib]
+bench = false
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+benchkit = []
+
+[dependencies]
+fitz-core.workspace = true
+fitz-storage.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+cntryl-midge.workspace = true
+crossbeam-channel.workspace = true
+hex.workspace = true
+lexkey.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+fitz-core = { workspace = true, features = ["bench-support"] }
+cntryl-stress.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "tier3_system_kv"
+harness = false
+
+[dev-dependencies.fitz-kv]
+workspace = true
+features = ["test-support"]

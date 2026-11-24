@@ -1,32 +1,47 @@
 # Benchmark targets
 
-The Cargo manifest is the source of target names and tier membership. Each
-benchmark workflow is manually dispatched and uploads its report. These
+Each crate's Cargo manifest registers its benchmark targets. The benchmark
+workflows run on a schedule, support manual runs, and upload reports. These
 workloads are diagnostic and are not a pull-request performance gate.
+
+- **Benchmark Nightly** runs Tiers 1–4 daily. For a manual run, choose a tier or
+  `all`, then select the measurement profile. Manual runs default to Tier 1.
+- **Benchmark Tier 5 Saturation** runs weekly.
+- **Benchmark Tier 6 Endurance** runs monthly.
+
+Scheduled saturation and endurance runs use the extended profile (3,600-second
+duration setting). Manual runs default to standard (600 seconds).
+
+To start a Tier 4 smoke run from the command line, use the nightly workflow.
+
+```sh
+gh workflow run nightly.yml -f tier=tier4 -f profile=smoke
+```
+
+If a nightly target is already running on the same ref, a repeat queues behind
+it. GitHub keeps the newest pending request for that target. Other targets can
+run in parallel.
 
 Targets requiring explicit setup:
 
 - `stream_subscription_capacity` runs one paced Stream workload per process.
-  For example, run `cargo bench --bench stream_subscription_capacity --features benchkit -- common-mixed tcp 128 75`.
+  For example, run `cargo bench -p fitz-e2e --bench stream_subscription_capacity --features benchkit -- common-mixed tcp 128 75`.
   The final two arguments set the commit count and arrival interval in milliseconds.
   Use the same settings when comparing brokers. The `churn` case measures
   charged registration bytes and live heap after each drained cycle.
-- `tier5_cloud_catalog`: use `cargo bench --bench tier5_cloud_catalog` with an
+- `tier5_cloud_catalog`: use `cargo bench -p fitz-e2e --bench tier5_cloud_catalog` with an
   immutable `FITZ_TEST_IMAGE`, a loopback S3-compatible provider, and disposable
   provider state. See [the workload contract](cloud-catalog-pressure.md).
-- `queue_pressure`: use `cargo bench --bench queue_pressure` with an explicit
+- `queue_pressure`: use `cargo bench -p fitz-e2e --bench queue_pressure` with an explicit
   resource envelope.
-- `queue_drain_latency`: use `cargo bench --bench queue_drain_latency` with an
+- `queue_drain_latency`: use `cargo bench -p fitz-e2e --bench queue_drain_latency` with an
   explicit invocation and finite reserve and acknowledgement workload.
-- `schedule_pressure`: use `cargo bench --bench schedule_pressure` with an
+- `schedule_pressure`: use `cargo bench -p fitz-e2e --bench schedule_pressure` with an
   explicit resource envelope.
-- `kv_pressure`: use `cargo bench --bench kv_pressure` with an explicit
+- `kv_pressure`: use `cargo bench -p fitz-e2e --bench kv_pressure` with an explicit
   resource envelope.
-- `lease_pressure`: use `cargo bench --bench lease_pressure` with an explicit
+- `lease_pressure`: use `cargo bench -p fitz-e2e --bench lease_pressure` with an explicit
   resource envelope.
-
-Other targets are grouped by tier in `.github/workflows/bench-tier*.yml` and
-registered in `Cargo.toml`.
 
 The `tier1_hotpath_message` target also compares Wire 2 and Wire 3 core-only
 frame decoding, measures a small unknown extension, and scans a valid Wire 3

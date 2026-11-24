@@ -1,0 +1,456 @@
+// KV domain message types and payload codec
+
+use crate::domain::protocol::KvError;
+use crate::domain::{
+    KvClientFrame, KvDropRequest, KvDropScope, KvMessage, KvResourceScope, KvResponse,
+    KvSubscriptionMessage, TxMode,
+};
+use crate::wire::frame_context::FrameContext;
+use crate::wire::payload_codec::PayloadDecoder;
+use fitz_core::runtime::routing::{route_exact_triplet, Route, RouteAddress, RouteFamily};
+
+use super::mutation_parsers::{
+    parse_delete, parse_delete_range, parse_get, parse_insert, parse_put, parse_scan,
+};
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u32_to_usize(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+/// KV domain message type IDs
+pub mod msg_type {
+    pub const BEGIN: u16 = 100;
+    pub const COMMIT: u16 = 101;
+    pub const ROLLBACK: u16 = 102;
+    pub const GET: u16 = 103;
+    pub const PUT: u16 = 104;
+    pub const INSERT: u16 = 105;
+    pub const DELETE: u16 = 106;
+    pub const DELETE_RANGE: u16 = 107;
+    pub const SCAN: u16 = 108;
+    pub const SUBSCRIBE: u16 = 109;
+    pub const UNSUBSCRIBE: u16 = 110;
+    pub const NOTIFY: u16 = 111;
+    pub const DROP: u16 = 112;
+}
+
+/// # Errors
+///
+/// Returns an error if the frame payload is malformed for the given KV message type.
+pub fn parse_frame(
+    ctx: &FrameContext,
+    payload: &[u8],
+    route_family: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+) -> Result<KvClientFrame, String> {
+    match ctx.msg_type.0 {
+        msg_type::BEGIN
+        | msg_type::COMMIT
+        | msg_type::ROLLBACK
+        | msg_type::GET
+        | msg_type::PUT
+        | msg_type::INSERT
+        | msg_type::DELETE
+        | msg_type::DELETE_RANGE
+        | msg_type::SCAN => {
+            parse_request(ctx.msg_type.0, route_family, payload).map(KvClientFrame::Op)
+        }
+        msg_type::DROP => {
+            let drop = decode_drop(payload)?;
+            Ok(KvClientFrame::Drop(KvDropRequest {
+                scope: KvDropScope::parse(route_family, drop.route)?,
+                persistence: drop.persistence,
+            }))
+        }
+        msg_type::SUBSCRIBE => {
+            parse_subscribe(route_family, session_id, subscriber, payload).map(KvClientFrame::Sub)
+        }
+        msg_type::UNSUBSCRIBE => {
+            parse_unsubscribe(route_family, session_id, subscriber, payload).map(KvClientFrame::Sub)
+        }
+        msg_type::NOTIFY => Err("KV_NOTIFY is server-to-client only".to_string()),
+        _ => Err(format!("Unknown KV message type: {}", ctx.msg_type.0)),
+    }
+}
+
+/// Parse a resource-scoped KV transaction request from bytes.
+/// Per `CLIENT_SPEC`: all operations now include the full route on wire.
+/// `RouteFamily` is assigned by the session and must be provided by the caller.
+///
+/// # Errors
+///
+/// Returns an error if the wire payload is malformed or the route is invalid.
+pub fn parse_request(
+    msg_type: u16,
+    route_family: RouteFamily,
+    payload: &[u8],
+) -> Result<KvMessage, String> {
+    match msg_type {
+        msg_type::BEGIN => parse_begin(route_family, payload),
+        msg_type::COMMIT => parse_commit(route_family, payload),
+        msg_type::ROLLBACK => parse_rollback(route_family, payload),
+        msg_type::GET => parse_get(route_family, payload),
+        msg_type::PUT => parse_put(route_family, payload),
+        msg_type::INSERT => parse_insert(route_family, payload),
+        msg_type::DELETE => parse_delete(route_family, payload),
+        msg_type::DELETE_RANGE => parse_delete_range(route_family, payload),
+        msg_type::SCAN => parse_scan(route_family, payload),
+        _ => Err(format!("Unknown KV message type: {msg_type}")),
+    }
+}
+
+/// Encode KV response to bytes
+pub fn encode_response(response: &KvResponse) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    match response {
+        KvResponse::BeginOk { tx_id } => {
+            buf.put_u8(0); // status: success
+            buf.put_u64(*tx_id);
+        }
+        KvResponse::SubscribeOk { subscription_id } => {
+            buf.put_u8(0); // status: success
+            buf.put_u64(*subscription_id);
+        }
+        KvResponse::DropOk | KvResponse::UnsubscribeOk => {
+            buf.put_u8(0); // status: success
+        }
+        KvResponse::CommitOk => {
+            buf.put_u8(0); // status: success
+                           // Empty response for commit ok
+        }
+        KvResponse::RollbackOk => {
+            buf.put_u8(0); // status: success
+                           // Empty response for rollback ok
+        }
+        KvResponse::GetResult { found, value } => {
+            buf.put_u8(0); // status: success
+            buf.put_u8(u8::from(*found));
+            if let Some(v) = value {
+                buf.put_u32(usize_to_u32_saturating(v.len()));
+                buf.put_slice(v);
+            } else {
+                buf.put_u32(0);
+            }
+        }
+        KvResponse::PutOk => {
+            buf.put_u8(0); // status: success
+                           // Empty response for put ok
+        }
+        KvResponse::InsertOk => {
+            buf.put_u8(0); // status: success
+                           // Empty response for insert ok
+        }
+        KvResponse::DeleteOk => {
+            buf.put_u8(0); // status: success
+                           // Empty response for delete ok
+        }
+        KvResponse::DeleteRangeOk => {
+            buf.put_u8(0); // status: success
+                           // Empty response for delete range ok
+        }
+        KvResponse::ScanResult { items, has_more } => {
+            buf.put_u8(0); // status: success
+            buf.put_u32(usize_to_u32_saturating(items.len()));
+            for item in items {
+                buf.put_u32(usize_to_u32_saturating(item.key.len()));
+                buf.put_slice(&item.key);
+                buf.put_u32(usize_to_u32_saturating(item.value.len()));
+                buf.put_slice(&item.value);
+            }
+            buf.put_u8(u8::from(*has_more));
+        }
+        KvResponse::Error { error } => {
+            return crate::wire::error_codes::encode_error_body(
+                kv_error_code(error),
+                &error.to_string(),
+            );
+        }
+    }
+    buf
+}
+
+fn kv_error_code(error: &KvError) -> u16 {
+    use crate::wire::error_codes::kv;
+
+    match error {
+        KvError::InvalidTxId | KvError::NoActiveTx => kv::ERR_TRANSACTION_NOT_FOUND,
+        KvError::NotFound => kv::ERR_KEY_NOT_FOUND,
+        KvError::Conflict(_) => kv::ERR_ISOLATION_CONFLICT,
+        KvError::AlreadyExists => kv::ERR_KEY_EXISTS,
+        KvError::ReadOnlyWrite => kv::ERR_WRITE_IN_READONLY,
+        KvError::RealmMismatch => kv::ERR_REALM_MISMATCH,
+        KvError::BackendUnavailable(_) | KvError::BackendError(_) => kv::ERR_BACKEND_ERROR,
+        KvError::Timeout(_) => kv::ERR_TIMEOUT,
+        KvError::InvalidSubscriptionPattern(_) => kv::ERR_INVALID_SUBSCRIPTION_PATTERN,
+        KvError::SubscriptionLimit => kv::ERR_SUBSCRIPTION_LIMIT,
+        KvError::InvalidRoute(_)
+        | KvError::InvalidRequest(_)
+        | KvError::InvalidRealm
+        | KvError::InvalidRouteFamily
+        | KvError::UnknownResource(_)
+        | KvError::TxScopeViolation { .. } => kv::ERR_INVALID_ROUTE,
+    }
+}
+
+// ===== Parsers =====
+
+/// Parse route string into realm, area, resource components.
+/// Expected format: `kv://realm/area/resource` or `realm/area/resource`.
+fn split_route(route_str: &str) -> Option<(&str, &str, &str)> {
+    let parts = route_exact_triplet(route_str)?;
+
+    if parts.realm.is_empty()
+        || parts.area.is_empty()
+        || parts.resource.is_empty()
+        || parts.realm.contains('*')
+        || parts.area.contains('*')
+        || parts.resource.contains('*')
+    {
+        return None;
+    }
+
+    Some((parts.realm, parts.area, parts.resource))
+}
+
+pub(super) fn decode_route_str<'a>(
+    route_bytes: &'a [u8],
+    op_name: &str,
+) -> Result<&'a str, String> {
+    std::str::from_utf8(route_bytes).map_err(|_| format!("Invalid UTF-8 in {op_name} route"))
+}
+
+fn read_route_str<'a>(
+    payload: &'a [u8],
+    offset: &mut usize,
+    op_name: &str,
+) -> Result<&'a str, String> {
+    if *offset + 4 > payload.len() {
+        return Err(format!("{op_name} route length overflow"));
+    }
+    let route_len = u32_to_usize(u32::from_be_bytes([
+        payload[*offset],
+        payload[*offset + 1],
+        payload[*offset + 2],
+        payload[*offset + 3],
+    ]));
+    *offset += 4;
+
+    if *offset + route_len > payload.len() {
+        return Err(format!("{op_name} route overflow"));
+    }
+    let route_str = decode_route_str(&payload[*offset..*offset + route_len], op_name)?;
+    *offset += route_len;
+    Ok(route_str)
+}
+
+pub(super) fn parse_scope(
+    route_family: RouteFamily,
+    route_str: &str,
+) -> Result<KvResourceScope, String> {
+    match split_route(route_str) {
+        Some((realm, area, resource)) => {
+            Ok(KvResourceScope::new(route_family, realm, area, resource))
+        }
+        None => Err(format!(
+            "Route must be realm/area/resource, got '{route_str}'"
+        )),
+    }
+}
+
+fn ensure_complete(decoder: &PayloadDecoder<'_>, op_name: &str) -> Result<(), String> {
+    if decoder.is_complete() {
+        Ok(())
+    } else {
+        Err(format!("Trailing data in {op_name} payload"))
+    }
+}
+
+fn validate_route(route_str: &str) -> Result<(), String> {
+    if split_route(route_str).is_some() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Route must be realm/area/resource, got '{route_str}'"
+        ))
+    }
+}
+
+/// Extract the KV route needed for authorization without constructing a full request message.
+///
+/// # Errors
+///
+/// Returns an error if the payload is malformed for the given KV message type.
+pub fn extract_auth_route(
+    msg_type: u16,
+    payload: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, str>>, String> {
+    let route = match msg_type {
+        msg_type::DROP => Ok(Some(decode_drop(payload)?.route)),
+        msg_type::BEGIN => {
+            let route_str = decode_begin(payload)?.route;
+            validate_route(route_str)?;
+            Ok(Some(route_str))
+        }
+        msg_type::SUBSCRIBE | msg_type::UNSUBSCRIBE => {
+            let mut offset = 0;
+            let route_str = read_route_str(payload, &mut offset, "KV watch")?;
+            if offset != payload.len() {
+                return Err("Trailing data in KV watch payload".to_string());
+            }
+            Ok(Some(route_str))
+        }
+        msg_type::COMMIT
+        | msg_type::ROLLBACK
+        | msg_type::GET
+        | msg_type::PUT
+        | msg_type::INSERT
+        | msg_type::DELETE
+        | msg_type::DELETE_RANGE
+        | msg_type::SCAN => {
+            if payload.len() < 12 {
+                return Err(format!("{msg_type} payload too short"));
+            }
+
+            let mut offset = 8;
+            let route_str = read_route_str(payload, &mut offset, "KV")?;
+            validate_route(route_str)?;
+            Ok(None)
+        }
+        msg_type::NOTIFY => Err("KV_NOTIFY is server-to-client only".to_string()),
+        _ => Err(format!("Unknown KV message type: {msg_type}")),
+    }?;
+    route
+        .map(|route| {
+            crate::wire::auth_route::canonicalize("kv", route, |route| {
+                if msg_type == msg_type::DROP {
+                    KvDropScope::canonical_authorization_route(route).map(std::borrow::Cow::Owned)
+                } else {
+                    crate::domain::canonical_auth_route(route)
+                }
+            })
+        })
+        .transpose()
+}
+
+struct DropFields<'a> {
+    route: &'a str,
+    persistence: fitz_storage::domains::CommitPersistence,
+}
+
+fn decode_drop(payload: &[u8]) -> Result<DropFields<'_>, String> {
+    let mut decoder = PayloadDecoder::new(payload);
+    let route = decoder.get_string_ref()?;
+    let persistence = fitz_storage::domains::CommitPersistence::decode(decoder.get_u8()?)?;
+    ensure_complete(&decoder, "DROP")?;
+    Ok(DropFields { route, persistence })
+}
+
+fn parse_commit(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+    // Wire format: [u64 tx_id][u32 route_len][route][u8 persistence]
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = parse_scope(route_family, decoder.get_string_ref()?)?;
+    let persistence = fitz_storage::domains::CommitPersistence::decode(decoder.get_u8()?)?;
+    ensure_complete(&decoder, "COMMIT")?;
+    Ok(KvMessage::Commit {
+        tx_id,
+        scope,
+        persistence,
+    })
+}
+
+fn parse_rollback(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+    // Wire format per `CLIENT_SPEC`: [u64 tx_id][u32 route_len][route]
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = parse_scope(route_family, decoder.get_string_ref()?)?;
+    ensure_complete(&decoder, "ROLLBACK")?;
+    Ok(KvMessage::Rollback { tx_id, scope })
+}
+
+/// A BEGIN payload decoded by the one wire rule that ingress authorization and
+/// the KV domain share, so neither can accept a frame the other rejects.
+struct BeginFields<'a> {
+    route: &'a str,
+    mode: TxMode,
+}
+
+fn decode_begin(payload: &[u8]) -> Result<BeginFields<'_>, String> {
+    // Wire format: [u32 route_len][route][u8 transaction mode]
+    let mut decoder = PayloadDecoder::new(payload);
+    let route = decoder.get_string_ref()?;
+    let mode = match decoder.get_u8()? {
+        0 => TxMode::ReadOnly,
+        1 => TxMode::ReadWrite,
+        _ => return Err("Invalid transaction mode".to_string()),
+    };
+
+    ensure_complete(&decoder, "BEGIN")?;
+
+    Ok(BeginFields { route, mode })
+}
+
+/// Decode the transaction mode a BEGIN payload requests.
+///
+/// # Errors
+///
+/// Returns an error for any payload the KV domain rejects as a malformed
+/// BEGIN: truncated fields, an unknown mode, or trailing data.
+pub fn begin_mode(payload: &[u8]) -> Result<TxMode, String> {
+    decode_begin(payload).map(|begin| begin.mode)
+}
+
+fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+    let begin = decode_begin(payload)?;
+    Ok(KvMessage::Begin {
+        scope: parse_scope(route_family, begin.route)?,
+        mode: begin.mode,
+    })
+}
+
+fn parse_subscribe(
+    route_family: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+    payload: &[u8],
+) -> Result<KvSubscriptionMessage, String> {
+    let mut offset = 0;
+    let pattern_str = read_route_str(payload, &mut offset, "KV SUBSCRIBE")?;
+    if offset != payload.len() {
+        return Err("Trailing data in KV SUBSCRIBE payload".to_string());
+    }
+
+    Ok(KvSubscriptionMessage::Subscribe {
+        family_id: route_family,
+        pattern: Route::from_ref(pattern_str),
+        session_id,
+        subscriber,
+    })
+}
+
+fn parse_unsubscribe(
+    route_family: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+    payload: &[u8],
+) -> Result<KvSubscriptionMessage, String> {
+    let mut offset = 0;
+    let pattern_str = read_route_str(payload, &mut offset, "KV UNSUBSCRIBE")?;
+    if offset != payload.len() {
+        return Err("Trailing data in KV UNSUBSCRIBE payload".to_string());
+    }
+
+    Ok(KvSubscriptionMessage::Unsubscribe {
+        family_id: route_family,
+        pattern: Route::from_ref(pattern_str),
+        session_id,
+        subscriber,
+    })
+}

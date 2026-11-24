@@ -1,0 +1,577 @@
+use super::{AuthorizationPolicy, DispatchDomain, DomainAuthorizationSpec};
+#[cfg(test)]
+use super::{Bytes, ChannelId};
+
+type AuthRouteExtractor =
+    for<'a> fn(u16, &'a [u8]) -> Result<Option<std::borrow::Cow<'a, str>>, String>;
+type AuthRouteCanonicalizer = for<'a> fn(&'a str) -> Result<std::borrow::Cow<'a, str>, String>;
+type RequestEnvelopeBuilder = fn(
+    crate::runtime::DomainKind,
+    crate::dispatch::DomainEnvelopeBuildRequest,
+) -> crate::runtime::Envelope;
+
+pub(crate) use crate::dispatch::DomainEnvelopeBuildRequest;
+
+pub(crate) struct IngressDomainDescriptor {
+    pub(super) manifest: &'static crate::runtime::DomainDescriptor,
+    pub(super) unauthorized_error_code: u16,
+    /// Code answered when the domain did not reply before its deadline.
+    ///
+    /// The command was already enqueued and may still execute, so this is the
+    /// domain's shared `TIMEOUT` slot (`x007`), whose catalog effect is
+    /// INDETERMINATE. It is never the `BUSY` slot: that tells a compliant SDK
+    /// the request was never accepted and invites a duplicate send.
+    pub(super) timeout_error_code: u16,
+    /// Code answered when the domain could not be reached at all: a dead
+    /// actor, a panicked sink, or a response that cannot be framed.
+    ///
+    /// The command may have partially applied, so this is the domain's shared
+    /// `BACKEND` slot (`x006`), also INDETERMINATE in the catalog.
+    pub(super) unavailable_error_code: u16,
+    /// Code returned when the domain mailbox stayed full and the command was
+    /// never enqueued.
+    ///
+    /// The opposite of the two codes above: nothing was accepted, so the
+    /// client may safely re-send. Every value here must be inside
+    /// `REQ-PROTO-012`'s retryable set, or a compliant client gives up on a
+    /// request it could have retried - the response message says "retry with
+    /// backoff", and a fatal code contradicts it.
+    pub(super) backpressure_error_code: u16,
+    extract_auth_route: AuthRouteExtractor,
+    canonical_auth_route: AuthRouteCanonicalizer,
+    build_request_envelope: RequestEnvelopeBuilder,
+    /// Messages whose route is a retained registration pattern
+    /// (`SUBSCRIBE`/`UNSUBSCRIBE`/`WATCH`/`REGISTER`) or a one-shot patterned
+    /// read (Lease `LIST`). Authorization compiles and containment-checks them
+    /// as patterns so it cannot accept a selector the sink would interpret
+    /// differently (routing-design.md §4); the grammar itself comes from the
+    /// domain descriptor.
+    pattern_registration_message_ids: &'static [u16],
+    /// Messages whose route is a pattern only when it carries a wildcard.
+    wildcard_selector_message_ids: &'static [u16],
+    /// Messages authorized against every route in a batch payload.
+    multi_route_message_ids: &'static [u16],
+    /// Messages with no success ACK whose broker-synthesized failures are
+    /// answered as a terminal reply keyed by the request's own id.
+    terminal_reply_message_ids: &'static [u16],
+}
+
+/// API-edge policy lookup keyed by the canonical [`DomainKind`] inventory.
+///
+/// This type deliberately owns only transport concerns: authorization route
+/// extraction, ingress error codes, and request-envelope construction. Domain
+/// identity and protocol message ownership remain in the shared manifests.
+pub(crate) struct IngressDomainPolicy;
+
+impl IngressDomainDescriptor {
+    #[cfg(test)]
+    pub(super) fn kind(&self) -> DispatchDomain {
+        self.manifest.kind
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn domain_name(&self) -> &'static str {
+        self.manifest.kind.as_str()
+    }
+
+    pub(super) fn extract_auth_route<'a>(
+        &self,
+        msg_type: u16,
+        payload: &'a [u8],
+    ) -> Result<Option<std::borrow::Cow<'a, str>>, String> {
+        (self.extract_auth_route)(msg_type, payload)
+    }
+
+    /// Canonicalize a route with the owning domain's auth-route grammar.
+    pub(super) fn canonical_auth_route<'a>(
+        &self,
+        route: &'a str,
+    ) -> Result<std::borrow::Cow<'a, str>, String> {
+        (self.canonical_auth_route)(route)
+    }
+
+    pub(super) fn is_pattern_registration(&self, msg_type: u16) -> bool {
+        self.pattern_registration_message_ids.contains(&msg_type)
+    }
+
+    pub(super) fn is_wildcard_selector(&self, msg_type: u16) -> bool {
+        self.wildcard_selector_message_ids.contains(&msg_type)
+    }
+
+    pub(super) fn is_multi_route(&self, msg_type: u16) -> bool {
+        self.multi_route_message_ids.contains(&msg_type)
+    }
+
+    pub(super) fn answers_with_terminal_reply(&self, msg_type: u16) -> bool {
+        self.terminal_reply_message_ids.contains(&msg_type)
+    }
+
+    pub(crate) fn build_request_envelope(
+        &self,
+        request: DomainEnvelopeBuildRequest,
+    ) -> crate::runtime::Envelope {
+        (self.build_request_envelope)(self.manifest.kind, request)
+    }
+}
+
+impl IngressDomainPolicy {
+    #[cfg(test)]
+    pub(super) fn all() -> &'static [IngressDomainDescriptor; 7] {
+        INGRESS_DOMAIN_DESCRIPTORS
+    }
+
+    pub(super) fn descriptor_for_domain(
+        domain: DispatchDomain,
+    ) -> &'static IngressDomainDescriptor {
+        &INGRESS_DOMAIN_DESCRIPTORS[domain.index()]
+    }
+
+    pub(super) fn dispatch_spec_for_msg_type(
+        msg_type: crate::protocol::message::MessageType,
+    ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
+        let Some(dispatch) = crate::dispatch::client_dispatch(msg_type)? else {
+            return Ok(None);
+        };
+        let policy = manifest_authorization_policy(dispatch.authorization)
+            .ok_or("manifest message has no authorization policy")?;
+        Ok(Some(DomainAuthorizationSpec {
+            domain: dispatch.domain,
+            policy,
+        }))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn descriptor_for_msg_type(
+        msg_type: crate::protocol::message::MessageType,
+    ) -> Result<Option<&'static IngressDomainDescriptor>, &'static str> {
+        let entry = crate::protocol::manifest::client_entry(msg_type)?;
+        let Some(domain) = Self::domain_from_manifest_name(entry.domain) else {
+            return Ok(None);
+        };
+        Ok(Some(Self::descriptor_for_domain(domain)))
+    }
+
+    /// Resolve a manifest domain name back to its dispatch domain.
+    ///
+    /// Derived from the shared descriptor table rather than a separate literal
+    /// match, so the name accepted here is always the one `as_str` produces and
+    /// the two cannot drift apart.
+    #[cfg(any(test, feature = "test-support"))]
+    fn domain_from_manifest_name(name: &str) -> Option<DispatchDomain> {
+        DispatchDomain::ALL
+            .into_iter()
+            .find(|domain| domain.as_str() == name)
+    }
+}
+
+const INGRESS_DOMAIN_DESCRIPTORS: &[IngressDomainDescriptor; 7] = &[
+    IngressDomainDescriptor {
+        manifest: crate::runtime::DomainKind::Kv.descriptor(),
+        unauthorized_error_code: crate::protocol::error_codes::kv::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::kv::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::kv::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::kv::ERR_BACKEND_ERROR,
+        extract_auth_route: crate::protocol::kv_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::kv::canonical_auth_route,
+        build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[109, 110],
+        wildcard_selector_message_ids: &[112],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
+    },
+    IngressDomainDescriptor {
+        manifest: crate::runtime::DomainKind::Queue.descriptor(),
+        unauthorized_error_code: crate::protocol::error_codes::queue::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::queue::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::queue::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::queue::ERR_BACKEND_ERROR,
+        extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::queue::canonical_auth_route,
+        build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[207, 208],
+        wildcard_selector_message_ids: &[202],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
+    },
+    IngressDomainDescriptor {
+        manifest: crate::runtime::DomainKind::Notice.descriptor(),
+        unauthorized_error_code: crate::protocol::error_codes::notice::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::notice::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::notice::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::notice::ERR_BACKEND_ERROR,
+        extract_auth_route: crate::protocol::notice_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::notice::canonical_auth_route,
+        build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[501],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
+    },
+    IngressDomainDescriptor {
+        manifest: crate::runtime::DomainKind::Stream.descriptor(),
+        unauthorized_error_code: crate::protocol::error_codes::stream::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::stream::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::stream::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::stream::ERR_BACKEND_ERROR,
+        extract_auth_route: crate::protocol::stream_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::stream::canonical_auth_route,
+        build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[607, 608],
+        wildcard_selector_message_ids: &[604],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
+    },
+    IngressDomainDescriptor {
+        manifest: crate::runtime::DomainKind::Rpc.descriptor(),
+        unauthorized_error_code: crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::rpc::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::rpc::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+        extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::rpc::canonical_auth_route,
+        build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[300, 301],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[302],
+    },
+    IngressDomainDescriptor {
+        manifest: crate::runtime::DomainKind::Lease.descriptor(),
+        unauthorized_error_code: crate::protocol::error_codes::lease::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::lease::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::lease::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::lease::ERR_BACKEND_ERROR,
+        extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::lease::canonical_auth_route,
+        build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[407, 408, 410],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[],
+        terminal_reply_message_ids: &[],
+    },
+    IngressDomainDescriptor {
+        manifest: crate::runtime::DomainKind::Schedule.descriptor(),
+        unauthorized_error_code: crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::schedule::ERR_BUSY,
+        timeout_error_code: crate::protocol::error_codes::schedule::ERR_TIMEOUT,
+        unavailable_error_code: crate::protocol::error_codes::schedule::ERR_BACKEND_ERROR,
+        extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
+        canonical_auth_route: crate::domains::schedule::canonical_auth_route,
+        build_request_envelope: crate::dispatch::build_request_envelope,
+        pattern_registration_message_ids: &[703, 704],
+        wildcard_selector_message_ids: &[],
+        multi_route_message_ids: &[706],
+        terminal_reply_message_ids: &[],
+    },
+];
+
+const _: () = {
+    let mut index = 0;
+    while index < INGRESS_DOMAIN_DESCRIPTORS.len() {
+        assert!(INGRESS_DOMAIN_DESCRIPTORS[index].manifest.kind as usize == index);
+        index += 1;
+    }
+};
+
+fn manifest_authorization_policy(
+    authorization: crate::protocol::manifest::ManifestAuthorization,
+) -> Option<AuthorizationPolicy> {
+    use crate::auth::Access;
+    use crate::protocol::manifest::ManifestAuthorization;
+
+    match authorization {
+        ManifestAuthorization::None => None,
+        ManifestAuthorization::RouteRead => Some(AuthorizationPolicy::RouteScoped(Access::Read)),
+        ManifestAuthorization::RouteWrite => Some(AuthorizationPolicy::RouteScoped(Access::Write)),
+        ManifestAuthorization::RouteAll => Some(AuthorizationPolicy::RouteScoped(Access::All)),
+        ManifestAuthorization::SessionOwned => Some(AuthorizationPolicy::SessionOwned),
+        ManifestAuthorization::KvBeginMode => Some(AuthorizationPolicy::KvBeginModeScoped),
+        ManifestAuthorization::WildcardRead => {
+            Some(AuthorizationPolicy::WildcardScoped(Access::Read))
+        }
+        ManifestAuthorization::MultiRouteWrite => {
+            Some(AuthorizationPolicy::MultiRouteScoped(Access::Write))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::DomainKind;
+    use std::collections::HashSet;
+
+    fn lease_build_request(msg_type: u16, payload: Bytes) -> DomainEnvelopeBuildRequest {
+        let family = crate::runtime::routing::RouteFamily::new(41);
+        DomainEnvelopeBuildRequest {
+            session_id: 7,
+            channel_id: ChannelId::Lease,
+            route_family: family,
+            msg_type: crate::protocol::message::MessageType::new(msg_type),
+            payload,
+            source: crate::runtime::routing::RouteAddress::new(
+                family,
+                crate::runtime::routing::Route::new("inbox://session/7"),
+            ),
+            destination: crate::runtime::routing::RouteAddress::new(
+                family,
+                crate::runtime::routing::Route::new("lease://acme/locks/resource"),
+            ),
+            correlation: None,
+            ack_requested: false,
+            extensions: crate::protocol::wire3::extensions::KnownFields::none(),
+            received_at: std::time::Instant::now(),
+        }
+    }
+
+    fn lease_acquire_payload(route: &str, owner_id: &str) -> Bytes {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_string(owner_id);
+        encoder.put_u64(30);
+        encoder.put_u32(0);
+        Bytes::from(encoder.finish())
+    }
+
+    #[test]
+    fn should_define_exactly_one_ingress_descriptor_for_every_domain_kind() {
+        // Arrange
+        let descriptors = IngressDomainPolicy::all();
+
+        // Act
+        let descriptor_kinds = descriptors
+            .iter()
+            .map(IngressDomainDescriptor::kind)
+            .collect::<HashSet<_>>();
+        let all_kinds = DomainKind::ALL.into_iter().collect::<HashSet<_>>();
+
+        // Assert
+        assert_eq!(descriptors.len(), DomainKind::ALL.len());
+        assert_eq!(descriptor_kinds, all_kinds);
+    }
+
+    #[test]
+    fn should_resolve_each_domain_to_its_own_ingress_descriptor() {
+        // `descriptor_for_domain` maps each variant to a hardcoded
+        // `INGRESS_DOMAIN_DESCRIPTORS` index. Set-equality alone cannot catch a
+        // reordered array, which would silently pair every domain with another
+        // domain's auth-route extractor and unauthorized error code.
+
+        // Arrange
+        let domains = DomainKind::ALL;
+
+        // Act
+        let resolved =
+            domains.map(|domain| IngressDomainPolicy::descriptor_for_domain(domain).kind());
+
+        // Assert
+        assert_eq!(resolved, domains);
+    }
+
+    #[test]
+    fn should_resolve_every_manifest_domain_name() {
+        // Arrange
+        let names = DomainKind::ALL.map(DomainKind::as_str);
+
+        // Act
+        let resolved = names.map(IngressDomainPolicy::domain_from_manifest_name);
+
+        // Assert
+        assert_eq!(resolved, DomainKind::ALL.map(Some));
+        assert_eq!(IngressDomainPolicy::domain_from_manifest_name("nope"), None);
+    }
+
+    #[test]
+    fn should_preserve_message_type_dispatch_policy() {
+        // Arrange
+        let cases = [
+            (
+                100,
+                Some((DomainKind::Kv, AuthorizationPolicy::KvBeginModeScoped)),
+            ),
+            (
+                200,
+                Some((
+                    DomainKind::Queue,
+                    AuthorizationPolicy::RouteScoped(crate::auth::Access::Write),
+                )),
+            ),
+            (
+                302,
+                Some((
+                    DomainKind::Rpc,
+                    AuthorizationPolicy::RouteScoped(crate::auth::Access::Write),
+                )),
+            ),
+            (
+                403,
+                Some((
+                    DomainKind::Lease,
+                    AuthorizationPolicy::RouteScoped(crate::auth::Access::Read),
+                )),
+            ),
+            (
+                501,
+                Some((
+                    DomainKind::Notice,
+                    AuthorizationPolicy::RouteScoped(crate::auth::Access::Read),
+                )),
+            ),
+            (
+                604,
+                Some((
+                    DomainKind::Stream,
+                    AuthorizationPolicy::RouteScoped(crate::auth::Access::Read),
+                )),
+            ),
+            (
+                706,
+                Some((
+                    DomainKind::Schedule,
+                    AuthorizationPolicy::MultiRouteScoped(crate::auth::Access::Write),
+                )),
+            ),
+            (
+                702,
+                Some((
+                    DomainKind::Schedule,
+                    AuthorizationPolicy::WildcardScoped(crate::auth::Access::Read),
+                )),
+            ),
+        ];
+
+        // Act
+        let actual = cases
+            .iter()
+            .map(|(msg_type, _)| {
+                IngressDomainPolicy::dispatch_spec_for_msg_type(
+                    crate::protocol::message::MessageType::new(*msg_type),
+                )
+                .expect("dispatch policy should resolve")
+                .map(|spec| (spec.domain, spec.policy))
+            })
+            .collect::<Vec<_>>();
+        let expected = cases
+            .iter()
+            .map(|(_, expected)| *expected)
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn should_preserve_invalid_message_rejections() {
+        // Arrange
+        let cases = [
+            111, 113, 199, 209, 201, 205, 299, 305, 306, 399, 409, 404, 504, 505, 609, 611, 699,
+            705, 707, 799,
+        ];
+
+        // Act
+        let actual = cases
+            .iter()
+            .map(|msg_type| {
+                IngressDomainPolicy::dispatch_spec_for_msg_type(
+                    crate::protocol::message::MessageType::new(*msg_type),
+                )
+                .expect_err("message type should be rejected")
+            })
+            .collect::<Vec<_>>();
+        let expected = cases
+            .iter()
+            .map(|msg_type| {
+                if crate::protocol::manifest::entry(crate::protocol::message::MessageType::new(
+                    *msg_type,
+                ))
+                .is_some()
+                {
+                    "message type is server-to-client only"
+                } else {
+                    "unsupported message type"
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn should_build_prepared_lease_request_for_operation_frame() {
+        // Arrange
+        let descriptor = IngressDomainPolicy::descriptor_for_domain(DispatchDomain::Lease);
+        let payload = lease_acquire_payload("lease://acme/locks/resource", "owner");
+
+        // Act
+        let envelope = descriptor.build_request_envelope(lease_build_request(400, payload));
+        let request = envelope
+            .payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+            .expect("prepared lease request");
+
+        // Assert
+        assert_eq!(request.meta.session_id, 7);
+        assert_eq!(request.meta.message_type, 400);
+        let operation = request.frame.as_ref().expect("prepared lease operation");
+        match operation {
+            crate::domains::lease::protocol::PreparedLeaseOperation::Acquire {
+                key,
+                owner_id,
+                ttl_secs,
+                wait_seconds,
+            } => {
+                assert_eq!(key.realm, "acme");
+                assert_eq!(key.area, "locks");
+                assert_eq!(key.resource, "resource");
+                assert_eq!(owner_id, "session:7:owner");
+                assert_eq!(*ttl_secs, 30);
+                assert_eq!(*wait_seconds, 0);
+            }
+            other => panic!("expected prepared acquire, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn should_reject_prepared_lease_acquire_owner_id_over_wire_safe_limit() {
+        // Arrange
+        let descriptor = IngressDomainPolicy::descriptor_for_domain(DispatchDomain::Lease);
+        let owner_id =
+            "x".repeat(crate::domains::lease::protocol::LEASE_MAX_OWNER_ID_BYTES.saturating_add(1));
+        let payload = lease_acquire_payload("lease://acme/locks/resource", &owner_id);
+
+        // Act
+        let envelope = descriptor.build_request_envelope(lease_build_request(400, payload));
+        let request = envelope
+            .payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+            .expect("prepared lease request");
+
+        // Assert
+        assert!(
+            request
+                .frame
+                .as_ref()
+                .is_err_and(|message| message.contains("owner_id exceeds maximum length")),
+            "oversized logical owner ID must fail before session scoping"
+        );
+    }
+
+    #[test]
+    fn should_keep_lease_subscription_on_public_request_path() {
+        // Arrange
+        let descriptor = IngressDomainPolicy::descriptor_for_domain(DispatchDomain::Lease);
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        encoder.put_string("lease://acme/locks/resource");
+
+        // Act
+        let envelope = descriptor
+            .build_request_envelope(lease_build_request(407, Bytes::from(encoder.finish())));
+
+        // Assert
+        assert!(envelope
+            .payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+            .is_none());
+        assert!(envelope
+            .payload::<crate::domains::lease::LeaseClientRequest>()
+            .is_some());
+    }
+}

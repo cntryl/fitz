@@ -1,0 +1,243 @@
+[package]
+name = "fitz-e2e"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+autobenches = false
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fitz = { workspace = true, features = ["test-support"] }
+
+[dev-dependencies]
+fitz-core = { workspace = true, features = ["bench-support"] }
+async-trait.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+cntryl-midge.workspace = true
+crossbeam-channel.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+hyper.workspace = true
+jsonwebtoken.workspace = true
+libc.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+tungstenite.workspace = true
+url.workspace = true
+uuid.workspace = true
+cntryl-stress.workspace = true
+serial_test.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+bench-no-snapshot = ["fitz/bench-no-snapshot"]
+benchkit = ["fitz/benchkit"]
+stress-soak = []
+recovery-qualification = ["fitz/recovery-qualification"]
+
+[lib]
+bench = false
+
+[[bench]]
+name = "tier2_subsystem_queue"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_rpc"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_lease"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_notice"
+harness = false
+
+[[bench]]
+name = "tier2_subsystem_stream"
+harness = false
+
+[[bench]]
+name = "tier3_system_lease"
+harness = false
+required-features = ["benchkit"]
+
+[[bench]]
+name = "tier3_system_notice"
+harness = false
+
+[[bench]]
+name = "tier3_system_queue"
+harness = false
+
+[[bench]]
+name = "tier3_system_rpc"
+harness = false
+
+[[bench]]
+name = "tier3_system_stream"
+harness = false
+
+[[bench]]
+name = "tier3_system_stream_admin"
+harness = false
+
+[[bench]]
+name = "tier4_kv_gate"
+harness = false
+
+[[bench]]
+name = "tier4_kv_ladder"
+harness = false
+
+[[bench]]
+name = "tier4_kv_contention"
+harness = false
+
+[[bench]]
+name = "tier4_lease_gate"
+harness = false
+required-features = ["benchkit"]
+
+[[bench]]
+name = "tier4_lease_ladder"
+harness = false
+required-features = ["benchkit"]
+
+[[bench]]
+name = "tier4_lease_contention"
+harness = false
+required-features = ["benchkit"]
+
+[[bench]]
+name = "tier4_notice_publish"
+harness = false
+
+[[bench]]
+name = "tier4_notice_fanout"
+harness = false
+
+[[bench]]
+name = "tier4_notice_control"
+harness = false
+
+[[bench]]
+name = "tier4_queue_gate"
+harness = false
+
+[[bench]]
+name = "tier4_queue_concurrency"
+harness = false
+
+[[bench]]
+name = "tier4_queue_shapes"
+harness = false
+
+[[bench]]
+name = "tier4_rpc_roundtrip"
+harness = false
+
+[[bench]]
+name = "tier4_rpc_pipeline"
+harness = false
+
+[[bench]]
+name = "tier4_schedule_lifecycle"
+harness = false
+
+[[bench]]
+name = "tier4_schedule_concurrency"
+harness = false
+
+[[bench]]
+name = "tier4_schedule_shapes"
+harness = false
+
+[[bench]]
+name = "tier4_stream_gate"
+harness = false
+
+[[bench]]
+name = "tier4_stream_concurrency"
+harness = false
+
+[[bench]]
+name = "tier4_stream_filters"
+harness = false
+
+[[bench]]
+name = "tier4_stream_ladder"
+harness = false
+
+[[bench]]
+name = "tier4_stream_mixed"
+harness = false
+
+[[bench]]
+name = "tier4_stream_shapes"
+harness = false
+
+[[bench]]
+name = "stream_subscription_capacity"
+harness = false
+required-features = ["benchkit"]
+
+[[bench]]
+name = "tier5_cloud_catalog"
+harness = false
+required-features = ["benchkit", "stress-soak", "recovery-qualification"]
+
+[[bench]]
+name = "tier5_queue_drains"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "tier5_saturation"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "queue_pressure"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "schedule_pressure"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "kv_pressure"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "lease_pressure"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "queue_drain_latency"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "tier6_endurance"
+harness = false
+required-features = ["benchkit", "stress-soak"]
+
+[[bench]]
+name = "tier2_subsystem_schedule_fire"
+harness = false

@@ -213,7 +213,7 @@ These keys are read in cloud provider builders when FITZ_STORAGE_MODE=cloud.
 
 ## MCP Control Plane
 
-These keys configure the optional MCP admin endpoint under `src/api/mcp`. Their
+These keys configure the optional MCP admin endpoint under `crates/fitz-server/src/api/mcp`. Their
 semantics, defaults, and security requirements are documented in
 [mcp-control-plane.md](../admin/mcp-control-plane.md) and the pages under
 `docs/admin/mcp/`; this table only makes the names discoverable.

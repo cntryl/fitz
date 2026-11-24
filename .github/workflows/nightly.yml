@@ -1,0 +1,161 @@
+name: Benchmark Nightly
+run-name: Nightly benchmarks (${{ inputs.tier || 'all' }}, ${{ inputs.profile || 'standard' }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Benchmark tier to run
+        type: choice
+        options: [tier1, tier2, tier3, tier4, all]
+        default: tier1
+      profile:
+        description: Measurement intensity
+        type: choice
+        options: [smoke, standard, extended]
+        default: standard
+  schedule:
+    - cron: "0 5 * * *"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_INCREMENTAL: "0"
+  RUST_LOG: "off"
+  FITZ_LOG_LEVEL: "off"
+  OTEL_ENABLED: "false"
+  STRESS_OUTPUT_DIR: ${{ github.workspace }}/target/stress
+  STRESS_PROFILE: ${{ inputs.profile == 'smoke' && 'smoke' || inputs.profile == 'extended' && 'lab' || 'default' }}
+
+jobs:
+  tier1:
+    if: github.event_name == 'schedule' || inputs.tier == 'all' || inputs.tier == 'tier1'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    concurrency: &benchmark_concurrency
+      group: bench-nightly-${{ github.ref }}-${{ matrix.bench }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: fitz-core, bench: tier1_hotpath_matcher }
+          - { package: fitz-core, bench: tier1_hotpath_message }
+          - { package: fitz-core, bench: tier1_hotpath_mux }
+          - { package: fitz, bench: tier1_hotpath_permissions }
+          - { package: fitz-core, bench: tier1_hotpath_context }
+          - { package: fitz-core, bench: tier1_hotpath_envelope }
+          - { package: fitz-core, bench: tier1_hotpath_routing }
+    steps: &benchmark_steps
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Run benchmark
+        run: |
+          feature_args=()
+          if [[ -n "${BENCH_FEATURES:-}" ]]; then
+            feature_args=(--features "$BENCH_FEATURES")
+          fi
+          cargo bench --locked -p '${{ matrix.package }}' --bench '${{ matrix.bench }}' "${feature_args[@]}"
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-${{ github.job }}-${{ matrix.bench }}-${{ github.sha }}
+          path: |
+            target/stress/**
+            target/fitz-stress/**
+          if-no-files-found: ignore
+
+  tier2:
+    if: github.event_name == 'schedule' || inputs.tier == 'all' || inputs.tier == 'tier2'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    concurrency: *benchmark_concurrency
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: fitz-core, bench: tier2_subsystem_mailbox }
+          - { package: fitz-core, bench: tier2_subsystem_family_actor_pool }
+          - { package: fitz-core, bench: tier2_subsystem_subscriptions }
+          - { package: fitz-core, bench: tier2_subsystem_message_pipeline }
+          - { package: fitz-core, bench: tier2_subsystem_router }
+          - { package: fitz-schedule, bench: tier2_subsystem_schedule_scan }
+          - { package: fitz-schedule, bench: tier2_subsystem_schedule_create }
+          - { package: fitz-schedule, bench: tier2_subsystem_schedule_churn }
+          - { package: fitz-schedule, bench: tier2_subsystem_schedule_control_latency }
+          - { package: fitz-e2e, bench: tier2_subsystem_schedule_fire }
+          - { package: fitz-e2e, bench: tier2_subsystem_queue }
+          - { package: fitz-e2e, bench: tier2_subsystem_rpc }
+          - { package: fitz-e2e, bench: tier2_subsystem_lease }
+          - { package: fitz-e2e, bench: tier2_subsystem_notice }
+          - { package: fitz-e2e, bench: tier2_subsystem_stream }
+    steps: *benchmark_steps
+
+  tier3:
+    if: github.event_name == 'schedule' || inputs.tier == 'all' || inputs.tier == 'tier3'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    concurrency: *benchmark_concurrency
+    env:
+      BENCH_FEATURES: benchkit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: fitz-kv, bench: tier3_system_kv }
+          - { package: fitz-e2e, bench: tier3_system_lease }
+          - { package: fitz-e2e, bench: tier3_system_notice }
+          - { package: fitz-e2e, bench: tier3_system_queue }
+          - { package: fitz-e2e, bench: tier3_system_rpc }
+          - { package: fitz-e2e, bench: tier3_system_stream }
+          - { package: fitz-e2e, bench: tier3_system_stream_admin }
+    steps: *benchmark_steps
+
+  tier4:
+    if: github.event_name == 'schedule' || inputs.tier == 'all' || inputs.tier == 'tier4'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    concurrency: *benchmark_concurrency
+    env:
+      BENCH_FEATURES: benchkit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: fitz-e2e, bench: tier4_kv_gate }
+          - { package: fitz-e2e, bench: tier4_kv_ladder }
+          - { package: fitz-e2e, bench: tier4_kv_contention }
+          - { package: fitz-e2e, bench: tier4_lease_gate }
+          - { package: fitz-e2e, bench: tier4_lease_ladder }
+          - { package: fitz-e2e, bench: tier4_lease_contention }
+          - { package: fitz-e2e, bench: tier4_notice_publish }
+          - { package: fitz-e2e, bench: tier4_notice_fanout }
+          - { package: fitz-e2e, bench: tier4_notice_control }
+          - { package: fitz-e2e, bench: tier4_queue_gate }
+          - { package: fitz-e2e, bench: tier4_queue_concurrency }
+          - { package: fitz-e2e, bench: tier4_queue_shapes }
+          - { package: fitz-e2e, bench: tier4_rpc_roundtrip }
+          - { package: fitz-e2e, bench: tier4_rpc_pipeline }
+          - { package: fitz-e2e, bench: tier4_schedule_lifecycle }
+          - { package: fitz-e2e, bench: tier4_schedule_concurrency }
+          - { package: fitz-e2e, bench: tier4_schedule_shapes }
+          - { package: fitz-e2e, bench: tier4_stream_gate }
+          - { package: fitz-e2e, bench: tier4_stream_concurrency }
+          - { package: fitz-e2e, bench: tier4_stream_filters }
+          - { package: fitz-e2e, bench: tier4_stream_ladder }
+          - { package: fitz-e2e, bench: tier4_stream_mixed }
+          - { package: fitz-e2e, bench: tier4_stream_shapes }
+          - { package: fitz-stream, bench: tier4_stream_compacted }
+    steps: *benchmark_steps
