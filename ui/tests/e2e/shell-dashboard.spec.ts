@@ -94,10 +94,11 @@ test("shows dashboard refresh while the topology request is pending", async ({
   await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
 
   const refreshing = page.locator('[data-slot="badge"]').filter({ hasText: "Refreshing" });
-  const topologyRequest = page.waitForRequest("**/api/v1/1/topology");
   try {
-    await page.getByRole("button", { name: "Refresh overview" }).click();
-    await topologyRequest;
+    await Promise.all([
+      page.waitForRequest("**/api/v1/1/topology"),
+      page.getByRole("button", { name: "Refresh overview" }).click(),
+    ]);
     await expect(refreshing).toBeVisible();
 
     await page.screenshot({

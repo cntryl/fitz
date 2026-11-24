@@ -8,6 +8,10 @@ describe("Vite mock API middleware", () => {
   const server = createServer();
   let origin: string;
 
+  function request(path: string, options?: RequestInit) {
+    return fetch(`${origin}${path}`, { ...options, signal: AbortSignal.timeout(3000) });
+  }
+
   beforeAll(async () => {
     fitzMockApiPlugin().configureServer({
       config: { logger: { info() {} } },
@@ -37,7 +41,7 @@ describe("Vite mock API middleware", () => {
   });
 
   it("parses the session POST body and returns the mock response", async () => {
-    const response = await fetch(`${origin}/api/v1/session?from=test`, {
+    const response = await request("/api/v1/session?from=test", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ password: "pwd123", username: "root" }),
@@ -48,7 +52,7 @@ describe("Vite mock API middleware", () => {
   });
 
   it("returns the mock JSON error response for an invalid session body", async () => {
-    const response = await fetch(`${origin}/api/v1/session`, {
+    const response = await request("/api/v1/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{",
@@ -60,7 +64,7 @@ describe("Vite mock API middleware", () => {
   });
 
   it("forwards requests outside the mock API to the next handler", async () => {
-    const response = await fetch(`${origin}/admin`);
+    const response = await request("/admin");
 
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("downstream middleware");
