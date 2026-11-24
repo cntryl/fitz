@@ -112,16 +112,20 @@ pub(crate) fn with_notice_clients<R>(
 
 pub(crate) fn with_authenticated_notice_clients<R>(
     route_families: &[u32],
+    storage_family_ceiling: u32,
     identity_family_mappings: &[(String, u32)],
     identities: &[String],
     run: impl FnOnce(&tokio::runtime::Runtime, &mut [TestClient]) -> R,
 ) -> R {
     let runtime = shared_bench_runtime();
     let server = runtime
-        .block_on(TestServer::start_with_auth_route_families(
-            route_families.to_vec(),
-            identity_family_mappings.iter().cloned(),
-        ))
+        .block_on(
+            TestServer::start_with_auth_route_families_and_storage_families(
+                route_families.to_vec(),
+                storage_family_ceiling,
+                identity_family_mappings.iter().cloned(),
+            ),
+        )
         .expect("start authenticated Notice benchmark server");
     let mut clients = identities
         .iter()
@@ -132,7 +136,7 @@ pub(crate) fn with_authenticated_notice_clients<R>(
         })
         .collect::<Vec<_>>();
 
-    let result = run(&runtime, &mut clients);
+    let result = run(runtime, &mut clients);
 
     for client in clients {
         runtime

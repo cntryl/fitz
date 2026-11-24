@@ -39,7 +39,41 @@ type RuntimeComponents = (
 pub fn init(config: &BootConfig) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
     config.validate()?;
+    Ok(init_validated(config))
+}
 
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn init_with_test_route_families(
+    config: &BootConfig,
+    storage_config: &BootConfig,
+) -> BootResult<RuntimeComponents> {
+    // Validate the runtime's ordinary settings with the dense storage IDs.
+    // Then validate the sparse actor set and its authorization mappings.
+    let mut validation_config = config.clone();
+    validation_config
+        .route_families
+        .clone_from(&storage_config.route_families);
+    validation_config.validate()?;
+
+    let families = &config.route_families;
+    if families.is_empty()
+        || families.windows(2).any(|pair| pair[0] >= pair[1])
+        || families
+            .iter()
+            .any(|family| storage_config.route_families.binary_search(family).is_err())
+    {
+        return Err(
+            "test route families must be a sorted, unique subset of storage families".into(),
+        );
+    }
+    config
+        .route_family_resolver
+        .validate(families, config.auth_required)?;
+
+    Ok(init_validated(config))
+}
+
+fn init_validated(config: &BootConfig) -> RuntimeComponents {
     // Create runtime components
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
@@ -73,5 +107,5 @@ pub fn init(config: &BootConfig) -> BootResult<RuntimeComponents> {
 
     info!("Runtime initialized");
 
-    Ok((router, ingress, ingress_config, runtime))
+    (router, ingress, ingress_config, runtime)
 }

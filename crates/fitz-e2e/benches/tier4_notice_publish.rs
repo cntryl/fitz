@@ -109,7 +109,7 @@ fn process_cpu_time() -> Duration {
     };
     // SAFETY: `time` points to writable stack storage for the returned clock value.
     assert_eq!(
-        unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut time) },
+        unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut time) },
         0
     );
     Duration::new(
@@ -153,23 +153,34 @@ async fn publish_acknowledged(client: &mut TestClient, frame: &[u8]) -> Duration
     started.elapsed()
 }
 
-fn measure_authenticated_dispatch_case(
-    ctx: &mut StressContext,
-    scenario: &'static str,
-    measurement: &'static str,
+struct AuthenticatedDispatchTopology {
+    route_families: Vec<u32>,
+    storage_ceiling: u32,
+    identities: Vec<String>,
+    mappings: Vec<(String, u32)>,
+    frames: Vec<Vec<u8>>,
+    active_family_count: usize,
+    shard_count: usize,
+    family_counts_by_shard: Vec<usize>,
+}
+
+fn prepare_authenticated_dispatch_topology(
     collocated_family_count: usize,
     family_for_session: impl Fn(usize, usize) -> u32,
-) {
+) -> AuthenticatedDispatchTopology {
     let shard_count = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let collocated_families = (0..collocated_family_count)
         .map(|index| u32::try_from(index * shard_count + 1).expect("collocated family id fits u32"))
         .collect::<Vec<_>>();
-    let max_family = collocated_families
-        .last()
-        .copied()
-        .unwrap_or(1)
-        .max(u32::try_from(shard_count).expect("shard count fits u32"));
-    let route_families = (1..=max_family).collect::<Vec<_>>();
+    let mut route_families = collocated_families.clone();
+    route_families.extend(
+        (1..shard_count)
+            .map(|shard| u32::try_from(shard + 1).expect("other-shard family id fits u32")),
+    );
+    route_families.sort_unstable();
+    route_families.dedup();
+    let storage_ceiling =
+        u32::try_from(1 + 31 * shard_count).expect("storage family ceiling fits u32");
 
     let identities = (0..ACTOR_PUBLISH_SESSIONS)
         .map(|index| format!("actor-dispatch-session-{index}"))
@@ -193,6 +204,24 @@ fn measure_authenticated_dispatch_case(
         .collect::<std::collections::BTreeSet<_>>()
         .len();
     let runtime_shard_count = shard_count_for_family_count(route_families.len());
+    let mut family_counts_by_shard = vec![0_usize; runtime_shard_count];
+    for family_id in &route_families {
+        let shard = family_shard_affinity(
+            fitz_core::runtime::routing::RouteFamily::new(*family_id),
+            runtime_shard_count,
+        );
+        family_counts_by_shard[shard] += 1;
+    }
+    let expected_family_counts = (0..runtime_shard_count)
+        .map(|shard| {
+            if shard == 0 {
+                collocated_family_count
+            } else {
+                1
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(family_counts_by_shard, expected_family_counts);
     assert!(mappings
         .iter()
         .all(|(_, family)| route_families.contains(family)));
@@ -209,20 +238,51 @@ fn measure_authenticated_dispatch_case(
         "active families are collocated on one actor shard"
     );
 
+    AuthenticatedDispatchTopology {
+        route_families,
+        storage_ceiling,
+        identities,
+        mappings,
+        frames,
+        active_family_count,
+        shard_count: runtime_shard_count,
+        family_counts_by_shard,
+    }
+}
+
+fn measure_authenticated_dispatch_case(
+    ctx: &mut StressContext,
+    scenario: &'static str,
+    measurement: &'static str,
+    collocated_family_count: usize,
+    family_for_session: impl Fn(usize, usize) -> u32,
+) {
+    let topology =
+        prepare_authenticated_dispatch_topology(collocated_family_count, family_for_session);
     ctx.parameter("scenario", scenario);
     ctx.parameter("authenticated_session_count", ACTOR_PUBLISH_SESSIONS);
-    ctx.parameter("provisioned_family_count", route_families.len());
-    ctx.parameter("active_family_count", active_family_count);
+    ctx.parameter(
+        "runtime_provisioned_family_count",
+        topology.route_families.len(),
+    );
+    ctx.parameter("storage_column_family_count", topology.storage_ceiling);
+    ctx.parameter("active_family_count", topology.active_family_count);
     ctx.parameter("collocated_family_count", collocated_family_count);
-    ctx.parameter("actor_shard_count", runtime_shard_count);
+    ctx.parameter("actor_shard_count", topology.shard_count);
+    ctx.parameter(
+        "actor_families_per_shard_json",
+        serde_json::to_string(&topology.family_counts_by_shard)
+            .expect("serialize shard family counts"),
+    );
 
     with_authenticated_notice_clients(
-        &route_families,
-        &mappings,
-        &identities,
+        &topology.route_families,
+        topology.storage_ceiling,
+        &topology.mappings,
+        &topology.identities,
         |runtime, clients| {
-            runtime.block_on(connect_authenticated_clients(clients, &identities));
-            for (client, frame) in clients.iter_mut().zip(&frames) {
+            runtime.block_on(connect_authenticated_clients(clients, &topology.identities));
+            for (client, frame) in clients.iter_mut().zip(&topology.frames) {
                 runtime.block_on(publish_acknowledged(client, frame));
             }
 
@@ -236,7 +296,7 @@ fn measure_authenticated_dispatch_case(
                     let durations = runtime.block_on(join_all(
                         clients
                             .iter_mut()
-                            .zip(&frames)
+                            .zip(&topology.frames)
                             .map(|(client, frame)| publish_acknowledged(client, frame)),
                     ));
                     process_cpu.set(
