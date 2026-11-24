@@ -93,44 +93,38 @@ fn command_history(size: usize) -> (StreamStore, Vec<EventPayload>, usize) {
                 64,
                 "fixture must merge the complete global bucket"
             );
-            let mut resource_prefix =
-                encode_compact_resource_page_key("replay", "orders", "order-123", 0);
-            resource_prefix.truncate(resource_prefix.len() - 24);
-            let resource_rows = txn
-                .scan(
-                    &cntryl_midge::Query::new()
-                        .prefix(Bytes::from(resource_prefix))
-                        .start_key(Bytes::from(encode_compact_resource_page_key(
-                            "replay",
-                            "orders",
-                            "order-123",
-                            0,
-                        )))
-                        .limit(2),
-                )
-                .expect("inspect exact-resource replacement")
-                .try_collect()
-                .unwrap();
-            assert_eq!(
-                resource_rows.len(),
-                1,
-                "resource history must compact to one fragment"
-            );
-            assert_eq!(
-                decode_resource_offset_from_key(&resource_rows[0].0).unwrap(),
-                0
-            );
-            let resource_page = CompactResourcePageValue::try_decode(&resource_rows[0].1).unwrap();
-            assert_eq!(resource_page.records.len(), 64);
-            let baseline_decoder_copy_bytes = resource_page
-                .records
-                .iter()
-                .map(|record| record.body.len() + record.metadata.as_ref().map_or(0, Bytes::len))
-                .sum();
-            return (store, events, baseline_decoder_copy_bytes);
+            return (store, events, resource_decoder_copy_bytes(&txn));
         }
     }
     panic!("fixture must finish compaction");
+}
+
+fn resource_decoder_copy_bytes(txn: &cntryl_midge::Transaction) -> usize {
+    let start_key = encode_compact_resource_page_key("replay", "orders", "order-123", 0);
+    let mut prefix = start_key.clone();
+    prefix.truncate(prefix.len() - 24);
+    let rows: Vec<_> = txn
+        .scan(
+            &cntryl_midge::Query::new()
+                .prefix(Bytes::from(prefix))
+                .start_key(Bytes::from(start_key))
+                .limit(2),
+        )
+        .expect("inspect exact-resource replacement")
+        .try_collect()
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "resource history must compact to one fragment"
+    );
+    assert_eq!(decode_resource_offset_from_key(&rows[0].0).unwrap(), 0);
+    let page = CompactResourcePageValue::try_decode(&rows[0].1).unwrap();
+    assert_eq!(page.records.len(), 64);
+    page.records
+        .iter()
+        .map(|record| record.body.len() + record.metadata.as_ref().map_or(0, Bytes::len))
+        .sum()
 }
 
 fn measure_projection(
