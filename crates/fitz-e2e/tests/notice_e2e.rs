@@ -230,29 +230,39 @@ where
     assert_eq!(delivery2.body.as_slice(), b"shared");
 }
 
-async fn should_deliver_to_exact_match_before_wildcard<C>(server: &TestServer)
+async fn should_deliver_to_overlapping_exact_and_wildcard_registrations<C>(server: &TestServer)
 where
     C: NoticeConnector,
 {
     // Arrange
+    let route = "notice://test/exact/route";
     let mut client = C::connect(server).await.expect("connect");
-
-    // Act - Subscribe to exact route
-    let subscribe_frame = build_notice_subscribe("notice://test/exact/route");
-    let _sub_response = client
-        .send_and_receive(&subscribe_frame, 2000)
+    let wildcard = subscribe_notice_pattern_expect_ok(&mut client, "notice://test/exact/*")
         .await
-        .expect("subscribe");
+        .expect("wildcard registration ID");
+    let exact = subscribe_notice_pattern_expect_ok(&mut client, route)
+        .await
+        .expect("exact registration ID");
+    assert_ne!(wildcard, exact);
+    let mut expected_ids = [wildcard, exact];
+    expected_ids.sort_unstable();
 
-    // Act - Publish to exact route (should match)
-    let publish_frame = build_notice_publish("notice://test/exact/route", "test-realm", b"exact");
-    client.send_frame(&publish_frame).await.expect("publish");
-    let delivery = client.recv_frame(2000).await.expect("exact delivery");
-    let delivery = parse_notice_delivery(&delivery).expect("parse exact delivery");
+    // Act
+    let frame = build_notice_publish(route, "test-realm", b"shared");
+    client.send_frame(&frame).await.expect("publish");
+    let first = client.recv_frame(2000).await.expect("first delivery");
+    let second = client.recv_frame(2000).await.expect("second delivery");
 
     // Assert
-    assert_eq!(delivery.route, "notice://test/exact/route");
-    assert_eq!(delivery.body.as_slice(), b"exact");
+    let deliveries =
+        [first, second].map(|frame| parse_notice_delivery(&frame).expect("decode notice delivery"));
+    for delivery in &deliveries {
+        assert_eq!(delivery.route, route);
+        assert_eq!(delivery.body.as_slice(), b"shared");
+    }
+    let mut delivered_ids = deliveries.map(|delivery| delivery.subscription_id);
+    delivered_ids.sort_unstable();
+    assert_eq!(delivered_ids, expected_ids);
 }
 
 async fn should_not_match_pattern_if_publish_beneath_scope<C>(server: &TestServer)
@@ -593,7 +603,7 @@ define_transport_tests!(
     should_match_single_wildcard_pattern_tcp / should_match_single_wildcard_pattern_ws => should_match_single_wildcard_pattern,
     should_match_double_wildcard_pattern_tcp / should_match_double_wildcard_pattern_ws => should_match_double_wildcard_pattern,
     should_match_multiple_subscribers_on_overlapping_patterns_tcp / should_match_multiple_subscribers_on_overlapping_patterns_ws => should_match_multiple_subscribers_on_overlapping_patterns,
-    should_deliver_to_exact_match_before_wildcard_tcp / should_deliver_to_exact_match_before_wildcard_ws => should_deliver_to_exact_match_before_wildcard,
+    should_deliver_to_overlapping_exact_and_wildcard_registrations_tcp / should_deliver_to_overlapping_exact_and_wildcard_registrations_ws => should_deliver_to_overlapping_exact_and_wildcard_registrations,
     should_not_match_pattern_if_publish_beneath_scope_tcp / should_not_match_pattern_if_publish_beneath_scope_ws => should_not_match_pattern_if_publish_beneath_scope,
     should_retain_other_notice_subscription_after_unsubscribe_tcp / should_retain_other_notice_subscription_after_unsubscribe_ws => should_retain_other_notice_subscription_after_unsubscribe,
     should_remove_notice_subscription_when_subscriber_disconnects_tcp / should_remove_notice_subscription_when_subscriber_disconnects_ws => should_remove_notice_subscription_when_subscriber_disconnects,

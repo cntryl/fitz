@@ -231,8 +231,8 @@ fn should_absorb_transient_domain_mailbox_backpressure_for_each_domain() {
     }
 }
 
-struct CapturingInboxSink {
-    frames: Arc<Mutex<Vec<FrameContext>>>,
+pub(super) struct CapturingInboxSink {
+    pub(super) frames: Arc<Mutex<Vec<FrameContext>>>,
 }
 
 impl MailboxSink for CapturingInboxSink {
@@ -461,7 +461,7 @@ fn should_not_emit_a_second_terminal_response_after_the_domain_replied_for_each_
 }
 
 #[test]
-fn should_surface_sustained_high_lane_domain_mailbox_backpressure_for_each_domain() {
+fn should_keep_session_open_when_each_domain_high_lane_is_full() {
     // Arrange
     let rt = tokio::runtime::Runtime::new().unwrap();
 

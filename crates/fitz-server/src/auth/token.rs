@@ -88,16 +88,23 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_hmac_with_wrong_algorithm() {
+    fn should_report_unsupported_hmac_algorithm_given_hs384_token() {
         // Arrange
-        let secret = b"test_secret";
-        // This is a malformed token that will fail header parsing
-        let token = "not.a.token";
+        let secret = b"jwt-algorithm-test-secret";
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(Algorithm::HS384),
+            &serde_json::json!({ "sub": "test", "exp": 9_999_999_999_u64 }),
+            &jsonwebtoken::EncodingKey::from_secret(secret).expect("test signing key"),
+        )
+        .expect("encode HS384 token");
 
         // Act
-        let result = verify_jwt_with_hmac_secret(token, secret);
+        let result = verify_jwt_with_hmac_secret(&token, secret);
 
         // Assert
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "unsupported HMAC algorithm; expected HS256"
+        );
     }
 }

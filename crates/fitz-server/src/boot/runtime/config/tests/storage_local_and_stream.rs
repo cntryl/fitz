@@ -23,7 +23,7 @@ fn assert_s3_compatible_config(
 #[test]
 #[serial]
 fn should_reject_zero_storage_memtable_bytes() {
-    with_storage_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "0")], || {
+    with_config_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "0")], || {
         // Arrange
 
         // Act
@@ -42,7 +42,7 @@ fn should_reject_zero_storage_memtable_bytes() {
 #[test]
 #[serial]
 fn should_reject_invalid_storage_memtable_bytes() {
-    with_storage_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "small")], || {
+    with_config_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "small")], || {
         // Arrange
 
         // Act
@@ -102,7 +102,7 @@ fn should_keep_memory_schedule_mode_best_effort() {
 #[test]
 #[serial]
 fn should_accept_contiguous_route_family_allowlist() {
-    with_clean_config_env(|| {
+    with_config_env(&[], || {
         // Arrange
         let config = BootConfig::new()
             .with_auth_config(crate::auth::AuthConfig::Disabled)
@@ -119,7 +119,7 @@ fn should_accept_contiguous_route_family_allowlist() {
 #[test]
 #[serial]
 fn should_reject_empty_route_family_allowlist() {
-    with_clean_config_env(|| {
+    with_config_env(&[], || {
         // Arrange
         let config = BootConfig::new()
             .with_auth_config(crate::auth::AuthConfig::Disabled)
@@ -136,7 +136,7 @@ fn should_reject_empty_route_family_allowlist() {
 #[test]
 #[serial]
 fn should_reject_gapped_route_family_allowlist() {
-    with_clean_config_env(|| {
+    with_config_env(&[], || {
         // Arrange
         let config = BootConfig::new()
             .with_auth_config(crate::auth::AuthConfig::Disabled)
@@ -153,7 +153,7 @@ fn should_reject_gapped_route_family_allowlist() {
 #[test]
 #[serial]
 fn should_read_route_family_identity_map_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_ROUTE_FAMILIES", "1,2,3"),
@@ -177,7 +177,7 @@ fn should_read_route_family_identity_map_from_environment() {
 #[test]
 #[serial]
 fn should_reject_duplicate_route_family_identity_mapping() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_ROUTE_FAMILY_MAP", "abc=1,abc=2"),
@@ -202,7 +202,7 @@ fn should_reject_duplicate_route_family_identity_mapping() {
 #[test]
 #[serial]
 fn should_reject_zero_route_family_identity_mapping() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_ROUTE_FAMILY_MAP", "abc=0"),
@@ -224,7 +224,7 @@ fn should_reject_zero_route_family_identity_mapping() {
 #[test]
 #[serial]
 fn should_reject_invalid_route_family_identity_mapping_integer() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_ROUTE_FAMILY_MAP", "abc=two"),
@@ -249,7 +249,7 @@ fn should_reject_invalid_route_family_identity_mapping_integer() {
 #[test]
 #[serial]
 fn should_reject_unprovisioned_route_family_identity_mapping() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_ROUTE_FAMILIES", "1"),
@@ -272,7 +272,7 @@ fn should_reject_unprovisioned_route_family_identity_mapping() {
 #[test]
 #[serial]
 fn should_reject_removed_legacy_route_family_env() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY", "true"),
@@ -297,7 +297,7 @@ fn should_reject_removed_legacy_route_family_env() {
 #[test]
 #[serial]
 fn should_reject_removed_custom_claim_alias_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_AUTH_CUSTOM_CLAIM", "fitz"),
@@ -322,7 +322,7 @@ fn should_reject_removed_custom_claim_alias_from_environment() {
 #[test]
 #[serial]
 fn should_read_org_claim_override_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_AUTH_ORG_CLAIM", "fitz://org_id"),
@@ -349,7 +349,7 @@ fn should_read_org_claim_override_from_environment() {
 #[test]
 #[serial]
 fn should_read_permissions_claim_override_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_AUTH_PERMISSIONS_CLAIM", "fitz://permissions"),
@@ -375,7 +375,7 @@ fn should_read_permissions_claim_override_from_environment() {
 #[test]
 #[serial]
 fn should_reject_invalid_override_collisions_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_AUTH_CUSTOM_CLAIM", "fitz://permissions"),
@@ -401,7 +401,7 @@ fn should_reject_invalid_override_collisions_from_environment() {
 #[test]
 #[serial]
 fn should_reject_overlapping_role_claim_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_ROUTE_FAMILY_CLAIM", "tid"),
@@ -427,7 +427,7 @@ fn should_reject_overlapping_role_claim_from_environment() {
 #[test]
 #[serial]
 fn should_reject_reserved_role_claim_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_AUTH_ROLE_CLAIM", "scope"),
@@ -451,7 +451,7 @@ fn should_reject_reserved_role_claim_from_environment() {
 #[test]
 #[serial]
 fn should_reject_cloud_mode_without_provider() {
-    with_storage_env(&[("FITZ_STORAGE_MODE", "cloud")], || {
+    with_config_env(&[("FITZ_STORAGE_MODE", "cloud")], || {
         // Arrange
 
         // Act
@@ -470,7 +470,7 @@ fn should_reject_cloud_mode_without_provider() {
 #[test]
 #[serial]
 fn should_reject_blank_provider_given_cloud_mode() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "   "),
@@ -495,7 +495,7 @@ fn should_reject_blank_provider_given_cloud_mode() {
 #[test]
 #[serial]
 fn should_parse_sqrzl_s3_defaults_given_explicit_provider() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
@@ -532,7 +532,7 @@ fn should_parse_sqrzl_s3_defaults_given_explicit_provider() {
 #[test]
 #[serial]
 fn should_parse_sqrzl_azure_defaults_given_explicit_provider() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-azure"),
@@ -565,7 +565,7 @@ fn should_parse_sqrzl_azure_defaults_given_explicit_provider() {
 #[test]
 #[serial]
 fn should_parse_sqrzl_gcs_defaults_given_explicit_provider() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-gcs"),
@@ -598,7 +598,7 @@ fn should_parse_sqrzl_gcs_defaults_given_explicit_provider() {
 #[test]
 #[serial]
 fn should_parse_aws_s3_provider_given_cloud_env() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "aws-s3"),
@@ -630,7 +630,7 @@ fn should_parse_aws_s3_provider_given_cloud_env() {
 #[test]
 #[serial]
 fn should_parse_s3_compatible_provider_given_cloud_env() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "s3-compatible"),
@@ -661,7 +661,7 @@ fn should_parse_s3_compatible_provider_given_cloud_env() {
 #[test]
 #[serial]
 fn should_parse_s3_family_vendor_providers_given_cloud_env() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "minio"),
@@ -686,7 +686,7 @@ fn should_parse_s3_family_vendor_providers_given_cloud_env() {
         },
     );
 
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "wasabi"),
@@ -711,7 +711,7 @@ fn should_parse_s3_family_vendor_providers_given_cloud_env() {
         },
     );
 
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "oci-s3"),
@@ -742,7 +742,7 @@ fn should_parse_s3_family_vendor_providers_given_cloud_env() {
 #[test]
 #[serial]
 fn should_parse_azure_blob_provider_given_cloud_env() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "azure-blob"),
@@ -776,7 +776,7 @@ fn should_parse_azure_blob_provider_given_cloud_env() {
 #[test]
 #[serial]
 fn should_reject_azure_blob_bucket_alias_given_missing_container() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "azure-blob"),
@@ -804,7 +804,7 @@ fn should_reject_azure_blob_bucket_alias_given_missing_container() {
 #[test]
 #[serial]
 fn should_reject_azure_blob_account_alias_given_missing_azure_account_name() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "azure-blob"),
@@ -832,7 +832,7 @@ fn should_reject_azure_blob_account_alias_given_missing_azure_account_name() {
 #[test]
 #[serial]
 fn should_parse_gcs_provider_given_cloud_env() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "gcs"),
@@ -865,7 +865,7 @@ fn should_parse_gcs_provider_given_cloud_env() {
 #[test]
 #[serial]
 fn should_reject_zero_stream_subscription_limit_at_startup() {
-    with_storage_env(
+    with_config_env(
         &[("FITZ_STREAM_MAX_SUBSCRIPTIONS_PER_SESSION", "0")],
         || {
             // Arrange
@@ -886,7 +886,7 @@ fn should_reject_zero_stream_subscription_limit_at_startup() {
 #[test]
 #[serial]
 fn should_reject_malformed_stream_subscription_budget_at_startup() {
-    with_storage_env(&[("FITZ_STREAM_SUBSCRIPTION_BUDGET_BYTES", "many")], || {
+    with_config_env(&[("FITZ_STREAM_SUBSCRIPTION_BUDGET_BYTES", "many")], || {
         // Arrange
         let config = BootConfig::new();
 

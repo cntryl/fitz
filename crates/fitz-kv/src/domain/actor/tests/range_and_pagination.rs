@@ -234,6 +234,33 @@ fn should_handle_every_omitted_scan_bound_combination() {
 }
 
 #[test]
+fn should_scan_every_key_in_reverse_order_given_an_unbounded_range() {
+    // Arrange
+    let mut actor = test_actor();
+    let scope = KvResourceScope::new(RouteFamily::new(1), "realm", "area", "table");
+    let tx_id = begin_with_scope(&mut actor, scope.clone());
+    put_scan_keys(&mut actor, tx_id, &scope, &[b"b", b"a", b"c"]);
+
+    // Act
+    let (keys, has_more) = scan_keys(
+        &mut actor,
+        tx_id,
+        &scope,
+        ScanQuery {
+            start: None,
+            end: None,
+            limit: None,
+            reverse: true,
+            start_exclusive: false,
+        },
+    );
+
+    // Assert
+    assert_eq!(keys, [b"c", b"b", b"a"].map(|key| Bytes::from_static(key)));
+    assert!(!has_more);
+}
+
+#[test]
 fn should_lower_reverse_exact_bounds_around_binary_successors() {
     // Arrange
     let mut actor = test_actor();

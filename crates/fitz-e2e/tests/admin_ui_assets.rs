@@ -3,7 +3,6 @@ use fitz::boot::Runtime;
 use fitz::runtime::Router;
 use fitz_e2e::testkit::body;
 use hyper::{Method, StatusCode};
-use std::path::Path;
 use std::sync::Arc;
 
 fn test_runtime() -> Arc<Runtime> {
@@ -21,11 +20,15 @@ fn assert_browser_security_headers(headers: &hyper::HeaderMap) {
 }
 
 #[tokio::test]
-async fn should_return_not_found_given_runtime_ui_missing() {
+async fn should_report_installed_ui_assets_at_root_with_browser_security_headers() {
     // Arrange
-    if Path::new("/app/public/index.html").is_file() {
-        return;
-    }
+    let (expected_status, expected_body) = match std::fs::read("/app/public/index.html") {
+        Ok(index) => (StatusCode::OK, index),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (StatusCode::NOT_FOUND, br#"{"error":"Not Found"}"#.to_vec())
+        }
+        Err(error) => panic!("read installed UI assets: {error}"),
+    };
     let runtime = test_runtime();
     let request = hyper::http::Request::builder()
         .method(Method::GET)
@@ -42,8 +45,8 @@ async fn should_return_not_found_given_runtime_ui_missing() {
     let body = body::to_bytes(response.into_body()).await.unwrap();
 
     // Assert
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body.as_ref(), br#"{"error":"Not Found"}"#);
+    assert_eq!(status, expected_status);
+    assert_eq!(body.as_ref(), expected_body);
 }
 
 #[tokio::test]

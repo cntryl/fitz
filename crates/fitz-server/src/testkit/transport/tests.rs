@@ -97,7 +97,7 @@ fn should_build_connect_frame() {
 }
 
 #[test]
-fn should_generate_valid_jwt() {
+fn should_generate_a_three_segment_jwt() {
     // Arrange
     let realm = "test-realm";
 
@@ -114,24 +114,69 @@ fn should_generate_valid_jwt() {
 }
 
 #[tokio::test]
-async fn should_cleanup_all_session_state_given_abrupt_websocket_disconnect() {
+async fn should_clean_up_only_state_owned_by_disconnected_websocket_peer() {
     // Arrange
     let server = TestServer::start().await.expect("start test server");
-    let _tcp = server.connect().await.expect("connect tcp client");
-    let _websocket = server.connect_ws().await.expect("connect websocket client");
-    server
-        .wait_for_session_count(2)
+    let mut tcp = server.connect().await.expect("connect TCP client");
+    let mut websocket = server.connect_ws().await.expect("connect WebSocket client");
+    let connect = build_connect_frame("test-realm", &generate_test_jwt("test-realm"));
+    tcp.send_frame(&connect)
         .await
-        .expect("wait for active sessions");
+        .expect("authenticate TCP client");
+    websocket
+        .send_frame(&connect)
+        .await
+        .expect("authenticate WebSocket client");
+    server
+        .wait_for_authenticated_sessions(2)
+        .await
+        .expect("wait for authenticated sessions");
+    tcp.send_frame(&crate::benchkit::build_kv_begin(
+        "kv://test-realm/app/tcp",
+        1,
+    ))
+    .await
+    .expect("begin TCP transaction");
+    websocket
+        .send_frame(&crate::benchkit::build_kv_begin(
+            "kv://test-realm/app/websocket",
+            1,
+        ))
+        .await
+        .expect("begin WebSocket transaction");
+    server
+        .wait_for_kv_transaction_count(2)
+        .await
+        .expect("wait for both transactions");
+    let sessions = server.runtime.list_sessions();
+    let tcp_session = sessions
+        .iter()
+        .find(|session| session.transport == "tcp")
+        .expect("TCP session");
 
     // Act
-    let result = server.shutdown().await;
+    drop(websocket);
+    server
+        .wait_for_session_count(1)
+        .await
+        .expect("remove disconnected session");
+    server
+        .wait_for_kv_transaction_count(1)
+        .await
+        .expect("remove WebSocket transaction");
 
     // Assert
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("shutdown failed: {error}"),
-    }
+    let remaining = server.runtime.list_sessions();
+    let [remaining_tcp] = remaining.as_slice() else {
+        panic!("expected only the TCP session");
+    };
+    assert_eq!(remaining_tcp.session_id, tcp_session.session_id);
+    let transactions = server.runtime.kv_list_transactions(None);
+    let [remaining_transaction] = transactions.as_slice() else {
+        panic!("expected only the TCP transaction");
+    };
+    assert_eq!(remaining_transaction.resource, "tcp");
+    server.shutdown().await.expect("stop test server");
 }
 
 #[tokio::test(start_paused = true)]

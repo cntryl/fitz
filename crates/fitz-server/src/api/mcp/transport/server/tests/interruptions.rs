@@ -18,28 +18,50 @@ async fn should_keep_unauthorized_queue_targets_in_memory_before_admission() {
     ];
 
     // Act
+    let mut results = Vec::new();
     for (operation, family, realm) in cases {
         for cancelled in [false, true] {
             let cancellation = CancellationToken::new();
             if cancelled {
                 cancellation.cancel();
             }
-            let result = server
-                .execute_action_tool(
-                    server.context.clone(),
-                    cancellation,
-                    PREVIEW_QUEUE_TOOL,
-                    Some(serde_json::json!({
-                        "operation": operation, "route_family": family, "realm": realm,
-                        "area": "jobs", "resource": "dispatch", "message_id": 7
-                    })),
-                )
-                .await;
-            assert!(result.is_err());
+            results.push(
+                server
+                    .execute_action_tool(
+                        server.context.clone(),
+                        cancellation,
+                        PREVIEW_QUEUE_TOOL,
+                        Some(serde_json::json!({
+                            "operation": operation, "route_family": family, "realm": realm,
+                            "area": "jobs", "resource": "dispatch", "message_id": 7
+                        })),
+                    )
+                    .await,
+            );
         }
     }
 
     // Assert
+    assert!(results.iter().all(Result::is_err));
+    let records = server.context.audit_records();
+    assert!(records.iter().all(|record| {
+        record.tool_name == PREVIEW_QUEUE_TOOL
+            && record.decision == crate::api::mcp::McpAuditDecision::Denied
+    }));
+    let reasons: Vec<_> = records
+        .iter()
+        .map(|record| record.result_summary.as_str())
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            "execution_capacity_full",
+            "request_not_admitted",
+            "request_cancelled_before_admission",
+            "request_not_admitted",
+        ]
+        .repeat(cases.len())
+    );
     assert_eq!(
         std::fs::metadata(directory.path().join("actions.jsonl"))
             .unwrap()

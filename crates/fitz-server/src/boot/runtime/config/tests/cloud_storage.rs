@@ -3,7 +3,7 @@ use super::*;
 #[test]
 #[serial]
 fn should_require_commit_persistence_without_background_cloud_downgrade() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
@@ -38,7 +38,7 @@ fn should_require_commit_persistence_without_background_cloud_downgrade() {
 #[test]
 #[serial]
 fn should_default_storage_lease_ttl_to_thirty_seconds() {
-    with_storage_env(&[], || {
+    with_config_env(&[], || {
         // Arrange
 
         // Act
@@ -52,7 +52,7 @@ fn should_default_storage_lease_ttl_to_thirty_seconds() {
 #[test]
 #[serial]
 fn should_read_storage_lease_ttl_from_environment() {
-    with_storage_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "59")], || {
+    with_config_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "59")], || {
         // Arrange
 
         // Act
@@ -67,7 +67,7 @@ fn should_read_storage_lease_ttl_from_environment() {
 #[test]
 #[serial]
 fn should_reject_storage_lease_ttl_below_current_safety_floor() {
-    with_storage_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "29")], || {
+    with_config_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "29")], || {
         // Arrange
 
         // Act
@@ -85,7 +85,7 @@ fn should_reject_storage_lease_ttl_below_current_safety_floor() {
 #[test]
 #[serial]
 fn should_reject_non_numeric_storage_lease_ttl() {
-    with_storage_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "slow")], || {
+    with_config_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "slow")], || {
         // Arrange
 
         // Act
@@ -102,8 +102,8 @@ fn should_reject_non_numeric_storage_lease_ttl() {
 
 #[test]
 #[serial]
-fn should_reject_missing_required_cloud_fields_given_real_provider() {
-    with_storage_env(
+fn should_reject_missing_bucket_given_aws_s3_provider() {
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "aws-s3"),
@@ -114,10 +114,14 @@ fn should_reject_missing_required_cloud_fields_given_real_provider() {
 
             // Act
             let config = BootConfig::new();
-            let result = config.validate();
+            let result = StorageConfig::from_boot_config(&config).validate();
 
             // Assert
-            assert!(result.is_err());
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.contains("cloud storage requires FITZ_STORAGE_BUCKET"),
+                "{error}"
+            );
         },
     );
 }
@@ -125,7 +129,7 @@ fn should_reject_missing_required_cloud_fields_given_real_provider() {
 #[test]
 #[serial]
 fn should_reject_old_cloud_mode_aliases_given_vendor_in_storage_mode() {
-    with_storage_env(&[("FITZ_STORAGE_MODE", "s3")], || {
+    with_config_env(&[("FITZ_STORAGE_MODE", "s3")], || {
         // Arrange
 
         // Act
@@ -144,7 +148,7 @@ fn should_reject_old_cloud_mode_aliases_given_vendor_in_storage_mode() {
 #[test]
 #[serial]
 fn should_ignore_storage_path_given_cloud_cache_path() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
@@ -172,7 +176,7 @@ fn should_ignore_storage_path_given_cloud_cache_path() {
 #[test]
 #[serial]
 fn should_map_cloud_durability_to_write_policies() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
@@ -204,7 +208,7 @@ fn should_map_cloud_durability_to_write_policies() {
 #[test]
 #[serial]
 fn should_accept_background_cloud_durability() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
@@ -239,7 +243,7 @@ fn should_accept_background_cloud_durability() {
 #[test]
 #[serial]
 fn should_reject_removed_buffered_queue_policy() {
-    with_storage_env(&[("FITZ_QUEUE_WRITE_POLICY", "buffered")], || {
+    with_config_env(&[("FITZ_QUEUE_WRITE_POLICY", "buffered")], || {
         // Arrange
         let config = BootConfig::new();
 
@@ -257,7 +261,7 @@ fn should_reject_removed_buffered_queue_policy() {
 #[test]
 #[serial]
 fn should_reject_invalid_cloud_durability() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
@@ -283,7 +287,7 @@ fn should_reject_invalid_cloud_durability() {
 #[test]
 #[serial]
 fn should_reject_removed_strict_queue_policy() {
-    with_storage_env(&[("FITZ_QUEUE_WRITE_POLICY", "strict")], || {
+    with_config_env(&[("FITZ_QUEUE_WRITE_POLICY", "strict")], || {
         // Arrange
         let config = BootConfig::new();
 
@@ -301,7 +305,7 @@ fn should_reject_removed_strict_queue_policy() {
 #[test]
 #[serial]
 fn should_keep_queue_best_effort_with_strict_cloud_storage() {
-    with_storage_env(
+    with_config_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
             ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
@@ -324,7 +328,7 @@ fn should_keep_queue_best_effort_with_strict_cloud_storage() {
 #[test]
 #[serial]
 fn should_reject_invalid_queue_write_policy() {
-    with_storage_env(&[("FITZ_QUEUE_WRITE_POLICY", "speedy")], || {
+    with_config_env(&[("FITZ_QUEUE_WRITE_POLICY", "speedy")], || {
         // Arrange
 
         // Act
@@ -343,7 +347,7 @@ fn should_reject_invalid_queue_write_policy() {
 #[test]
 #[serial]
 fn should_reject_invalid_queue_loss_window() {
-    with_storage_env(&[("FITZ_QUEUE_LOSS_WINDOW_MS", "0")], || {
+    with_config_env(&[("FITZ_QUEUE_LOSS_WINDOW_MS", "0")], || {
         // Arrange
 
         // Act
@@ -362,7 +366,7 @@ fn should_reject_invalid_queue_loss_window() {
 #[test]
 #[serial]
 fn should_reject_invalid_kv_idle_transaction_ttl() {
-    with_storage_env(&[("FITZ_KV_IDLE_TRANSACTION_TTL_SECS", "0")], || {
+    with_config_env(&[("FITZ_KV_IDLE_TRANSACTION_TTL_SECS", "0")], || {
         // Arrange
 
         // Act
@@ -380,7 +384,7 @@ fn should_reject_invalid_kv_idle_transaction_ttl() {
 #[test]
 #[serial]
 fn should_reject_invalid_schedule_preload_timeout() {
-    with_storage_env(&[(ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS, "0")], || {
+    with_config_env(&[(ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS, "0")], || {
         // Arrange
 
         // Act

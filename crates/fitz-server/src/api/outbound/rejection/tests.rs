@@ -53,7 +53,7 @@ fn should_drop_unacknowledged_publish_when_incoming_buffer_admission_fails() {
 }
 
 #[test]
-fn should_preserve_unsupported_reserved_flags_even_when_incoming_buffer_is_full() {
+fn should_report_unsupported_reserved_flags_when_rejecting_unqueued_frame() {
     // Arrange
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let sink = SessionOutboundSink::new(tx);

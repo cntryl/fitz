@@ -123,40 +123,28 @@ fn make_schedule_actor_and_store_with_clock(
 fn should_calculate_next_fire_time_for_every_minute() {
     // Arrange
     let cron = CronSchedule::parse("* * * * *").unwrap();
-    let now = std::time::Instant::now();
+    let clock = MockClock::new(epoch_ms(2025, 1, 6, 2, 47, 37));
+    let expected = chrono::Utc.with_ymd_and_hms(2025, 1, 6, 2, 48, 0).unwrap();
 
     // Act
-    let next_fire = cron.next_fire_time(now);
+    let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
 
     // Assert
-    // Should be in the future
-    assert!(next_fire > now);
-
-    // Should be less than 2 minutes away (next minute boundary)
-    let elapsed = next_fire.duration_since(now);
-    assert!(
-        elapsed.as_secs() <= 120,
-        "Next fire should be within 2 minutes, got {} seconds",
-        elapsed.as_secs()
-    );
+    assert_eq!(resolve_fire_time(&clock, next_fire), expected);
 }
 
 #[test]
-fn should_calculate_next_fire_time_for_specific_hour() {
+fn should_calculate_next_fire_at_specific_utc_hour_on_following_day() {
     // Arrange
-    let cron = CronSchedule::parse("0 3 * * *").unwrap(); // Daily at 3 AM
-    let now = std::time::Instant::now();
+    let cron = CronSchedule::parse("0 3 * * *").unwrap();
+    let clock = MockClock::new(epoch_ms(2025, 1, 6, 3, 0, 1));
+    let expected = chrono::Utc.with_ymd_and_hms(2025, 1, 7, 3, 0, 0).unwrap();
 
     // Act
-    let next_fire = cron.next_fire_time(now);
+    let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
 
     // Assert
-    // Should be in the future (basic sanity check)
-    assert!(next_fire > now);
-
-    // Should be less than 25 hours away (next occurrence of 3 AM)
-    let elapsed = next_fire.duration_since(now);
-    assert!(elapsed.as_secs() < 25 * 3600);
+    assert_eq!(resolve_fire_time(&clock, next_fire), expected);
 }
 
 // ========== Complex Scheduling Scenarios ==========

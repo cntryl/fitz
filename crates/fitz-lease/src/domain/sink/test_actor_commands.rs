@@ -4,6 +4,22 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 impl LeaseDomain {
+    pub(super) fn await_normal_lane_for_tests(
+        &self,
+        family: fitz_core::runtime::routing::RouteFamily,
+    ) {
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        self.enqueue(
+            family,
+            fitz_core::runtime::FamilyActorLane::Normal,
+            LeaseDomainCommand::InspectForTests(Box::new(|_| {}), done_tx),
+        )
+        .expect("enqueue Lease normal-lane barrier");
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("finish Lease normal-lane work");
+    }
+
     pub(super) fn is_active_for_tests(&self) -> bool {
         self.active.load(Ordering::Relaxed)
     }

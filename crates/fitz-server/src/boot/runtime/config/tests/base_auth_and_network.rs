@@ -1,28 +1,48 @@
 use super::*;
 pub(super) use crate::prelude;
 pub(super) use serial_test::serial;
+use std::ffi::OsString;
 
-pub(super) fn with_env_var<T>(key: &str, value: &str, test: impl FnOnce() -> T) -> T {
-    let previous = std::env::var(key).ok();
-    unsafe {
-        std::env::set_var(key, value);
+struct EnvRestore<'a>(Vec<(&'a str, Option<OsString>)>);
+
+impl Drop for EnvRestore<'_> {
+    fn drop(&mut self) {
+        for (key, previous) in &self.0 {
+            // Callers serialize their configuration environment fixtures.
+            unsafe {
+                if let Some(previous) = previous {
+                    std::env::set_var(key, previous);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
     }
-
-    let result = test();
-
-    match previous {
-        Some(previous) => unsafe {
-            std::env::set_var(key, previous);
-        },
-        None => unsafe {
-            std::env::remove_var(key);
-        },
-    }
-
-    result
 }
 
-pub(super) fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T) -> T {
+fn with_env<T>(keys: &[&str], values: &[(&str, &str)], test: impl FnOnce() -> T) -> T {
+    let _restore = EnvRestore(
+        keys.iter()
+            .copied()
+            .chain(values.iter().map(|(key, _)| *key))
+            .map(|key| (key, std::env::var_os(key)))
+            .collect(),
+    );
+    // Callers serialize their configuration environment fixtures.
+    unsafe {
+        for key in keys {
+            std::env::remove_var(key);
+        }
+        for (key, value) in values {
+            std::env::set_var(key, value);
+        }
+    }
+    test()
+}
+
+pub(super) fn with_config_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T) -> T {
+    // BootConfig defaults read transport, authorization, domain limits, and storage
+    // together, even when validation later targets one of those concerns.
     let keys = [
         "FITZ_AUTH_REQUIRED",
         "FITZ_JWT_AUDIENCE",
@@ -35,10 +55,18 @@ pub(super) fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T
         "FITZ_ROUTE_FAMILY_CLAIM",
         "FITZ_AUTH_CUSTOM_CLAIM",
         "FITZ_AUTH_ROLE_CLAIM",
+        "FITZ_AUTH_ORG_CLAIM",
+        "FITZ_AUTH_PERMISSIONS_CLAIM",
         "FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY",
         "FITZ_ASSUME_EXTERNAL_TLS",
         "FITZ_ASSUME_LOCAL_LOOPBACK_EDGE",
+        "FITZ_HTTP_PORT",
+        "FITZ_TCP_PORT",
         "FITZ_TCP_ENABLED",
+        "FITZ_BIND_ADDR",
+        "FITZ_METRICS_BIND_ADDR",
+        "FITZ_METRICS_PORT",
+        ENV_MAX_MESSAGE_BYTES,
         "FITZ_WS_ALLOWED_ORIGINS",
         "FITZ_ADMIN_AUTH_MODE",
         "FITZ_ROOT_PASSWORD",
@@ -53,37 +81,6 @@ pub(super) fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T
         ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS,
         ENV_DRAIN_GRACE_SECONDS,
         ENV_DRAIN_CLOSE_REASON,
-    ];
-    let previous = keys
-        .iter()
-        .map(|key| (*key, std::env::var(key).ok()))
-        .collect::<Vec<_>>();
-
-    unsafe {
-        for key in keys {
-            std::env::remove_var(key);
-        }
-        for (key, value) in values {
-            std::env::set_var(key, value);
-        }
-    }
-
-    let result = test();
-
-    unsafe {
-        for (key, value) in previous {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
-
-    result
-}
-
-pub(super) fn with_storage_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T) -> T {
-    let keys = [
         "FITZ_STORAGE_MODE",
         "FITZ_STORAGE_PROVIDER",
         "FITZ_STORAGE_BUCKET",
@@ -99,15 +96,9 @@ pub(super) fn with_storage_env<T>(values: &[(&str, &str)], test: impl FnOnce() -
         "FITZ_STORAGE_CLOUD_DURABILITY",
         "FITZ_STORAGE_LEASE_TTL_SECS",
         "FITZ_STORAGE_MEMTABLE_BYTES",
+        "FITZ_STREAM_STORAGE_LAYOUT",
         "FITZ_STREAM_MAX_SUBSCRIPTIONS_PER_SESSION",
         "FITZ_STREAM_SUBSCRIPTION_BUDGET_BYTES",
-        ENV_QUEUE_WRITE_POLICY,
-        ENV_QUEUE_LOSS_WINDOW_MS,
-        "FITZ_QUEUE_MAX_ATTEMPTS",
-        "FITZ_QUEUE_MESSAGE_TTL",
-        "FITZ_QUEUE_DLQ_TTL",
-        ENV_KV_IDLE_TRANSACTION_TTL_SECS,
-        ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS,
         "AWS_REGION",
         "AWS_DEFAULT_REGION",
         "AZURE_STORAGE_ACCOUNT_NAME",
@@ -118,41 +109,25 @@ pub(super) fn with_storage_env<T>(values: &[(&str, &str)], test: impl FnOnce() -
         "GOOGLE_CLOUD_PROJECT",
         "GCS_HMAC_ACCESS_ID",
         "GCS_HMAC_SECRET",
-        "FITZ_ADMIN_AUTH_MODE",
-        "FITZ_ROOT_PASSWORD",
-        ENV_DRAIN_GRACE_SECONDS,
-        ENV_DRAIN_CLOSE_REASON,
     ];
-    let previous = keys
-        .iter()
-        .map(|key| (*key, std::env::var(key).ok()))
-        .collect::<Vec<_>>();
-
-    unsafe {
-        for key in keys {
-            std::env::remove_var(key);
-        }
-        for (key, value) in values {
-            std::env::set_var(key, value);
-        }
-    }
-
-    let result = test();
-
-    unsafe {
-        for (key, value) in previous {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
-
-    result
+    with_env(&keys, values, test)
 }
 
-pub(super) fn with_clean_config_env<T>(test: impl FnOnce() -> T) -> T {
-    with_storage_env(&[], || with_auth_env(&[], test))
+#[test]
+#[serial]
+fn should_restore_environment_when_configuration_fixture_panics() {
+    // Arrange
+    const KEY: &str = "FITZ_TEST_CONFIG_ENV_RESTORE";
+    let previous = std::env::var_os(KEY);
+
+    // Act
+    let result = std::panic::catch_unwind(|| {
+        with_env(&[], &[(KEY, "temporary")], || panic!("fixture panic"));
+    });
+
+    // Assert
+    assert!(result.is_err());
+    assert_eq!(std::env::var_os(KEY), previous);
 }
 
 pub(super) fn cloud_config(config: &BootConfig) -> &CloudStorageConfig {
@@ -168,7 +143,7 @@ pub(super) fn should_create_default_boot_config() {
     // Arrange
 
     // Act
-    let config = BootConfig::default();
+    let config = with_config_env(&[], BootConfig::default);
 
     // Assert
     assert_eq!(config.tcp_port, prelude::DEFAULT_TCP_PORT);
@@ -206,7 +181,7 @@ pub(super) fn should_create_default_boot_config() {
 #[test]
 #[serial]
 fn should_accept_legacy_fast_queue_setting_as_best_effort() {
-    with_storage_env(&[(ENV_QUEUE_WRITE_POLICY, "fast")], || {
+    with_config_env(&[(ENV_QUEUE_WRITE_POLICY, "fast")], || {
         // Arrange
         let config = BootConfig::default();
 
@@ -222,7 +197,7 @@ fn should_accept_legacy_fast_queue_setting_as_best_effort() {
 #[test]
 #[serial]
 pub(super) fn should_use_implicit_local_ws_allowed_origins_by_default() {
-    with_auth_env(&[("FITZ_AUTH_REQUIRED", "false")], || {
+    with_config_env(&[("FITZ_AUTH_REQUIRED", "false")], || {
         // Arrange
 
         // Act
@@ -267,7 +242,7 @@ pub(super) fn should_customize_boot_config() {
 #[test]
 #[serial]
 pub(super) fn should_read_drain_config_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             (ENV_DRAIN_GRACE_SECONDS, "45"),
@@ -290,7 +265,7 @@ pub(super) fn should_read_drain_config_from_environment() {
 #[test]
 #[serial]
 pub(super) fn should_read_schedule_preload_timeout_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             (ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS, "75"),
@@ -311,7 +286,7 @@ pub(super) fn should_read_schedule_preload_timeout_from_environment() {
 #[test]
 #[serial]
 pub(super) fn should_reject_invalid_drain_grace_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             (ENV_DRAIN_GRACE_SECONDS, "nope"),
@@ -345,7 +320,7 @@ pub(super) fn auth_ready_config() -> BootConfig {
 #[test]
 #[serial]
 pub(super) fn should_reject_public_bind_without_external_tls_ack_when_auth_required() {
-    with_auth_env(&[], || {
+    with_config_env(&[], || {
         // Arrange
         let config = auth_ready_config()
             .with_bind_addr("0.0.0.0".to_string())
@@ -366,7 +341,7 @@ pub(super) fn should_reject_public_bind_without_external_tls_ack_when_auth_requi
 #[test]
 #[serial]
 pub(super) fn should_allow_public_bind_with_external_tls_ack_when_auth_required() {
-    with_auth_env(
+    with_config_env(
         &[("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com")],
         || {
             // Arrange
@@ -386,7 +361,7 @@ pub(super) fn should_allow_public_bind_with_external_tls_ack_when_auth_required(
 #[test]
 #[serial]
 pub(super) fn should_allow_public_bind_with_local_loopback_edge_ack_when_auth_required() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE", "true"),
             ("FITZ_WS_ALLOWED_ORIGINS", "http://127.0.0.1:4090"),
@@ -409,7 +384,7 @@ pub(super) fn should_allow_public_bind_with_local_loopback_edge_ack_when_auth_re
 #[test]
 #[serial]
 pub(super) fn should_reject_non_loopback_origin_with_local_loopback_edge_ack() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE", "true"),
             ("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com"),
@@ -433,7 +408,7 @@ pub(super) fn should_reject_non_loopback_origin_with_local_loopback_edge_ack() {
 #[test]
 #[serial]
 pub(super) fn should_reject_external_tls_and_local_loopback_edge_acks_together() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ASSUME_EXTERNAL_TLS", "true"),
             ("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE", "true"),
@@ -458,7 +433,7 @@ pub(super) fn should_reject_external_tls_and_local_loopback_edge_acks_together()
 #[test]
 #[serial]
 pub(super) fn should_reject_public_admin_origin_with_local_loopback_edge_ack() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ADMIN_AUTH_MODE", "open"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
@@ -485,7 +460,7 @@ pub(super) fn should_reject_public_admin_origin_with_local_loopback_edge_ack() {
 #[test]
 #[serial]
 pub(super) fn should_reject_public_auth_bind_with_empty_ws_allowed_origins() {
-    with_auth_env(&[], || {
+    with_config_env(&[], || {
         // Arrange
         let config = auth_ready_config()
             .with_bind_addr("0.0.0.0".to_string())
@@ -507,7 +482,7 @@ pub(super) fn should_reject_public_auth_bind_with_empty_ws_allowed_origins() {
 #[test]
 #[serial]
 pub(super) fn should_allow_public_auth_bind_with_ws_allowed_origins() {
-    with_auth_env(
+    with_config_env(
         &[("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com")],
         || {
             // Arrange
@@ -542,7 +517,7 @@ pub(super) fn should_allow_loopback_bind_without_external_tls_when_auth_required
 #[test]
 #[serial]
 pub(super) fn should_reject_public_bind_without_external_tls_ack_when_protected_admin_configured() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
@@ -570,7 +545,7 @@ pub(super) fn should_reject_public_bind_without_external_tls_ack_when_protected_
 #[test]
 #[serial]
 pub(super) fn should_allow_loopback_bind_without_external_tls_when_protected_admin_configured() {
-    with_auth_env(&[("FITZ_ROOT_PASSWORD", "pwd123")], || {
+    with_config_env(&[("FITZ_ROOT_PASSWORD", "pwd123")], || {
         // Arrange
         let config = BootConfig::new()
             .with_auth_config(crate::auth::AuthConfig::Disabled)
@@ -588,7 +563,7 @@ pub(super) fn should_allow_loopback_bind_without_external_tls_when_protected_adm
 #[test]
 #[serial]
 pub(super) fn should_allow_public_bind_with_external_tls_ack_when_protected_admin_configured() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
@@ -612,7 +587,7 @@ pub(super) fn should_allow_public_bind_with_external_tls_ack_when_protected_admi
 #[test]
 #[serial]
 pub(super) fn should_reject_public_protected_admin_without_public_origin() {
-    with_auth_env(&[("FITZ_ROOT_PASSWORD", "pwd123")], || {
+    with_config_env(&[("FITZ_ROOT_PASSWORD", "pwd123")], || {
         // Arrange
         let config = BootConfig::new()
             .with_auth_config(crate::auth::AuthConfig::Disabled)
@@ -634,7 +609,7 @@ pub(super) fn should_reject_public_protected_admin_without_public_origin() {
 #[test]
 #[serial]
 pub(super) fn should_reject_insecure_public_admin_origin() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "http://admin.example.com"),
@@ -662,7 +637,7 @@ pub(super) fn should_reject_insecure_public_admin_origin() {
 #[test]
 #[serial]
 pub(super) fn should_reject_insecure_admin_cookie_on_public_bind() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
@@ -691,7 +666,7 @@ pub(super) fn should_reject_insecure_admin_cookie_on_public_bind() {
 #[test]
 #[serial]
 pub(super) fn should_allow_public_bind_without_external_tls_when_admin_open_mode_configured() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ADMIN_AUTH_MODE", "open"),
             ("FITZ_ROOT_PASSWORD", "pwd123"),
@@ -716,13 +691,10 @@ pub(super) fn should_allow_public_bind_without_external_tls_when_admin_open_mode
 #[serial]
 pub(super) fn should_read_listener_ports_from_environment() {
     // Arrange
+    let overrides = [("FITZ_HTTP_PORT", "6080"), ("FITZ_TCP_PORT", "6081")];
 
     // Act
-    let config = with_clean_config_env(|| {
-        with_env_var("FITZ_HTTP_PORT", "6080", || {
-            with_env_var("FITZ_TCP_PORT", "6081", BootConfig::default)
-        })
-    });
+    let config = with_config_env(&overrides, BootConfig::default);
 
     // Assert
     assert_eq!(config.http_port, 6080);
@@ -733,9 +705,10 @@ pub(super) fn should_read_listener_ports_from_environment() {
 #[serial]
 pub(super) fn should_read_tcp_enabled_from_environment() {
     // Arrange
+    let overrides = [("FITZ_TCP_ENABLED", "false")];
 
     // Act
-    let config = with_env_var("FITZ_TCP_ENABLED", "false", BootConfig::default);
+    let config = with_config_env(&overrides, BootConfig::default);
 
     // Assert
     assert!(!config.tcp_enabled);
@@ -744,7 +717,7 @@ pub(super) fn should_read_tcp_enabled_from_environment() {
 #[test]
 #[serial]
 pub(super) fn should_reject_invalid_tcp_enabled_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_TCP_ENABLED", "maybe"),
@@ -769,7 +742,7 @@ pub(super) fn should_reject_invalid_tcp_enabled_from_environment() {
 #[test]
 #[serial]
 pub(super) fn should_read_ws_allowed_origins_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             (
@@ -800,7 +773,7 @@ pub(super) fn should_read_ws_allowed_origins_from_environment() {
 #[test]
 #[serial]
 pub(super) fn should_reject_invalid_ws_allowed_origins_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com/path"),
@@ -825,7 +798,7 @@ pub(super) fn should_reject_invalid_ws_allowed_origins_from_environment() {
 #[test]
 #[serial]
 pub(super) fn should_preserve_invalid_ws_allowed_origins_error_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com/path"),
@@ -850,7 +823,7 @@ pub(super) fn should_preserve_invalid_ws_allowed_origins_error_from_environment(
 #[test]
 #[serial]
 pub(super) fn should_reject_ws_allowed_origin_with_trailing_slash_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com/"),
@@ -875,7 +848,7 @@ pub(super) fn should_reject_ws_allowed_origin_with_trailing_slash_from_environme
 #[test]
 #[serial]
 pub(super) fn should_reject_admin_public_origin_with_trailing_slash_from_environment() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com/"),
@@ -903,7 +876,7 @@ pub(super) fn should_reject_admin_public_origin_with_trailing_slash_from_environ
 #[test]
 #[serial]
 pub(super) fn should_allow_localhost_http_ws_allowed_origin() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_WS_ALLOWED_ORIGINS", "http://localhost:3000"),
@@ -924,7 +897,7 @@ pub(super) fn should_allow_localhost_http_ws_allowed_origin() {
 #[test]
 #[serial]
 pub(super) fn should_reject_public_http_ws_allowed_origin() {
-    with_auth_env(
+    with_config_env(
         &[
             ("FITZ_AUTH_REQUIRED", "false"),
             ("FITZ_WS_ALLOWED_ORIGINS", "http://app.example.com"),
@@ -949,7 +922,7 @@ pub(super) fn should_reject_public_http_ws_allowed_origin() {
 #[test]
 #[serial]
 pub(super) fn should_read_storage_memtable_bytes_from_environment() {
-    with_storage_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "8388608")], || {
+    with_config_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "8388608")], || {
         // Arrange
 
         // Act

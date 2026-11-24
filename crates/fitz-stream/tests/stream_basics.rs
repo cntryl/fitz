@@ -2,11 +2,16 @@
 
 use bytes::Bytes;
 use fitz_core::runtime::routing::RouteFamily;
-use fitz_stream::domain::protocol::{StreamWriteMode, MAX_EVENT_SIZE};
-use fitz_stream::testkit::create_test_db;
+use fitz_stream::domain::protocol::{StreamReadItem, StreamWriteMode, MAX_EVENT_SIZE};
 use fitz_stream::testkit::domain_internals::StreamActor;
-use fitz_stream::testkit::domain_internals::{BatchLimits, StreamStore, StreamTTL};
+use fitz_stream::testkit::domain_internals::{
+    BatchLimits, ReadResourceParams, StreamStore, StreamTTL,
+};
+use fitz_stream::testkit::{
+    create_local_bench_store, create_test_db, shutdown_test_engine_with_timeout,
+};
 use std::sync::Arc;
+use std::time::Duration;
 
 fn make_actor_with_store(
     store: Arc<StreamStore>,
@@ -530,30 +535,58 @@ fn should_abort_append_session_on_owner_cleanup() {
 }
 
 #[test]
-fn should_replay_stream_records_given_resource_offset_after_restart_tcp() {
+fn should_replay_stream_records_from_resource_offset_after_engine_restart() {
     // Arrange
-    let store = Arc::new(StreamStore::new(create_test_db()));
-    let mut writer = make_actor_with_store(store.clone(), "realm1", "area1", "orders");
+    let (engine, temp_dir) = create_local_bench_store();
+    let store = Arc::new(StreamStore::new(Arc::clone(&engine)));
+    let mut writer = make_actor_with_store(store, "realm1", "area1", "orders");
+    writer.begin_append_session(10, 100, None).unwrap();
+    for (offset, payload) in [(0, b"event-0"), (1, b"event-1"), (2, b"event-2")] {
+        append_for_owner(
+            &mut writer,
+            10,
+            100,
+            offset,
+            Bytes::from_static(payload),
+            None,
+        )
+        .unwrap();
+    }
+    commit_for_owner(&mut writer, 10, 100).unwrap();
+    drop(writer);
+    shutdown_test_engine_with_timeout(engine, Duration::from_secs(2));
 
     // Act
-    writer.begin_append_session(10, 100, None).unwrap();
-    append_for_owner(
-        &mut writer,
-        10,
-        100,
-        0,
-        Bytes::from_static(b"event-0"),
-        None,
-    )
-    .unwrap();
-    commit_for_owner(&mut writer, 10, 100).unwrap();
-
-    let mut restarted = make_actor_with_store(store, "realm1", "area1", "orders");
-    restarted.begin_append_session(10, 101, None).unwrap();
-    let metadata = restarted.metadata().unwrap().metadata;
+    let options = cntryl_midge::OpenOptions::local(temp_dir.path().to_string_lossy().as_ref())
+        .build()
+        .expect("build reopened engine options");
+    let engine = Arc::new(cntryl_midge::Engine::open(options).expect("reopen persistent stream"));
+    let store = StreamStore::new(engine);
+    let (items, cursor) = store
+        .read_resource(&ReadResourceParams {
+            family: 1,
+            realm: "realm1",
+            area: "area1",
+            resource: "orders",
+            from_offset: 1,
+            limit: 10,
+            max_bytes: None,
+        })
+        .expect("replay persisted stream");
 
     // Assert
-    assert_eq!(metadata.last_resource_offset, Some(0));
+    let [StreamReadItem::Event(second), StreamReadItem::Event(third)] = items.as_slice() else {
+        panic!("Expected exactly the events at offsets 1 and 2, got {items:?}");
+    };
+    assert_eq!(
+        [
+            (second.resource_offset, &second.body[..]),
+            (third.resource_offset, &third.body[..])
+        ],
+        [(1, b"event-1".as_slice()), (2, b"event-2".as_slice())]
+    );
+    assert_eq!(cursor.last_resource_offset, 2);
+    assert!(!cursor.has_more);
 }
 
 #[test]

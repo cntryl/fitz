@@ -4,20 +4,6 @@ use bytes::{BufMut, Bytes};
 use fitz_core::runtime::routing::RouteFamily;
 
 #[test]
-fn should_require_commit_persistence_instead_of_begin_persistence() {
-    // Arrange
-    let mut begin = Vec::new();
-    put_route(&mut begin, "kv://acme/kv/users");
-    begin.push(1);
-
-    // Act
-    let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &begin);
-
-    // Assert
-    assert!(matches!(result, Ok(KvMessage::Begin { .. })), "{result:?}");
-}
-
-#[test]
 fn should_require_commit_persistence_by_rejecting_legacy_begin_bytes() {
     // Arrange
     let mut begin = Vec::new();
@@ -287,7 +273,7 @@ proptest::proptest! {
 }
 
 #[test]
-fn should_encode_get_result_found() {
+fn should_encode_exact_get_result_payload() {
     // Arrange
     let response = KvResponse::GetResult {
         found: true,
@@ -298,9 +284,7 @@ fn should_encode_get_result_found() {
     let encoded = encode_response(&response);
 
     // Assert
-    assert_ne!(encoded, Vec::<u8>::new());
-    assert_eq!(encoded[0], 0); // status: success
-    assert_eq!(encoded[1], 1); // found flag
+    assert_eq!(encoded.as_slice(), b"\x00\x01\x00\x00\x00\x0atest_value");
 }
 
 #[test]
@@ -315,9 +299,7 @@ fn should_encode_get_result_not_found() {
     let encoded = encode_response(&response);
 
     // Assert
-    assert_ne!(encoded, Vec::<u8>::new());
-    assert_eq!(encoded[0], 0); // status: success
-    assert_eq!(encoded[1], 0); // not found flag
+    assert_eq!(encoded, [0, 0, 0, 0, 0, 0]);
 }
 
 #[test]

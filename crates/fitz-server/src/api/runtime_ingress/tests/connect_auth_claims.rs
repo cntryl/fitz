@@ -1,3 +1,4 @@
+use super::domain_backpressure::CapturingInboxSink;
 use super::*;
 
 struct BackpressuredSink;
@@ -696,65 +697,55 @@ fn should_allow_stream_followup_after_begin_without_global_stream_write_permissi
     assert_eq!(ingress.session_count(), 1);
 }
 
-struct BackpressureCapturingInbox;
-
-impl MailboxSink for BackpressureCapturingInbox {
-    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
-        Ok(())
-    }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
 #[test]
-fn should_surface_router_backpressure_in_ingress_decision() {
+fn should_deliver_correlated_kv_busy_response_when_domain_mailbox_is_full() {
     // Arrange
-    let metrics = crate::observability::metrics();
-    let backpressure_before = metrics.counter_get(obs::METRIC_ROUTER_BACKPRESSURE);
-
+    let session_id = 90;
+    let correlation = std::num::NonZeroU64::new(42);
     let router = Arc::new(crate::runtime::Router::new());
+    let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
     router.register_domain_pattern("kv", Arc::new(BackpressuredSink));
-    // A live session has an inbox; the rejection frame is written to it.
     router.register(
-        crate::runtime::routing::RouteAddress::new(
-            RouteFamily::new(1),
-            crate::runtime::routing::Route::new("inbox://session/90"),
-        ),
-        Arc::new(BackpressureCapturingInbox) as Arc<dyn MailboxSink>,
+        crate::runtime::routing::session_inbox_address(RouteFamily::new(1), session_id),
+        Arc::new(CapturingInboxSink {
+            frames: Arc::clone(&client_frames),
+        }),
     );
 
     let ingress = RuntimeIngress::new(false).with_router(router);
-    let session = make_session_info(90, TransportKind::Tcp);
+    let session = make_session_info(session_id, TransportKind::Tcp);
+    let frame = crate::benchkit::build_kv_begin("kv://test/app/users", 1);
+    let (msg_type, payload) = crate::benchkit::extract_single_tlv_field(&frame);
 
     // Act
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
+    let decision = rt.block_on(async {
         ingress.on_open(session).await.unwrap();
-        let frame = crate::benchkit::transport::build_kv_begin("kv://test/app/users", 1);
-        let payload = Bytes::from(frame[crate::protocol::wire2::header::HEADER_LEN..].to_vec());
-
-        let decision = ingress
+        ingress
             .on_frame(
-                90,
+                session_id,
                 ChannelId::Pub,
-                crate::protocol::message::MessageType::new(100),
+                crate::protocol::message::MessageType::new(msg_type),
                 payload,
-                None,
+                correlation,
             )
-            .await;
-
-        // Assert
-        // The command was never enqueued, so the frame is rejected and the
-        // session kept; closing would strip the client of the one signal that
-        // makes a retry safe.
-        assert_eq!(decision, IngressDecision::Accept);
-        assert!(
-            metrics.counter_get(obs::METRIC_ROUTER_BACKPRESSURE) > backpressure_before,
-            "expected router backpressure metric to increase"
-        );
+            .await
     });
+
+    // Assert
+    assert_eq!(decision, IngressDecision::Accept);
+    let frames = client_frames.lock().unwrap();
+    let [rejection] = frames.as_slice() else {
+        panic!("expected exactly one rejection, got {frames:?}");
+    };
+    assert_eq!(rejection.session_id, session_id);
+    assert_eq!(rejection.msg_type.as_u16(), msg_type);
+    assert_eq!(rejection.correlation, correlation);
+    assert!(rejection.response_final);
+    assert_eq!(
+        decode_domain_error_code(&rejection.payload),
+        crate::protocol::error_codes::kv::ERR_BUSY
+    );
 }
 
 #[test]

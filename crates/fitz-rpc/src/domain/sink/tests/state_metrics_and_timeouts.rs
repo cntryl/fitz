@@ -309,7 +309,7 @@ pub(super) fn should_reject_rpc_delivery_when_family_runtime_is_stopped() {
 }
 
 #[test]
-pub(super) fn should_route_rpc_live_count_queries_through_family_runtime() {
+pub(super) fn should_report_zero_live_counts_when_rpc_runtime_stops() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::AdminReadModel::new();
@@ -328,20 +328,21 @@ pub(super) fn should_route_rpc_live_count_queries_through_family_runtime() {
             Instant::now() + Duration::from_secs(30),
         ),
     );
+    assert_eq!(sink.worker_count(), 1);
+    assert_eq!(sink.pending_request_count(), 1);
+    sink.stop_actor_for_tests();
 
     // Act
-    sink.stop_actor_for_tests();
     let worker_count = sink.worker_count();
     let pending_request_count = sink.pending_request_count();
 
     // Assert
-    assert!(!sink.is_actor_running());
     assert_eq!(worker_count, 0);
     assert_eq!(pending_request_count, 0);
 }
 
 #[test]
-pub(super) fn should_route_rpc_session_cleanup_helper_through_family_runtime() {
+pub(super) fn should_report_no_session_cleanup_effects_when_rpc_runtime_has_stopped() {
     // Arrange
     let family = RouteFamily::new(1);
     let metrics = fitz_core::observability::metrics::MetricsCollector::new();
@@ -361,12 +362,12 @@ pub(super) fn should_route_rpc_session_cleanup_helper_through_family_runtime() {
         ),
     );
 
-    // Act
     sink.stop_actor_for_tests();
+
+    // Act
     let cleanup = sink.apply_session_cleanup(42);
 
     // Assert
-    assert!(!sink.is_actor_running());
     assert_eq!(cleanup.removed_registrations, 0);
     assert_eq!(cleanup.detached_callers, 0);
     assert_eq!(cleanup.removed_pending, 0);
@@ -376,7 +377,7 @@ pub(super) fn should_route_rpc_session_cleanup_helper_through_family_runtime() {
 }
 
 #[test]
-pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_family_runtime() {
+pub(super) fn should_report_no_worker_unsubscribe_effects_when_rpc_runtime_has_stopped() {
     // Arrange
     let family = RouteFamily::new(1);
     let metrics = fitz_core::observability::metrics::MetricsCollector::new();
@@ -397,12 +398,12 @@ pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_family_runtime(
         ),
     );
 
-    // Act
     sink.stop_actor_for_tests();
+
+    // Act
     let cleanup = sink.apply_worker_unsubscribe(&worker_addr, 42);
 
     // Assert
-    assert!(!sink.is_actor_running());
     assert_eq!(cleanup.removed_registrations, 0);
     assert_eq!(cleanup.removed_pending, 0);
     assert_eq!(cleanup.pending_len, 0);

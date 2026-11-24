@@ -46,7 +46,7 @@ use crate::wire::payload_codec::PayloadEncoder;
 use bytes::Bytes;
 use fitz_core::runtime::mailbox::Mailbox;
 use fitz_core::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz_core::runtime::{ClientChannel, Envelope, MailboxSink, Router};
+use fitz_core::runtime::{ClientChannel, DeliveryError, Envelope, MailboxSink, Router};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -115,6 +115,42 @@ fn receive_envelope(mailbox: &Mailbox, label: &str) -> Envelope {
         .receiver()
         .recv_timeout(Duration::from_secs(1))
         .unwrap_or_else(|_| panic!("{label}"))
+}
+
+struct FullResponseMailbox {
+    mailbox: Mailbox,
+    rejected: crossbeam_channel::Sender<FrameContext>,
+}
+
+impl MailboxSink for FullResponseMailbox {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let frame = envelope.payload::<FrameContext>().cloned();
+        let result = self.mailbox.deliver(envelope);
+        if let (Err(DeliveryError::MailboxFull { .. }), Some(frame)) = (&result, frame) {
+            let _ = self.rejected.send(frame);
+        }
+        result
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.mailbox.deliver_high_priority(envelope)
+    }
+}
+
+fn register_full_response_mailbox(
+    router: &Router,
+    reply_to: &RouteAddress,
+) -> crossbeam_channel::Receiver<FrameContext> {
+    let mailbox = Mailbox::new(1);
+    mailbox
+        .deliver(Envelope::new(reply_to.clone(), ()))
+        .expect("fill response mailbox");
+    let (rejected, responses) = crossbeam_channel::unbounded();
+    router.register(
+        reply_to.clone(),
+        Arc::new(FullResponseMailbox { mailbox, rejected }),
+    );
+    responses
 }
 
 fn assert_no_envelope(mailbox: &Mailbox) {
@@ -762,12 +798,7 @@ fn should_not_retain_direct_lease_when_acquire_response_cannot_be_delivered() {
     let client = RouteAddress::new(family, Route::new("inbox://session/7"));
     let destination = RouteAddress::new(family, Route::new(route));
     let router = Arc::new(Router::new());
-    let mailbox = Arc::new(Mailbox::new(1));
-    router.register(client.clone(), mailbox.clone());
-    mailbox
-        .sender()
-        .try_send(Envelope::new(client.clone(), 1_u8))
-        .expect("fill client mailbox");
+    let rejected = register_full_response_mailbox(&router, &client);
     let sink = LeaseDomain::new(router, crate::control::admin::AdminReadModel::new());
 
     // Act
@@ -783,9 +814,14 @@ fn should_not_retain_direct_lease_when_acquire_response_cannot_be_delivered() {
         ),
     ))
     .expect("deliver acquire");
-    std::thread::sleep(Duration::from_millis(50));
+    sink.await_normal_lane_for_tests(family);
+    let response = rejected.try_recv().expect("reject acquire response");
 
     // Assert
+    assert_eq!(
+        response.payload.get(..2),
+        Some([0, crate::wire::lease_codec::acquire_response_type::ACQUIRED].as_slice())
+    );
     assert_eq!(sink.lease_count(), 0);
 }
 
@@ -798,12 +834,7 @@ fn should_not_retain_waiter_when_queued_response_cannot_be_delivered() {
     let client = RouteAddress::new(family, Route::new("inbox://session/8"));
     let destination = RouteAddress::new(family, Route::new(route));
     let router = Arc::new(Router::new());
-    let mailbox = Arc::new(Mailbox::new(1));
-    router.register(client.clone(), mailbox.clone());
-    mailbox
-        .sender()
-        .try_send(Envelope::new(client.clone(), 1_u8))
-        .expect("fill client mailbox");
+    let rejected = register_full_response_mailbox(&router, &client);
     let sink = LeaseDomain::new(router, crate::control::admin::AdminReadModel::new());
     assert!(matches!(
         sink.acquire_for_tests(LeaseAcquireRequest {
@@ -834,9 +865,14 @@ fn should_not_retain_waiter_when_queued_response_cannot_be_delivered() {
         ),
     ))
     .expect("deliver waiting acquire");
-    std::thread::sleep(Duration::from_millis(50));
+    sink.await_normal_lane_for_tests(family);
+    let response = rejected.try_recv().expect("reject queued response");
 
     // Assert
+    assert_eq!(
+        response.payload.get(..2),
+        Some([0, crate::wire::lease_codec::acquire_response_type::QUEUED].as_slice())
+    );
     assert_eq!(sink.lease_count(), 1);
     assert_eq!(sink.pending_waiter_count_for_tests(&key), 0);
 }

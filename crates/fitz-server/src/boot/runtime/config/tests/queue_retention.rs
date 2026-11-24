@@ -3,7 +3,7 @@ use super::*;
 #[test]
 #[serial]
 fn should_convert_queue_message_ttl_days_to_seconds() {
-    with_auth_env(&[("FITZ_QUEUE_MESSAGE_TTL", "2")], || {
+    with_config_env(&[("FITZ_QUEUE_MESSAGE_TTL", "2")], || {
         // Arrange
         // Act
         let config = BootConfig::new();
@@ -15,7 +15,7 @@ fn should_convert_queue_message_ttl_days_to_seconds() {
 #[test]
 #[serial]
 fn should_convert_queue_dlq_ttl_days_to_seconds() {
-    with_auth_env(&[("FITZ_QUEUE_DLQ_TTL", "3")], || {
+    with_config_env(&[("FITZ_QUEUE_DLQ_TTL", "3")], || {
         // Arrange
         // Act
         let config = BootConfig::new();
@@ -27,7 +27,7 @@ fn should_convert_queue_dlq_ttl_days_to_seconds() {
 #[test]
 #[serial]
 fn should_default_queue_retention_to_no_expiry() {
-    with_auth_env(&[], || {
+    with_config_env(&[], || {
         // Arrange
         // Act
         let config = BootConfig::new();
@@ -38,7 +38,7 @@ fn should_default_queue_retention_to_no_expiry() {
 }
 
 fn rejects_retention(key: &str, value: &str) {
-    with_auth_env(&[(key, value)], || {
+    with_config_env(&[(key, value)], || {
         // Arrange
         let config = auth_ready_config();
         // Act

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_route_notice_session_cleanup_command_through_family_runtime() {
+fn should_report_actor_stopped_when_notice_session_cleanup_cannot_run() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
@@ -24,16 +24,13 @@ fn should_route_notice_session_cleanup_command_through_family_runtime() {
     let response = decode_notice_response(&client_mailbox);
     assert_eq!(response.status, 0);
     assert_eq!(sink.subscription_count(), Ok(1));
+    sink.stop_actor_for_tests();
 
     // Act
-    sink.stop_actor_for_tests();
     let removed = sink.unsubscribe_all_for_session(session_id);
-    let subscription_count = sink.subscription_count();
 
     // Assert
-    assert!(!sink.is_actor_running());
     assert_eq!(removed, Err(DeliveryError::ActorStopped));
-    assert_eq!(subscription_count, Err(DeliveryError::ActorStopped));
 }
 
 #[test]

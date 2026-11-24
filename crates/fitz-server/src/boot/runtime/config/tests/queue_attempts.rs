@@ -1,7 +1,7 @@
 use super::*;
 
 fn assert_invalid_limit(value: &str) {
-    with_auth_env(&[("FITZ_QUEUE_MAX_ATTEMPTS", value)], || {
+    with_config_env(&[("FITZ_QUEUE_MAX_ATTEMPTS", value)], || {
         // Arrange
         let config = auth_ready_config();
 
@@ -49,7 +49,7 @@ fn should_reject_empty_queue_max_attempts() {
 #[test]
 #[serial]
 fn should_default_queue_max_attempts_to_unlimited() {
-    with_auth_env(&[], || {
+    with_config_env(&[], || {
         // Arrange
 
         // Act
@@ -63,7 +63,7 @@ fn should_default_queue_max_attempts_to_unlimited() {
 #[test]
 #[serial]
 fn should_accept_one_queue_attempt() {
-    with_auth_env(&[("FITZ_QUEUE_MAX_ATTEMPTS", "1")], || {
+    with_config_env(&[("FITZ_QUEUE_MAX_ATTEMPTS", "1")], || {
         // Arrange
 
         // Act
@@ -81,7 +81,7 @@ fn should_accept_one_queue_attempt() {
 #[test]
 #[serial]
 fn should_accept_maximum_queue_attempts() {
-    with_auth_env(&[("FITZ_QUEUE_MAX_ATTEMPTS", "4294967295")], || {
+    with_config_env(&[("FITZ_QUEUE_MAX_ATTEMPTS", "4294967295")], || {
         // Arrange
 
         // Act

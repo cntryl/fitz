@@ -757,7 +757,7 @@ pub(super) fn should_return_error_when_area_watermark_guard_read_fails() {
 }
 
 #[test]
-pub(super) fn should_preserve_area_watermark_given_same_value_update() {
+pub(super) fn should_preserve_area_watermark_given_nonincreasing_updates() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     store
@@ -765,39 +765,17 @@ pub(super) fn should_preserve_area_watermark_given_same_value_update() {
         .expect("seed area watermark");
 
     // Act
-    store
-        .set_watermark(1, "test", "events", 10)
-        .expect("rewrite same area watermark");
-
-    // Assert
-    assert_eq!(
+    let watermarks = [10, 9].map(|candidate| {
+        store
+            .set_watermark(1, "test", "events", candidate)
+            .expect("update area watermark");
         store
             .get_watermark(1, "test", "events")
-            .expect("read area watermark"),
-        10
-    );
-}
-
-#[test]
-pub(super) fn should_preserve_area_watermark_given_lower_value_update() {
-    // Arrange
-    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
-    store
-        .set_watermark(1, "test", "events", 10)
-        .expect("seed area watermark");
-
-    // Act
-    store
-        .set_watermark(1, "test", "events", 9)
-        .expect("rewrite lower area watermark");
+            .expect("read area watermark")
+    });
 
     // Assert
-    assert_eq!(
-        store
-            .get_watermark(1, "test", "events")
-            .expect("read area watermark"),
-        10
-    );
+    assert_eq!(watermarks, [10, 10]);
 }
 
 #[test]
@@ -872,7 +850,7 @@ pub(super) fn should_return_error_when_realm_watermark_guard_read_fails() {
 }
 
 #[test]
-pub(super) fn should_preserve_realm_watermark_given_same_value_update() {
+pub(super) fn should_preserve_realm_watermark_given_nonincreasing_updates() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     store
@@ -880,37 +858,15 @@ pub(super) fn should_preserve_realm_watermark_given_same_value_update() {
         .expect("seed realm watermark");
 
     // Act
-    store
-        .set_realm_watermark(1, "test", 10)
-        .expect("rewrite same realm watermark");
-
-    // Assert
-    assert_eq!(
+    let watermarks = [10, 9].map(|candidate| {
+        store
+            .set_realm_watermark(1, "test", candidate)
+            .expect("update realm watermark");
         store
             .get_realm_watermark(1, "test")
-            .expect("read realm watermark"),
-        10
-    );
-}
-
-#[test]
-pub(super) fn should_preserve_realm_watermark_given_lower_value_update() {
-    // Arrange
-    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
-    store
-        .set_realm_watermark(1, "test", 10)
-        .expect("seed realm watermark");
-
-    // Act
-    store
-        .set_realm_watermark(1, "test", 9)
-        .expect("rewrite lower realm watermark");
+            .expect("read realm watermark")
+    });
 
     // Assert
-    assert_eq!(
-        store
-            .get_realm_watermark(1, "test")
-            .expect("read realm watermark"),
-        10
-    );
+    assert_eq!(watermarks, [10, 10]);
 }

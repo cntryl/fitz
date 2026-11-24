@@ -189,6 +189,26 @@ impl<M: Send + 'static> FamilyActorPool<M> {
     ///
     /// Returns an error for an empty, invalid, or duplicate family set.
     pub fn new(families: &[RouteFamily]) -> Result<Self, FamilyActorPoolError> {
+        Self::with_shard_count(families, shard_count_for_family_count(families.len()))
+    }
+
+    /// Create a pool with fixed topology for a caller's tests.
+    ///
+    /// # Errors
+    /// Returns an error for an empty, invalid, or duplicate family set.
+    #[cfg(feature = "bench-support")]
+    #[doc(hidden)]
+    pub fn with_shard_count_for_tests(
+        families: &[RouteFamily],
+        shard_count: std::num::NonZeroUsize,
+    ) -> Result<Self, FamilyActorPoolError> {
+        Self::with_shard_count(families, shard_count.get().min(families.len()))
+    }
+
+    fn with_shard_count(
+        families: &[RouteFamily],
+        shard_count: usize,
+    ) -> Result<Self, FamilyActorPoolError> {
         if families.is_empty() {
             return Err(FamilyActorPoolError::NoProvisionedFamilies);
         }
@@ -203,7 +223,6 @@ impl<M: Send + 'static> FamilyActorPool<M> {
             }
         }
 
-        let shard_count = shard_count_for_family_count(families.len());
         let shard_workers = (0..shard_count)
             .map(|_| Arc::new(OnceLock::new()))
             .collect::<Vec<_>>();

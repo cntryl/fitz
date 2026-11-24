@@ -68,9 +68,8 @@ impl Clock for TestClock {
     }
 }
 
-/// Test that multiple consumers can reserve messages fairly (competing consumer semantics)
 #[test]
-fn should_distribute_messages_fairly_among_competing_consumers() {
+fn should_reserve_disjoint_batches_for_distinct_consumer_sessions() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(
@@ -90,42 +89,46 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
         fitz_queue::utils::idempotency::default_dedup_store(),
     );
 
-    // Enqueue 30 messages (10 per consumer)
-    let mut message_ids = Vec::new();
-    for i in 0..30 {
-        let body = Bytes::from(format!("task {i}"));
-        match actor.handle_send(body, None) {
-            QueueResponse::Sent { id } => message_ids.push(id),
-            _ => panic!("Expected Enqueued"),
-        }
-    }
+    let consumer_sessions = [7, 8, 9];
+    let expected_batches = consumer_sessions.map(|session_id| {
+        [0, 1].map(|index| {
+            let body = Bytes::from(format!("task {session_id}-{index}"));
+            let QueueResponse::Sent { id } = actor.handle_send(body.clone(), None) else {
+                panic!("expected queued message");
+            };
+            (id, body)
+        })
+    });
 
     // Act
-    let mut reservation_batches = Vec::new();
-    for _ in 0..3 {
-        match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
-            QueueResponse::Received { messages } => {
-                assert_eq!(messages.len(), 10);
-                reservation_batches.push(messages);
-            }
-            _ => panic!("Expected Reserved"),
-        }
-    }
+    let reserved_batches = consumer_sessions.map(|session_id| {
+        let QueueResponse::Received { messages } =
+            actor.handle_receive_for_session(session_id, 30, Some(2))
+        else {
+            panic!("expected batch for session {session_id}");
+        };
+        messages
+            .into_iter()
+            .map(|message| (message.id, message.body))
+            .collect::<Vec<_>>()
+    });
 
     // Assert
+    assert_eq!(reserved_batches, expected_batches);
     assert_eq!(actor.ready_len(), 0);
-    assert!(!actor.inflight.is_empty(), "Should have in-flight messages");
-
-    // Verify no message was reserved twice
-    let mut all_ids: Vec<_> = reservation_batches[0]
-        .iter()
-        .chain(reservation_batches[1].iter())
-        .chain(reservation_batches[2].iter())
-        .map(|m| m.id)
+    let mut owners: Vec<_> = actor
+        .admin_inflight()
+        .into_iter()
+        .map(|entry| (entry.message_id, entry.session_id))
         .collect();
-    all_ids.sort_by_key(fitz_queue::domain::MessageId::as_u64);
-    all_ids.dedup();
-    assert_eq!(all_ids.len(), 30, "Should have 30 unique message IDs");
+    owners.sort_unstable();
+    let mut expected_owners: Vec<_> = consumer_sessions
+        .into_iter()
+        .zip(expected_batches)
+        .flat_map(|(session, batch)| batch.map(|(id, _)| (id.as_u64(), Some(session))))
+        .collect();
+    expected_owners.sort_unstable();
+    assert_eq!(owners, expected_owners);
 }
 
 /// Recreating the actor releases reservations over retained engine state.
@@ -340,50 +343,52 @@ fn should_preserve_delayed_visibility_after_actor_recreation() {
         .expect("Failed to open Midge"),
     );
 
-    let queue_key = unique_queue_key("delayed-crash");
-
-    // Enqueue messages with delay
-    {
-        let mut actor = QueueActor::new(
-            RouteFamily::new(0),
-            queue_key.clone(),
-            store.clone(),
-            None,
-            fitz_queue::utils::idempotency::default_dedup_store(),
-        );
-
-        // Message 1: immediately visible
-        actor.handle_send(Bytes::from("immediate"), None);
-
-        // Message 2: delayed 1 hour
-        actor.handle_send(Bytes::from("delayed_1h"), Some(3600));
-
-        // Verify in-memory state
-        assert_eq!(actor.ready_len(), 1, "Should have 1 ready message");
-        // delayed field is private, verify through reserve behavior
-    }
-
-    // Act
-    let mut actor = QueueActor::new(
+    let clock = TestClock::new();
+    let queue_key = unique_queue_key("delayed-recovery");
+    let body = Bytes::from_static(b"delayed");
+    let delay = Duration::from_secs(60);
+    let mut actor = QueueActor::with_clock(
         RouteFamily::new(0),
-        queue_key,
-        store,
+        queue_key.clone(),
+        store.clone(),
+        Box::new(clock.clone()),
         None,
         fitz_queue::utils::idempotency::default_dedup_store(),
     );
+    let QueueResponse::Sent { id } = actor.handle_send(body.clone(), Some(delay.as_secs())) else {
+        panic!("expected delayed enqueue");
+    };
+    drop(actor);
+
+    // Act
+    let mut actor = QueueActor::with_clock(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        Box::new(clock.clone()),
+        None,
+        fitz_queue::utils::idempotency::default_dedup_store(),
+    );
+    clock.advance(delay.checked_sub(Duration::from_millis(1)).unwrap());
+    actor.process_due_work();
+    let before_deadline = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+    clock.advance(Duration::from_millis(1));
+    actor.process_due_work();
+    let at_deadline = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
     // Assert
-    assert_eq!(actor.ready_len(), 1, "Ready message should be recovered");
-    // Note: delayed is private field, so verify behavior through reserve instead
-
-    // Verify immediately visible
-    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
-        QueueResponse::Received { messages } => {
-            assert_eq!(messages.len(), 1);
-            assert_eq!(messages[0].body, Bytes::from("immediate"));
-        }
-        _ => panic!("Expected to reserve the immediate message"),
-    }
+    assert_eq!(
+        before_deadline,
+        QueueResponse::Received { messages: vec![] }
+    );
+    let QueueResponse::Received { messages } = at_deadline else {
+        panic!("expected reservation at the visibility deadline");
+    };
+    let [message] = messages.as_slice() else {
+        panic!("expected exactly one recovered message");
+    };
+    assert_eq!(message.id, id);
+    assert_eq!(message.body, body);
 }
 
 /// Actor reconstruction reserves new IDs after the previous allocation range.

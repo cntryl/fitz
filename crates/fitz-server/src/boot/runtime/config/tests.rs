@@ -62,6 +62,7 @@ fn should_validate_transport_independently_of_invalid_drain() {
     let mut config = auth_ready_config();
     config.drain_grace_seconds = 0;
     config.bind_addr = "127.0.0.1".to_string();
+    assert!(DrainConfig::from_boot_config(&config).validate().is_err());
 
     // Act
     let result = TransportConfig::from_boot_config(&config).validate(false);
@@ -76,6 +77,13 @@ fn should_validate_storage_independently_of_invalid_transport() {
     // Arrange
     let mut config = auth_ready_config();
     config.metrics_bind_addr.clear();
+    assert_eq!(
+        TransportConfig::from_boot_config(&config)
+            .validate(false)
+            .unwrap_err()
+            .to_string(),
+        "FITZ_METRICS_BIND_ADDR must not be empty"
+    );
 
     // Act
     let result = StorageConfig::from_boot_config(&config).validate();
@@ -92,6 +100,7 @@ fn should_validate_drain_independently_of_invalid_storage() {
     config.storage_mode = StorageMode::Invalid {
         reason: "invalid storage".to_string(),
     };
+    assert!(StorageConfig::from_boot_config(&config).validate().is_err());
 
     // Act
     let result = DrainConfig::from_boot_config(&config).validate();
@@ -103,7 +112,7 @@ fn should_validate_drain_independently_of_invalid_storage() {
 #[test]
 #[serial]
 fn should_reject_configured_http_ws_origin_even_when_env_origins_are_valid() {
-    with_auth_env(
+    with_config_env(
         &[("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com")],
         || {
             // Arrange
@@ -129,7 +138,7 @@ fn should_reject_configured_http_ws_origin_even_when_env_origins_are_valid() {
 #[test]
 #[serial]
 fn should_reject_configured_empty_ws_origins_even_when_env_origins_are_valid() {
-    with_auth_env(
+    with_config_env(
         &[("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com")],
         || {
             // Arrange

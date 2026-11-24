@@ -54,7 +54,10 @@ fn cloud_domain_setup_options(
     }
 }
 
-fn assert_cloud_domain_bootstrap(prefix: &str, durable_write_policy: crate::domains::WritePolicy) {
+fn cloud_domain_health_after_bootstrap(
+    prefix: &str,
+    durable_write_policy: crate::domains::WritePolicy,
+) -> Vec<DomainHealthSnapshot> {
     let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
     let options =
         cntryl_midge::OpenOptions::cloud_simulated(tempdir.path(), "fitz-domain-bootstrap", prefix)
@@ -74,12 +77,24 @@ fn assert_cloud_domain_bootstrap(prefix: &str, durable_write_policy: crate::doma
         &cloud_domain_setup_options(durable_write_policy),
     )
     .unwrap_or_else(|error| panic!("cloud domain bootstrap failed: {error}"));
+    let health = domains.health_snapshots();
 
     domains.stop();
     router.clear();
     drop(domains);
     drop(router);
     crate::testkit::midge::shutdown_test_engine_with_timeout(store, shutdown_budget);
+    health
+}
+
+fn assert_all_domains_healthy(health: &[DomainHealthSnapshot], family: RouteFamily) {
+    for kind in DomainKind::ALL {
+        let snapshot = health
+            .iter()
+            .find(|snapshot| snapshot.domain == kind.as_str())
+            .expect("domain health snapshot");
+        assert_eq!(snapshot.healthy_families, [family], "{}", kind.as_str());
+    }
 }
 
 fn encode_kv_begin(route: &str) -> Bytes {
@@ -149,23 +164,27 @@ fn should_setup_all_seven_domains() {
 }
 
 #[test]
-fn should_bootstrap_domains_with_background_cloud_write_policy() {
+fn should_start_all_domains_given_background_cloud_configuration() {
     // Arrange
+    let policy = crate::domains::WritePolicy::CloudAsync;
 
     // Act
-    assert_cloud_domain_bootstrap("background", crate::domains::WritePolicy::CloudAsync);
+    let health = cloud_domain_health_after_bootstrap("background", policy);
 
     // Assert
+    assert_all_domains_healthy(&health, RouteFamily::new(1));
 }
 
 #[test]
-fn should_bootstrap_domains_with_strict_cloud_write_policy() {
+fn should_start_all_domains_given_strict_cloud_configuration() {
     // Arrange
+    let policy = crate::domains::WritePolicy::CloudStrict;
 
     // Act
-    assert_cloud_domain_bootstrap("strict", crate::domains::WritePolicy::CloudStrict);
+    let health = cloud_domain_health_after_bootstrap("strict", policy);
 
     // Assert
+    assert_all_domains_healthy(&health, RouteFamily::new(1));
 }
 
 #[test]

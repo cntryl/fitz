@@ -194,9 +194,12 @@ fn should_store_cloud_strict_write_policy_given_strict_cloud_policy() {
 }
 
 #[test]
-fn should_read_admin_pending_claims_through_actor_command() {
+fn should_read_live_pending_claim_from_schedule_actor() {
     // Arrange
     let family = RouteFamily::new(1);
+    let route = "schedule://acme/jobs/nightly/run";
+    let start_ms = 1_700_000_040_000;
+    let clock = Arc::new(MockClock::new(start_ms));
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::AdminReadModel::new();
@@ -205,28 +208,39 @@ fn should_read_admin_pending_claims_through_actor_command() {
         router,
         admin_read_model,
     );
-    let mut actor = crate::domain::ScheduleActor::new(
+    let mut actor = crate::domain::ScheduleActor::new_with_clock(
         family,
         crate::domain::ScheduleStore::new(store),
         fitz_storage::domains::WritePolicy::Buffered,
+        clock.clone(),
     );
     actor
         .create_schedule(
-            "schedule://acme/jobs/nightly/run".to_string(),
+            route.to_string(),
             "* * * * *".to_string(),
             Bytes::from_static(b"nightly"),
         )
         .expect("create schedule");
-    actor.bench_prepare_scan(1);
-    assert_eq!(actor.bench_claim_due_fires().len(), 1);
+    let fire_ms = start_ms + 60_000;
+    clock.advance(Duration::from_mins(1));
+    assert_eq!(actor.collect_due_occurrences_for_publish().len(), 1);
     sink.insert_actor_for_tests(family, actor);
 
     // Act
-    sink.stop();
     let claims = sink.admin_pending_claims(family);
 
     // Assert
-    assert!(claims.is_empty());
+    let [claim] = claims.as_slice() else {
+        panic!("expected one pending claim, got {claims:?}");
+    };
+    assert_eq!(claim.route_family, family.as_u64());
+    assert_eq!(claim.route, route);
+    assert_eq!(
+        claim.delivery_mode,
+        crate::domain::ScheduleDeliveryMode::Broadcast
+    );
+    assert_eq!(claim.fire_ms, fire_ms);
+    assert_eq!(claim.claimed_at_ms, fire_ms);
 }
 
 #[test]
@@ -292,39 +306,64 @@ fn should_skip_run_now_delivery_when_command_expires_while_queued() {
 }
 
 #[test]
-fn should_route_schedule_force_due_scan_through_actor_command() {
+fn should_deliver_scheduled_payload_when_the_actor_scans_due_work() {
     // Arrange
     let family = RouteFamily::new(1);
+    let route = "schedule://acme/jobs/nightly/run";
+    let subscriber = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let mailbox = Arc::new(Mailbox::new(8));
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
-    let admin_read_model = crate::control::admin::AdminReadModel::new();
+    router.register(subscriber.clone(), mailbox.clone());
     let sink = ScheduleDomain::new(
         crate::domain::ScheduleStore::new(store.clone()),
         router,
-        admin_read_model,
+        crate::control::admin::AdminReadModel::new(),
     );
-    let mut actor = crate::domain::ScheduleActor::new(
+    let clock = Arc::new(MockClock::new(1_700_000_040_000));
+    let mut actor = crate::domain::ScheduleActor::new_with_clock(
         family,
         crate::domain::ScheduleStore::new(store),
         fitz_storage::domains::WritePolicy::Buffered,
+        clock.clone(),
     );
     actor
         .create_schedule(
-            "schedule://acme/jobs/nightly/run".to_string(),
+            route.to_string(),
             "* * * * *".to_string(),
             Bytes::from_static(b"nightly"),
         )
         .expect("create schedule");
+    clock.advance(Duration::from_mins(1));
     sink.insert_actor_for_tests(family, actor);
-    let pending_fire_count_before_stop = sink.actor_pending_fire_count_for_tests(family);
+    let mut subscriptions = ScheduleSubscriptionSet::new();
+    subscriptions.insert(
+        family,
+        ScheduleSubscription {
+            pattern: fitz_core::runtime::matcher::Pattern::new(route),
+            session_id: 7,
+            subscription_id: 1,
+            subscriber,
+        },
+    );
+    sink.insert_subscriptions_for_tests(family, subscriptions);
 
     // Act
-    sink.stop_actor_for_tests();
-    sink.force_due_scan_for_tests(1);
+    sink.scan_due_schedules();
+    let response = receive_envelope(&mailbox, "due schedule notification")
+        .into_payload::<FrameContext>()
+        .expect("schedule notification frame");
 
     // Assert
-    assert!(!sink.is_actor_running());
-    assert_eq!(pending_fire_count_before_stop, 0);
+    assert_eq!(response.msg_type.as_u16(), 705);
+    let mut payload = PayloadDecoder::new(&response.payload);
+    assert_eq!(payload.get_u64().expect("subscription ID"), 1);
+    assert_eq!(payload.get_string().expect("schedule route"), route);
+    assert_eq!(
+        payload.get_bytes().expect("schedule payload").as_ref(),
+        b"nightly"
+    );
+    assert!(payload.is_complete());
 }
 
 #[test]
@@ -423,25 +462,49 @@ fn should_timeout_schedule_preload_when_actor_does_not_reply_before_deadline() {
 }
 
 #[test]
-fn should_route_schedule_admin_refresh_through_actor_command() {
+fn should_publish_schedule_definition_when_admin_refresh_is_requested() {
     // Arrange
+    let family = RouteFamily::new(1);
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
-    let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::AdminReadModel::new();
     let sink = ScheduleDomain::new(
-        crate::domain::ScheduleStore::new(store),
-        router,
-        admin_read_model,
+        crate::domain::ScheduleStore::new(store.clone()),
+        Arc::new(Router::new()),
+        admin_read_model.clone(),
     );
+    let mut actor = crate::domain::ScheduleActor::new_with_clock(
+        family,
+        crate::domain::ScheduleStore::new(store),
+        fitz_storage::domains::WritePolicy::Buffered,
+        Arc::new(MockClock::new(1_700_000_000_000)),
+    );
+    actor
+        .create_schedule(
+            "schedule://acme/jobs/nightly/run".to_string(),
+            "0 3 * * *".to_string(),
+            Bytes::from_static(b"nightly"),
+        )
+        .expect("create schedule");
+    sink.insert_actor_for_tests(family, actor);
     sink.set_snapshot_dirty_for_tests(true);
     assert!(sink.snapshot_dirty_for_tests());
+    assert!(admin_read_model
+        .schedules_for_route_family(family.as_u64())
+        .is_empty());
 
     // Act
-    sink.stop_actor_for_tests();
     sink.refresh_admin_snapshot_if_dirty();
+    let schedules = admin_read_model.schedules_for_route_family(family.as_u64());
 
     // Assert
-    assert!(!sink.is_actor_running());
+    let [schedule] = schedules.as_slice() else {
+        panic!("expected one published schedule, got {schedules:?}");
+    };
+    assert_eq!(schedule.realm, "acme");
+    assert_eq!(schedule.area, "jobs");
+    assert_eq!(schedule.resource, "nightly");
+    assert_eq!(schedule.operation, "run");
+    assert_eq!(schedule.cron, "0 3 * * *");
 }
 
 #[test]

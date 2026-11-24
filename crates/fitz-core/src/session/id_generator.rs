@@ -19,34 +19,46 @@ pub fn generate() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::sync::Barrier;
+    use std::thread;
 
     #[test]
-    fn should_generate_unique_session_ids() {
+    fn should_generate_increasing_session_ids() {
         // Arrange
+        let first = generate();
 
         // Act
-        let id1 = generate();
-        let id2 = generate();
-        let id3 = generate();
+        let next = generate();
 
         // Assert
-        assert!(id1 < id2);
-        assert!(id2 < id3);
+        assert!(next > first);
     }
 
     #[test]
-    fn should_never_repeat_session_ids() {
+    fn should_generate_distinct_session_ids_given_concurrent_callers() {
         // Arrange
-        let count = 1000;
+        const WORKERS: usize = 8;
+        const IDS_PER_WORKER: usize = 128;
+        let start = Barrier::new(WORKERS);
 
         // Act
-        let ids: Vec<u64> = (0..count).map(|_| generate()).collect();
+        let ids = thread::scope(|scope| {
+            let workers: Vec<_> = (0..WORKERS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        (0..IDS_PER_WORKER).map(|_| generate()).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().expect("generate session IDs"))
+                .collect::<HashSet<_>>()
+        });
 
         // Assert
-        for i in 0..ids.len() {
-            for j in (i + 1)..ids.len() {
-                assert_ne!(ids[i], ids[j], "Session IDs must be unique");
-            }
-        }
+        assert_eq!(ids.len(), WORKERS * IDS_PER_WORKER);
     }
 }

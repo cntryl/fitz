@@ -25,6 +25,18 @@ struct StopReportingActor {
     stopped: crossbeam_channel::Sender<()>,
 }
 
+struct MetricsProbeActor {
+    metrics: Arc<obs::metrics::MetricsCollector>,
+    scope: Option<obs::global::TestMetricsScope>,
+    work: Option<BlockingWork>,
+    stopped: crossbeam_channel::Sender<()>,
+}
+
+struct BlockingWork {
+    entered: crossbeam_channel::Sender<Instant>,
+    release: crossbeam_channel::Receiver<()>,
+}
+
 struct BatchStopActor {
     count: u32,
     entered: crossbeam_channel::Sender<()>,
@@ -96,6 +108,29 @@ impl Actor for StopReportingActor {
 
     fn stopped(&mut self) {
         let _ = self.stopped.send(());
+    }
+}
+
+impl Actor for MetricsProbeActor {
+    type Message = ();
+
+    fn started(&mut self, _ctx: &mut Context<Self>) {
+        self.scope = Some(obs::global::TestMetricsScope::install(Arc::clone(
+            &self.metrics,
+        )));
+    }
+
+    fn receive(&mut self, (): (), ctx: &mut Context<Self>) {
+        if let Some(work) = &self.work {
+            work.entered.send(Instant::now()).unwrap();
+            work.release.recv().unwrap();
+        }
+        ctx.stop();
+    }
+
+    fn stopped(&mut self) {
+        drop(self.scope.take());
+        self.stopped.send(()).unwrap();
     }
 }
 
@@ -575,63 +610,71 @@ fn should_process_high_priority_messages_before_normal_messages_given_both_lanes
 fn should_accumulate_duration_counter_in_microseconds() {
     // Arrange
     let metric_name = "test_scheduler_duration_counter_us_total";
-    let metrics = crate::observability::metrics();
-    let before = metrics.counter_get(metric_name);
+    let metrics = Arc::new(obs::metrics::MetricsCollector::new());
+    let _metrics_scope = obs::global::TestMetricsScope::install(Arc::clone(&metrics));
 
     // Act
     record_duration_counter(metric_name, Duration::from_micros(250));
 
     // Assert
-    assert_eq!(metrics.counter_get(metric_name), before + 250);
+    assert_eq!(metrics.counter_get(metric_name), 250);
 }
 
 #[test]
 fn should_record_worker_busy_time_when_processing_messages() {
     // Arrange
-    let metrics = crate::observability::metrics();
-    let before = metrics.counter_get(obs::METRIC_WORKER_BUSY_TIME);
+    let metrics = Arc::new(obs::metrics::MetricsCollector::new());
     let scheduler = Scheduler::new();
     scheduler.start();
-    let actor = CounterActor { count: 0 };
+    let (entered, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release) = crossbeam_channel::bounded(1);
+    let (stopped, stopped_rx) = crossbeam_channel::bounded(1);
+    let actor = MetricsProbeActor {
+        metrics: Arc::clone(&metrics),
+        scope: None,
+        work: Some(BlockingWork { entered, release }),
+        stopped,
+    };
     let actor_ref = scheduler.spawn(actor, test_address(1, "/test/busy-counter"), 10);
 
     // Act
-    actor_ref.send(TestMsg::Increment).unwrap();
-    let (tx, rx) = crossbeam_channel::bounded(1);
-    actor_ref.send(TestMsg::GetCount(tx)).unwrap();
-    let count = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let mut after = before;
-    while after == before && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-        after = metrics.counter_get(obs::METRIC_WORKER_BUSY_TIME);
+    actor_ref.send(()).unwrap();
+    let started = entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    // The counter rounds down to microseconds.
+    while started.elapsed() < Duration::from_micros(1) {
+        std::hint::spin_loop();
     }
-    actor_ref.send(TestMsg::Stop).unwrap();
+    release_tx.send(()).unwrap();
+    stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
     // Assert
-    assert_eq!(count, 1);
-    assert!(after > before);
+    assert!(metrics.counter_get(obs::METRIC_WORKER_BUSY_TIME) > 0);
 }
 
 #[test]
 fn should_record_worker_idle_time_while_waiting_for_messages() {
     // Arrange
-    let metrics = crate::observability::metrics();
-    let before = metrics.counter_get(obs::METRIC_WORKER_IDLE_TIME);
+    let metrics = Arc::new(obs::metrics::MetricsCollector::new());
     let scheduler = Scheduler::new();
     scheduler.start();
-    let actor = CounterActor { count: 0 };
+    let (stopped, stopped_rx) = crossbeam_channel::bounded(1);
+    let actor = MetricsProbeActor {
+        metrics: Arc::clone(&metrics),
+        scope: None,
+        work: None,
+        stopped,
+    };
     let actor_ref = scheduler.spawn(actor, test_address(1, "/test/idle-counter"), 10);
 
     // Act
     let deadline = Instant::now() + Duration::from_secs(1);
-    let mut after = before;
-    while after == before && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-        after = metrics.counter_get(obs::METRIC_WORKER_IDLE_TIME);
+    while metrics.counter_get(obs::METRIC_WORKER_IDLE_TIME) == 0 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
     }
-    actor_ref.send(TestMsg::Stop).unwrap();
+    let idle_time = metrics.counter_get(obs::METRIC_WORKER_IDLE_TIME);
+    actor_ref.send(()).unwrap();
+    stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
     // Assert
-    assert!(after > before);
+    assert!(idle_time > 0);
 }
