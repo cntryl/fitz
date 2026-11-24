@@ -143,9 +143,11 @@ Notice route and an RPC request route are still concrete.
 
 ### 3.3 Registration limits
 
-KV, Queue, Notice, Stream, RPC, Schedule, and Lease cap retained registrations
-at 1,024 per session, counting exact and wildcard registrations together. The
-wildcard subset is separately capped at 128 per session. Production safety also
+KV, Queue, Notice, RPC, Schedule, and Lease cap retained registrations at
+1,024 per session, counting exact and wildcard registrations together. These
+domains cap the wildcard subset at 128 per session. Stream defaults to 10,000
+registrations per session across exact and wildcard selectors and charges
+registrations against a broker-wide byte budget. Production safety also
 requires explicit limits for matching fanout, queued deliveries, and active
 route caches.
 
@@ -611,15 +613,13 @@ watermark even for a selector with no matches.
 `SUBSCRIBE` and `UNSUBSCRIBE` use the same typed selector matrix as reads, but
 subscriptions remain live and session-scoped:
 
-- Exact registrations use a direct route map.
-- Wildcard registrations use the shared `RoutedSubscriptionSet` segment trie.
-- A concrete committed route is parsed once and matched against retained
-  registrations.
-- The original selector string/registration identity is retained for removal.
-- Syntactically distinct aliases may remain independent registrations even
-  though they share one compiled execution selector.
-- Overlapping registrations each receive their eligible delivery.
-- Notification queues and fanout are bounded.
+- Each family indexes the canonical keys in the Stream selector grammar. A
+  committed route is parsed once and probes up to eight keys.
+- The original selector string identifies a registration. Distinct aliases
+  share a canonical bucket and keep independent registration IDs.
+- A matching bucket produces one job that shares the commit payload with
+  other matching buckets. The highest registration ID at commit time bounds
+  delivery. Unsubscribe and disconnect retire work for the removed ID.
 
 Delivery waits only for the selector's governing visibility frontier:
 
@@ -642,9 +642,20 @@ defined, clients subscribe and read with documented race handling and
 deduplication; the broker must not imply an atomic handoff that it does not
 persist.
 
-The existing shared trie is the initial subscription design. Eight specialized
-subscription maps would duplicate matcher state and are justified only by
-profiled evidence that the shared trie is the bottleneck.
+Ready and parked work have separate capacity. Each stage retains at most
+5,000 jobs and 65,536 outstanding delivery attempts per family, plus
+32 MiB of charged bytes across the broker. A job costs 512 bytes plus the
+concrete route, canonical selector path, and encoded commit payload lengths.
+Ready dispatch rotates across buckets in FIFO order within each bucket and
+processes at most 64 jobs and 64 targets per actor turn.
+
+Parked work is indexed by scope and required offset. Area and realm
+watermarks are inclusive, and the global watermark is exclusive. The broker
+promotes eligible work when ready capacity is available and rechecks up to
+16 parked scopes per maintenance turn. Before deferred dispatch, the broker
+discards commits whose first global offset precedes the persisted resource
+DROP cutoff. Capacity rejection and failed handoffs can lose live hints.
+Readers recover committed history through durable reads.
 
 ## 13. Storage activation, recovery, and compaction
 

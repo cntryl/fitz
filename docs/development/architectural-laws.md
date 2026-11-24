@@ -206,11 +206,13 @@ Fitz must remain a runtime of narrow, composable primitives:
 - Schedule = durable timing intent
 
 KV, Queue, Notice, Stream, RPC, Lease, and Schedule registration patterns use
-strict whole-segment `*` and `**` syntax. Each domain caps retained
-registrations at 1,024 per session, including exact and wildcard registrations,
-and caps the wildcard subset at 128. Duplicates are idempotent and checked
-before either cap; overlaps stay independent, notification routes stay
-concrete, and matching never crosses a `RouteFamily` boundary. Lease
+strict whole-segment `*` and `**` syntax. Stream defaults to 10,000
+retained registrations per session across exact and wildcard selectors and
+charges them against a broker-wide byte budget. The other domains cap
+registrations at 1,024 per session, including up to 128 wildcards. Duplicate
+registrations are idempotent and checked before capacity is charged. Overlaps
+stay independent, notification routes stay concrete, and matching stays
+within one `RouteFamily`. Lease
 `SUBSCRIBE`, `UNSUBSCRIBE`, and
 `LIST` accept this same depth-three grammar so a fleet can observe ownership
 by pattern; exact `ACQUIRE`, `EXTEND`, and `RELEASE` remain unaffected and

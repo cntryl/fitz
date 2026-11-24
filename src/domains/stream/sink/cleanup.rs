@@ -7,23 +7,7 @@
 //! state.
 
 use super::model::StreamFamilyState;
-use crate::runtime::routing::RouteFamily;
 use crate::runtime::{CleanedUpSessions, SessionScoped};
-
-impl StreamFamilyState {
-    pub(in crate::domains::stream::sink) fn unsubscribe_all(&mut self, session_id: u64) {
-        let families = &mut self.subscriptions.families;
-        for (family_id, state) in families.iter_mut() {
-            state.remove_session(
-                RouteFamily::try_from(*family_id)
-                    .expect("stream family IDs originate from RouteFamily"),
-                session_id,
-            );
-        }
-        families.retain(|_, state| !state.is_empty());
-        self.remove_pending_notifications_for_session(session_id);
-    }
-}
 
 impl SessionScoped for StreamFamilyState {
     fn cleaned_up_sessions(&mut self) -> &mut CleanedUpSessions {
@@ -31,23 +15,20 @@ impl SessionScoped for StreamFamilyState {
     }
 
     fn release_session_resources(&mut self, session_id: u64) {
-        let subscriptions_removed = self
-            .subscriptions
-            .families
-            .values()
-            .map(|state| state.subscription_count_for_session(session_id))
-            .sum::<usize>()
-            > 0;
-        self.unsubscribe_all(session_id);
+        let subscriptions = self.subscriptions.remove_session(session_id);
+        let subscriptions_removed = !subscriptions.is_empty();
+        for (id, entry) in subscriptions {
+            self.delivery.retire(&entry.canonical, id);
+        }
 
         let mut removed_sessions = Vec::new();
         let mut idle_keys = Vec::new();
-        let mut advanced_families = std::collections::BTreeSet::new();
+        let mut advanced_scopes = std::collections::BTreeSet::new();
         for (key, actor) in &mut self.actors {
             if let Some(stream_session_id) = actor.cleanup_session(session_id) {
                 removed_sessions.push(stream_session_id);
                 idle_keys.push(key.clone());
-                advanced_families.insert(key.family.as_u64());
+                advanced_scopes.insert((key.realm.clone(), key.area.clone()));
             }
         }
         for key in idle_keys {
@@ -55,11 +36,8 @@ impl SessionScoped for StreamFamilyState {
         }
         let sessions_removed = !removed_sessions.is_empty();
 
-        for family_id in advanced_families {
-            self.handle_visibility_advance(
-                RouteFamily::try_from(family_id)
-                    .expect("stream family IDs originate from RouteFamily"),
-            );
+        for (realm, area) in advanced_scopes {
+            self.recheck_commit_scopes(&realm, &area);
         }
 
         if !removed_sessions.is_empty() {

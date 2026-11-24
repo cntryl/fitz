@@ -224,56 +224,29 @@ where
     }
 }
 
-pub(crate) async fn should_enforce_stream_wildcard_registration_limit<C>(server: &TestServer)
+pub(crate) async fn should_accept_stream_wildcards_above_128<C>(server: &TestServer)
 where
     C: StreamConnector,
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let mut first_subscription_id = None;
     for index in 0..128 {
         let pattern = format!("stream://*/limit/{index}");
         let response = client
             .send_and_receive(&build_stream_subscribe(&pattern), 2000)
             .await
             .expect("Stream wildcard registration");
-        let (_, status, data) = parse_stream_response(&response);
-        assert_eq!(status, 0, "wildcard registration {index} must succeed");
-        let id = parse_stream_session_id(&data).expect("Stream subscription id");
-        first_subscription_id.get_or_insert(id);
+        assert_eq!(parse_stream_response(&response).1, 0);
     }
 
     // Act
-    let duplicate = client
-        .send_and_receive(&build_stream_subscribe("stream://*/limit/0"), 2000)
+    let response = client
+        .send_and_receive(&build_stream_subscribe("stream://*/limit/128"), 2000)
         .await
-        .expect("duplicate Stream registration");
-    let exact = client
-        .send_and_receive(&build_stream_subscribe("stream://test/limit/exact"), 2000)
-        .await
-        .expect("exact Stream registration at wildcard cap");
-    let overflow = client
-        .send_and_receive(&build_stream_subscribe("stream://*/limit/overflow"), 2000)
-        .await
-        .expect("Stream wildcard overflow response");
+        .expect("129th Stream wildcard registration");
 
     // Assert
-    let (_, duplicate_status, duplicate_data) = parse_stream_response(&duplicate);
-    assert_eq!(duplicate_status, 0);
-    assert_eq!(
-        parse_stream_session_id(&duplicate_data).expect("duplicate subscription id"),
-        first_subscription_id.expect("first subscription id")
-    );
-    assert_eq!(parse_stream_response(&exact).1, 0);
-    let (_, overflow_status, overflow_data) = parse_stream_response(&overflow);
-    assert_eq!(overflow_status, 1);
-    let (code, message) = fitz::protocol::error_codes::decode_error_body(&overflow_data)
-        .expect("Stream overflow error envelope");
-    assert_eq!(
-        code,
-        fitz::protocol::error_codes::stream::ERR_SUBSCRIPTION_LIMIT
-    );
-    assert!(message.contains("subscription limit"));
+    assert_eq!(parse_stream_response(&response).1, 0);
 }
 
 pub(crate) async fn should_deliver_stream_notification_for_overlapping_wildcards<C>(

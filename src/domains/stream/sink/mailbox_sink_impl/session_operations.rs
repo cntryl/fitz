@@ -5,7 +5,7 @@ use super::{
     StreamClientResponseBody, StreamDiscriminator, StreamFamilyState, StreamReadExecution,
     StreamSessionOwner, StreamStoreError,
 };
-use crate::domains::stream::sink::model::{OperationOutcome, StreamCommitOutcome, WatermarkCommit};
+use crate::domains::stream::sink::model::{StreamCommitOutcome, WatermarkCommit};
 use crate::domains::stream::StreamMessage;
 
 impl super::super::model::StreamFamilyRuntime {
@@ -34,7 +34,7 @@ impl super::super::model::StreamFamilyRuntime {
 
         let is_begin = matches!(&stream_msg, StreamMessage::Begin { .. });
         let is_commit = matches!(&stream_msg, StreamMessage::Commit { .. });
-        let outcome: OperationOutcome = (match stream_msg {
+        let (response, admin_dirty) = match stream_msg {
             StreamMessage::Begin {
                 family_id,
                 route,
@@ -87,10 +87,9 @@ impl super::super::model::StreamFamilyRuntime {
             StreamMessage::GetMetadata { family_id, route } => {
                 self.core.handle_metadata_operation(family_id, &route)
             }
-        })
-        .into();
+        };
 
-        if outcome.admin_dirty {
+        if admin_dirty {
             if is_commit {
                 self.core.mark_committed_admin_snapshot_dirty();
             } else {
@@ -98,17 +97,8 @@ impl super::super::model::StreamFamilyRuntime {
             }
         }
 
-        if let Some(notification) = outcome.notification.as_ref() {
-            let event = crate::runtime::DomainPublishEvent::new(
-                notification.family,
-                notification.route.clone(),
-                notification.payload.clone(),
-            );
-            self.core.handle_domain_publish(&event);
-        }
-
         self.core
-            .route_operation_response(envelope, meta, request_started, is_begin, &outcome);
+            .route_operation_response(envelope, meta, request_started, is_begin, &response);
     }
 
     fn handle_commit_operation(
@@ -116,16 +106,15 @@ impl super::super::model::StreamFamilyRuntime {
         meta: crate::runtime::ClientFrameMeta,
         session_id: u64,
         mode: crate::domains::stream::protocol::StreamWriteMode,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> (StreamClientResponseBody, bool) {
         let outcome = self.core.handle_commit_operation(meta, session_id, mode);
-        if let Some(commit) = outcome.watermark {
+        if let Some((event, commit)) = outcome.committed {
+            self.core.handle_committed_batch(&event, &commit.batch);
+            // Hand off one bounded slice before waking the committing client.
+            self.core.dispatch_ready_notifications();
             self.enqueue_watermark_commit(commit);
         }
-        (outcome.response, outcome.notification, outcome.admin_dirty)
+        (outcome.response, outcome.admin_dirty)
     }
 }
 
@@ -136,9 +125,9 @@ impl StreamFamilyState {
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
         is_begin: bool,
-        outcome: &OperationOutcome,
+        response: &StreamClientResponseBody,
     ) {
-        let begin_session = match (&outcome.response, is_begin) {
+        let begin_session = match (response, is_begin) {
             (
                 StreamClientResponseBody::Ok {
                     session_id: Some(session_id),
@@ -148,9 +137,9 @@ impl StreamFamilyState {
             ) => Some(*session_id),
             _ => None,
         };
-        if !self.route_stream_response(envelope, meta, &outcome.response, request_started) {
+        if !self.route_stream_response(envelope, meta, response, request_started) {
             if let Some(session_id) = begin_session {
-                let (_, _, admin_dirty) = self.handle_rollback_operation(meta, session_id);
+                let (_, admin_dirty) = self.handle_rollback_operation(meta, session_id);
                 if admin_dirty {
                     self.mark_admin_snapshot_dirty();
                 }
@@ -164,17 +153,9 @@ impl StreamFamilyState {
         family_id: crate::runtime::routing::RouteFamily,
         route: &Route,
         ingest_metadata: Option<IngestMetadata>,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> (StreamClientResponseBody, bool) {
         if family_id != meta.route_family {
-            return (
-                Self::stream_error_response("route family mismatch"),
-                None,
-                false,
-            );
+            return (Self::stream_error_response("route family mismatch"), false);
         }
 
         match Self::actor_key_for_route(family_id, route) {
@@ -186,7 +167,6 @@ impl StreamFamilyState {
                 ) else {
                     return (
                         Self::stream_error_response("stream session ID space exhausted"),
-                        None,
                         false,
                     );
                 };
@@ -213,7 +193,6 @@ impl StreamFamilyState {
                                         session_id: Some(session_id),
                                         data: vec![],
                                     },
-                                    None,
                                     true,
                                 )
                             }
@@ -224,14 +203,14 @@ impl StreamFamilyState {
                                 crate::observability::counter_inc(
                                     "fitz_stream_append_conflicts_total",
                                 );
-                                (Self::stream_error_response(error), None, false)
+                                (Self::stream_error_response(error), false)
                             }
                         }
                     }
-                    Err(error) => (Self::stream_error_response(error), None, false),
+                    Err(error) => (Self::stream_error_response(error), false),
                 }
             }
-            Err(error) => (Self::stream_error_response(error), None, false),
+            Err(error) => (Self::stream_error_response(error), false),
         }
     }
 
@@ -253,23 +232,17 @@ impl StreamFamilyState {
         body: bytes::Bytes,
         metadata: Option<bytes::Bytes>,
         discriminator: Option<StreamDiscriminator>,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> (StreamClientResponseBody, bool) {
         let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
             return (
                 Self::stream_error_response(StreamStoreError::SessionNotFound),
-                None,
                 false,
             );
         };
         let Some(actor) = self.actors.get_mut(&owner.key) else {
             return (
                 Self::stream_error_response(StreamStoreError::SessionNotFound),
-                None,
                 false,
             );
         };
@@ -290,13 +263,12 @@ impl StreamFamilyState {
                         session_id: None,
                         data: encoder.finish(),
                     },
-                    None,
                     false,
                 )
             }
             Err(error) => {
                 let removed = self.remove_inactive_append_session(session_id, &owner.key);
-                (Self::stream_error_response(error), None, removed)
+                (Self::stream_error_response(error), removed)
             }
         }
     }
@@ -316,9 +288,8 @@ impl StreamFamilyState {
         else {
             return StreamCommitOutcome {
                 response: Self::stream_error_response(StreamStoreError::SessionNotFound),
-                notification: None,
+                committed: None,
                 admin_dirty: false,
-                watermark: None,
             };
         };
         let commit_result = {
@@ -347,25 +318,27 @@ impl StreamFamilyState {
                         last_global_offset: commit.last_global_offset,
                     },
                 };
-                let payload = Self::encode_stream_commit_notify_payload(&commit);
+                let event = crate::runtime::DomainPublishEvent::new(
+                    owner.key.family,
+                    owner.key.resource_route(),
+                    Self::encode_stream_commit_notify_payload(&commit),
+                );
                 StreamCommitOutcome {
                     response: StreamClientResponseBody::Ok {
                         session_id: None,
                         data: vec![],
                     },
-                    notification: Some((owner.key.family, owner.key.resource_route(), payload)),
+                    committed: Some((event, watermark_commit)),
                     admin_dirty: true,
-                    watermark: Some(watermark_commit),
                 }
             }
             Err(error) => {
                 let removed = self.remove_inactive_append_session(session_id, &owner.key);
-                self.handle_visibility_advance(meta.route_family);
+                self.recheck_commit_scopes(&owner.key.realm, &owner.key.area);
                 StreamCommitOutcome {
                     response: Self::stream_error_response(error),
-                    notification: None,
+                    committed: None,
                     admin_dirty: removed,
-                    watermark: None,
                 }
             }
         }
@@ -375,16 +348,11 @@ impl StreamFamilyState {
         &mut self,
         meta: crate::runtime::ClientFrameMeta,
         session_id: u64,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> (StreamClientResponseBody, bool) {
         let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
             return (
                 Self::stream_error_response(StreamStoreError::SessionNotFound),
-                None,
                 false,
             );
         };
@@ -399,17 +367,16 @@ impl StreamFamilyState {
                 self.session_owners.remove(session_id);
                 self.actors.remove(&owner.key);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
-                self.handle_visibility_advance(meta.route_family);
+                self.recheck_commit_scopes(&owner.key.realm, &owner.key.area);
                 (
                     StreamClientResponseBody::Ok {
                         session_id: None,
                         data: vec![],
                     },
-                    None,
                     true,
                 )
             }
-            Err(error) => (Self::stream_error_response(error), None, false),
+            Err(error) => (Self::stream_error_response(error), false),
         }
     }
 
@@ -433,32 +400,23 @@ impl StreamFamilyState {
 
     fn encode_operation_result(
         result: Result<Vec<u8>, String>,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> (StreamClientResponseBody, bool) {
         match result {
             Ok(data) => (
                 StreamClientResponseBody::Ok {
                     session_id: None,
                     data,
                 },
-                None,
                 false,
             ),
-            Err(error) => (Self::stream_error_response(error), None, false),
+            Err(error) => (Self::stream_error_response(error), false),
         }
     }
 
     fn handle_read_operation(
         &mut self,
         request: StreamReadExecution<'_>,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> (StreamClientResponseBody, bool) {
         Self::encode_operation_result(self.encode_read_response_data(request))
     }
 
@@ -466,11 +424,7 @@ impl StreamFamilyState {
         &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &Route,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> (StreamClientResponseBody, bool) {
         Self::encode_operation_result(self.encode_last_response_data(family_id, route))
     }
 
@@ -478,11 +432,7 @@ impl StreamFamilyState {
         &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &Route,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> (StreamClientResponseBody, bool) {
         Self::encode_operation_result(self.encode_metadata_response_data(family_id, route))
     }
 }

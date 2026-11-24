@@ -57,6 +57,10 @@ impl DomainHealthSnapshot {
 }
 
 impl BrokerDomains {
+    #[cfg(feature = "benchkit")]
+    pub(crate) fn stream_subscription_charged_bytes(&self) -> usize {
+        self.stream.subscription_charged_bytes()
+    }
     pub(crate) fn maintenance_jobs(&self) -> Vec<super::domain_interfaces::MaintenanceJob> {
         let queue_active = self.queue.clone();
         let queue_run = self.queue.clone();
@@ -550,6 +554,7 @@ pub(crate) struct DomainSetupOptions {
     pub(crate) request_buffered_write_policy: crate::domains::WritePolicy,
     pub(crate) rpc_request_timeout: Option<std::time::Duration>,
     pub(crate) stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+    pub(crate) stream_subscription_limits: crate::domains::stream::sink::StreamSubscriptionLimits,
     pub(crate) kv_idle_transaction_ttl: std::time::Duration,
     pub(crate) schedule_preload_timeout: std::time::Duration,
 }
@@ -582,7 +587,10 @@ fn create_stream_sink(
                 options.request_sync_write_policy,
                 options.request_buffered_write_policy,
             ),
-            options.max_message_bytes,
+            crate::domains::stream::sink::StreamRuntimeLimits {
+                max_message_bytes: options.max_message_bytes,
+                subscriptions: options.stream_subscription_limits,
+            },
         )?
         .with_metrics(metrics.clone()),
     ))

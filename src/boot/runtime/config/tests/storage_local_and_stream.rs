@@ -861,3 +861,42 @@ fn should_parse_gcs_provider_given_cloud_env() {
         },
     );
 }
+
+#[test]
+#[serial]
+fn should_reject_zero_stream_subscription_limit_at_startup() {
+    with_storage_env(
+        &[("FITZ_STREAM_MAX_SUBSCRIPTIONS_PER_SESSION", "0")],
+        || {
+            // Arrange
+            let config = BootConfig::new();
+
+            // Act
+            let result = config.validate();
+
+            // Assert
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_STREAM_MAX_SUBSCRIPTIONS_PER_SESSION must be a positive integer"));
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn should_reject_malformed_stream_subscription_budget_at_startup() {
+    with_storage_env(&[("FITZ_STREAM_SUBSCRIPTION_BUDGET_BYTES", "many")], || {
+        // Arrange
+        let config = BootConfig::new();
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_STREAM_SUBSCRIPTION_BUDGET_BYTES must be a positive integer"));
+    });
+}

@@ -165,6 +165,8 @@ impl Runtime {
                 request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
                 rpc_request_timeout: None,
                 stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+                stream_subscription_limits:
+                    crate::domains::stream::sink::StreamSubscriptionLimits::default(),
                 kv_idle_transaction_ttl: Duration::from_mins(5),
                 schedule_preload_timeout:
                     crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,

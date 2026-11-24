@@ -474,6 +474,8 @@ pub struct BootConfig {
     pub storage_mode: StorageMode,
     /// Stream storage layout selector
     pub stream_storage_layout: StreamStorageLayout,
+    pub(crate) stream_subscription_limits:
+        Result<crate::domains::stream::sink::StreamSubscriptionLimits, String>,
     /// Whether authentication is required (default: true)
     pub auth_required: bool,
     /// Explicit auth configuration for token verification
@@ -649,6 +651,8 @@ impl Default for BootConfig {
             metrics_port,
             storage_mode: StorageMode::from_env(),
             stream_storage_layout: StreamStorageLayout::from_env(),
+            stream_subscription_limits:
+                crate::domains::stream::sink::StreamSubscriptionLimits::from_env(),
             auth_required,
             auth_config: crate::auth::AuthConfig::from_env(auth_required),
             auth_claims_config: crate::auth::AuthClaimsConfig::from_env(),
@@ -872,6 +876,9 @@ impl BootConfig {
     pub fn validate(&self) -> BootResult<()> {
         DrainConfig::from_boot_config(self).validate()?;
         StorageConfig::from_boot_config(self).validate()?;
+        self.stream_subscription_limits
+            .as_ref()
+            .map_err(String::as_str)?;
         let protected_admin_configured =
             crate::api::admin::auth::protected_admin_configured_from_env();
         TransportConfig::from_boot_config(self).validate(protected_admin_configured)?;

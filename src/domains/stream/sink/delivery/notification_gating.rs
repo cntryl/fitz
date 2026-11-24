@@ -1,228 +1,301 @@
-use super::super::model::{
-    PendingStreamNotification, ReadyStreamNotification, StreamFamilyState,
-    StreamNotificationTarget, StreamVisibilityFrontier,
-};
-use crate::runtime::routing::route_triplet;
+use super::super::model::{StreamFamilyState, StreamResourceScope};
+use super::record_drops;
+use crate::domains::stream::protocol::BatchCommitted;
+use crate::domains::stream::route_grammar::StreamRouteShape;
+use crate::runtime::routing::{route_exact_triplet, route_quad, RouteTriplet};
+use crate::runtime::DomainPublishEvent;
+use serde::Deserialize;
+use std::sync::Arc;
 
-const MAX_PENDING_NOTIFICATIONS: usize = 10_000;
+const MAINTENANCE_SCOPES: usize = 16;
 
-#[derive(Default)]
-struct VisibilityCache {
-    areas: std::collections::HashMap<(String, String), Option<u64>>,
-    realms: std::collections::HashMap<String, Option<u64>>,
-    global: Option<u64>,
-    global_loaded: bool,
+#[derive(Clone, Copy, Deserialize)]
+pub(super) struct CommitOffsets {
+    #[serde(rename = "first_global_offset")]
+    pub(super) first_global: u64,
+    #[serde(rename = "last_area_offset")]
+    last_area: u64,
+    #[serde(rename = "last_realm_offset")]
+    last_realm: u64,
+    #[serde(rename = "last_global_offset")]
+    last_global: u64,
 }
 
-#[derive(Clone, Copy)]
-struct InvalidVisibilityEvent;
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PublishedEventKind {
+    Committed,
+}
+
+#[derive(Deserialize)]
+struct PublishedCommit {
+    #[serde(rename = "event")]
+    _kind: PublishedEventKind,
+    #[serde(flatten)]
+    offsets: CommitOffsets,
+}
+
+impl From<&BatchCommitted> for CommitOffsets {
+    fn from(batch: &BatchCommitted) -> Self {
+        Self {
+            first_global: batch.first_global_offset,
+            last_area: batch.last_area_offset,
+            last_realm: batch.last_realm_offset,
+            last_global: batch.last_global_offset,
+        }
+    }
+}
+
+pub(super) struct CommitEvent {
+    pub(super) local_commit: bool,
+    pub(super) event: DomainPublishEvent,
+    pub(super) resource: StreamResourceScope,
+    pub(super) offsets: CommitOffsets,
+    #[cfg(feature = "benchkit")]
+    pub(super) dispatch_started: Option<std::time::Instant>,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum VisibilityScope {
+    Area(String, String),
+    Realm(String),
+    Global,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Frontier {
+    Resource,
+    Area,
+    Realm,
+    Global,
+}
+
+impl Frontier {
+    fn for_selector(selector: StreamRouteShape<'_>) -> Self {
+        match selector {
+            StreamRouteShape::Resource { .. } => Self::Resource,
+            StreamRouteShape::Area { .. } => Self::Area,
+            StreamRouteShape::RealmFilterResource { .. } | StreamRouteShape::Realm { .. } => {
+                Self::Realm
+            }
+            _ => Self::Global,
+        }
+    }
+
+    fn for_commit(self, event: &CommitEvent) -> Option<(VisibilityScope, u64)> {
+        match self {
+            Self::Resource => None,
+            Self::Area => Some((
+                VisibilityScope::Area(event.resource.realm.clone(), event.resource.area.clone()),
+                event.offsets.last_area,
+            )),
+            Self::Realm => Some((
+                VisibilityScope::Realm(event.resource.realm.clone()),
+                event.offsets.last_realm,
+            )),
+            Self::Global => Some((VisibilityScope::Global, event.offsets.last_global)),
+        }
+    }
+}
 
 impl StreamFamilyState {
-    fn visibility_frontier(
-        selector: &str,
-        event: &crate::runtime::DomainPublishEvent,
-    ) -> Result<StreamVisibilityFrontier, InvalidVisibilityEvent> {
-        use crate::domains::stream::route_grammar::StreamRouteShape;
-
-        let payload: serde_json::Value =
-            serde_json::from_slice(&event.payload).map_err(|_| InvalidVisibilityEvent)?;
-        if payload.get("event").and_then(serde_json::Value::as_str) != Some("committed") {
-            return Err(InvalidVisibilityEvent);
-        }
-        let parts = route_triplet(event.route.as_str()).ok_or(InvalidVisibilityEvent)?;
-        let shape = crate::domains::stream::route_grammar::classify_stream_route_shape(selector)
-            .map_err(|_| InvalidVisibilityEvent)?;
-        match shape {
-            StreamRouteShape::Resource { .. } => Ok(StreamVisibilityFrontier::Resource),
-            StreamRouteShape::Area { .. } => Ok(StreamVisibilityFrontier::Area {
-                realm: parts.realm.to_string(),
-                area: parts.area.to_string(),
-                last_offset: payload
-                    .get("last_area_offset")
-                    .and_then(serde_json::Value::as_u64)
-                    .ok_or(InvalidVisibilityEvent)?,
-            }),
-            StreamRouteShape::RealmFilterResource { .. } | StreamRouteShape::Realm { .. } => {
-                Ok(StreamVisibilityFrontier::Realm {
-                    realm: parts.realm.to_string(),
-                    last_offset: payload
-                        .get("last_realm_offset")
-                        .and_then(serde_json::Value::as_u64)
-                        .ok_or(InvalidVisibilityEvent)?,
-                })
-            }
-            StreamRouteShape::GlobalFilterAreaResource { .. }
-            | StreamRouteShape::GlobalFilterArea { .. }
-            | StreamRouteShape::GlobalFilterResource { .. }
-            | StreamRouteShape::Global => Ok(StreamVisibilityFrontier::Global {
-                last_offset: payload
-                    .get("last_global_offset")
-                    .and_then(serde_json::Value::as_u64)
-                    .ok_or(InvalidVisibilityEvent)?,
-            }),
-        }
-    }
-
-    fn frontier_is_visible(
+    pub(in crate::domains::stream::sink) fn handle_domain_publish(
         &mut self,
-        family: u64,
-        frontier: &StreamVisibilityFrontier,
-        cache: &mut VisibilityCache,
-    ) -> bool {
-        match frontier {
-            StreamVisibilityFrontier::Resource => true,
-            StreamVisibilityFrontier::Area {
-                realm,
-                area,
-                last_offset,
-            } => cache
-                .areas
-                .entry((realm.clone(), area.clone()))
-                .or_insert_with(|| self.stream_store.get_watermark(family, realm, area).ok())
-                .is_some_and(|watermark| watermark >= *last_offset),
-            StreamVisibilityFrontier::Realm { realm, last_offset } => cache
-                .realms
-                .entry(realm.clone())
-                .or_insert_with(|| self.stream_store.get_realm_watermark(family, realm).ok())
-                .is_some_and(|watermark| watermark >= *last_offset),
-            StreamVisibilityFrontier::Global { last_offset } => {
-                if !cache.global_loaded {
-                    cache.global = self.stream_store.get_global_watermark(family).ok();
-                    cache.global_loaded = true;
-                }
-                cache
-                    .global
-                    .is_some_and(|watermark| watermark > *last_offset)
-            }
+        event: &DomainPublishEvent,
+    ) {
+        if event.family_id != self.family {
+            return;
         }
-    }
-
-    fn drain_visible_pending(
-        &mut self,
-        family: u64,
-        cache: &mut VisibilityCache,
-    ) -> Vec<ReadyStreamNotification> {
-        let drained = std::mem::take(&mut self.subscriptions.pending);
-        let mut ready = Vec::new();
-        let mut retained = Vec::with_capacity(drained.len());
-        for notification in drained {
-            if notification.event.family_id.as_u64() != family {
-                retained.push(notification);
-                continue;
+        let route = event.route.as_str();
+        if let Some(parts) = route_exact_triplet(route).filter(|_| !route.contains('*')) {
+            if let Some(canonical) = route.strip_prefix("stream://") {
+                self.enqueue_commit_notifications(event, canonical, &parts, None);
             }
-            if self.frontier_is_visible(family, &notification.frontier, cache) {
-                ready.push(ReadyStreamNotification {
-                    target: notification.target,
-                    event: notification.event,
-                });
+        } else if let Some(parts) = route_quad(route)
+            .filter(|parts| parts.resource == "*" && parts.operation == "watermark")
+        {
+            if parts.area == "*" {
+                self.recheck_parked(&VisibilityScope::Realm(parts.realm.to_owned()));
             } else {
-                retained.push(notification);
-            }
-        }
-        let pending = &mut self.subscriptions.pending;
-        let available = MAX_PENDING_NOTIFICATIONS.saturating_sub(retained.len());
-        let dropped = pending.len().saturating_sub(available);
-        let accepted = available.min(pending.len());
-        retained.extend(pending.drain(..accepted));
-        *pending = retained;
-        if dropped > 0 {
-            crate::observability::counter_add(
-                crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
-                u64::try_from(dropped).unwrap_or(u64::MAX),
-            );
-        }
-        ready
-    }
-
-    pub(super) fn collect_ready_notifications(
-        &mut self,
-        event: &crate::runtime::DomainPublishEvent,
-    ) -> Vec<ReadyStreamNotification> {
-        let family = event.family_id.as_u64();
-        let mut visibility_cache = VisibilityCache::default();
-        let mut ready = self.drain_visible_pending(family, &mut visibility_cache);
-        let matches = {
-            let families = &self.subscriptions.families;
-            let Some(state) = families.get(&family) else {
-                return ready;
-            };
-            let mut matches = Vec::new();
-            state.for_each_matching(event, |subscription| {
-                matches.push((
-                    StreamNotificationTarget {
-                        session_id: subscription.session_id,
-                        subscription_id: subscription.subscription_id,
-                        subscriber: subscription.subscriber.clone(),
-                    },
-                    subscription.pattern.route().to_string(),
+                self.recheck_parked(&VisibilityScope::Area(
+                    parts.realm.to_owned(),
+                    parts.area.to_owned(),
                 ));
-            });
-            matches
-        };
-        let mut newly_pending = Vec::new();
-        for (target, selector) in matches {
-            match Self::visibility_frontier(&selector, event) {
-                Ok(frontier)
-                    if self.frontier_is_visible(family, &frontier, &mut visibility_cache) =>
-                {
-                    ready.push(ReadyStreamNotification {
-                        target,
-                        event: event.clone(),
-                    });
-                }
-                Ok(frontier) => {
-                    newly_pending.push(PendingStreamNotification {
-                        target,
-                        pattern: selector,
-                        event: event.clone(),
-                        frontier,
-                    });
-                }
-                Err(_) => {
-                    crate::observability::counter_inc(
-                        crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
-                    );
-                }
             }
+            self.recheck_parked(&VisibilityScope::Global);
         }
-        if !newly_pending.is_empty() {
-            let pending = &mut self.subscriptions.pending;
-            let available = MAX_PENDING_NOTIFICATIONS.saturating_sub(pending.len());
-            let accepted = available.min(newly_pending.len());
-            pending.extend(newly_pending.drain(..accepted));
-            if !newly_pending.is_empty() {
-                crate::observability::counter_add(
-                    crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
-                    u64::try_from(newly_pending.len()).unwrap_or(u64::MAX),
-                );
-            }
+    }
+
+    pub(in crate::domains::stream::sink) fn handle_committed_batch(
+        &mut self,
+        event: &DomainPublishEvent,
+        batch: &BatchCommitted,
+    ) {
+        let concrete_key = event
+            .route
+            .as_str()
+            .strip_prefix("stream://")
+            .expect("Stream commit scheme");
+        let parts = route_exact_triplet(event.route.as_str()).expect("commit has a resource route");
+        self.enqueue_commit_notifications(event, concrete_key, &parts, Some(batch.into()));
+    }
+
+    fn enqueue_commit_notifications(
+        &mut self,
+        event: &DomainPublishEvent,
+        concrete_key: &str,
+        parts: &RouteTriplet<'_>,
+        local_offsets: Option<CommitOffsets>,
+    ) {
+        #[cfg(feature = "benchkit")]
+        let dispatch_started = crate::benchkit::stream_dispatch::start();
+        let mut matches = Vec::new();
+        let mut add_match =
+            |selector: &Arc<str>, ids: &std::collections::BTreeSet<u64>, frontier| {
+                let cutoff = *ids.last().expect("empty registration buckets are removed");
+                matches.push((selector.clone(), cutoff, ids.len(), frontier));
+            };
+        if self.subscriptions.has_wildcards() {
+            self.subscriptions
+                .for_each_match(parts, |selector, ids, shape| {
+                    add_match(selector, ids, Frontier::for_selector(shape));
+                });
+        } else if let Some((selector, ids)) = self.subscriptions.bucket(concrete_key) {
+            add_match(selector, ids, Frontier::Resource);
         }
-        ready
-    }
+        let has_parked = self.delivery.has_parked_work();
+        // The successful local write advanced both scope counters atomically
+        // with the records and postings. Global visibility has its own fence.
+        let area = (has_parked || matches.iter().any(|entry| entry.3 == Frontier::Area))
+            .then(|| {
+                self.availability(
+                    &VisibilityScope::Area(parts.realm.to_owned(), parts.area.to_owned()),
+                    &matches,
+                    Frontier::Area,
+                    local_offsets.map(|offsets| offsets.last_area),
+                )
+            })
+            .flatten();
+        let realm = (has_parked || matches.iter().any(|entry| entry.3 == Frontier::Realm))
+            .then(|| {
+                self.availability(
+                    &VisibilityScope::Realm(parts.realm.to_owned()),
+                    &matches,
+                    Frontier::Realm,
+                    local_offsets.map(|offsets| offsets.last_realm),
+                )
+            })
+            .flatten();
+        let global = self.availability(&VisibilityScope::Global, &matches, Frontier::Global, None);
+        if matches.is_empty() {
+            return;
+        }
 
-    pub(super) fn collect_visible_pending_notifications(
-        &mut self,
-        family: u64,
-    ) -> Vec<ReadyStreamNotification> {
-        self.drain_visible_pending(family, &mut VisibilityCache::default())
-    }
-
-    pub(in crate::domains::stream::sink) fn remove_pending_notifications_for_session(
-        &mut self,
-        session_id: u64,
-    ) {
-        self.subscriptions
-            .pending
-            .retain(|pending| pending.target.session_id != session_id);
-    }
-
-    pub(in crate::domains::stream::sink) fn remove_pending_notifications_for_pattern(
-        &mut self,
-        session_id: u64,
-        pattern: &str,
-    ) {
-        self.subscriptions.pending.retain(|pending| {
-            pending.target.session_id != session_id || pending.pattern != pattern
+        let offsets = local_offsets.or_else(|| {
+            serde_json::from_slice::<PublishedCommit>(&event.payload)
+                .ok()
+                .map(|commit| commit.offsets)
         });
+        let Some(offsets) = offsets else {
+            record_drops(matches.iter().map(|(_, _, count, _)| count).sum());
+            return;
+        };
+        let event = Arc::new(CommitEvent {
+            local_commit: local_offsets.is_some(),
+            event: event.clone(),
+            offsets,
+            #[cfg(feature = "benchkit")]
+            dispatch_started,
+            resource: StreamResourceScope {
+                family: event.family_id,
+                realm: parts.realm.to_owned(),
+                area: parts.area.to_owned(),
+                resource: parts.resource.to_owned(),
+            },
+        });
+        for (selector, cutoff, count, frontier) in matches {
+            let watermark = match frontier {
+                Frontier::Resource => None,
+                Frontier::Area => area,
+                Frontier::Realm => realm,
+                Frontier::Global => global,
+            };
+            let parked = frontier
+                .for_commit(&event)
+                .filter(|(_, offset)| watermark.is_none_or(|visible| *offset > visible));
+            if !self
+                .delivery
+                .enqueue(event.clone(), selector, cutoff, count, parked)
+            {
+                record_drops(count);
+            }
+        }
+    }
+
+    fn availability(
+        &mut self,
+        scope: &VisibilityScope,
+        matches: &[(Arc<str>, u64, usize, Frontier)],
+        frontier: Frontier,
+        committed_through: Option<u64>,
+    ) -> Option<u64> {
+        if !self.delivery.has_parked(scope) && !matches.iter().any(|entry| entry.3 == frontier) {
+            return None;
+        }
+        let watermark = committed_through.or_else(|| self.visible_through(scope))?;
+        self.delivery.promote(scope, watermark);
+        Some(watermark)
+    }
+
+    fn visible_through(&mut self, scope: &VisibilityScope) -> Option<u64> {
+        let family = self.family.as_u64();
+        match scope {
+            VisibilityScope::Area(realm, area) => {
+                self.stream_store.get_watermark(family, realm, area).ok()
+            }
+            VisibilityScope::Realm(realm) => {
+                self.stream_store.get_realm_watermark(family, realm).ok()
+            }
+            VisibilityScope::Global => self
+                .stream_store
+                .get_global_watermark(family)
+                .ok()?
+                .checked_sub(1),
+        }
+    }
+
+    fn recheck_parked(&mut self, scope: &VisibilityScope) {
+        if self.delivery.has_parked(scope) {
+            if let Some(watermark) = self.visible_through(scope) {
+                self.delivery.promote(scope, watermark);
+            }
+        }
+    }
+
+    pub(in crate::domains::stream::sink) fn recheck_commit_scopes(
+        &mut self,
+        realm: &str,
+        area: &str,
+    ) {
+        self.recheck_parked(&VisibilityScope::Area(realm.to_owned(), area.to_owned()));
+        self.recheck_parked(&VisibilityScope::Realm(realm.to_owned()));
+        self.recheck_parked(&VisibilityScope::Global);
+    }
+
+    pub(in crate::domains::stream::sink) fn recheck_parked_slice(&mut self) {
+        for scope in self.delivery.parked_scopes(MAINTENANCE_SCOPES) {
+            self.recheck_parked(&scope);
+        }
+    }
+
+    pub(in crate::domains::stream::sink) fn discard_drop_notifications(
+        &mut self,
+        scope: &crate::domains::stream::StreamDropScope,
+    ) {
+        record_drops(self.delivery.discard_where(|event| {
+            let key = &event.resource;
+            scope.matches_parts(key.family, &key.realm, &key.area, &key.resource)
+        }));
+        self.recheck_parked(&VisibilityScope::Global);
     }
 }

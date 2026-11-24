@@ -24,7 +24,7 @@ pub(crate) enum StreamBenchClient {
 }
 
 impl StreamBenchClient {
-    async fn connect(
+    pub(crate) async fn connect(
         server: &TestServer,
         transport: TransportKind,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -58,7 +58,7 @@ impl StreamBenchClient {
         }
     }
 
-    async fn close(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) async fn close(self) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             Self::Tcp(client) => client.close().await,
             Self::WebSocket(mut client) => client.close().await,

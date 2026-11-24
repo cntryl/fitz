@@ -98,6 +98,17 @@ impl TestServer {
         self.store.metrics()
     }
 
+    /// Current charged bytes for retained Stream registrations.
+    #[cfg(feature = "benchkit")]
+    #[must_use]
+    pub fn stream_subscription_charged_bytes(&self) -> usize {
+        self.runtime
+            .domains
+            .read()
+            .as_ref()
+            .map_or(0, |domains| domains.stream_subscription_charged_bytes())
+    }
+
     /// Start a test server with auth disabled (backward compatible)
     ///
     /// # Errors
@@ -416,6 +427,9 @@ impl TestServer {
             metrics_port: 0,
             storage_mode,
             stream_storage_layout,
+            stream_subscription_limits: Ok(
+                crate::domains::stream::sink::StreamSubscriptionLimits::default(),
+            ),
             auth_required,
             auth_config: if auth_required {
                 crate::auth::AuthConfig::jwks(
@@ -439,7 +453,7 @@ impl TestServer {
                 crate::auth::RouteFamilyResolverConfig::default()
             },
             route_families,
-            max_connections: 1000,
+            max_connections: 10_000,
             max_frame_size: max_message_bytes,
             channel_capacity: 10_000,
             cloud_durability: crate::boot::runtime::CloudDurabilityMode::Background,
@@ -503,6 +517,10 @@ impl TestServer {
                 request_buffered_write_policy: boot_config.request_buffered_write_policy(),
                 rpc_request_timeout,
                 stream_storage_layout: boot_config.stream_storage_layout,
+                stream_subscription_limits: boot_config
+                    .stream_subscription_limits
+                    .clone()
+                    .expect("valid Stream test settings"),
                 kv_idle_transaction_ttl: std::time::Duration::from_secs(
                     boot_config.kv_idle_transaction_ttl_seconds,
                 ),
