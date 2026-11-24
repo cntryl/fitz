@@ -8,6 +8,7 @@ mod rpc_e2e {
     mod cancellation;
     mod common;
     mod request_failures;
+    mod request_success;
     mod response_errors;
     mod restart;
 }

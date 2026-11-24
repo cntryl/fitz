@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn should_handle_large_frames() {
+    fn should_extract_one_mib_frame_length_from_prefix() {
         // Arrange
         let large_len: u32 = 1024 * 1024; // 1 MB
         let mut buffer = BytesMut::new();

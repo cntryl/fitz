@@ -152,7 +152,7 @@ mod tests {
     use super::RegistrationRotor;
 
     #[test]
-    fn should_rotate_registrations_independent_of_route_queue_state() {
+    fn should_wrap_registration_cursor_after_advancing_past_last_entry() {
         // Arrange
         let mut rotor = RegistrationRotor::new(vec![11, 22, 33]);
 

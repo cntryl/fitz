@@ -631,19 +631,6 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_route_given_scheme_domain_mismatch() {
-        // Arrange
-        // Act
-        // Assert
-        let queue_write = MESSAGE_MANIFEST
-            .iter()
-            .find(|entry| entry.message_id == 200)
-            .expect("queue write manifest entry");
-        assert_eq!(queue_write.route_scheme, Some("queue"));
-        assert_ne!(queue_write.route_scheme, Some("stream"));
-    }
-
-    #[test]
     fn should_not_infer_realm_from_route_family() {
         // Arrange
         // Act
@@ -666,51 +653,33 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_permission_given_wrong_scheme() {
-        let queue_write = entry(MessageType::new(200)).expect("queue write manifest entry");
+    fn should_require_queue_route_write_authorization_for_message_200() {
+        // Arrange
+        let message = MessageType::new(200);
+
+        // Act
+        let queue_write = entry(message).expect("queue write manifest entry");
+
+        // Assert
         assert_eq!(queue_write.authorization, ManifestAuthorization::RouteWrite);
         assert_eq!(queue_write.route_scheme, Some("queue"));
     }
 
     #[test]
-    fn should_reject_second_connect_given_authenticated_session() {
+    fn should_only_list_connect_as_client_control_message() {
         // Arrange
-        // The invariant is that exactly one message id opens a session, not
-        // that CONNECT is the only client-to-server control message - frame
-        // correlation added a second one that carries no session semantics.
+        let connect = MessageType::CONNECT.as_u16();
+
         // Act
-        let connects: Vec<_> = MESSAGE_MANIFEST
-            .iter()
-            .filter(|entry| entry.message_id == MessageType::CONNECT.as_u16())
-            .collect();
-        let other_client_control: Vec<_> = MESSAGE_MANIFEST
+        let client_control: Vec<_> = MESSAGE_MANIFEST
             .iter()
             .filter(|entry| {
-                entry.domain == "control"
-                    && entry.direction == ManifestDirection::ClientToServer
-                    && entry.message_id != MessageType::CONNECT.as_u16()
+                entry.domain == "control" && entry.direction == ManifestDirection::ClientToServer
             })
+            .map(|entry| entry.message_id)
             .collect();
 
         // Assert
-        assert_eq!(connects.len(), 1);
-        assert!(
-            other_client_control.is_empty(),
-            "CONNECT is the only client-to-server control message"
-        );
-    }
-
-    #[test]
-    fn should_reject_non_connect_frame_before_authentication() {
-        // Arrange
-        // Act
-        // Assert
-        let first_domain_message = MESSAGE_MANIFEST
-            .iter()
-            .find(|entry| {
-                entry.domain != "control" && entry.direction == ManifestDirection::ClientToServer
-            })
-            .expect("domain message");
-        assert_ne!(first_domain_message.domain, "control");
+        assert_eq!(client_control, [connect]);
     }
 }

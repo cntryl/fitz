@@ -677,6 +677,22 @@ fn should_expire_dead_letter_data_through_midge_without_broker_cleanup() {
         .unwrap()
         .dead_lettered_at_ms
         .unwrap();
+    let header_key = actor.cached_header_key(id);
+    let body_key = actor.cached_body_key(id);
+    let index_key = actor.dlq_index_key(entered_at, id);
+    {
+        let txn = actor
+            .persistence
+            .store
+            .begin(
+                1,
+                super::super::recovery_store::QueueTransactionMode::ReadOnly,
+            )
+            .unwrap();
+        assert!(txn.get(&header_key).unwrap().is_some());
+        assert!(txn.get(&body_key).unwrap().is_some());
+        assert!(txn.get(&index_key).unwrap().is_some());
+    }
     std::thread::sleep(Duration::from_millis(1_250));
 
     // Act
@@ -688,9 +704,9 @@ fn should_expire_dead_letter_data_through_midge_without_broker_cleanup() {
             super::super::recovery_store::QueueTransactionMode::ReadOnly,
         )
         .unwrap();
-    let header = txn.get(&actor.cached_header_key(id)).unwrap();
-    let body = txn.get(&actor.cached_body_key(id)).unwrap();
-    let index = txn.get(&actor.dlq_index_key(entered_at, id)).unwrap();
+    let header = txn.get(&header_key).unwrap();
+    let body = txn.get(&body_key).unwrap();
+    let index = txn.get(&index_key).unwrap();
 
     // Assert
     assert!(header.is_none());

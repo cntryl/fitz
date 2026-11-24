@@ -47,10 +47,23 @@ fn setup_test_context_with_limits(
     metrics: Option<&fitz_core::observability::metrics::MetricsCollector>,
     subscriptions: StreamSubscriptionLimits,
 ) -> TestContext {
+    setup_test_context_configuring_sink(subscriptions, |sink| {
+        if let Some(metrics) = metrics {
+            sink.with_metrics(metrics.clone())
+        } else {
+            sink
+        }
+    })
+}
+
+fn setup_test_context_configuring_sink(
+    subscriptions: StreamSubscriptionLimits,
+    configure: impl FnOnce(StreamDomain) -> StreamDomain,
+) -> TestContext {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::AdminReadModel::new();
-    let mut sink = StreamDomain::new_with_storage_layout_and_families(
+    let sink = StreamDomain::new_with_storage_layout_and_families(
         fitz_storage::storage::FitzStorageEngine::new(
             fitz_storage::testkit::create_test_engine_with_cfs(vec![1, 2]),
         ),
@@ -65,10 +78,7 @@ fn setup_test_context_with_limits(
         },
     )
     .expect("create Stream test sink");
-    if let Some(metrics) = metrics {
-        sink = sink.with_metrics(metrics.clone());
-    }
-    let sink = Arc::new(sink);
+    let sink = Arc::new(configure(sink));
     router.register_domain_pattern("stream", sink.clone() as Arc<dyn MailboxSink>);
     let (source, inbox) = register_session_queue_sink(&router, family, TEST_CLIENT_SESSION_ID);
 

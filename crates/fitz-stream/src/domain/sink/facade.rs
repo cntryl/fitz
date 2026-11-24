@@ -2,8 +2,6 @@ use super::budget::Budget;
 use super::delivery::DeliveryQueue;
 #[cfg(test)]
 use super::model::StreamReadExecution;
-#[cfg(test)]
-use super::model::STREAM_ACTOR_REPLY_TIMEOUT;
 use super::model::{
     AdminStreamReadRequest, AdminStreamReadRequestOwned, StreamAdminReadCommand, StreamDomain,
     StreamDomainCommand, StreamDomainConfig, StreamFamilyRuntime, StreamFamilyState,
@@ -15,7 +13,7 @@ use crate::domain::{StreamMetrics, StreamReadItem, StreamStorageLayout};
 #[cfg(test)]
 use fitz_core::runtime::routing::Route;
 use fitz_core::runtime::routing::RouteFamily;
-use fitz_core::runtime::{CleanedUpSessions, Router};
+use fitz_core::runtime::{CleanedUpSessions, FamilyActorPool, FamilyActorPoolRuntime, Router};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -245,41 +243,46 @@ impl StreamDomain {
     fn spawn_family_runtime(
         config: &StreamDomainConfig,
         families: &[RouteFamily],
-    ) -> Result<fitz_core::runtime::FamilyActorPoolRuntime<StreamDomainCommand>, String> {
-        let pool = fitz_core::runtime::FamilyActorPool::new(families)
+    ) -> Result<FamilyActorPoolRuntime<StreamDomainCommand>, String> {
+        let pool = FamilyActorPool::new(families)
             .map_err(|error| format!("create Stream family actor pool: {error}"))?;
+        Ok(Self::spawn_family_runtime_from_pool(config, pool))
+    }
+
+    fn spawn_family_runtime_from_pool(
+        config: &StreamDomainConfig,
+        pool: FamilyActorPool<StreamDomainCommand>,
+    ) -> FamilyActorPoolRuntime<StreamDomainCommand> {
         let family_config = config.clone();
         let ingress = pool.ingress();
         let idle_ingress = ingress.clone();
-        Ok(
-            fitz_core::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric_and_idle(
-                pool,
-                config.active.clone(),
-                move |family| {
-                    Some(Box::new(StreamFamilyRuntime::new(StreamFamilyState::new(
-                        &family_config,
-                        family,
-                    ))))
-                },
-                move |slot, family, _lane, command| {
-                    // The pool retains failed slots. Owning the state across the callback
-                    // releases broker credits before the pool records an unwind.
-                    let mut state = slot.take().expect("running Stream family has state");
-                    state.core.delivery.begin_turn();
-                    state.run_command(family, command);
-                    state.offer_continuation(&ingress);
-                    *slot = Some(state);
-                },
-                move |slot, _family| {
-                    let mut state = slot.take().expect("running Stream family has state");
-                    state.core.delivery.begin_turn();
-                    state.core.dispatch_ready_notifications();
-                    state.service_watermark_timers();
-                    state.offer_continuation(&idle_ingress);
-                    *slot = Some(state);
-                },
-                crate::domain::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
-            ),
+        FamilyActorPoolRuntime::spawn_with_family_failed_metric_and_idle(
+            pool,
+            config.active.clone(),
+            move |family| {
+                Some(Box::new(StreamFamilyRuntime::new(StreamFamilyState::new(
+                    &family_config,
+                    family,
+                ))))
+            },
+            move |slot, family, _lane, command| {
+                // The pool retains failed slots. Owning the state across the callback
+                // releases broker credits before the pool records an unwind.
+                let mut state = slot.take().expect("running Stream family has state");
+                state.core.delivery.begin_turn();
+                state.run_command(family, command);
+                state.offer_continuation(&ingress);
+                *slot = Some(state);
+            },
+            move |slot, _family| {
+                let mut state = slot.take().expect("running Stream family has state");
+                state.core.delivery.begin_turn();
+                state.core.dispatch_ready_notifications();
+                state.service_watermark_timers();
+                state.offer_continuation(&idle_ingress);
+                *slot = Some(state);
+            },
+            crate::domain::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
         )
     }
 
@@ -438,6 +441,18 @@ impl StreamDomain {
     }
 
     #[cfg(test)]
+    pub(super) fn with_shard_count_for_tests(
+        mut self,
+        shard_count: std::num::NonZeroUsize,
+    ) -> Self {
+        self.family_runtime.stop();
+        let pool = FamilyActorPool::with_shard_count_for_tests(&self.family_families, shard_count)
+            .expect("create fixed topology Stream test pool");
+        self.family_runtime = Self::spawn_family_runtime_from_pool(&self.config, pool);
+        self
+    }
+
+    #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
         self.family_runtime.stop();
     }
@@ -589,11 +604,12 @@ impl StreamDomain {
             ),
         )
         .expect("enqueue Stream family inspection");
+        let timeout = fitz_storage::testkit::scaled_test_timeout(Duration::from_secs(5));
         reply_rx
-            .recv_timeout(STREAM_ACTOR_REPLY_TIMEOUT)
+            .recv_timeout(timeout)
             .expect("complete Stream family inspection");
         result_rx
-            .recv_timeout(STREAM_ACTOR_REPLY_TIMEOUT)
+            .recv_timeout(timeout)
             .expect("receive Stream family inspection")
     }
 

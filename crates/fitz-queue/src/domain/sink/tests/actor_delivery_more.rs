@@ -309,44 +309,50 @@ fn should_route_queue_cleanup_through_family_actor() {
 }
 
 #[test]
-fn should_route_queue_runtime_sweep_through_family_actor() {
+fn should_reply_empty_to_parked_reserve_when_runtime_sweep_passes_deadline() {
     // Arrange
     let family = RouteFamily::new(1);
-    let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let session_id = 7;
+    let consumer_address = RouteAddress::new(family, Route::new("inbox://session/7"));
     let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
-    let sender_mailbox = Arc::new(Mailbox::new(8));
+    let consumer_mailbox = Arc::new(Mailbox::new(8));
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
-    router.register(sender_address.clone(), sender_mailbox.clone());
-    let admin_read_model = crate::control::admin::AdminReadModel::new();
-    let sink = new_queue_domain_sink(
-        store,
-        router,
-        admin_read_model,)
-    .with_fast_flush_interval(Some(Duration::from_millis(100)));
+    router.register(consumer_address.clone(), consumer_mailbox.clone());
+    let sink = new_queue_domain_sink(store, router, crate::control::admin::AdminReadModel::new());
     sink.deliver(Envelope::from_route(
-        sender_address,
+        consumer_address,
         queue_address,
         FrameContext::new(
-            7,
+            session_id,
             ChannelId::Pub,
-            MessageType::new(200),
-            encode_queue_send("queue://acme/email/jobs", b"email"),
+            MessageType::new(202),
+            encode_queue_reserve_wait("queue://acme/jobs/emails", 30, 1, 30),
             family,
         ),
     ))
-    .expect("send should enqueue");
-    let _send_ack = receive_queue_frame(&sender_mailbox, "send response");
-    assert!(sink.dirty_fast_flush_contains_family_for_tests(1));
-    let dirty_before_stop = sink.dirty_fast_flush_contains_family_for_tests(1);
+    .expect("park long-poll reserve");
+    assert_eq!(
+        sink.inspect_family_for_tests(family, |state| state.reservation_book.pending_count()),
+        1
+    );
+    assert!(consumer_mailbox.receiver().try_recv().is_err());
 
     // Act
-    sink.stop_actor_for_tests();
-    sink.sweep_runtime_state_at(Instant::now() + Duration::from_millis(100));
+    assert!(sink.request_runtime_sweep_at(Instant::now() + Duration::from_secs(31)));
+    let response = consumer_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .expect("expired reserve response")
+        .into_payload::<FrameContext>()
+        .expect("queue response frame");
 
     // Assert
-    assert!(!sink.is_actor_running());
-    assert!(dirty_before_stop);
+    assert_eq!(decode_concrete_reserve_response(&response), Vec::<Vec<u8>>::new());
+    assert_eq!(
+        sink.inspect_family_for_tests(family, |state| state.reservation_book.pending_count()),
+        0
+    );
 }
 
 #[test]

@@ -76,14 +76,22 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
 
 /// Build QUEUE RESERVE frame (`msg_type` 202)
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
+    build_queue_reserve(queue_name, None)
+}
+
+/// Build a QUEUE RESERVE frame with an optional batch size.
+pub fn build_queue_reserve(queue_name: &str, batch_size: Option<u32>) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u64 lease_seconds]
-    //              [u8 has_batch=0][u8 has_wait=0]
+    //              [u8 has_batch][u32 batch_size if present][u8 has_wait=0]
     let route = normalize_queue_route(queue_name);
     let mut payload = Vec::new();
     payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes()); // lease_seconds = 30
-    payload.push(0); // has_batch_size = false
+    payload.push(u8::from(batch_size.is_some()));
+    if let Some(batch_size) = batch_size {
+        payload.extend_from_slice(&batch_size.to_be_bytes());
+    }
     payload.push(0); // has_wait_seconds = false
 
     let mut builder = FrameBuilder::new();

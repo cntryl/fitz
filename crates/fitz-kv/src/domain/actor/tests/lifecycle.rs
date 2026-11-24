@@ -87,6 +87,7 @@ pub(super) fn should_reject_kv_operation_given_route_family_mismatch_without_mut
             error: KvError::InvalidRouteFamily
         }
     ));
+    assert_eq!(actor.mutation_count_for_tx(tx_id), Some(0));
 }
 
 #[test]

@@ -1,11 +1,7 @@
-//! Multi-domain coexistence smoke tests.
+//! Multi-domain end-to-end tests.
 //!
-//! These tests verify that operations across two or more domains can execute
-//! on the same server instance without interference or crash. Each operation
-//! is asserted only to return status 0 (success).
-//!
-//! They do NOT verify payload persistence, retrieval, realm isolation semantics,
-//! or cross-domain ordering. For semantic verification, see the per-domain `*_e2e.rs` files.
+//! Coexistence cases check successful operations on the same broker. The
+//! isolation cases check distinct values and work in separate realms.
 
 mod fixtures;
 use fitz_e2e::testkit::TestServer;
@@ -24,7 +20,7 @@ fn assert_rpc_delivery_ok(frame: &[u8]) {
 // ============================================================================
 
 #[tokio::test]
-async fn should_isolate_queue_work_from_lease_ownership_tcp() {
+async fn should_accept_queue_work_then_grant_lease_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: enqueue a queue message, then acquire a lease in the same server runtime.
 
@@ -56,7 +52,7 @@ async fn should_isolate_queue_work_from_lease_ownership_tcp() {
 }
 
 #[tokio::test]
-async fn should_isolate_queue_work_from_lease_ownership_ws() {
+async fn should_accept_queue_work_then_grant_lease_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: enqueue a queue message, then acquire a lease in the same server runtime.
 
@@ -263,9 +259,9 @@ async fn should_allow_stream_append_with_active_notice_subscription_ws() {
 }
 
 #[tokio::test]
-async fn should_keep_notice_subscriptions_independent_from_stream_reads_tcp() {
+async fn should_read_stream_with_active_notice_subscription_tcp() {
     let server = TestServer::start().await.expect("start");
-    // Scenario: notice subscription stays independent from stream reads.
+    // Scenario: read a stream while a Notice registration remains active.
 
     // Arrange
     let mut stream_client = TcpStreamConnector::connect(&server)
@@ -275,12 +271,15 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_tcp() {
         .await
         .expect("notice connect");
 
-    // Act
-    let subscribe_frame = build_notice_subscribe("patterns/*");
-    let _ = notice_client
+    let subscribe_frame = build_notice_subscribe("notice://test/patterns/*");
+    let subscription = notice_client
         .send_and_receive(&subscribe_frame, 2000)
         .await
         .expect("notice subscribe");
+    let (_, status, _) = parse_notice_response(&subscription);
+    assert_eq!(status, 0);
+
+    // Act
 
     // Create stream session
     let stream_write_route = "stream://test/stream/data/write";
@@ -310,14 +309,14 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_tcp() {
     let (_msg_type, status, _data) = parse_stream_response(&read_response);
     assert_eq!(
         status, 0,
-        "Stream operations should not interfere with notice subscriptions"
+        "Stream read should succeed with an active Notice registration"
     );
 }
 
 #[tokio::test]
-async fn should_keep_notice_subscriptions_independent_from_stream_reads_ws() {
+async fn should_read_stream_with_active_notice_subscription_ws() {
     let server = TestServer::start().await.expect("start");
-    // Scenario: notice subscription stays independent from stream reads.
+    // Scenario: read a stream while a Notice registration remains active.
 
     // Arrange
     let mut stream_client = WsStreamConnector::connect(&server)
@@ -327,12 +326,15 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_ws() {
         .await
         .expect("notice connect");
 
-    // Act
-    let subscribe_frame = build_notice_subscribe("patterns/*");
-    let _ = notice_client
+    let subscribe_frame = build_notice_subscribe("notice://test/patterns/*");
+    let subscription = notice_client
         .send_and_receive(&subscribe_frame, 2000)
         .await
         .expect("notice subscribe");
+    let (_, status, _) = parse_notice_response(&subscription);
+    assert_eq!(status, 0);
+
+    // Act
 
     // Create stream session
     let stream_write_route = "stream://test/stream/data/write";
@@ -368,7 +370,7 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_ws() {
 // ============================================================================
 
 #[tokio::test]
-async fn should_allow_rpc_requests_alongside_stream_appends_tcp() {
+async fn should_append_to_stream_after_successful_rpc_call_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: RPC request alongside stream append.
 
@@ -439,7 +441,7 @@ async fn should_allow_rpc_requests_alongside_stream_appends_tcp() {
 }
 
 #[tokio::test]
-async fn should_allow_rpc_requests_alongside_stream_appends_ws() {
+async fn should_append_to_stream_after_successful_rpc_call_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: RPC request alongside stream append.
 
@@ -508,7 +510,7 @@ async fn should_allow_rpc_requests_alongside_stream_appends_ws() {
 }
 
 #[tokio::test]
-async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
+async fn should_append_stream_records_given_interleaved_rpc_calls_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: interleaved RPC calls with stream appends.
 
@@ -601,7 +603,7 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
 }
 
 #[tokio::test]
-async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
+async fn should_append_stream_records_given_interleaved_rpc_calls_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: interleaved RPC calls with stream appends.
 
@@ -857,66 +859,8 @@ async fn should_allow_lease_release_after_kv_transaction_ws() {
     assert_eq!(status, 0);
 }
 
-// ============================================================================
-// REALM ISOLATION WITH MULTIPLE DOMAINS ACTIVE
-// ============================================================================
-
-#[tokio::test]
-async fn should_keep_realms_isolated_while_multiple_domains_are_active_tcp() {
-    let server = TestServer::start().await.expect("start");
-    // Scenario: operations in separate realms stay isolated while multiple domains are active.
-
-    // Arrange
-    let mut kv_client = TcpConnector::connect(&server).await.expect("kv connect");
-    let mut queue_client = TcpQueueConnector::connect(&server)
-        .await
-        .expect("queue connect");
-
-    // Act
-    let kv_begin = build_kv_begin("test/realm1/data", 1);
-    let kv_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
-    let queue_frame = build_queue_enqueue("tasks", b"task");
-    let queue_response = queue_client
-        .send_and_receive(&queue_frame, 2000)
-        .await
-        .expect("queue enqueue");
-
-    // Assert
-    let (_msg_type, status, _data) = parse_kv_response(&kv_response);
-    assert_eq!(status, 0);
-    let (_msg_type, status, _data) = parse_queue_response(&queue_response);
-    assert_eq!(
-        status, 0,
-        "Different realms should remain isolated while multiple domains are active"
-    );
-}
-
-#[tokio::test]
-async fn should_keep_realms_isolated_while_multiple_domains_are_active_ws() {
-    let server = TestServer::start().await.expect("start");
-    // Scenario: operations in separate realms stay isolated while multiple domains are active.
-
-    // Arrange
-    let mut kv_client = WsConnector::connect(&server).await.expect("kv connect");
-    let mut queue_client = WsQueueConnector::connect(&server)
-        .await
-        .expect("queue connect");
-
-    // Act
-    let kv_begin = build_kv_begin("test/realm1/data", 1);
-    let kv_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
-    let queue_frame = build_queue_enqueue("tasks", b"task");
-    let queue_response = queue_client
-        .send_and_receive(&queue_frame, 2000)
-        .await
-        .expect("queue enqueue");
-
-    // Assert
-    let (_msg_type, status, _data) = parse_kv_response(&kv_response);
-    assert_eq!(status, 0);
-    let (_msg_type, status, _data) = parse_queue_response(&queue_response);
-    assert_eq!(status, 0);
-}
+#[path = "multi_domain_e2e/realm_isolation.rs"]
+mod realm_isolation;
 
 #[path = "multi_domain_e2e/shared_engine.rs"]
 mod shared_engine;

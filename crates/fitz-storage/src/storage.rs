@@ -86,6 +86,7 @@ impl From<Arc<cntryl_midge::Engine>> for FitzStorageEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cntryl_midge::{TransactionMode, WriteOptions};
 
     fn make_storage() -> FitzStorageEngine {
         let engine = crate::testkit::create_test_engine_with_cfs(vec![1]);
@@ -93,15 +94,26 @@ mod tests {
     }
 
     #[test]
-    fn should_open_transaction_for_route_family_column_family() {
+    fn should_read_identical_keys_from_the_requested_route_family() {
         // Arrange
-        let storage = make_storage();
+        let engine = crate::testkit::create_test_engine_with_cfs(vec![1, 2]);
+        for (family, value) in [(1, b"first".as_slice()), (2, b"second".as_slice())] {
+            let mut transaction = engine.begin_tx(family, TransactionMode::ReadWrite).unwrap();
+            transaction
+                .put(b"shared-key".to_vec(), value.to_vec(), None)
+                .unwrap();
+            transaction.commit(WriteOptions::sync()).unwrap();
+        }
+        let storage = FitzStorageEngine::new(engine);
 
         // Act
-        let result = storage.begin_tx(1, cntryl_midge::TransactionMode::ReadOnly);
+        let values = [1, 2].map(|family| {
+            let transaction = storage.begin_tx(family, TransactionMode::ReadOnly).unwrap();
+            transaction.get(b"shared-key").unwrap().unwrap().to_vec()
+        });
 
         // Assert
-        assert!(result.is_ok());
+        assert_eq!(values, [b"first".to_vec(), b"second".to_vec()]);
     }
 
     #[test]

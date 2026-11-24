@@ -412,6 +412,30 @@ async fn should_not_leak_admin_resource_given_unauthorized_route_family() {
 async fn should_return_queue_inflight_under_resource() {
     // Arrange
     let runtime = test_runtime();
+    let expected = QueueInflight {
+        message_id: 99,
+        family: 1,
+        realm: "prod".into(),
+        area: "jobs".into(),
+        resource: "worker".into(),
+        inflight_token: "token-99".into(),
+        session_id: "11".into(),
+        expires_at: "2026-03-14T12:05:00Z".into(),
+        attempts: 2,
+    };
+    let other_resource = QueueInflight {
+        resource: "another-worker".into(),
+        ..expected.clone()
+    };
+    let other_family = QueueInflight {
+        family: 2,
+        ..expected.clone()
+    };
+    runtime.admin_read_model().replace_queue_inflight(vec![
+        expected.clone(),
+        other_resource,
+        other_family,
+    ]);
     let cookie = login_cookie(runtime.clone()).await;
 
     let req = hyper::http::Request::builder()
@@ -428,6 +452,9 @@ async fn should_return_queue_inflight_under_resource() {
 
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload, serde_json::json!({ "inflight": [expected] }));
 }
 
 #[tokio::test]

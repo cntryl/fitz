@@ -8,7 +8,7 @@ use crate::runtime::routing::RouteFamily;
 use crate::runtime::Router;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn current_epoch_ms() -> u64 {
     std::time::SystemTime::now()
@@ -44,7 +44,7 @@ impl Runtime {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         Self {
             router,
             startup_time: now,
@@ -483,7 +483,11 @@ impl Runtime {
 
     #[must_use]
     pub fn uptime(&self) -> Duration {
-        self.startup_time.elapsed()
+        self.uptime_at(Instant::now())
+    }
+
+    fn uptime_at(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(self.startup_time)
     }
 
     #[must_use]
@@ -566,12 +570,16 @@ impl Runtime {
 
     #[must_use]
     pub fn messages_per_second(&self) -> f64 {
-        let uptime_secs = u64_to_f64(self.uptime_seconds());
-        if uptime_secs < 0.001 {
+        self.messages_per_second_at(Instant::now())
+    }
+
+    fn messages_per_second_at(&self, now: Instant) -> f64 {
+        let uptime_seconds = self.uptime_at(now).as_secs();
+        if uptime_seconds == 0 {
             return 0.0;
         }
         let total_messages = self.messages_received() + self.messages_sent();
-        u64_to_f64(total_messages) / uptime_secs
+        u64_to_f64(total_messages) / u64_to_f64(uptime_seconds)
     }
 }
 
@@ -704,36 +712,49 @@ mod tests {
     }
 
     #[test]
-    fn should_calculate_messages_per_second() {
+    fn should_calculate_message_rate_from_both_message_counters() {
         // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
 
-        assert!(runtime.messages_per_second().abs() < f64::EPSILON);
-
-        // Act
+        runtime.increment_messages_received();
         runtime.increment_messages_received();
         runtime.increment_messages_sent();
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        let sampled_at = runtime.startup_time + Duration::from_secs(2);
+
+        // Act
+        let rate = runtime.messages_per_second_at(sampled_at);
 
         // Assert
-        let mps = runtime.messages_per_second();
-        assert!(mps >= 0.0);
+        assert!((rate - 1.5).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn should_report_uptime() {
+    fn should_report_zero_message_rate_before_one_second_of_uptime() {
+        // Arrange
+        let runtime = Runtime::new(Arc::new(Router::new()));
+        runtime.increment_messages_received();
+        let sampled_at = runtime.startup_time + Duration::from_millis(999);
+
+        // Act
+        let rate = runtime.messages_per_second_at(sampled_at);
+
+        // Assert
+        assert!(rate.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn should_report_duration_since_startup() {
         // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        let sampled_at = runtime.startup_time + Duration::from_millis(50);
 
         // Act
-        let uptime = runtime.uptime();
+        let uptime = runtime.uptime_at(sampled_at);
 
         // Assert
-        assert!(uptime.as_millis() >= 50);
-        let _uptime_secs = runtime.uptime_seconds();
+        assert_eq!(uptime, Duration::from_millis(50));
     }
 
     #[test]

@@ -708,13 +708,20 @@ fn should_not_wait_for_clean_stream_family_actor_on_admin_refresh() {
 #[test]
 fn should_refresh_distinct_shard_family_admin_snapshot_while_peer_is_blocked() {
     // Arrange
-    let context = setup_test_context();
+    let context =
+        setup_test_context_configuring_sink(StreamSubscriptionLimits::default(), |sink| {
+            sink.with_shard_count_for_tests(std::num::NonZeroUsize::new(2).unwrap())
+        });
     let second_family_id = RouteFamily::new(2);
     let ingress = context.sink.family_runtime.ingress();
-    if ingress.shard_for_family(context.family) == ingress.shard_for_family(second_family_id) {
-        // One worker cannot process another family while blocked.
-        return;
-    }
+    assert_ne!(
+        ingress
+            .shard_for_family(context.family)
+            .expect("first-family shard"),
+        ingress
+            .shard_for_family(second_family_id)
+            .expect("second-family shard")
+    );
     let second_family = context_for_family(&context, second_family_id);
     seed_committed_stream_route(
         &second_family,
@@ -749,7 +756,7 @@ fn should_refresh_distinct_shard_family_admin_snapshot_while_peer_is_blocked() {
             .admin_read_model
             .streams(None)
             .iter()
-            .any(|stream| stream.route_family == 2)
+            .any(|stream| stream.route_family == second_family_id.as_u64())
         {
             observed_early = true;
             break;

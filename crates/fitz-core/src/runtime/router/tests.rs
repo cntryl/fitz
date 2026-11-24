@@ -76,15 +76,21 @@ fn should_route_to_domain_pattern_across_families() {
     // Register "kv" domain pattern (NOT specific to any family)
     router.register_domain_pattern("kv", sink.clone());
 
-    // Act - Send messages from different tenants (route families)
-    let tenant_acme = test_address(1, "kv://acme/app/users");
-    let tenant_xyz = test_address(2, "kv://xyz/app/users");
+    let first = test_address(1, "kv://shared/app/users");
+    let second = test_address(2, "kv://shared/app/users");
 
-    router.route(Envelope::new(tenant_acme, "msg1")).unwrap();
-    router.route(Envelope::new(tenant_xyz, "msg2")).unwrap();
+    // Act
+    router.route(Envelope::new(first.clone(), "msg1")).unwrap();
+    router.route(Envelope::new(second.clone(), "msg2")).unwrap();
 
-    // Assert - Both messages delivered to same domain sink
-    assert_eq!(sink.delivered.lock().len(), 2);
+    let delivered = sink.delivered.lock();
+    let actual: Vec<_> = delivered
+        .iter()
+        .map(|envelope| (envelope.destination(), envelope.payload::<&str>().copied()))
+        .collect();
+
+    // Assert
+    assert_eq!(actual, [(&first, Some("msg1")), (&second, Some("msg2"))]);
 }
 
 #[test]
@@ -289,7 +295,7 @@ fn should_catch_panicking_sink_during_high_priority_delivery() {
 }
 
 #[test]
-fn should_record_cleanup_failure_without_leaking_session_state() {
+fn should_record_backpressure_given_a_full_high_priority_lane() {
     // Arrange
     struct HighLaneBackpressuredSink;
 
@@ -306,8 +312,8 @@ fn should_record_cleanup_failure_without_leaking_session_state() {
         }
     }
 
-    let metrics = crate::observability::metrics();
-    let before = metrics.counter_get(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE);
+    let metrics = Arc::new(obs::metrics::MetricsCollector::new());
+    let _metrics_scope = obs::global::TestMetricsScope::install(Arc::clone(&metrics));
     let router = Router::new();
     let address = test_address(1, "/system/control");
     router.register(address.clone(), Arc::new(HighLaneBackpressuredSink));
@@ -323,9 +329,9 @@ fn should_record_cleanup_failure_without_leaking_session_state() {
             DeliveryError::HighLaneFull { .. }
         )) if target == address
     ));
-    assert!(
-        metrics.counter_get(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE) > before,
-        "expected router high-lane backpressure metric to increase"
+    assert_eq!(
+        metrics.counter_get(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE),
+        1
     );
 }
 

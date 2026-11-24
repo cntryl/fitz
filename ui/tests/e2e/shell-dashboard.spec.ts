@@ -66,10 +66,15 @@ test("renders unavailable base and nested route families as SPA 404 pages", asyn
   }
 });
 
-test("captures the dashboard refreshing state", async ({ page }, testInfo) => {
+test("shows dashboard refresh while the topology request is pending", async ({
+  page,
+}, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
 
-  let releaseRefresh: (() => void) | undefined;
+  let releaseRefresh!: () => void;
+  const holdRefresh = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
   let topologyRequests = 0;
 
   await mockAdminFeatures(page);
@@ -77,9 +82,7 @@ test("captures the dashboard refreshing state", async ({ page }, testInfo) => {
     topologyRequests += 1;
 
     if (topologyRequests > 1) {
-      await new Promise<void>((resolve) => {
-        releaseRefresh = resolve;
-      });
+      await holdRefresh;
     }
 
     await route.fulfill({
@@ -90,17 +93,24 @@ test("captures the dashboard refreshing state", async ({ page }, testInfo) => {
   await openDashboard(page, "light", false);
   await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Refresh overview" }).click();
-  await expect(page.locator('[data-slot="badge"]').filter({ hasText: "Refreshing" })).toBeVisible();
+  const refreshing = page.locator('[data-slot="badge"]').filter({ hasText: "Refreshing" });
+  try {
+    await Promise.all([
+      page.waitForRequest("**/api/v1/1/topology"),
+      page.getByRole("button", { name: "Refresh overview" }).click(),
+    ]);
+    await expect(refreshing).toBeVisible();
 
-  await page.screenshot({
-    fullPage: true,
-    path: testInfo.outputPath("dashboard-refreshing.png"),
-    animations: "disabled",
-  });
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("dashboard-refreshing.png"),
+      animations: "disabled",
+    });
+  } finally {
+    releaseRefresh();
+  }
 
-  releaseRefresh?.();
-  await page.waitForTimeout(100);
+  await expect(refreshing).toBeHidden();
 });
 
 test("captures desktop domain navigation", async ({ page }, testInfo) => {

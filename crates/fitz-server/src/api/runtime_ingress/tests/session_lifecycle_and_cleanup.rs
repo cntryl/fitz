@@ -446,7 +446,7 @@ async fn should_open_session() {
 }
 
 #[test]
-pub(super) fn should_process_frame() {
+pub(super) fn should_accept_valid_jwks_connect_from_websocket_client() {
     // Arrange
     let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
     let session = make_session_info(2, TransportKind::WebSocket);

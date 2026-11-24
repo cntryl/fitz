@@ -14,6 +14,34 @@ use std::time::Instant;
 static METRICS_COLLECTOR: OnceCell<Arc<MetricsCollector>> = OnceCell::new();
 static HOT_PATH_METRICS_ENABLED: OnceCell<bool> = OnceCell::new();
 
+#[cfg(test)]
+std::thread_local! {
+    static TEST_METRICS: std::cell::RefCell<Option<Arc<MetricsCollector>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(crate) struct TestMetricsScope(Option<Arc<MetricsCollector>>);
+
+#[cfg(test)]
+impl TestMetricsScope {
+    pub(crate) fn install(metrics: Arc<MetricsCollector>) -> Self {
+        Self(TEST_METRICS.replace(Some(metrics)))
+    }
+
+    fn current() -> Option<Arc<MetricsCollector>> {
+        TEST_METRICS.with(|metrics| metrics.borrow().clone())
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestMetricsScope {
+    fn drop(&mut self) {
+        TEST_METRICS.replace(self.0.take());
+    }
+}
+
 fn u128_to_u64_saturating(value: u128) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
@@ -23,43 +51,45 @@ fn u128_to_u64_saturating(value: u128) -> u64 {
 /// If observability has not been initialized yet, this lazily creates
 /// a default collector so metrics recording never panics.
 pub fn metrics() -> Arc<MetricsCollector> {
-    METRICS_COLLECTOR
-        .get_or_init(|| Arc::new(MetricsCollector::new()))
-        .clone()
+    with_metrics(Arc::clone)
 }
 
-fn metrics_ref() -> &'static Arc<MetricsCollector> {
-    METRICS_COLLECTOR.get_or_init(|| Arc::new(MetricsCollector::new()))
+fn with_metrics<T>(record: impl FnOnce(&Arc<MetricsCollector>) -> T) -> T {
+    #[cfg(test)]
+    if let Some(metrics) = TestMetricsScope::current() {
+        return record(&metrics);
+    }
+    record(METRICS_COLLECTOR.get_or_init(|| Arc::new(MetricsCollector::new())))
 }
 
 /// Record a histogram observation in microseconds using the cached global collector.
 pub fn histogram_observe_us(name: &str, value_us: u64) {
-    metrics_ref().histogram_observe_us(name, value_us);
+    with_metrics(|metrics| metrics.histogram_observe_us(name, value_us));
 }
 
 /// Increment a counter using the cached global collector.
 pub fn counter_inc(name: &str) {
-    metrics_ref().counter_inc(name);
+    with_metrics(|metrics| metrics.counter_inc(name));
 }
 
 /// Add to a counter using the cached global collector.
 pub fn counter_add(name: &str, amount: u64) {
-    metrics_ref().counter_add(name, amount);
+    with_metrics(|metrics| metrics.counter_add(name, amount));
 }
 
 /// Set a gauge using the cached global collector.
 pub fn gauge_set(name: &str, value: u64) {
-    metrics_ref().gauge_set(name, value);
+    with_metrics(|metrics| metrics.gauge_set(name, value));
 }
 
 /// Increment a gauge by 1 using the cached global collector.
 pub fn gauge_inc(name: &str) {
-    metrics_ref().gauge_inc(name);
+    with_metrics(|metrics| metrics.gauge_inc(name));
 }
 
 /// Decrement a gauge by 1 using the cached global collector.
 pub fn gauge_dec(name: &str) {
-    metrics_ref().gauge_dec(name);
+    with_metrics(|metrics| metrics.gauge_dec(name));
 }
 
 /// Whether extra hot-path attribution metrics are enabled.

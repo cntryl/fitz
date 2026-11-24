@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 use fitz_core::runtime::routing::RouteFamily;
-use fitz_kv::domain::{KvMessage, KvResourceScope, KvResponse, TxMode};
+use fitz_kv::domain::{KvMessage, KvResourceScope, KvResponse, ScanQuery, TxMode};
 use fitz_kv::testkit::create_local_bench_store;
 use fitz_kv::testkit::domain_internals::KvActor;
 use fitz_kv::testkit::{create_test_engine_with_cfs, scaled_test_timeout};
@@ -175,131 +175,65 @@ fn should_show_committed_value_before_restart() {
 }
 
 #[test]
-fn should_commit_durable_kv_transaction() {
-    // Arrange
-    let (store, _temp_dir) = create_local_bench_store();
-    let mut actor = KvActor::new(store);
-
-    // Act - create and commit a durable transaction
-    let begin = actor.handle(KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "dur".to_string(),
-            "kv".to_string(),
-            "r".to_string(),
-        ),
-        mode: TxMode::ReadWrite,
-    });
-    let KvResponse::BeginOk { tx_id } = begin else {
-        panic!("Begin failed");
-    };
-
-    actor.handle(KvMessage::Put {
-        tx_id,
-        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
-        key: Bytes::from_static(b"k1"),
-        value: Bytes::from_static(b"v1"),
-    });
-
-    let c = actor.handle(KvMessage::Commit {
-        tx_id,
-        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
-        persistence: fitz_storage::domains::CommitPersistence::Sync,
-    });
-
-    // Assert
-    assert!(matches!(c, KvResponse::CommitOk));
-}
-
-#[test]
 fn should_restore_committed_kv_value_on_engine_restart() {
     // Arrange
     let (store, temp_dir) = create_local_bench_store();
-    let temp_path = temp_dir.path().to_path_buf();
-    let mut actor = KvActor::new(store.clone());
+    let scope = kv_scope(RouteFamily::new(1), "dur", "r");
+    let key = Bytes::from_static(b"k1");
+    let value = Bytes::from_static(b"v1");
+    let mut writer = KvActor::new(Arc::clone(&store));
 
-    // Act - create and commit a durable transaction
-    let begin = actor.handle(KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "dur".to_string(),
-            "kv".to_string(),
-            "r".to_string(),
-        ),
+    let begin = writer.handle(KvMessage::Begin {
+        scope: scope.clone(),
         mode: TxMode::ReadWrite,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
     };
 
-    actor.handle(KvMessage::Put {
+    let put = writer.handle(KvMessage::Put {
         tx_id,
-        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
-        key: Bytes::from_static(b"k1"),
-        value: Bytes::from_static(b"v1"),
+        scope: scope.clone(),
+        key: key.clone(),
+        value: value.clone(),
     });
+    assert!(matches!(put, KvResponse::PutOk), "{put:?}");
 
-    let c = actor.handle(KvMessage::Commit {
+    let commit = writer.handle(KvMessage::Commit {
         tx_id,
-        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+        scope: scope.clone(),
         persistence: fitz_storage::domains::CommitPersistence::Sync,
     });
-    assert!(matches!(c, KvResponse::CommitOk));
+    assert!(matches!(commit, KvResponse::CommitOk), "{commit:?}");
 
-    // Simulate process exit and restart
-    drop(actor);
+    drop(writer);
     shutdown_local_bench_store(store);
 
-    // Keep temp_dir alive during reopen to prevent directory deletion
-    let reopened = reopen_local_bench_store(&temp_path);
-
-    let mut actor2 = KvActor::new(reopened);
-    let b2 = actor2.handle(KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "dur".to_string(),
-            "kv".to_string(),
-            "r".to_string(),
-        ),
+    // Act
+    let mut reader = KvActor::new(reopen_local_bench_store(temp_dir.path()));
+    let begin = reader.handle(KvMessage::Begin {
+        scope: scope.clone(),
         mode: TxMode::ReadOnly,
     });
-    let KvResponse::BeginOk { tx_id: tx2 } = b2 else {
-        panic!("Expected BeginOk");
+    let KvResponse::BeginOk { tx_id } = begin else {
+        panic!("Expected BeginOk, got {begin:?}");
     };
-
-    // Assert - Read value after restart
-    let got = actor2.handle(KvMessage::Get {
-        tx_id: tx2,
-        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
-        key: Bytes::from_static(b"k1"),
+    let restored = reader.handle(KvMessage::Get {
+        tx_id,
+        scope: scope.clone(),
+        key,
     });
+    reader.handle(KvMessage::Rollback { tx_id, scope });
 
-    match got {
-        KvResponse::GetResult {
-            found: true,
-            value: Some(v),
-        } => assert_eq!(&*v, b"v1"),
-        other => {
-            // Heuristic: when Midge is running with an in-memory backend the DB files
-            // won't be present under the temp directory (we see `target/tmp/midge_test_memory_*`).
-            // In that environment the post-restart persistence check is not applicable
-            // so we skip instead of failing the test.
-            let mem_hint = temp_path.join("target").join("tmp");
-            if mem_hint.exists() {
-                println!(
-                    "SKIP: underlying Midge engine appears memory-backed; skipping disk-restart check (response={other:?})"
-                );
-                return;
-            }
-
-            panic!("Expected persisted value after restart (got: {other:?})");
-        }
-    }
-
-    actor2.handle(KvMessage::Rollback {
-        tx_id: tx2,
-        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
-    });
+    // Assert
+    let KvResponse::GetResult {
+        found: true,
+        value: Some(restored_value),
+    } = restored
+    else {
+        panic!("Expected persisted value after restart, got {restored:?}");
+    };
+    assert_eq!(restored_value, value);
 }
 
 #[test]
@@ -461,73 +395,79 @@ fn should_return_family_two_value_after_engine_restart_given_same_key_in_multipl
     assert_eq!(value, Bytes::from_static(b"family-2"));
 }
 
-// --- append the scale test here ---
-
 #[test]
-fn should_handle_high_throughput_batch_puts() {
+fn should_read_all_values_after_repeated_buffered_commits() {
     // Arrange
     let store = create_test_engine_with_cfs(vec![1]);
     let mut actor = KvActor::new(store);
+    let scope = kv_scope(RouteFamily::new(1), "scale", "batch");
+    let expected = (0..200)
+        .map(|i| {
+            (
+                Bytes::from(format!("k{i:04}")),
+                Bytes::from(format!("v{i:04}")),
+            )
+        })
+        .collect::<Vec<_>>();
 
-    // Act - perform many small transactions (fast, buffered)
-    for i in 0..200 {
+    for (key, value) in &expected {
         let begin = actor.handle(KvMessage::Begin {
-            scope: KvResourceScope::new(
-                RouteFamily::new(1),
-                "scale".to_string(),
-                "kv".to_string(),
-                "batch".to_string(),
-            ),
+            scope: scope.clone(),
             mode: TxMode::ReadWrite,
         });
         let KvResponse::BeginOk { tx_id } = begin else {
-            panic!("Begin failed");
+            panic!("Expected BeginOk for {key:?}, got {begin:?}");
         };
 
-        let key = Bytes::from(format!("k{i:04}"));
-        let _ = actor.handle(KvMessage::Put {
+        let put = actor.handle(KvMessage::Put {
             tx_id,
-            scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
+            scope: scope.clone(),
             key: key.clone(),
-            value: Bytes::from_static(b"v"),
+            value: value.clone(),
         });
+        assert!(matches!(put, KvResponse::PutOk), "put {key:?}: {put:?}");
 
-        let c = actor.handle(KvMessage::Commit {
+        let commit = actor.handle(KvMessage::Commit {
             tx_id,
-            scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
+            scope: scope.clone(),
             persistence: fitz_storage::domains::CommitPersistence::Buffered,
         });
-        assert!(matches!(c, KvResponse::CommitOk));
+        assert!(
+            matches!(commit, KvResponse::CommitOk),
+            "commit {key:?}: {commit:?}"
+        );
     }
 
-    // Verify at least one value persisted
-    let b = actor.handle(KvMessage::Begin {
-        scope: KvResourceScope::new(
-            RouteFamily::new(1),
-            "scale".to_string(),
-            "kv".to_string(),
-            "batch".to_string(),
-        ),
+    let begin = actor.handle(KvMessage::Begin {
+        scope: scope.clone(),
         mode: TxMode::ReadOnly,
     });
-    let KvResponse::BeginOk { tx_id: tx } = b else {
-        panic!("Begin failed");
+    let KvResponse::BeginOk { tx_id } = begin else {
+        panic!("Expected BeginOk, got {begin:?}");
     };
 
-    let get = actor.handle(KvMessage::Get {
-        tx_id: tx,
-        scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
-        key: Bytes::from(format!("k{:04}", 42)),
+    // Act
+    let result = actor.handle(KvMessage::Scan {
+        tx_id,
+        scope: scope.clone(),
+        query: ScanQuery {
+            start: None,
+            end: None,
+            limit: None,
+            reverse: false,
+            start_exclusive: false,
+        },
     });
+    actor.handle(KvMessage::Rollback { tx_id, scope });
 
     // Assert
-    match get {
-        KvResponse::GetResult { found: true, .. } => {}
-        _ => panic!("Expected a stored key from batch puts"),
-    }
-
-    actor.handle(KvMessage::Rollback {
-        tx_id: tx,
-        scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
-    });
+    let KvResponse::ScanResult { items, has_more } = result else {
+        panic!("Expected ScanResult, got {result:?}");
+    };
+    let actual = items
+        .into_iter()
+        .map(|item| (item.key, item.value))
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
+    assert!(!has_more);
 }

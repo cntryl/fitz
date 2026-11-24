@@ -354,7 +354,7 @@ fn should_count_kv_transactions_without_materializing_snapshots() {
 }
 
 #[test]
-fn should_upsert_lease_given_incremental_update() {
+fn should_show_inserted_lease_fields() {
     // Arrange
     let read_model = AdminReadModel::default();
 

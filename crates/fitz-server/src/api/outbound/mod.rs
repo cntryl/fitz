@@ -586,7 +586,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_deliver_frame_without_blocking_current_thread_runtime() {
+    async fn should_deliver_encoded_frame_given_available_outbound_capacity() {
         // Arrange
         let (tx, mut rx) = mpsc::channel(1);
         let sink = SessionOutboundSink::new(tx);

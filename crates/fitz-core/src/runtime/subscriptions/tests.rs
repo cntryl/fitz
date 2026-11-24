@@ -679,12 +679,11 @@ fn should_collect_results_with_capacity() {
 proptest::proptest! {
     #[test]
     fn should_match_bruteforce_scan_for_generated_patterns(
-        // Generate up to 8 patterns, each with up to 6 segments
         patterns in proptest::collection::vec(
-            proptest::string::string_regex("[a-z]{1,5}").unwrap(),
+            proptest::string::string_regex(r"(?:[abc]|\*)(?:/(?:[abc]|\*)){0,3}(?:/\*\*)?").unwrap(),
             1..=8,
         ),
-        route_str in proptest::string::string_regex("[a-z]{1,5}(/[a-z]{1,5}){0,5}").unwrap(),
+        route_str in proptest::string::string_regex("[abc](/[abc]){0,5}").unwrap(),
     ) {
         use crate::runtime::matcher::Pattern;
 
@@ -692,7 +691,6 @@ proptest::proptest! {
         let f = family(1);
         let mut index = SubscriptionIndex::new();
 
-        // Insert each pattern as an exact route (no wildcards for simplicity)
         for (i, p) in patterns.iter().enumerate() {
             let full_pattern = format!("test://{p}");
             index.insert(f, &route(&full_pattern), sub_id(i as u64));
@@ -701,30 +699,27 @@ proptest::proptest! {
         let full_route = format!("test://{route_str}");
         let r = route(&full_route);
 
-        // Act
-        // Get trie matches
-        let mut trie_matches = index.match_all(f, &r);
-        trie_matches.sort_by_key(|id| id.0);
-
-        // Brute-force scan: check each pattern with Pattern::matches
-        let mut bf_matches = SubscriptionMatches::new();
+        let mut expected = SubscriptionMatches::new();
         for (i, p) in patterns.iter().enumerate() {
             let full_pattern = format!("test://{p}");
             let pattern = Pattern::new(&full_pattern);
             if pattern.matches(&r) {
-                bf_matches.push(sub_id(i as u64));
+                expected.push(sub_id(i as u64));
             }
         }
-        bf_matches.sort_by_key(|id| id.0);
+
+        // Act
+        let mut actual = index.match_all(f, &r);
+        actual.sort_by_key(|id| id.0);
 
         // Assert
-        assert_eq!(trie_matches, bf_matches, "trie diverged from brute-force for patterns={patterns:?} route={full_route}");
+        assert_eq!(actual, expected, "trie diverged from brute-force for patterns={patterns:?} route={full_route}");
     }
 
     #[test]
     fn should_preserve_roundtrip_after_insert_remove(
-        pattern_str in proptest::string::string_regex("[a-z]{1,5}(/[a-z]{1,5}){0,3}").unwrap(),
-        route_str in proptest::string::string_regex("[a-z]{1,5}(/[a-z]{1,5}){0,5}").unwrap(),
+        pattern_str in proptest::string::string_regex(r"(?:[abc]|\*)(?:/(?:[abc]|\*)){0,3}(?:/\*\*)?").unwrap(),
+        route_str in proptest::string::string_regex("[abc](/[abc]){0,5}").unwrap(),
     ) {
         use crate::runtime::matcher::Pattern;
 
@@ -743,14 +738,11 @@ proptest::proptest! {
         let matches_after_remove = index.match_all(f, &r);
 
         // Assert
-        // After remove, subscription 42 should never appear
         assert!(!matches_after_remove.contains(&sub_id(42)));
-
-        // If it matched before, it should have contained 42
-        let pattern = Pattern::new(&full_pattern);
-        if pattern.matches(&r) {
-            assert!(matches_after_insert.contains(&sub_id(42)));
-        }
+        assert_eq!(
+            matches_after_insert.contains(&sub_id(42)),
+            Pattern::new(&full_pattern).matches(&r)
+        );
     }
 }
 

@@ -272,12 +272,8 @@ fn should_not_retain_lease_subscription_when_response_cannot_be_delivered() {
     let family = RouteFamily::new(1);
     let source = RouteAddress::new(family, Route::new("inbox://session/7"));
     let destination = RouteAddress::new(family, Route::new("lease://inbound"));
-    let mailbox = Arc::new(Mailbox::new(1));
     let router = Arc::new(Router::new());
-    router.register(source.clone(), mailbox.clone());
-    mailbox
-        .deliver(Envelope::new(destination.clone(), Bytes::new()))
-        .expect("fill response mailbox");
+    let rejected = register_full_response_mailbox(&router, &source);
     let sink = new_correctness_lease_sink(router);
     let request = crate::domain::LeaseClientRequest::new(
         fitz_core::runtime::ClientFrameMeta::new(
@@ -299,29 +295,15 @@ fn should_not_retain_lease_subscription_when_response_cannot_be_delivered() {
     // Act
     sink.deliver(Envelope::from_route(source, destination, request))
         .expect("deliver lease subscription");
-    std::thread::sleep(Duration::from_millis(50));
-    let _filler = receive_envelope(&mailbox, "filled response mailbox");
-    let query_source = RouteAddress::new(family, Route::new("inbox://session/7"));
-    let query_destination = RouteAddress::new(family, Route::new("lease://inbound"));
-    let query = crate::domain::LeaseClientRequest::new(
-        fitz_core::runtime::ClientFrameMeta::new(
-            7,
-            ClientChannel::Lease,
-            crate::wire::lease_codec::msg_type::QUERY,
-            family,
-        ),
-        Ok(crate::domain::LeaseClientFrame::Op(
-            crate::domain::LeaseMessage::Query {
-                family_id: family,
-                route: Route::new("lease://acme/locks/resource"),
-            },
-        )),
-    );
-    sink.deliver(Envelope::from_route(query_source, query_destination, query))
-        .expect("deliver ordering query");
-    let _query_response = receive_envelope(&mailbox, "ordering query response");
+    sink.await_normal_lane_for_tests(family);
+    let response = rejected.try_recv().expect("reject subscription response");
 
     // Assert
+    assert_eq!(
+        response.msg_type.as_u16(),
+        crate::wire::lease_codec::msg_type::SUBSCRIBE
+    );
+    assert_eq!(response.payload.first(), Some(&0));
     assert_eq!(sink.subscription_count(), 0);
     assert!(sink.watch_families_are_empty_for_tests());
 }

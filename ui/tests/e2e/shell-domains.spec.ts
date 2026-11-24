@@ -3,6 +3,7 @@ import {
   applyLeaseOverride,
   domainOverviewPages,
   mockDomainOverviewApis,
+  scenarioNow,
 } from "./shell/api-fixtures";
 import {
   mockQueueResourceApis,
@@ -145,6 +146,7 @@ test("navigates lease scope drill-down links and shows ownership countdown updat
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.clock.install({ time: new Date(scenarioNow) });
   const leaseScope = {
     area: "default",
     realm: "default",
@@ -172,13 +174,12 @@ test("navigates lease scope drill-down links and shows ownership countdown updat
   );
   await expect(ownershipDetails).toBeVisible();
   const remainingCell = ownershipDetails.locator("[data-field='remaining-ttl']");
-  const initialRemaining = (await remainingCell.textContent())?.trim();
-  await page.waitForTimeout(1200);
-  const updatedRemaining = (await remainingCell.textContent())?.trim();
+  await page.clock.pauseAt(new Date(scenarioNow + 60_000));
+  await page.clock.fastForward(1000);
+  await expect(remainingCell).toHaveText("59s");
 
-  expect(initialRemaining).toBeTruthy();
-  expect(updatedRemaining).toBeTruthy();
-  expect(updatedRemaining).not.toBe(initialRemaining);
+  await page.clock.fastForward(1000);
+  await expect(remainingCell).toHaveText("58s");
 });
 
 test("navigates notice scope drill-down links to operation detail", async ({ page }) => {

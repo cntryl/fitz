@@ -439,136 +439,127 @@ impl Default for TimerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
-    use std::time::Instant;
 
     #[test]
-    fn should_fire_timer_after_delay() {
+    fn should_fire_one_shot_timer_once_at_its_deadline() {
         // Arrange
-        let mut tm = TimerManager::new();
-        let timer_id = tm.schedule_once(Duration::from_millis(50));
-        let fired = tm.fired_timers();
-        assert_eq!(fired, Vec::new());
+        let start = Instant::now();
+        let delay = Duration::from_millis(50);
+        let deadline = start + delay;
+        let mut tm = TimerManager::new_at(start);
+        let timer_id = tm.schedule_once_at(start, delay);
 
         // Act
-        thread::sleep(Duration::from_millis(100));
-        let fired = tm.fired_timers();
+        let before = tm.fired_timers_at(start + delay.saturating_sub(Duration::from_millis(1)));
+        let at_deadline = tm.fired_timers_at(deadline);
+        let after = tm.fired_timers_at(deadline + Duration::from_millis(1));
 
         // Assert
-        assert_eq!(fired.len(), 1);
-        assert_eq!(fired[0], timer_id);
-        let fired_again = tm.fired_timers();
-        assert_eq!(fired_again, Vec::new());
+        assert_eq!(before, []);
+        assert_eq!(at_deadline, [timer_id]);
+        assert_eq!(after, []);
     }
 
     #[test]
-    fn should_schedule_repeating_timer() {
+    fn should_fire_repeating_timer_on_each_interval() {
         // Arrange
-        let mut tm = TimerManager::new();
-        let timer_id = tm.schedule_repeat(Duration::from_millis(50), Duration::from_millis(50));
+        let start = Instant::now();
+        let interval = Duration::from_millis(50);
+        let mut tm = TimerManager::new_at(start);
+        let timer_id = tm.schedule_repeat_at(start, interval, interval);
 
         // Act
-        thread::sleep(Duration::from_millis(120));
-        let fired = tm.fired_timers();
+        let first = tm.fired_timers_at(start + interval);
+        let between = tm.fired_timers_at(start + interval + Duration::from_millis(1));
+        let second = tm.fired_timers_at(start + interval * 2);
 
         // Assert
-        assert_ne!(fired, Vec::new());
-        assert_eq!(fired[0], timer_id);
-        thread::sleep(Duration::from_millis(60));
-        let fired_again = tm.fired_timers();
-        assert_eq!(fired_again.len(), 1);
-        assert_eq!(fired_again[0], timer_id);
+        assert_eq!(first, [timer_id]);
+        assert_eq!(between, []);
+        assert_eq!(second, [timer_id]);
     }
 
     #[test]
-    fn should_cancel_timer() {
+    fn should_not_fire_cancelled_timer_at_its_deadline() {
         // Arrange
-        let mut tm = TimerManager::new();
-        let timer_id = tm.schedule_once(Duration::from_millis(50));
+        let start = Instant::now();
+        let delay = Duration::from_millis(50);
+        let mut tm = TimerManager::new_at(start);
+        let timer_id = tm.schedule_once_at(start, delay);
+        assert!(tm.cancel(timer_id));
 
         // Act
-        let cancelled = tm.cancel(timer_id);
-        thread::sleep(Duration::from_millis(100));
-        let fired = tm.fired_timers();
+        let fired = tm.fired_timers_at(start + delay);
 
         // Assert
-        assert!(cancelled);
-        assert_eq!(fired, Vec::new());
+        assert_eq!(fired, []);
     }
 
     #[test]
     fn should_return_next_deadline_for_remaining_timer_when_earliest_timer_is_cancelled() {
         // Arrange
-        let mut tm = TimerManager::new();
-        let first_timer = tm.schedule_once(Duration::from_millis(50));
-        let second_timer = tm.schedule_once(Duration::from_millis(100));
-        let expected_tick = tm
-            .timers
-            .get(&second_timer)
-            .map(|entry| entry.deadline_tick)
-            .unwrap();
+        let start = Instant::now();
+        let second_delay = Duration::from_millis(100);
+        let mut tm = TimerManager::new_at(start);
+        let first_timer = tm.schedule_once_at(start, Duration::from_millis(50));
+        tm.schedule_once_at(start, second_delay);
+        assert!(tm.cancel(first_timer));
 
         // Act
-        let cancelled = tm.cancel(first_timer);
         let next_deadline = tm.next_deadline();
 
         // Assert
-        assert!(cancelled);
-        assert_eq!(tm.min_deadline_tick, Some(expected_tick));
-        assert!(next_deadline.is_some());
+        assert_eq!(next_deadline, Some(start + second_delay));
     }
 
     #[test]
     fn should_return_next_deadline_for_rescheduled_repeat_when_timer_fires() {
         // Arrange
-        let mut tm = TimerManager::new();
-        let timer_id = tm.schedule_repeat(Duration::from_millis(1), Duration::from_millis(50));
-
-        thread::sleep(Duration::from_millis(10));
+        let start = Instant::now();
+        let interval = Duration::from_millis(50);
+        let polled_at = start + Duration::from_millis(10);
+        let mut tm = TimerManager::new_at(start);
+        let timer = tm.schedule_repeat_at(start, Duration::from_millis(1), interval);
+        assert_eq!(tm.fired_timers_at(polled_at), [timer]);
 
         // Act
-        let fired = tm.fired_timers();
         let next_deadline = tm.next_deadline();
 
         // Assert
-        assert_eq!(fired, vec![timer_id]);
-        assert!(next_deadline.is_some());
-        assert!(next_deadline.unwrap() > Instant::now());
+        assert_eq!(next_deadline, Some(polled_at + interval));
     }
 
     #[test]
     fn should_keep_next_deadline_unchanged_when_no_timers_have_fired() {
         // Arrange
-        let mut tm = TimerManager::new();
-        tm.schedule_once(Duration::from_secs(1));
-        let expected_deadline = tm.next_deadline();
+        let start = Instant::now();
+        let mut tm = TimerManager::new_at(start);
+        let delay = Duration::from_secs(1);
+        tm.schedule_once_at(start, delay);
 
         // Act
-        let fired = tm.fired_timers();
+        let fired = tm.fired_timers_at(start);
         let next_deadline = tm.next_deadline();
 
         // Assert
-        assert_eq!(fired, Vec::new());
-        assert_eq!(next_deadline, expected_deadline);
+        assert_eq!(fired, []);
+        assert_eq!(next_deadline, Some(start + delay));
     }
 
     #[test]
-    fn should_fire_next_timer_sub_millisecond_given_10k_staggered() {
+    fn should_only_fire_due_timers_given_ten_thousand_staggered_deadlines() {
         // Arrange
-        let mut tm = TimerManager::new();
-        for index in 1..=10_000_u64 {
-            tm.schedule_once(Duration::from_millis(index));
+        let start = Instant::now();
+        let mut tm = TimerManager::new_at(start);
+        let due = [1, 2].map(|delay| tm.schedule_once_at(start, Duration::from_millis(delay)));
+        for delay in 3..=10_000 {
+            tm.schedule_once_at(start, Duration::from_millis(delay));
         }
 
-        thread::sleep(Duration::from_millis(2));
-
         // Act
-        let start = Instant::now();
-        let fired = tm.fired_timers();
-        let elapsed = start.elapsed();
+        let fired = tm.fired_timers_at(start + Duration::from_millis(2));
 
         // Assert
-        assert_ne!(fired, Vec::new());
-        assert!(elapsed < Duration::from_millis(1));
+        assert_eq!(fired, due);
     }
 }

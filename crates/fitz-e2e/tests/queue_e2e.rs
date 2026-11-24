@@ -129,64 +129,76 @@ where
 }
 
 // Generic test helper for multiple enqueue operations
-async fn should_handle_batch_enqueue_operations<C>(server: &TestServer)
+async fn should_reserve_every_payload_given_multiple_enqueues<C>(server: &TestServer)
 where
     C: QueueConnector,
 {
     // Arrange
+    let route = "queue://test/app/batch";
+    let expected: Vec<_> = (0..10)
+        .map(|index| format!("task-{index}").into_bytes())
+        .collect();
     let mut client = C::connect(server).await.expect("connect");
-
-    // Act - Enqueue multiple messages
-    for i in 0..10 {
-        let data = format!("task-{i}").into_bytes();
-        let frame = build_queue_enqueue("queue://test/app/batch", &data);
+    for body in &expected {
+        let frame = build_queue_enqueue(route, body);
         let response = client
             .send_and_receive(&frame, 2000)
             .await
-            .unwrap_or_else(|_| panic!("enqueue {i}"));
-
-        let (_msg_type, status, _data) = parse_queue_response(&response);
-        assert_eq!(status, 0, "Enqueue {i} should succeed");
+            .expect("enqueue batch fixture");
+        let (_, status, _) = parse_queue_response(&response);
+        assert_eq!(status, 0, "enqueue fixture payload {body:?}");
     }
 
-    // Assert - Dequeue to verify all were stored
-    let dequeue_frame = build_queue_dequeue("queue://test/app/batch");
+    // Act
     let response = client
-        .send_and_receive(&dequeue_frame, 2000)
+        .send_and_receive(&build_queue_reserve(route, Some(10)), 2000)
         .await
-        .expect("dequeue");
+        .expect("reserve batch");
 
-    let (_msg_type, status, _data) = parse_queue_response(&response);
-    assert_eq!(status, 0, "Should be able to dequeue after batch enqueue");
+    // Assert
+    let (message_type, status, data) = parse_queue_response(&response);
+    assert_eq!((message_type, status), (202, 0));
+    let mut actual = extract_queue_messages(&data).expect("decode reserved batch");
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
 }
 
 // Generic test helper for concurrent enqueue from multiple clients
-async fn should_handle_concurrent_enqueue_from_multiple_clients<C>(server: &TestServer)
+async fn should_preserve_both_payloads_given_overlapping_client_enqueues<C>(server: &TestServer)
 where
-    C: QueueConnector,
+    C: QueueConnector + FrameReceivingConnector,
 {
     // Arrange
+    let route = "queue://test/app/concurrent";
     let mut client1 = C::connect(server).await.expect("connect 1");
     let mut client2 = C::connect(server).await.expect("connect 2");
+    let mut consumer = C::connect(server).await.expect("connect consumer");
+    let frame1 = build_queue_enqueue(route, b"client-1-task");
+    let frame2 = build_queue_enqueue(route, b"client-2-task");
 
-    // Act - Both clients enqueue
-    let frame1 = build_queue_enqueue("queue://test/app/concurrent", b"client-1-task");
-    let response1 = client1
-        .send_and_receive(&frame1, 2000)
+    // Act
+    tokio::try_join!(client1.send_frame(&frame1), client2.send_frame(&frame2))
+        .expect("submit without awaiting either enqueue reply");
+    let (reply1, reply2) = tokio::try_join!(client1.recv_frame(2000), client2.recv_frame(2000))
+        .expect("receive both enqueue replies");
+    let reserved = consumer
+        .send_and_receive(&build_queue_reserve(route, Some(2)), 2000)
         .await
-        .expect("enqueue 1");
-
-    let frame2 = build_queue_enqueue("queue://test/app/concurrent", b"client-2-task");
-    let response2 = client2
-        .send_and_receive(&frame2, 2000)
-        .await
-        .expect("enqueue 2");
+        .expect("reserve both enqueued messages");
 
     // Assert
-    let (_msg_type, status1, _data) = parse_queue_response(&response1);
-    let (_msg_type, status2, _data) = parse_queue_response(&response2);
-    assert_eq!(status1, 0, "Client 1 enqueue should succeed");
-    assert_eq!(status2, 0, "Client 2 enqueue should succeed");
+    for reply in [&reply1, &reply2] {
+        let (message_type, status, _) = parse_queue_response(reply);
+        assert_eq!((message_type, status), (200, 0));
+    }
+    let (message_type, status, data) = parse_queue_response(&reserved);
+    assert_eq!((message_type, status), (202, 0));
+    let mut actual = extract_queue_messages(&data).expect("decode reserved work");
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        [b"client-1-task".to_vec(), b"client-2-task".to_vec()]
+    );
 }
 
 // Generic test helper for enqueue-dequeue-enqueue sequence
@@ -399,8 +411,8 @@ define_transport_tests!(
     should_reject_dequeue_empty_queue_tcp / should_reject_dequeue_empty_queue_ws => should_reject_dequeue_empty_queue,
     should_isolate_separate_queues_tcp / should_isolate_separate_queues_ws => should_isolate_separate_queues,
     should_preserve_message_payload_tcp / should_preserve_message_payload_ws => should_preserve_message_payload,
-    should_handle_batch_enqueue_operations_tcp / should_handle_batch_enqueue_operations_ws => should_handle_batch_enqueue_operations,
-    should_handle_concurrent_enqueue_from_multiple_clients_tcp / should_handle_concurrent_enqueue_from_multiple_clients_ws => should_handle_concurrent_enqueue_from_multiple_clients,
+    should_reserve_every_payload_given_multiple_enqueues_tcp / should_reserve_every_payload_given_multiple_enqueues_ws => should_reserve_every_payload_given_multiple_enqueues,
+    should_preserve_both_payloads_given_overlapping_client_enqueues_tcp / should_preserve_both_payloads_given_overlapping_client_enqueues_ws => should_preserve_both_payloads_given_overlapping_client_enqueues,
     should_handle_mixed_enqueue_dequeue_sequence_tcp / should_handle_mixed_enqueue_dequeue_sequence_ws => should_handle_mixed_enqueue_dequeue_sequence,
     should_notify_queue_watch_given_enqueue_tcp / should_notify_queue_watch_given_enqueue_ws => should_notify_queue_watch_given_enqueue,
     should_reject_invalid_queue_subscription_routes_tcp / should_reject_invalid_queue_subscription_routes_ws => should_reject_invalid_queue_subscription_routes,
