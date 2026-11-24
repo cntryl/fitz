@@ -22,7 +22,7 @@ fn snapshot_session_info(session: &RuntimeSessionInfo, connected_at: String) -> 
         session_id: session.session_id.to_string(),
         service_name: session.metadata.service_name(),
         route_family: session.route_family.as_u64(),
-        subject: claims.map(|claims| claims.sub.clone()).unwrap_or_default(),
+        subject: claims.map_or_default(|claims| claims.sub.clone()),
         identity_claim: claims
             .and_then(|claims| claims.identity_claim.clone())
             .unwrap_or_default(),
@@ -34,10 +34,7 @@ fn snapshot_session_info(session: &RuntimeSessionInfo, connected_at: String) -> 
         messages_received: session.messages_received(),
         messages_sent: session.messages_sent(),
         transport: session.transport_kind.to_string(),
-        remote_addr: session
-            .peer_addr
-            .map(|addr| addr.to_string())
-            .unwrap_or_default(),
+        remote_addr: session.peer_addr.map_or_default(|addr| addr.to_string()),
     }
 }
 

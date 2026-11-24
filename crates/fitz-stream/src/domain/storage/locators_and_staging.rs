@@ -1,13 +1,17 @@
 use super::super::store::EventPayload;
+#[cfg(any(test, feature = "test-support"))]
+use super::KeyPrefix;
+#[cfg(any(test, feature = "test-support"))]
+use super::OffsetCounterValue;
 use super::{
     decode_single_u64_value, decode_two_u64_value, encode_single_u64_value, encode_two_u64_value,
-    AreaCounterValue, CompactRealmPageValue, CompressedCompactRealmPageValue, KeyPrefix,
-    OffsetCounterValue, RealmCounterValue, ResourceMetaValue, WatermarkValue,
-    COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER,
+    AreaCounterValue, CompactRealmPageValue, CompressedCompactRealmPageValue, RealmCounterValue,
+    ResourceMetaValue, WatermarkValue, COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER,
 };
 use bytes::Bytes;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 
+#[cfg(any(test, feature = "test-support"))]
 fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
@@ -91,6 +95,11 @@ impl WatermarkValue {
     }
 }
 
+pub(crate) fn decode_offset_counter_value(bytes: &[u8]) -> Result<u64, String> {
+    decode_single_u64_value(bytes, 0x02, "decode offset counter value")
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl OffsetCounterValue {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
@@ -103,7 +112,7 @@ impl OffsetCounterValue {
     /// value.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self {
-            next_offset: decode_single_u64_value(bytes, 0x02, "decode offset counter value")?,
+            next_offset: decode_offset_counter_value(bytes)?,
         })
     }
 }
@@ -181,6 +190,7 @@ pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
 
 /// Staging key/value encoding for Transaction
 #[must_use]
+#[cfg(any(test, feature = "test-support"))]
 pub fn encode_staging_key(session_id: u64, event_index: usize) -> Vec<u8> {
     let mut encoder = lexkey::Encoder::with_capacity(18);
     encoder.push_byte(KeyPrefix::Staging as u8);
@@ -190,6 +200,7 @@ pub fn encode_staging_key(session_id: u64, event_index: usize) -> Vec<u8> {
     encoder.into_vec()
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn encode_staging_value(event: &EventPayload) -> Vec<u8> {
     let metadata_len = event.metadata.as_ref().map_or(0, Bytes::len);
     let mut buf = Vec::with_capacity(8 + event.body.len() + metadata_len);

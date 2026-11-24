@@ -36,9 +36,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-cntryl-stress.workspace = true
 proptest.workspace = true
-serial_test.workspace = true
 
 [dev-dependencies.fitz-queue]
 workspace = true

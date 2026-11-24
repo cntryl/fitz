@@ -15,59 +15,27 @@ fitz = { workspace = true, features = ["test-support"] }
 
 [dev-dependencies]
 fitz-core = { workspace = true, features = ["bench-support"] }
-ahash.workspace = true
-argon2.workspace = true
 async-trait.workspace = true
-base64.workspace = true
-brotli.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 cntryl-midge.workspace = true
 crossbeam-channel.workspace = true
-dashmap.workspace = true
-flate2.workspace = true
 futures-util.workspace = true
-getrandom.workspace = true
 hex.workspace = true
-hmac.workspace = true
-http-body-util.workspace = true
 hyper.workspace = true
-hyper-tungstenite.workspace = true
-hyper-util.workspace = true
 jsonwebtoken.workspace = true
-lexkey.workspace = true
 libc.workspace = true
-lz4_flex.workspace = true
-num-traits.workspace = true
-once_cell.workspace = true
-opentelemetry.workspace = true
-opentelemetry-otlp.workspace = true
-opentelemetry_sdk.workspace = true
 parking_lot.workspace = true
-percent-encoding.workspace = true
 reqwest.workspace = true
-rmcp.workspace = true
-rustc-hash.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha1.workspace = true
-sha2.workspace = true
-socket2.workspace = true
-smallvec.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true
-tokio-util.workspace = true
 tracing.workspace = true
-tracing-opentelemetry.workspace = true
-tracing-subscriber.workspace = true
 tungstenite.workspace = true
 url.workspace = true
 uuid.workspace = true
 cntryl-stress.workspace = true
-crc32c.workspace = true
-jsonschema.workspace = true
-proptest.workspace = true
 serial_test.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

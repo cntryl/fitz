@@ -1,11 +1,14 @@
 use super::super::store::StreamStorageLayout;
+#[cfg(test)]
+use super::{AreaValue, RealmValue, ResourceValue, OPTIONAL_OFFSET_ABSENT};
 use super::{
-    AreaValue, RealmValue, ResourceValue, StreamLayoutMarkerValue, AREA_VALUE_V2_MARKER,
-    OPTIONAL_BYTES_ABSENT, OPTIONAL_OFFSET_ABSENT, REALM_VALUE_V2_MARKER, RESOURCE_VALUE_V2_MARKER,
-    STREAM_LAYOUT_DROP_MARKER, STREAM_LAYOUT_MARKER_VALUE_V2_MARKER,
+    StreamLayoutMarkerValue, AREA_VALUE_V2_MARKER, OPTIONAL_BYTES_ABSENT, REALM_VALUE_V2_MARKER,
+    RESOURCE_VALUE_V2_MARKER, STREAM_LAYOUT_DROP_MARKER, STREAM_LAYOUT_MARKER_VALUE_V2_MARKER,
 };
+#[cfg(test)]
 use bytes::Bytes;
 
+#[cfg(test)]
 fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
@@ -21,7 +24,7 @@ impl StreamLayoutMarkerValue {
     }
 
     #[must_use]
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode(self) -> Vec<u8> {
         self.encode_marker(STREAM_LAYOUT_MARKER_VALUE_V2_MARKER)
     }
 
@@ -65,6 +68,55 @@ impl StreamLayoutMarkerValue {
     }
 }
 
+/// Inline index rows require validation at startup. Only fixtures read or emit their payloads.
+pub(crate) enum InlineIndexValue {
+    Resource,
+    Area,
+    Realm,
+}
+
+impl InlineIndexValue {
+    pub(crate) fn validate(self, bytes: &[u8]) -> Result<(), String> {
+        self.payload(bytes).map(|_| ())
+    }
+
+    fn payload(self, bytes: &[u8]) -> Result<(&[u8], Option<&[u8]>), String> {
+        let (marker, header_len, scope) = match self {
+            Self::Resource => (RESOURCE_VALUE_V2_MARKER, 42, "resource"),
+            Self::Area => (AREA_VALUE_V2_MARKER, 26, "area"),
+            Self::Realm => (REALM_VALUE_V2_MARKER, 34, "realm"),
+        };
+        if !bytes.starts_with(&marker) {
+            return Err(format!("decode {scope} value: missing marker"));
+        }
+        if bytes.len() < header_len {
+            return Err(format!("decode {scope} value: header too short"));
+        }
+
+        let body_len = u32_to_usize(u32::from_le_bytes(
+            bytes[header_len - 8..header_len - 4].try_into().unwrap(),
+        ));
+        let metadata_len =
+            u32::from_le_bytes(bytes[header_len - 4..header_len].try_into().unwrap());
+        let (body, rest) = bytes[header_len..]
+            .split_at_checked(body_len)
+            .ok_or_else(|| format!("decode {scope} value: truncated body"))?;
+        let (metadata, trailing) = if metadata_len == OPTIONAL_BYTES_ABSENT {
+            (None, rest)
+        } else {
+            let (metadata, trailing) = rest
+                .split_at_checked(u32_to_usize(metadata_len))
+                .ok_or_else(|| format!("decode {scope} value: truncated metadata"))?;
+            (Some(metadata), trailing)
+        };
+        if !trailing.is_empty() {
+            return Err(format!("decode {scope} value: trailing bytes"));
+        }
+        Ok((body, metadata))
+    }
+}
+
+#[cfg(test)]
 impl ResourceValue {
     pub fn encode(&self) -> Vec<u8> {
         let metadata_len = self.metadata.as_ref().map_or(0, Bytes::len);
@@ -104,72 +156,29 @@ impl ResourceValue {
     /// Returns an error if the resource value is malformed, truncated, or has
     /// trailing bytes.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        Self::decode_v2(bytes)
+        let (body, metadata) = InlineIndexValue::Resource.payload(bytes)?;
+        let area_offset = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
+        let realm_offset = u64::from_le_bytes(bytes[26..34].try_into().unwrap());
+        Ok(Self {
+            resource_offset: u64::from_le_bytes(bytes[2..10].try_into().unwrap()),
+            body: Bytes::copy_from_slice(body),
+            metadata: metadata.map(Bytes::copy_from_slice),
+            created_at: u64::from_le_bytes(bytes[10..18].try_into().unwrap()),
+            area_offset: (area_offset != OPTIONAL_OFFSET_ABSENT).then_some(area_offset),
+            realm_offset: (realm_offset != OPTIONAL_OFFSET_ABSENT).then_some(realm_offset),
+        })
     }
 
     /// # Panics
     ///
     /// Panics if `bytes` do not contain a valid resource value encoding.
     #[must_use]
-    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize resource value")
     }
-
-    fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
-        if !bytes.starts_with(&RESOURCE_VALUE_V2_MARKER) {
-            return Err("decode resource value: missing marker".to_string());
-        }
-        if bytes.len() < 42 {
-            return Err("decode resource value: header too short".to_string());
-        }
-
-        let resource_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
-        let created_at = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
-        let area_offset_raw = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
-        let realm_offset_raw = u64::from_le_bytes(bytes[26..34].try_into().unwrap());
-        let body_len = u32_to_usize(u32::from_le_bytes(bytes[34..38].try_into().unwrap()));
-        let metadata_len_raw = u32::from_le_bytes(bytes[38..42].try_into().unwrap());
-        let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
-            None
-        } else {
-            Some(u32_to_usize(metadata_len_raw))
-        };
-
-        let mut offset = 42;
-        if bytes.len().saturating_sub(offset) < body_len {
-            return Err("decode resource value: truncated body".to_string());
-        }
-        let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
-        offset += body_len;
-
-        let metadata = if let Some(metadata_len) = metadata_len {
-            if bytes.len().saturating_sub(offset) < metadata_len {
-                return Err("decode resource value: truncated metadata".to_string());
-            }
-            let metadata = Some(Bytes::copy_from_slice(
-                &bytes[offset..offset + metadata_len],
-            ));
-            offset += metadata_len;
-            metadata
-        } else {
-            None
-        };
-        if offset != bytes.len() {
-            return Err("decode resource value: trailing bytes".to_string());
-        }
-
-        Ok(Self {
-            resource_offset,
-            body,
-            metadata,
-            created_at,
-            area_offset: (area_offset_raw != OPTIONAL_OFFSET_ABSENT).then_some(area_offset_raw),
-            realm_offset: (realm_offset_raw != OPTIONAL_OFFSET_ABSENT).then_some(realm_offset_raw),
-        })
-    }
 }
 
+#[cfg(test)]
 impl AreaValue {
     pub fn encode(&self) -> Vec<u8> {
         let metadata_len = self.metadata.as_ref().map_or(0, Bytes::len);
@@ -197,76 +206,39 @@ impl AreaValue {
     /// Returns an error if the area value is malformed, truncated, or has
     /// trailing bytes.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        Self::decode_v2(bytes)
+        let (body, metadata) = InlineIndexValue::Area.payload(bytes)?;
+        Ok(Self {
+            resource_offset: u64::from_le_bytes(bytes[2..10].try_into().unwrap()),
+            body: Bytes::copy_from_slice(body),
+            metadata: metadata.map(Bytes::copy_from_slice),
+            created_at: u64::from_le_bytes(bytes[10..18].try_into().unwrap()),
+        })
     }
 
     /// # Panics
     ///
     /// Panics if `bytes` do not contain a valid area value encoding.
     #[must_use]
-    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize area value")
     }
-
-    fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
-        if !bytes.starts_with(&AREA_VALUE_V2_MARKER) {
-            return Err("decode area value: missing marker".to_string());
-        }
-        if bytes.len() < 26 {
-            return Err("decode area value: header too short".to_string());
-        }
-
-        let resource_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
-        let created_at = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
-        let body_len = u32_to_usize(u32::from_le_bytes(bytes[18..22].try_into().unwrap()));
-        let metadata_len_raw = u32::from_le_bytes(bytes[22..26].try_into().unwrap());
-        let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
-            None
-        } else {
-            Some(u32_to_usize(metadata_len_raw))
-        };
-
-        let mut offset = 26;
-        if bytes.len().saturating_sub(offset) < body_len {
-            return Err("decode area value: truncated body".to_string());
-        }
-        let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
-        offset += body_len;
-
-        let metadata = if let Some(metadata_len) = metadata_len {
-            if bytes.len().saturating_sub(offset) < metadata_len {
-                return Err("decode area value: truncated metadata".to_string());
-            }
-            let metadata = Some(Bytes::copy_from_slice(
-                &bytes[offset..offset + metadata_len],
-            ));
-            offset += metadata_len;
-            metadata
-        } else {
-            None
-        };
-
-        if offset != bytes.len() {
-            return Err("decode area value: trailing bytes".to_string());
-        }
-
-        Ok(Self {
-            resource_offset,
-            body,
-            metadata,
-            created_at,
-        })
-    }
 }
 
+#[cfg(test)]
 impl RealmValue {
     /// # Errors
     ///
     /// Returns an error if the realm value is malformed, truncated, or has
     /// trailing bytes.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        Self::decode_v2(bytes)
+        let (body, metadata) = InlineIndexValue::Realm.payload(bytes)?;
+        Ok(Self {
+            area_offset: u64::from_le_bytes(bytes[2..10].try_into().unwrap()),
+            resource_offset: u64::from_le_bytes(bytes[10..18].try_into().unwrap()),
+            body: Bytes::copy_from_slice(body),
+            metadata: metadata.map(Bytes::copy_from_slice),
+            created_at: u64::from_le_bytes(bytes[18..26].try_into().unwrap()),
+        })
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -295,59 +267,7 @@ impl RealmValue {
     ///
     /// Panics if `bytes` do not contain a valid realm value encoding.
     #[must_use]
-    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize realm value")
-    }
-
-    fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
-        if !bytes.starts_with(&REALM_VALUE_V2_MARKER) {
-            return Err("decode realm value: missing marker".to_string());
-        }
-        if bytes.len() < 34 {
-            return Err("decode realm value: header too short".to_string());
-        }
-
-        let area_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
-        let resource_offset = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
-        let created_at = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
-        let body_len = u32_to_usize(u32::from_le_bytes(bytes[26..30].try_into().unwrap()));
-        let metadata_len_raw = u32::from_le_bytes(bytes[30..34].try_into().unwrap());
-        let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
-            None
-        } else {
-            Some(u32_to_usize(metadata_len_raw))
-        };
-
-        let mut offset = 34;
-        if bytes.len().saturating_sub(offset) < body_len {
-            return Err("decode realm value: truncated body".to_string());
-        }
-        let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
-        offset += body_len;
-
-        let metadata = if let Some(metadata_len) = metadata_len {
-            if bytes.len().saturating_sub(offset) < metadata_len {
-                return Err("decode realm value: truncated metadata".to_string());
-            }
-            let metadata = Some(Bytes::copy_from_slice(
-                &bytes[offset..offset + metadata_len],
-            ));
-            offset += metadata_len;
-            metadata
-        } else {
-            None
-        };
-        if offset != bytes.len() {
-            return Err("decode realm value: trailing bytes".to_string());
-        }
-
-        Ok(Self {
-            area_offset,
-            resource_offset,
-            body,
-            metadata,
-            created_at,
-        })
     }
 }

@@ -232,13 +232,11 @@ pub(crate) fn match_candidate(mut candidate: Candidate, query: &str) -> Option<A
 }
 
 pub(crate) fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
-    uri.query()
-        .map(|query| {
-            url::form_urlencoded::parse(query.as_bytes())
-                .into_owned()
-                .collect()
-        })
-        .unwrap_or_default()
+    uri.query().map_or_default(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect()
+    })
 }
 
 pub(crate) fn normalize_route_family_filter(value: &str) -> String {

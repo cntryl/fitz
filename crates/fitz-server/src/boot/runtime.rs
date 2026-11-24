@@ -8,6 +8,7 @@ use tracing::info;
 
 mod config;
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use config::LocalListenerExposure;
 pub use config::{
     BootConfig, CloudDurabilityMode, CloudStorageConfig, StorageMemtableConfig, StorageMode,

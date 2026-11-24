@@ -164,11 +164,7 @@ impl SessionCloseFinalizer {
             return;
         }
 
-        let routes = self
-            .routes
-            .lock()
-            .map(|routes| routes.clone())
-            .unwrap_or_default();
+        let routes = self.routes.lock().map_or_default(|routes| routes.clone());
         for route in routes {
             self.router.unregister(&route);
         }

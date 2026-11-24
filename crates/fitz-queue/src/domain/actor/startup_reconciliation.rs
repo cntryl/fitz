@@ -48,6 +48,7 @@ impl QueueActor {
     /// # Errors
     ///
     /// Returns an error when any existing queue family contains invalid persisted state.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[allow(private_bounds)]
     pub fn validate_persisted_state_for_existing_families(
         store: impl Into<super::recovery_store::QueueStore>,
@@ -67,6 +68,7 @@ impl QueueActor {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub(in crate::domain::actor) fn validate_persisted_state_for_family(
         store: &super::recovery_store::QueueStore,
         family: u32,

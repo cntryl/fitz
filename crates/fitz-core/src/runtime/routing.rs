@@ -148,8 +148,6 @@
 //! ```
 
 use std::fmt;
-#[allow(unused_imports)]
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

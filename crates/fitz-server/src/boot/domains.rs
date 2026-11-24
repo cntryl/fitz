@@ -219,6 +219,7 @@ impl BrokerDomains {
         self.rpc.panic_family_actor_for_failpoint(family);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn schedule_force_due_scan_for_tests(&self, ready_count: usize) {
         self.schedule.force_due_scan_for_tests(ready_count);
     }

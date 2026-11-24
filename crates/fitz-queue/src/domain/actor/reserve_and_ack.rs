@@ -1,11 +1,12 @@
 //! Queue receive, lease extension, and acknowledgement processing.
 
 use super::{
-    decode_cached_response, encode_cached_response, obs, DlqReason, Duration, FxBuildHasher,
-    HashMap, HashSet, Inflight, InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan,
-    PersistedReadyMutation, QueueActor, QueueRecord, QueueResponse, QueueState, ReadyRange,
-    Reverse, VecDeque,
+    decode_cached_response, encode_cached_response, obs, DlqReason, Duration, Inflight,
+    InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan, QueueActor, QueueRecord,
+    QueueResponse, QueueState, Reverse,
 };
+#[cfg(any(test, feature = "test-support", feature = "benchkit"))]
+use super::{FxBuildHasher, HashMap, HashSet, PersistedReadyMutation, ReadyRange, VecDeque};
 use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,7 @@ fn validate_ack_authorization(
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support", feature = "benchkit"))]
 struct AckBatchDelete {
     id: MessageId,
     dedup_key: DedupKey,
@@ -44,6 +46,7 @@ struct AckBatchDelete {
 }
 
 impl QueueActor {
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn handle_receive_for_session(
         &mut self,
         session_id: u64,
@@ -483,6 +486,7 @@ impl QueueActor {
         }
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn handle_ack_batch_for_session(
         &mut self,
         session_id: u64,
@@ -584,6 +588,7 @@ impl QueueActor {
         self.finish_ack_success(id, dedup_key)
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     fn plan_ack_batch(
         &self,
         owner_session_id: u64,
@@ -652,6 +657,7 @@ impl QueueActor {
         Some(deletes)
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     fn apply_staged_ready_mutation(
         staged_ready_shards: &mut [VecDeque<ReadyRange>],
         staged_ready_count: &mut usize,
@@ -677,6 +683,7 @@ impl QueueActor {
             .saturating_add(inserted_len);
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     fn stage_delayed_mutation(
         staged_delayed: &mut HashMap<MessageId, u64, FxBuildHasher>,
         staged_next_delayed_visibility: &mut Option<u64>,
@@ -744,6 +751,7 @@ impl QueueActor {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     fn commit_ack_batch_delete(
         &self,
         deletes: &[AckBatchDelete],

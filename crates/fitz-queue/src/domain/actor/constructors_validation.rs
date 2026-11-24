@@ -24,6 +24,7 @@ impl QueueActor {
     ///
     /// # Panics
     /// Panics when persisted queue state cannot be recovered.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn new(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -60,6 +61,7 @@ impl QueueActor {
     ///
     /// # Panics
     /// Panics when persisted queue state cannot be recovered.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn with_clock(
         family: RouteFamily,
         queue_key: QueueKey,

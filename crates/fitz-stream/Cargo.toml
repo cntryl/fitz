@@ -39,7 +39,6 @@ tracing.workspace = true
 fitz-core = { workspace = true, features = ["bench-support"] }
 cntryl-stress.workspace = true
 proptest.workspace = true
-serial_test.workspace = true
 
 [[bench]]
 name = "tier4_stream_compacted"

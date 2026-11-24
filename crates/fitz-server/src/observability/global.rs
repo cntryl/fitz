@@ -51,6 +51,7 @@ pub(crate) fn try_init_observability_with_defaults(
 /// that are routine on every ephemeral test engine (see
 /// [`TEST_QUIET_DEPENDENCY_DIRECTIVES`]). Used by the test harness only --
 /// the production boot path keeps seeing every dependency `WARN`.
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn try_init_test_observability(
 ) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     if let Some(existing) = initialized_metrics() {
@@ -60,6 +61,7 @@ pub(crate) fn try_init_test_observability(
     init_observability_with_options(None, None, false, true)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn try_init_bench_observability(
 ) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     // Benchmarks should emit only stress output unless explicitly opted into logs.

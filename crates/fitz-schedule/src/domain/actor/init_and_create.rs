@@ -40,6 +40,7 @@ impl ScheduleActor {
     /// # Panics
     ///
     /// Panics when schedule actor startup fails.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[must_use]
     pub fn new(
         family: RouteFamily,
@@ -52,6 +53,7 @@ impl ScheduleActor {
     /// # Panics
     ///
     /// Panics when schedule actor startup fails.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[must_use]
     pub fn new_with_clock(
         family: RouteFamily,

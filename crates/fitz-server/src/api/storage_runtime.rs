@@ -37,6 +37,7 @@ enum OpenAttempt {
 /// Returns an error when the selected storage backend cannot be opened, when
 /// storage directories cannot be created, or when required route-family column
 /// families cannot be ensured.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     let (_shutdown_guard, shutdown) = watch::channel(None);
     match init_with_shutdown(config, shutdown).await? {

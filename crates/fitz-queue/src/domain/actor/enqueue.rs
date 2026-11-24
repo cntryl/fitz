@@ -4,11 +4,13 @@ use super::{
 };
 
 struct SendTiming {
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     delay_ms: u64,
     visible_at_ms: u64,
     visible_at: Instant,
 }
 
+#[cfg(any(test, feature = "test-support", feature = "benchkit"))]
 struct BatchSendPlan {
     ids: Vec<MessageId>,
     post_commit: Vec<(MessageId, QueueRecord, Bytes, Instant)>,
@@ -59,6 +61,7 @@ impl QueueActor {
     }
 
     /// Handle send operation
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
         self.handle_send_with_ttl(body, delay_seconds, None)
     }
@@ -201,6 +204,7 @@ impl QueueActor {
 
     /// Send multiple messages in one transaction (batch).
     /// Same semantics as `N×handle_send`; use for throughput when the caller has many messages.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn handle_send_batch(&mut self, items: &[(Bytes, Option<u64>)]) -> QueueResponse {
         if self.storage_outcome_is_unknown() {
             return Self::unknown_outcome_response();
@@ -360,6 +364,7 @@ impl QueueActor {
         };
 
         Ok(SendTiming {
+            #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
             delay_ms,
             visible_at_ms,
             visible_at,
@@ -492,6 +497,7 @@ impl QueueActor {
         }
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     fn stage_batch_send(
         &self,
         txn: &mut super::recovery_store::QueueTransaction,

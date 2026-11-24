@@ -287,6 +287,27 @@ fn should_reject_area_value_with_wrong_marker() {
 }
 
 #[test]
+fn should_reject_inline_area_metadata_truncated_on_disk() {
+    // Arrange
+    let mut encoded = AreaValue {
+        resource_offset: 7,
+        body: Bytes::from("body"),
+        metadata: Some(Bytes::from("meta")),
+        created_at: 321,
+    }
+    .encode();
+    encoded.truncate(encoded.len() - 1);
+
+    // Act
+    let error = InlineIndexValue::Area
+        .validate(&encoded)
+        .expect_err("reject truncated metadata");
+
+    // Assert
+    assert_eq!(error, "decode area value: truncated metadata");
+}
+
+#[test]
 fn should_roundtrip_compact_realm_value() {
     // Arrange
     let value = RealmValue {

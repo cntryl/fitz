@@ -27,7 +27,6 @@ hex.workspace = true
 lexkey.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 tracing.workspace = true
 
@@ -35,7 +34,6 @@ tracing.workspace = true
 fitz-core = { workspace = true, features = ["bench-support"] }
 cntryl-stress.workspace = true
 proptest.workspace = true
-serial_test.workspace = true
 
 [[bench]]
 name = "tier3_system_kv"

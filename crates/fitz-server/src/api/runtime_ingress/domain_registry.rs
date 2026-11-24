@@ -69,6 +69,7 @@ impl IngressDomainDescriptor {
         self.manifest.kind
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn domain_name(&self) -> &'static str {
         self.manifest.kind.as_str()
     }
@@ -139,6 +140,7 @@ impl IngressDomainPolicy {
         }))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn descriptor_for_msg_type(
         msg_type: crate::protocol::message::MessageType,
     ) -> Result<Option<&'static IngressDomainDescriptor>, &'static str> {
@@ -154,6 +156,7 @@ impl IngressDomainPolicy {
     /// Derived from the shared descriptor table rather than a separate literal
     /// match, so the name accepted here is always the one `as_str` produces and
     /// the two cannot drift apart.
+    #[cfg(any(test, feature = "test-support"))]
     fn domain_from_manifest_name(name: &str) -> Option<DispatchDomain> {
         DispatchDomain::ALL
             .into_iter()

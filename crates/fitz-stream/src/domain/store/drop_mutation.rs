@@ -262,6 +262,7 @@ impl StreamStore {
     ///
     /// # Errors
     /// Returns an error for an invalid scope, expired admission budget, or failed commit.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn drop_scope(&self, scope: &StreamDropScope, mode: StreamWriteMode) -> Result<(), String> {
         self.drop_scope_with_deadline(scope, mode, None)
     }

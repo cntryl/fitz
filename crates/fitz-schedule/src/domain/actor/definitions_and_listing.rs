@@ -187,6 +187,7 @@ impl ScheduleActor {
     /// # Errors
     ///
     /// Returns an error when validation or durable persistence fails.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn create_schedule(
         &mut self,
         route: String,
@@ -437,6 +438,7 @@ impl ScheduleActor {
         self.schedules.len()
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[must_use]
     pub fn list_defs(&self) -> Vec<(String, String, ScheduleDeliveryMode, Bytes)> {
         self.list_entries

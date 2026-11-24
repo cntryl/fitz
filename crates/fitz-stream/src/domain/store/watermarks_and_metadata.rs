@@ -16,6 +16,7 @@ impl StreamStore {
     ///
     /// # Errors
     /// Returns an error on a concurrent reset or storage failure.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_watermark(
         &self,
         family: u64,
@@ -31,6 +32,7 @@ impl StreamStore {
     ///
     /// # Errors
     /// Returns an error on a concurrent reset or storage failure.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_realm_watermark(
         &self,
         family: u64,

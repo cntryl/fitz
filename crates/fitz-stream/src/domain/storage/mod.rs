@@ -12,31 +12,39 @@ use keys_and_models::{
     STREAM_LAYOUT_DROP_MARKER, STREAM_LAYOUT_MARKER_VALUE_V2_MARKER,
 };
 
-#[cfg(test)]
-pub(crate) use keys_and_models::encode_compact_resource_fragment_key;
 pub use keys_and_models::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
-    encode_area_counter_key, encode_area_discriminator_key, encode_area_key,
-    encode_compact_area_page_key, encode_compact_global_page_key, encode_compact_resource_page_key,
+    encode_area_counter_key, encode_area_discriminator_key, encode_compact_area_page_key,
+    encode_compact_global_page_key, encode_compact_resource_page_key,
     encode_compressed_compact_realm_page_key, encode_cursor_state_key,
     encode_family_writer_epoch_key, encode_global_area_posting_key,
     encode_global_area_resource_posting_key, encode_global_counter_key,
     encode_global_discriminator_key, encode_global_resource_posting_key,
     encode_global_watermark_key, encode_offset_counter_key, encode_payload_blob_key,
-    encode_realm_counter_key, encode_realm_discriminator_key, encode_realm_key,
-    encode_realm_resource_posting_key, encode_realm_watermark_key,
-    encode_resource_discriminator_key, encode_resource_key, encode_resource_meta_key,
+    encode_realm_counter_key, encode_realm_discriminator_key, encode_realm_resource_posting_key,
+    encode_realm_watermark_key, encode_resource_discriminator_key, encode_resource_meta_key,
     encode_stream_layout_marker_key, encode_watermark_key, stream_key_suffix, AreaCounterValue,
-    AreaValue, CompactAreaPageRecord, CompactAreaPageValue, CompactGlobalPageRecord,
-    CompactGlobalPageValue, CompactRealmPageRecord, CompactRealmPageValue,
-    CompactResourcePageRecord, CompactResourcePageValue, CompressedCompactRealmPageValue,
-    KeyPrefix, OffsetCounterValue, PostingEntry, PostingPageValue, RealmCounterValue, RealmValue,
-    ResourceMetaValue, ResourceValue, StreamLayoutMarkerValue, WatermarkValue,
-    GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
+    CompactAreaPageRecord, CompactAreaPageValue, CompactGlobalPageRecord, CompactGlobalPageValue,
+    CompactRealmPageRecord, CompactRealmPageValue, CompactResourcePageRecord,
+    CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, PostingEntry,
+    PostingPageValue, RealmCounterValue, ResourceMetaValue, StreamLayoutMarkerValue,
+    WatermarkValue, GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
+};
+#[cfg(any(test, feature = "test-support"))]
+pub use keys_and_models::{
+    encode_area_key, encode_realm_key, encode_resource_key, OffsetCounterValue,
+};
+#[cfg(test)]
+pub(crate) use keys_and_models::{
+    encode_compact_resource_fragment_key, AreaValue, RealmValue, ResourceValue,
 };
 #[cfg(test)]
 pub use locators_and_staging::create_test_db;
-pub use locators_and_staging::{decode_staging_value, encode_staging_key, encode_staging_value};
+pub(crate) use locators_and_staging::decode_offset_counter_value;
+pub use locators_and_staging::decode_staging_value;
+#[cfg(any(test, feature = "test-support"))]
+pub use locators_and_staging::{encode_staging_key, encode_staging_value};
+pub(crate) use resource_area_realm_values::InlineIndexValue;
 
 #[cfg(test)]
 mod tests;

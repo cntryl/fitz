@@ -98,6 +98,7 @@ impl ScheduleStore {
     ///
     /// Returns an error when the family id is invalid, opening the family
     /// transaction fails, or committing with the caller-selected write options fails.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub(crate) fn sync_family(&self, cf_id: u64, write_policy: WritePolicy) -> Result<(), String> {
         let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
         let txn = self

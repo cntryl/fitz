@@ -370,8 +370,7 @@ impl Runtime {
         realm: &str,
     ) -> Vec<crate::control::admin::StreamRealmWatermark> {
         self.stream_realm_watermark_detail(realm)
-            .map(|detail| detail.family_watermarks)
-            .unwrap_or_default()
+            .map_or_default(|detail| detail.family_watermarks)
     }
 
     pub(crate) fn stream_area_watermark_detail(
@@ -390,8 +389,7 @@ impl Runtime {
         area: &str,
     ) -> Vec<crate::control::admin::StreamAreaWatermark> {
         self.stream_area_watermark_detail(realm, area)
-            .map(|detail| detail.family_watermarks)
-            .unwrap_or_default()
+            .map_or_default(|detail| detail.family_watermarks)
     }
 
     #[must_use]
@@ -477,8 +475,7 @@ impl Runtime {
             let timestamp = chrono::Utc
                 .timestamp_millis_opt(snapshot.dead_lettered_at_epoch_ms.cast_signed())
                 .single()
-                .map(|value| value.to_rfc3339())
-                .unwrap_or_default();
+                .map_or_default(|value| value.to_rfc3339());
             crate::control::admin::QueueDeadLetter::snapshot(
                 &crate::control::admin::QueueDeadLetterSnapshot {
                     message_id: snapshot.message_id,
@@ -579,8 +576,7 @@ impl Runtime {
         self.domain_admins
             .read()
             .as_ref()
-            .map(DomainAdminPorts::lease_admin_waiters)
-            .unwrap_or_default()
+            .map_or_default(DomainAdminPorts::lease_admin_waiters)
     }
 
     #[must_use]
@@ -600,8 +596,7 @@ impl Runtime {
         self.domain_admins
             .read()
             .as_ref()
-            .map(|domains| domains.schedule_admin_pending_claims(family))
-            .unwrap_or_default()
+            .map_or_default(|domains| domains.schedule_admin_pending_claims(family))
     }
 
     pub(crate) fn schedule_run_now(
@@ -681,7 +676,7 @@ fn session_info(session: &crate::session::SessionInfo) -> crate::control::admin:
         session_id: session.session_id.to_string(),
         service_name: session.metadata.service_name(),
         route_family: session.route_family.as_u64(),
-        subject: claims.map(|claims| claims.sub.clone()).unwrap_or_default(),
+        subject: claims.map_or_default(|claims| claims.sub.clone()),
         identity_claim: claims
             .and_then(|claims| claims.identity_claim.clone())
             .unwrap_or_default(),
@@ -693,10 +688,7 @@ fn session_info(session: &crate::session::SessionInfo) -> crate::control::admin:
         messages_received: session.messages_received(),
         messages_sent: session.messages_sent(),
         transport: session.transport_kind.to_string(),
-        remote_addr: session
-            .peer_addr
-            .map(|addr| addr.to_string())
-            .unwrap_or_default(),
+        remote_addr: session.peer_addr.map_or_default(|addr| addr.to_string()),
     }
 }
 

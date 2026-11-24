@@ -14,7 +14,6 @@ ahash.workspace = true
 bytes.workspace = true
 crossbeam-channel.workspace = true
 dashmap.workspace = true
-getrandom.workspace = true
 once_cell.workspace = true
 parking_lot.workspace = true
 rustc-hash.workspace = true
@@ -27,7 +26,6 @@ cntryl-stress = { workspace = true, optional = true }
 [dev-dependencies]
 cntryl-stress.workspace = true
 proptest.workspace = true
-serial_test.workspace = true
 
 [[bench]]
 name = "tier1_hotpath_matcher"

@@ -66,18 +66,8 @@ impl StreamActor {
         })
     }
 
-    pub fn resource_identity(&self) -> (&str, &str, &str) {
-        (&self.realm, &self.area, &self.resource)
-    }
-
     pub fn has_active_session(&self) -> bool {
         self.active_session.is_some()
-    }
-
-    pub fn active_session_owner(&self) -> Option<u64> {
-        self.active_session
-            .as_ref()
-            .map(|session| session.owner_session_id)
     }
 
     /// # Errors
@@ -390,6 +380,7 @@ impl StreamActor {
     /// # Errors
     ///
     /// Returns an error when the underlying durable read fails.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn read(
         &self,
         from_offset: u64,

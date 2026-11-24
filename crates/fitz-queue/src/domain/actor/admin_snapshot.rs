@@ -175,6 +175,7 @@ impl QueueActor {
         dead_letters
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[must_use]
     pub fn ready_contains(&self, id: MessageId) -> bool {
         !self.expired_ready.contains(&id) && self.ready.iter().any(|entry| entry.id == id)
@@ -182,6 +183,7 @@ impl QueueActor {
 
     /// Returns true if queue-local waiters should be re-checked.
     /// Clears the flag. Used by the domain sink after state-changing operations.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn take_needs_wake_waiters(&mut self) -> bool {
         std::mem::take(&mut self.needs_wake_waiters)
     }

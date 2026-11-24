@@ -295,6 +295,7 @@ pub(super) fn decode_two_u64_value(
 
 /// Encodes a resource stream key
 #[must_use]
+#[cfg(any(test, feature = "test-support"))]
 pub fn encode_resource_key(
     realm: &str,
     area: &str,
@@ -311,6 +312,7 @@ pub fn encode_resource_key(
 
 /// Encodes an area index key
 #[must_use]
+#[cfg(any(test, feature = "test-support"))]
 pub fn encode_area_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::Area, area.len() + 9);
     storage_key::encode_segment_into(&mut encoder, area);
@@ -320,6 +322,7 @@ pub fn encode_area_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
 
 /// Encodes a realm index key
 #[must_use]
+#[cfg(any(test, feature = "test-support"))]
 pub fn encode_realm_key(realm: &str, realm_offset: u64) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::Realm, 9);
     encoder.encode_u64_into(realm_offset);
@@ -535,6 +538,7 @@ pub fn encode_stream_layout_marker_key() -> Vec<u8> {
 /// `area_offset` and `realm_offset` are always written as `Some` at commit time.
 /// They remain options in memory so the record shape stays explicit at the
 /// storage boundary.
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct ResourceValue {
     pub resource_offset: u64,
@@ -548,6 +552,7 @@ pub struct ResourceValue {
 }
 
 /// Value stored in area index (covering index with full event)
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct AreaValue {
     pub resource_offset: u64,
@@ -557,6 +562,7 @@ pub struct AreaValue {
 }
 
 /// Value stored in realm index rows, carrying the full event inline
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct RealmValue {
     pub area_offset: u64,
@@ -688,6 +694,7 @@ pub struct WatermarkValue {
 }
 
 /// Offset counter value (metadata, not subject to TTL)
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct OffsetCounterValue {
     pub next_offset: u64,

@@ -19,12 +19,11 @@ use super::storage::{
     encode_global_discriminator_key, encode_global_resource_posting_key,
     encode_global_watermark_key, encode_payload_blob_key, encode_realm_counter_key,
     encode_realm_resource_posting_key, encode_resource_meta_key, encode_stream_layout_marker_key,
-    encode_watermark_key, AreaCounterValue, AreaValue, CompactAreaPageRecord, CompactAreaPageValue,
+    encode_watermark_key, AreaCounterValue, CompactAreaPageRecord, CompactAreaPageValue,
     CompactGlobalPageRecord, CompactGlobalPageValue, CompactRealmPageRecord,
     CompactResourcePageRecord, CompactResourcePageValue, CompressedCompactRealmPageValue,
-    KeyPrefix, OffsetCounterValue, PostingEntry, PostingPageValue, RealmCounterValue, RealmValue,
-    ResourceMetaValue, ResourceValue, StreamLayoutMarkerValue, WatermarkValue,
-    GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
+    KeyPrefix, PostingEntry, PostingPageValue, RealmCounterValue, ResourceMetaValue,
+    StreamLayoutMarkerValue, WatermarkValue, GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
@@ -56,7 +55,8 @@ struct AppendSession {
     ingest_metadata: Option<IngestMetadata>,
 }
 
-pub type SessionId = u64;
+#[cfg(test)]
+type SessionId = u64;
 type SequenceGuardKey = (u64, String, String, String);
 type SequenceGuard = Arc<Mutex<()>>;
 
@@ -357,6 +357,7 @@ impl StreamStorageLayout {
 
 impl StreamTTL {
     #[must_use]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_seconds(seconds: u64) -> Self {
         Self {
             ttl_seconds: Some(seconds),
@@ -364,6 +365,7 @@ impl StreamTTL {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn never() -> Self {
         Self { ttl_seconds: None }
     }

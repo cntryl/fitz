@@ -57,7 +57,7 @@ where
                         .sink
                         .reject_unqueued_frame(context.session_id, &frame.frame)?,
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        return Err("WebSocket inbound frame queue closed".to_owned())
+                        return Err("WebSocket inbound frame queue closed".to_owned());
                     }
                 }
             }

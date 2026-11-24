@@ -1,10 +1,10 @@
+use super::super::storage::{decode_offset_counter_value, InlineIndexValue};
 use super::{
     decode_staging_value, encode_cursor_state_key, encode_stream_layout_marker_key,
-    AreaCounterValue, AreaValue, BatchLimits, CompactAreaPageValue, CompactGlobalPageValue,
+    AreaCounterValue, BatchLimits, CompactAreaPageValue, CompactGlobalPageValue,
     CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, LayoutActivationFailure,
-    OffsetCounterValue, PostingPageValue, RealmCounterValue, RealmValue, ResourceMetaValue,
-    ResourceValue, StreamLayoutMarkerValue, StreamStorageLayout, StreamStore, StreamTTL,
-    WatermarkValue, REALM_PAGE_RECORD_LIMIT,
+    PostingPageValue, RealmCounterValue, ResourceMetaValue, StreamLayoutMarkerValue,
+    StreamStorageLayout, StreamStore, StreamTTL, WatermarkValue, REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
@@ -72,10 +72,12 @@ impl StreamStore {
             .map_err(|error| error.to_string())
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
         Self::new_with_storage(fitz_storage::storage::FitzStorageEngine::new(db))
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub(crate) fn new_with_storage(db: fitz_storage::storage::FitzStorageEngine) -> Self {
         Self::with_storage_config_and_layout(
             db,
@@ -85,6 +87,7 @@ impl StreamStore {
         )
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn with_layout(db: Arc<cntryl_midge::Engine>, layout: StreamStorageLayout) -> Self {
         Self::with_storage_layout(fitz_storage::storage::FitzStorageEngine::new(db), layout)
     }
@@ -101,10 +104,12 @@ impl StreamStore {
         )
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn with_limits(db: Arc<cntryl_midge::Engine>, limits: BatchLimits) -> Self {
         Self::with_storage_limits(fitz_storage::storage::FitzStorageEngine::new(db), limits)
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub(crate) fn with_storage_limits(
         db: fitz_storage::storage::FitzStorageEngine,
         limits: BatchLimits,
@@ -117,6 +122,7 @@ impl StreamStore {
         )
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn with_config(db: Arc<cntryl_midge::Engine>, limits: BatchLimits, ttl: StreamTTL) -> Self {
         Self::with_storage_config(
             fitz_storage::storage::FitzStorageEngine::new(db),
@@ -125,6 +131,7 @@ impl StreamStore {
         )
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub(crate) fn with_storage_config(
         db: fitz_storage::storage::FitzStorageEngine,
         limits: BatchLimits,
@@ -133,6 +140,7 @@ impl StreamStore {
         Self::with_storage_config_and_layout(db, limits, ttl, StreamStorageLayout::default())
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn with_config_and_layout(
         db: Arc<cntryl_midge::Engine>,
         limits: BatchLimits,
@@ -232,6 +240,7 @@ impl StreamStore {
         self.limits.clone()
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn storage_layout(&self) -> StreamStorageLayout {
         self.layout
     }
@@ -344,19 +353,19 @@ impl StreamStore {
             return Ok(());
         };
         match prefix {
-            KeyPrefix::Resource => ResourceValue::try_decode(value)
-                .map(|_| ())
+            KeyPrefix::Resource => InlineIndexValue::Resource
+                .validate(value)
                 .map_err(|error| ("resource", error)),
-            KeyPrefix::Area => AreaValue::try_decode(value)
-                .map(|_| ())
+            KeyPrefix::Area => InlineIndexValue::Area
+                .validate(value)
                 .map_err(|error| ("area", error)),
-            KeyPrefix::Realm => RealmValue::try_decode(value)
-                .map(|_| ())
+            KeyPrefix::Realm => InlineIndexValue::Realm
+                .validate(value)
                 .map_err(|error| ("realm", error)),
             KeyPrefix::Watermark => WatermarkValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("watermark", error)),
-            KeyPrefix::OffsetCounter => OffsetCounterValue::decode(value)
+            KeyPrefix::OffsetCounter => decode_offset_counter_value(value)
                 .map(|_| ())
                 .map_err(|error| ("offset_counter", error)),
             KeyPrefix::RealmWatermark => WatermarkValue::decode(value)

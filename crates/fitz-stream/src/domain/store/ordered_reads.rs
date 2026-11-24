@@ -191,6 +191,7 @@ impl StreamStore {
     ///
     /// Returns an error if layout activation, watermark loading, storage
     /// transaction creation, page scanning, or page decoding fails.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn read_area(
         &self,
         family: u64,
@@ -371,6 +372,7 @@ impl StreamStore {
     ///
     /// Returns an error if layout activation, realm watermark loading,
     /// storage transaction creation, page scanning, or page decoding fails.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn read_realm(
         &self,
         family: u64,

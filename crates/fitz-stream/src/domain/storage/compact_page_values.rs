@@ -516,11 +516,6 @@ impl CompactGlobalPageValue {
 
 impl CompactRealmPageValue {
     #[must_use]
-    pub fn is_encoded(bytes: &[u8]) -> bool {
-        bytes.starts_with(&COMPACT_REALM_PAGE_VALUE_V2_MARKER)
-    }
-
-    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_marked_page(COMPACT_REALM_PAGE_VALUE_V2_MARKER, &self.records)
     }
@@ -555,11 +550,6 @@ impl CompactRealmPageValue {
 
 impl CompactAreaPageValue {
     #[must_use]
-    pub fn is_encoded(bytes: &[u8]) -> bool {
-        bytes.starts_with(&COMPACT_AREA_PAGE_VALUE_V2_MARKER)
-    }
-
-    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_marked_page(COMPACT_AREA_PAGE_VALUE_V2_MARKER, &self.records)
     }
@@ -593,11 +583,6 @@ impl CompactAreaPageValue {
 }
 
 impl CompactResourcePageValue {
-    #[must_use]
-    pub fn is_encoded(bytes: &[u8]) -> bool {
-        bytes.starts_with(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER)
-    }
-
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_marked_page(COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER, &self.records)

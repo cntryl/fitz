@@ -1,7 +1,9 @@
 use super::model::ScheduleActor;
+#[cfg(any(test, feature = "test-support", feature = "benchkit"))]
 use crate::domain::protocol::{
     ScheduleFailure, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
 };
+#[cfg(any(test, feature = "test-support", feature = "benchkit"))]
 use crate::domain::route_grammar::parse_concrete_schedule_route;
 #[cfg(test)]
 use fitz_core::runtime::clock::SystemClock;
@@ -51,6 +53,7 @@ impl ScheduleActor {
     /// # Errors
     ///
     /// Returns an error when the backing schedule family cannot be flushed.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[doc(hidden)]
     pub fn bench_drain_storage(&self) -> Result<(), String> {
         self.store
@@ -99,6 +102,7 @@ impl ScheduleActor {
         epoch_ms_to_instant_with_reference(timestamp_ms, anchor, anchor_ms)
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
         if let Err(error) = self.reconcile_unknown_commit() {
             return ScheduleResponse::Error(ScheduleFailure::operation_error(error));

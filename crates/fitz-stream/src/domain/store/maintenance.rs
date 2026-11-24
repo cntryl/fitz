@@ -667,6 +667,7 @@ impl StreamStore {
     ///
     /// Returns an error for malformed/overlapping fragments or a failed atomic
     /// replacement transaction.
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn run_maintenance(&self, family: u64) -> Result<StreamMaintenanceResult, String> {
         self.run_maintenance_classified(family)
             .map(|(result, _)| result)

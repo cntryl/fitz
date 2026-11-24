@@ -4,6 +4,7 @@ use crate::domain::store::{
     PersistedPendingFireClaim, ScheduleAckDefinition, ScheduleFireClaim,
     SchedulePendingFireClaimAck, SchedulePersistence, SchedulePersistenceError,
 };
+#[cfg(any(test, feature = "test-support", feature = "benchkit"))]
 use bytes::Bytes;
 use rustc_hash::FxBuildHasher;
 use std::cmp::Reverse;
@@ -383,6 +384,7 @@ impl ScheduleActor {
         self.apply_claims_to_state(to_reschedule, now_ms)
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub(super) fn collect_due_occurrences_for_publish_at(
         &mut self,
         now: Instant,
@@ -397,10 +399,12 @@ impl ScheduleActor {
         self.claim_due_fires_at(self.clock.now_instant())
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     pub fn collect_due_occurrences_for_publish(&mut self) -> Vec<(String, Bytes)> {
         self.collect_due_occurrences_for_publish_at(self.clock.now_instant())
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[doc(hidden)]
     pub fn bench_claim_due_fires(&mut self) -> Vec<PersistedPendingFireClaim> {
         self.claim_due_fires()
@@ -436,6 +440,7 @@ impl ScheduleActor {
             .collect()
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[doc(hidden)]
     #[must_use]
     pub fn bench_pending_claimed_occurrences_for_publish(&self) -> Vec<PersistedPendingFireClaim> {
@@ -518,6 +523,7 @@ impl ScheduleActor {
         Ok((acked, acknowledged_at_ms))
     }
 
+    #[cfg(any(test, feature = "test-support", feature = "benchkit"))]
     #[doc(hidden)]
     pub fn bench_ack_pending_fire_claims(
         &mut self,
