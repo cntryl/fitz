@@ -1,111 +1,111 @@
-//! Publish/notification fan-out: matching subscribers to a committed event,
-//! delivering to live subscribers, and notifying watermark coordinators.
+//! Bounded, best-effort live delivery for committed Stream records.
 
 use super::model::StreamFamilyState;
-#[cfg(test)]
-use crate::dispatch::protocol::payload_codec::PayloadEncoder;
 use crate::runtime::Envelope;
+use std::ops::Bound::{Excluded, Included};
 
 mod notification_gating;
+mod queue;
 mod watermark_coordination;
+pub(super) use queue::{DeliveryQueue, SharedDeliveryBudgets};
+
+const MAX_DISPATCH_JOBS_PER_TURN: usize = 64;
+const MAX_DISPATCH_TARGETS_PER_TURN: usize = 64;
 
 impl StreamFamilyState {
-    pub(in crate::domains::stream::sink) fn handle_domain_publish(
-        &mut self,
-        event: &crate::runtime::DomainPublishEvent,
-    ) {
-        let ready = self.collect_ready_notifications(event);
-        self.route_ready_notifications(ready);
-    }
-
-    pub(in crate::domains::stream::sink) fn handle_visibility_advance(
-        &mut self,
-        family: crate::runtime::routing::RouteFamily,
-    ) {
-        let ready = self.collect_visible_pending_notifications(family.as_u64());
-        self.route_ready_notifications(ready);
-    }
-
-    fn route_ready_notifications(&mut self, ready: Vec<super::model::ReadyStreamNotification>) {
-        #[cfg(test)]
-        let mut payload_encoder = PayloadEncoder::with_capacity(256);
-        for notification in ready {
-            let target = notification.target;
-            let event = notification.event;
-            if *target.subscriber.family() != event.family_id {
-                crate::observability::counter_inc(
-                    crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
-                );
+    pub(super) fn dispatch_ready_notifications(&mut self) {
+        if !self.delivery.begin_dispatch() {
+            return;
+        }
+        let mut targets_left = MAX_DISPATCH_TARGETS_PER_TURN;
+        for _ in 0..MAX_DISPATCH_JOBS_PER_TURN {
+            if targets_left == 0 {
+                break;
+            }
+            let Some((id, deferred, job)) = self.delivery.next_ready() else {
+                break;
+            };
+            let key = &job.event.resource;
+            let current = !deferred
+                || self
+                    .stream_store
+                    .resource_drop_cutoff(key.family.as_u64(), &key.realm, &key.area, &key.resource)
+                    .is_ok_and(|cutoff| job.event.offsets.first_global >= cutoff);
+            if !current {
+                record_drops(job.remaining());
+                self.delivery.remove(id);
                 continue;
             }
-            #[cfg(test)]
-            self.route_commit_notify(
-                target.session_id,
-                target.subscription_id,
-                &target.subscriber,
-                &event,
-                &mut payload_encoder,
-            );
-            #[cfg(not(test))]
-            self.route_commit_notify(
-                target.session_id,
-                target.subscription_id,
-                &target.subscriber,
-                &event,
-            );
+
+            let ids = self
+                .subscriptions
+                .ids(&job.selector)
+                .expect("live targets have a registration bucket");
+            for subscription_id in ids
+                .range((Excluded(job.cursor), Included(job.cutoff)))
+                .copied()
+                .take(targets_left)
+            {
+                let subscriber = self.subscriptions.get(subscription_id);
+                let result =
+                    route_notification(&self.router, subscriber, subscription_id, &job.event.event);
+                #[cfg(feature = "benchkit")]
+                crate::benchkit::stream_dispatch::record(job.event.dispatch_started);
+                if !result {
+                    record_drops(1);
+                }
+                job.finish_target(subscription_id);
+                targets_left -= 1;
+            }
+            if job.remaining() == 0 {
+                self.delivery.remove(id);
+            }
         }
     }
+}
 
+fn record_drops(count: usize) {
+    if count > 0 {
+        crate::observability::counter_add(
+            crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+            super::model::usize_to_u64_saturating(count),
+        );
+    }
+}
+
+fn route_notification(
+    router: &crate::runtime::Router,
+    subscriber: &super::subscriptions::Subscription,
+    id: u64,
+    event: &crate::runtime::DomainPublishEvent,
+) -> bool {
     #[cfg(test)]
-    pub(in crate::domains::stream::sink) fn route_commit_notify(
-        &mut self,
-        session_id: u64,
-        subscription_id: u64,
-        subscriber: &crate::runtime::routing::RouteAddress,
-        event: &crate::runtime::DomainPublishEvent,
-        payload_encoder: &mut PayloadEncoder,
-    ) {
-        let notify_payload = crate::dispatch::protocol::stream_codec::encode_notify_into(
-            payload_encoder,
-            subscription_id,
+    let notify = {
+        let mut encoder =
+            crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let payload = crate::dispatch::protocol::stream_codec::encode_notify_into(
+            &mut encoder,
+            id,
             &event.route,
             &event.payload,
         );
-        let notify_ctx = crate::dispatch::protocol::FrameContext::new(
-            session_id,
+        crate::dispatch::protocol::FrameContext::new(
+            subscriber.session_id,
             crate::dispatch::protocol::frame::ChannelId::Sub,
             crate::dispatch::protocol::message::MessageType::new(609),
-            bytes::Bytes::from(notify_payload),
+            bytes::Bytes::from(payload),
             event.family_id,
-        );
-        let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
-        if self.router.route(notify_envelope).is_err() {
-            crate::observability::counter_inc(
-                crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
-            );
-        }
-    }
-
+        )
+    };
     #[cfg(not(test))]
-    pub(in crate::domains::stream::sink) fn route_commit_notify(
-        &mut self,
-        session_id: u64,
-        subscription_id: u64,
-        subscriber: &crate::runtime::routing::RouteAddress,
-        event: &crate::runtime::DomainPublishEvent,
-    ) {
-        let notify = crate::domains::stream::StreamClientNotification::new(
-            session_id,
-            event.family_id,
-            subscription_id,
-            event.route.clone(),
-            event.payload.clone(),
-        );
-        let notify_envelope = Envelope::new(subscriber.clone(), notify);
-        if self.router.route(notify_envelope).is_err() {
-            crate::observability::counter_inc(
-                crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
-            );
-        }
-    }
+    let notify = crate::domains::stream::StreamClientNotification::new(
+        subscriber.session_id,
+        event.family_id,
+        id,
+        event.route.clone(),
+        event.payload.clone(),
+    );
+    router
+        .route(Envelope::new(subscriber.subscriber.clone(), notify))
+        .is_ok()
 }

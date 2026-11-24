@@ -197,6 +197,10 @@ fn register_domains_stage(
     runtime: &Runtime,
     config: &BootConfig,
 ) -> BootStage<Arc<domains::BrokerDomains>> {
+    let stream_subscription_limits = match &config.stream_subscription_limits {
+        Ok(limits) => *limits,
+        Err(error) => return BootStage::Failed(error.clone().into()),
+    };
     let options = domains::DomainSetupOptions {
         max_message_bytes: config.max_frame_size,
         route_families: config.route_families.clone(),
@@ -210,6 +214,7 @@ fn register_domains_stage(
         request_buffered_write_policy: config.request_buffered_write_policy(),
         rpc_request_timeout: None,
         stream_storage_layout: config.stream_storage_layout,
+        stream_subscription_limits,
         kv_idle_transaction_ttl: Duration::from_secs(config.kv_idle_transaction_ttl_seconds),
         schedule_preload_timeout: config.schedule_preload_timeout(),
     };

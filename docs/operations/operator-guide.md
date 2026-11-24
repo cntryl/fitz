@@ -88,6 +88,21 @@ curl --fail http://127.0.0.1:4090/readyz
   domain responses and supported persistence/recovery procedures to establish
   state; do not treat a dashboard snapshot as a durability or delivery proof.
 
+### Stream subscription capacity
+
+`FITZ_STREAM_MAX_SUBSCRIPTIONS_PER_SESSION` defaults to 10,000 across exact
+and wildcard selectors. `FITZ_STREAM_SUBSCRIPTION_BUDGET_BYTES` defaults to
+134,217,728 bytes shared by all families. Both accept positive integers and
+are evaluated at startup. A registration costs 512 bytes plus the length of
+the original selector and the canonical selector path. Unsubscribe and
+disconnect release that charge. Capacity rejection returns Stream error
+`2004`.
+
+Ready and watermark-parked notifications each have a separate 32 MiB broker
+budget and per-family limits of 5,000 jobs and 65,536 outstanding target
+attempts. Watch `fitz_stream_notify_drops_total` when diagnosing missing live
+hints. Applications advance their checkpoints from durable reads.
+
 ## Secure the Operator Surface
 
 For deployments outside local development, use protected admin auth, verified

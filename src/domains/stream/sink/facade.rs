@@ -1,3 +1,5 @@
+use super::budget::Budget;
+use super::delivery::DeliveryQueue;
 #[cfg(test)]
 use super::model::StreamReadExecution;
 #[cfg(test)]
@@ -5,14 +7,15 @@ use super::model::STREAM_ACTOR_REPLY_TIMEOUT;
 use super::model::{
     AdminStreamReadRequest, AdminStreamReadRequestOwned, StreamAdminReadCommand, StreamDomain,
     StreamDomainCommand, StreamDomainConfig, StreamFamilyRuntime, StreamFamilyState,
-    StreamLiveCounts, SubscriptionRegistry,
+    StreamLiveCounts, StreamRuntimeLimits,
 };
+use super::subscriptions::SubscriptionRegistry;
 use crate::domains::stream::metrics::StreamDurableMetrics;
 use crate::domains::stream::{StreamMetrics, StreamReadItem, StreamStorageLayout};
 #[cfg(test)]
 use crate::runtime::routing::Route;
 use crate::runtime::routing::RouteFamily;
-use crate::runtime::{CleanedUpSessions, DeliveryError, Router};
+use crate::runtime::{CleanedUpSessions, Router};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -37,7 +40,12 @@ impl StreamFamilyState {
             cleaned_up_sessions: CleanedUpSessions::new(
                 crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
             ),
-            subscriptions: SubscriptionRegistry::new(config.next_subscription_id.clone()),
+            subscriptions: SubscriptionRegistry::new(
+                config.next_subscription_id.clone(),
+                config.subscription_bytes.clone(),
+                config.subscriptions_per_session,
+            ),
+            delivery: DeliveryQueue::new(&config.delivery_budgets),
             next_session_id: config.next_session_id.clone(),
             cursor_integrity_key: config.cursor_integrity_key.clone(),
             router: config.router.clone(),
@@ -55,6 +63,10 @@ impl StreamFamilyState {
 }
 
 impl StreamDomain {
+    #[cfg(feature = "benchkit")]
+    pub(crate) fn subscription_charged_bytes(&self) -> usize {
+        self.config.subscription_bytes.used()
+    }
     /// Capture readable committed history selected by a Stream route pattern.
     ///
     /// # Errors
@@ -151,7 +163,7 @@ impl StreamDomain {
             stream_storage_layout,
             None,
             write_options,
-            crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
+            (crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize).into(),
         )
     }
 
@@ -162,13 +174,13 @@ impl StreamDomain {
         stream_storage_layout: StreamStorageLayout,
         provisioned_families: Option<&[RouteFamily]>,
         write_options: super::StreamStorageWriteOptions,
-        max_message_bytes: usize,
+        limits: StreamRuntimeLimits,
     ) -> Result<Self, String> {
         let stream_store = store.into().into_store(
             stream_storage_layout,
             write_options.sync_intent(),
             write_options.buffered_intent(),
-            max_message_bytes,
+            limits.max_message_bytes,
         );
         stream_store.ensure_layout_activation_for_existing_families()?;
         stream_store.validate_persisted_state_for_existing_families()?;
@@ -195,6 +207,9 @@ impl StreamDomain {
             stream_store,
             next_session_id: Arc::new(AtomicU64::new(1)),
             next_subscription_id: Arc::new(AtomicU64::new(1)),
+            subscription_bytes: Budget::new(limits.subscriptions.bytes.get()),
+            subscriptions_per_session: limits.subscriptions.per_session.get(),
+            delivery_budgets: super::delivery::SharedDeliveryBudgets::default(),
             cursor_integrity_key: Arc::new(cursor_integrity_key),
             router,
             admin_projection: Arc::new(super::projection::StreamAdminProjection::new(
@@ -226,80 +241,35 @@ impl StreamDomain {
         let pool = crate::runtime::FamilyActorPool::new(families)
             .map_err(|error| format!("create Stream family actor pool: {error}"))?;
         let family_config = config.clone();
+        let ingress = pool.ingress();
+        let idle_ingress = ingress.clone();
         Ok(
             crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric_and_idle(
                 pool,
                 config.active.clone(),
                 move |family| {
-                    StreamFamilyRuntime::new(StreamFamilyState::new(&family_config, family))
+                    Some(Box::new(StreamFamilyRuntime::new(StreamFamilyState::new(
+                        &family_config,
+                        family,
+                    ))))
                 },
-                |state, family, _lane, command| match command {
-                    StreamDomainCommand::Deliver(envelope, reply) => {
-                        let result = if *envelope.destination().family() == family {
-                            state.deliver_envelope(&envelope)
-                        } else {
-                            Err(DeliveryError::ActorStopped)
-                        };
-                        let _ = reply.send(result);
-                        // A continuously busy family never reaches the idle
-                        // handler, so service watermark coordination here as
-                        // well; otherwise commits queue up, overflow, and the
-                        // dropped ranges leave the area watermark stuck.
-                        state.service_watermark_timers();
-                    }
-                    StreamDomainCommand::ReadLiveCounts(reply) => {
-                        let _ = reply.send(state.core.live_counts());
-                    }
-                    StreamDomainCommand::ReadResourceRecords(command) => {
-                        let request = command.request.as_borrowed();
-                        let _ = command
-                            .reply
-                            .send(state.core.admin_read_resource_records(request));
-                    }
-                    StreamDomainCommand::CaptureStreamSnapshot(selector, reply) => {
-                        let _ = reply.send(state.core.capture_stream_snapshot(&selector));
-                    }
-                    StreamDomainCommand::RestoreStreamSnapshot(artifact, reply) => {
-                        let result = state.restore_stream_snapshot(&artifact);
-                        state.service_watermark_timers();
-                        let _ = reply.send(result);
-                    }
-                    StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                        state.core.refresh_admin_snapshot_if_dirty();
-                        let _ = reply.send(());
-                    }
-                    StreamDomainCommand::RunMaintenance {
-                        family: requested_family,
-                        reply,
-                    } => {
-                        if requested_family == family.as_u64() {
-                            state.core.run_maintenance_slice(requested_family);
-                            state.service_watermark_timers();
-                        }
-                        if let Some(reply) = reply {
-                            let _ = reply.send(());
-                        }
-                    }
-                    #[cfg(test)]
-                    StreamDomainCommand::SyncAdminSnapshot(reply) => {
-                        state.core.sync_admin_snapshot();
-                        let _ = reply.send(());
-                    }
-                    StreamDomainCommand::PanicForFailpoint => {
-                        panic!("injected Stream family actor panic");
-                    }
-                    #[cfg(test)]
-                    StreamDomainCommand::BlockForTests(entered, release) => {
-                        let _ = entered.send(());
-                        let _ = release.recv();
-                    }
-                    #[cfg(test)]
-                    StreamDomainCommand::InspectForTests(inspect, reply) => {
-                        inspect(state);
-                        let _ = reply.send(());
-                    }
+                move |slot, family, _lane, command| {
+                    // The pool retains failed slots. Owning the state across the callback
+                    // releases broker credits before the pool records an unwind.
+                    let mut state = slot.take().expect("running Stream family has state");
+                    state.core.delivery.begin_turn();
+                    state.run_command(family, command);
+                    state.offer_continuation(&ingress);
+                    *slot = Some(state);
                 },
-                |state, _family| state.service_watermark_timers(),
+                move |slot, _family| {
+                    let mut state = slot.take().expect("running Stream family has state");
+                    state.core.delivery.begin_turn();
+                    state.core.dispatch_ready_notifications();
+                    state.service_watermark_timers();
+                    state.offer_continuation(&idle_ingress);
+                    *slot = Some(state);
+                },
                 crate::domains::stream::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
             ),
         )

@@ -1,6 +1,6 @@
 [package]
 name = "fitz"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 autobenches = false
 license-file = "LICENSE"
@@ -319,6 +319,11 @@ harness = false
 
 [[bench]]
 name = "tier4_stream_compacted"
+harness = false
+required-features = ["benchkit"]
+
+[[bench]]
+name = "stream_subscription_capacity"
 harness = false
 required-features = ["benchkit"]
 

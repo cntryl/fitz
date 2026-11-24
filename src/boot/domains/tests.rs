@@ -26,6 +26,8 @@ fn domain_setup_options() -> DomainSetupOptions {
         request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
         rpc_request_timeout: None,
         stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+        stream_subscription_limits: crate::domains::stream::sink::StreamSubscriptionLimits::default(
+        ),
         kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
         schedule_preload_timeout: crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
     }
@@ -47,6 +49,8 @@ fn cloud_domain_setup_options(
         request_buffered_write_policy: crate::domains::WritePolicy::CloudAsync,
         rpc_request_timeout: None,
         stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+        stream_subscription_limits: crate::domains::stream::sink::StreamSubscriptionLimits::default(
+        ),
         kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
         schedule_preload_timeout: crate::domains::schedule::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
     }

@@ -14,11 +14,13 @@ use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 
+mod delivery_limits;
 mod drop;
 mod drop_coordination;
 mod drop_reclamation;
 mod drop_snapshots;
 mod review_drop_observability;
+mod subscription_limits;
 
 const TEST_CLIENT_SESSION_ID: u64 = 1;
 
@@ -38,6 +40,13 @@ fn setup_test_context() -> TestContext {
 fn setup_test_context_with_metrics(
     metrics: Option<&crate::observability::metrics::MetricsCollector>,
 ) -> TestContext {
+    setup_test_context_with_limits(metrics, StreamSubscriptionLimits::default())
+}
+
+fn setup_test_context_with_limits(
+    metrics: Option<&crate::observability::metrics::MetricsCollector>,
+    subscriptions: StreamSubscriptionLimits,
+) -> TestContext {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
@@ -50,7 +59,10 @@ fn setup_test_context_with_metrics(
         StreamStorageLayout::default(),
         Some(&[family, RouteFamily::new(2)]),
         StreamStorageWriteOptions::local(),
-        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
+        StreamRuntimeLimits {
+            max_message_bytes: crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
+            subscriptions,
+        },
     )
     .expect("create Stream test sink");
     if let Some(metrics) = metrics {
@@ -85,7 +97,9 @@ fn request(context: &TestContext, destination: &str, msg_type: u16, payload: Byt
 
     let responses = context.inbox.drain();
     responses
-        .last()
+        .iter()
+        .rev()
+        .find(|frame| frame.msg_type.as_u16() != 609)
         .map(|frame| frame.payload.clone())
         .expect("stream response")
 }
@@ -113,7 +127,9 @@ fn request_from_session(
 
     let responses = inbox.drain();
     responses
-        .last()
+        .iter()
+        .rev()
+        .find(|frame| frame.msg_type.as_u16() != 609)
         .map(|frame| frame.payload.clone())
         .expect("stream response")
 }

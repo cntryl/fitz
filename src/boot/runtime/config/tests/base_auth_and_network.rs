@@ -99,6 +99,8 @@ pub(super) fn with_storage_env<T>(values: &[(&str, &str)], test: impl FnOnce() -
         "FITZ_STORAGE_CLOUD_DURABILITY",
         "FITZ_STORAGE_LEASE_TTL_SECS",
         "FITZ_STORAGE_MEMTABLE_BYTES",
+        "FITZ_STREAM_MAX_SUBSCRIPTIONS_PER_SESSION",
+        "FITZ_STREAM_SUBSCRIPTION_BUDGET_BYTES",
         ENV_QUEUE_WRITE_POLICY,
         ENV_QUEUE_LOSS_WINDOW_MS,
         "FITZ_QUEUE_MAX_ATTEMPTS",

@@ -896,11 +896,13 @@ The success response uses the "optional u64" encoding pattern: a 1-byte flag fol
 - The scheme must be `stream://`, segments must be non-empty, wildcards must be
   whole segments, and the pattern must be capable of matching a concrete
   three-segment Stream route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 2003
-- A session may retain at most 1,024 registrations total and 128 wildcard
-  registrations. A duplicate is checked before either limit; overflow returns
-  2004
-- Matching is isolated by `RouteFamily`. Overlapping registrations remain
-  independent and exact registrations have no precedence
+- A session may retain up to 10,000 registrations by default. Exact and
+  wildcard selectors share the configured limit and a broker-wide byte
+  budget. After validation and authorization, a duplicate reuses its ID
+  without charging either limit. Capacity rejection returns 2004.
+- Matching is isolated by `RouteFamily`. Overlaps and distinct aliases keep
+  independent IDs. A subscriber only receives hints for commits made while
+  its registration was active.
 
 #### Stream UNSUBSCRIBE (608)
 
@@ -948,21 +950,17 @@ Commit notification (one or more records committed):
   "last_area_offset": <u64>,
   "first_realm_offset": <u64>,
   "last_realm_offset": <u64>,
+  "first_global_offset": <u64>,
+  "last_global_offset": <u64>,
   "batch_size": <u32>
 }
 ```
 
-Watermark advance notification:
-```json
-{
-  "event": "watermark_advanced",
-  "previous": <u64>,
-  "watermark": <u64>
-}
-```
-
 **Delivery Semantics:**
-- **Best-effort**: notifications may be dropped under backpressure
-- **Debounced**: commit notifications may be coalesced — multiple commits to the same resource can produce a single notification covering the full offset range
-- **Session-scoped**: all subscriptions lost on disconnect; clients must re-subscribe after reconnecting
-- `subscription_id` tells the client which subscription matched; client demultiplexes to local handlers
+- Notifications are best effort. Backpressure can drop a hint. Clients
+  advance checkpoints through durable reads.
+- Exact notifications are eligible when the resource commit becomes visible.
+  Wildcard notifications wait for the area, realm, or global watermark
+  governing the selector.
+- Disconnect ends all registrations. Clients register again after reconnect.
+- `subscription_id` identifies the matching registration.

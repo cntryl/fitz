@@ -155,20 +155,32 @@ impl StreamRouteShape<'_> {
     /// `stream://{realm}/*/*` request, matching §4's alias-equivalence
     /// requirement for authorization.
     pub(crate) fn canonical(&self) -> String {
-        match *self {
+        let mut canonical = String::new();
+        self.write_canonical(&mut canonical);
+        canonical
+    }
+
+    pub(crate) fn write_canonical(&self, key: &mut String) {
+        let (realm, area, resource) = match *self {
             Self::Resource {
                 realm,
                 area,
                 resource,
-            } => format!("{realm}/{area}/{resource}"),
-            Self::Area { realm, area } => format!("{realm}/{area}/*"),
-            Self::RealmFilterResource { realm, resource } => format!("{realm}/*/{resource}"),
-            Self::Realm { realm } => format!("{realm}/*/*"),
-            Self::GlobalFilterAreaResource { area, resource } => format!("*/{area}/{resource}"),
-            Self::GlobalFilterArea { area } => format!("*/{area}/*"),
-            Self::GlobalFilterResource { resource } => format!("*/*/{resource}"),
-            Self::Global => "*/*/*".to_string(),
-        }
+            } => (realm, area, resource),
+            Self::Area { realm, area } => (realm, area, "*"),
+            Self::RealmFilterResource { realm, resource } => (realm, "*", resource),
+            Self::Realm { realm } => (realm, "*", "*"),
+            Self::GlobalFilterAreaResource { area, resource } => ("*", area, resource),
+            Self::GlobalFilterArea { area } => ("*", area, "*"),
+            Self::GlobalFilterResource { resource } => ("*", "*", resource),
+            Self::Global => ("*", "*", "*"),
+        };
+        key.reserve(realm.len() + area.len() + resource.len() + 2);
+        key.push_str(realm);
+        key.push('/');
+        key.push_str(area);
+        key.push('/');
+        key.push_str(resource);
     }
 }
 

@@ -1,8 +1,10 @@
+use super::budget::Budget;
+use super::delivery::{DeliveryQueue, SharedDeliveryBudgets};
+use super::subscriptions::{StreamSubscriptionLimits, SubscriptionRegistry};
 use crate::domains::stream::metrics::StreamDurableMetrics;
 use crate::domains::stream::StreamMetrics;
 use crate::domains::stream::{StreamActor, StreamClientResponseBody, StreamStore};
-use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{Route, RouteFamily};
 use crate::runtime::{CleanedUpSessions, DeliveryError, Envelope, MailboxSink, Router};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -19,67 +21,6 @@ pub(super) fn usize_to_u32_saturating(value: usize) -> u32 {
 
 pub(super) fn usize_to_u64_saturating(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
-}
-
-pub(super) struct StreamSubscription {
-    pub(super) pattern: crate::runtime::matcher::Pattern,
-    pub(super) session_id: u64,
-    pub(super) subscription_id: u64,
-    pub(super) subscriber: RouteAddress,
-}
-
-#[derive(Clone)]
-pub(super) struct StreamNotificationTarget {
-    pub(super) session_id: u64,
-    pub(super) subscription_id: u64,
-    pub(super) subscriber: RouteAddress,
-}
-
-#[derive(Clone)]
-pub(super) enum StreamVisibilityFrontier {
-    Resource,
-    Area {
-        realm: String,
-        area: String,
-        last_offset: u64,
-    },
-    Realm {
-        realm: String,
-        last_offset: u64,
-    },
-    Global {
-        last_offset: u64,
-    },
-}
-
-pub(super) struct PendingStreamNotification {
-    pub(super) target: StreamNotificationTarget,
-    pub(super) pattern: String,
-    pub(super) event: crate::runtime::DomainPublishEvent,
-    pub(super) frontier: StreamVisibilityFrontier,
-}
-
-pub(super) struct ReadyStreamNotification {
-    pub(super) target: StreamNotificationTarget,
-    pub(super) event: crate::runtime::DomainPublishEvent,
-}
-
-impl RoutedSubscription for StreamSubscription {
-    fn metric_domain() -> &'static str {
-        "stream"
-    }
-
-    fn pattern(&self) -> &crate::runtime::matcher::Pattern {
-        &self.pattern
-    }
-
-    fn session_id(&self) -> u64 {
-        self.session_id
-    }
-
-    fn subscription_id(&self) -> u64 {
-        self.subscription_id
-    }
 }
 
 pub struct AdminStreamReadRequest<'a> {
@@ -233,12 +174,6 @@ pub(super) struct StreamRealmScope {
     pub(super) realm: String,
 }
 
-pub(super) struct CommitNotification {
-    pub(super) family: RouteFamily,
-    pub(super) route: Route,
-    pub(super) payload: bytes::Bytes,
-}
-
 pub(super) struct WatermarkCommit {
     pub(super) family: RouteFamily,
     pub(super) realm: String,
@@ -270,41 +205,8 @@ impl WatermarkTargets {
 
 pub(super) struct StreamCommitOutcome {
     pub(super) response: StreamClientResponseBody,
-    pub(super) notification: Option<(RouteFamily, Route, bytes::Bytes)>,
+    pub(super) committed: Option<(crate::runtime::DomainPublishEvent, WatermarkCommit)>,
     pub(super) admin_dirty: bool,
-    pub(super) watermark: Option<WatermarkCommit>,
-}
-
-pub(super) struct OperationOutcome {
-    pub(super) response: StreamClientResponseBody,
-    pub(super) notification: Option<CommitNotification>,
-    pub(super) admin_dirty: bool,
-}
-
-impl
-    From<(
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    )> for OperationOutcome
-{
-    fn from(
-        (response, notification, admin_dirty): (
-            StreamClientResponseBody,
-            Option<(RouteFamily, Route, bytes::Bytes)>,
-            bool,
-        ),
-    ) -> Self {
-        Self {
-            response,
-            notification: notification.map(|(family, route, payload)| CommitNotification {
-                family,
-                route,
-                payload,
-            }),
-            admin_dirty,
-        }
-    }
 }
 
 #[derive(Default)]
@@ -328,22 +230,6 @@ impl StreamResourceScope {
             "stream://{}/{}/{}",
             self.realm, self.area, self.resource
         ))
-    }
-}
-
-pub(super) struct SubscriptionRegistry {
-    pub(super) families: HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>,
-    pub(super) next_id: Arc<AtomicU64>,
-    pub(super) pending: Vec<PendingStreamNotification>,
-}
-
-impl SubscriptionRegistry {
-    pub(super) fn new(next_id: Arc<AtomicU64>) -> Self {
-        Self {
-            families: HashMap::new(),
-            next_id,
-            pending: Vec::new(),
-        }
     }
 }
 
@@ -375,6 +261,7 @@ impl WatermarkCoordinators {
 
 pub(super) struct StreamFamilyRuntime {
     pub(super) core: StreamFamilyState,
+    pub(super) continuation_queued: bool,
     pub(super) last_watermark_generation: u64,
     pub(super) watermark_coordinators: WatermarkCoordinators,
     pub(super) watermark_router: Arc<Router>,
@@ -414,6 +301,7 @@ impl StreamFamilyRuntime {
         );
         Self {
             core,
+            continuation_queued: false,
             last_watermark_generation,
             watermark_coordinators: WatermarkCoordinators::new(),
             watermark_router,
@@ -432,6 +320,7 @@ pub(super) struct StreamFamilyState {
     pub(super) session_owners: super::session_owners::StreamSessionOwners,
     pub(super) cleaned_up_sessions: CleanedUpSessions,
     pub(super) subscriptions: SubscriptionRegistry,
+    pub(super) delivery: DeliveryQueue,
     pub(super) next_session_id: Arc<AtomicU64>,
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
     pub(super) router: Arc<Router>,
@@ -442,6 +331,7 @@ pub(super) struct StreamFamilyState {
 }
 
 pub(super) enum StreamDomainCommand {
+    ContinueDelivery,
     Deliver(
         Envelope,
         crossbeam_channel::Sender<Result<(), DeliveryError>>,
@@ -490,11 +380,29 @@ pub(crate) struct StreamDomain {
     pub(super) family_families: Vec<RouteFamily>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct StreamRuntimeLimits {
+    pub(crate) max_message_bytes: usize,
+    pub(crate) subscriptions: StreamSubscriptionLimits,
+}
+
+impl From<usize> for StreamRuntimeLimits {
+    fn from(max_message_bytes: usize) -> Self {
+        Self {
+            max_message_bytes,
+            subscriptions: StreamSubscriptionLimits::default(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct StreamDomainConfig {
     pub(super) stream_store: Arc<StreamStore>,
     pub(super) next_session_id: Arc<AtomicU64>,
     pub(super) next_subscription_id: Arc<AtomicU64>,
+    pub(super) subscription_bytes: Budget,
+    pub(super) subscriptions_per_session: usize,
+    pub(super) delivery_budgets: SharedDeliveryBudgets,
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
     pub(super) router: Arc<Router>,
     pub(super) admin_projection: Arc<super::projection::StreamAdminProjection>,

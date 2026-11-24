@@ -61,6 +61,7 @@ impl StreamFamilyRuntime {
             realm: commit.targets.realm
                 && !self.notify_realm_coordinator(commit.family, &commit.realm, &commit.batch),
         };
+        self.core.recheck_commit_scopes(&commit.realm, &commit.area);
         if !remaining.is_empty() {
             self.enqueue_watermark_commit(WatermarkCommit {
                 targets: remaining,

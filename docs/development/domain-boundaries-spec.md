@@ -281,10 +281,12 @@ patterns must be capable of matching four; Notice and RPC retain flexible
 depth. Wrong schemes, empty segments, partial wildcard tokens, and impossible
 depths are rejected before state mutation.
 
-Each domain retains at most 1,024 registrations per session, counting exact
-and wildcard registrations together. The wildcard subset is separately capped
-at 128 per session. A duplicate `(session, original registration string)` is
-idempotent and checked before either limit. Matching does not cross
+Stream defaults to 10,000 registrations per session, counting exact and
+wildcard selectors together, with a shared broker byte budget. The other
+domains retain at most 1,024 registrations per session, including up to 128
+wildcards. After validation and authorization, a duplicate
+`(session, original registration string)` reuses its ID and consumes no
+additional capacity. Matching does not cross
 `RouteFamily`; exact and wildcard registrations are equal candidates,
 overlapping registrations stay independent, and notifications report the exact
 concrete route.
@@ -368,9 +370,10 @@ must assert them so they cannot restore pre-DROP state after an indeterminate
 outcome. A family-local DROP revision lets observability refresh after a late
 deletion without rebuilding inventory after every cleanup slice.
 
-DROP is idempotent for an empty scope. Live subscriptions remain registered;
-commit notifications are ephemeral hints and may race deletion. DROP does not
-enumerate per-resource deletion events. Clients reconcile through explicit
+DROP is idempotent for an empty scope. Live subscriptions remain registered.
+Deferred dispatch checks the persisted resource cutoff before handing off a
+notification. Frames already handed to transport may race deletion. DROP
+does not enumerate per-resource deletion events. Clients reconcile through explicit
 reads. Snapshot export omits deleted history, and reset destinations may accept
 ordinary snapshot replay. The first DROP installs a persisted format marker
 that prevents an older broker from ignoring deletion cutoffs and exposing old

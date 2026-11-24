@@ -1,5 +1,5 @@
 use super::model::{
-    StreamDomain, StreamDomainCommand, StreamFamilyState, StreamReadExecution, StreamSubscription,
+    StreamDomain, StreamDomainCommand, StreamFamilyState, StreamReadExecution,
     STREAM_ACTOR_REPLY_TIMEOUT, STREAM_CLIENT_ACTOR_REPLY_TIMEOUT, STREAM_OPERATIONS_TOTAL,
 };
 use super::session_owners::StreamSessionOwner;
@@ -9,7 +9,6 @@ use crate::dispatch::protocol::FrameContext;
 use crate::domains::stream::protocol::{IngestMetadata, StreamDiscriminator};
 use crate::domains::stream::store::StreamStoreError;
 use crate::domains::stream::{StreamClientFrame, StreamClientRequest, StreamClientResponseBody};
-use crate::domains::subscription_state::RoutedSubscriptionSet;
 #[cfg(test)]
 use crate::runtime::routing::RouteAddress;
 use crate::runtime::routing::{Route, RouteFamily};

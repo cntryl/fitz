@@ -140,6 +140,8 @@ For the auth and browser-perimeter checklist, see
 | FITZ_QUEUE_DLQ_TTL | Integer days, 1 to 4294967295 | Unset (no DLQ cap) | Retention from DLQ entry, capped by the original message expiry. Both header and body use Midge TTL. Zero and invalid values fail startup. |
 | FITZ_KV_IDLE_TRANSACTION_TTL_SECS | Positive integer second count | 300 | Maximum inactivity for an open KV transaction before the broker force-rolls it back and releases its broker-local resource lock. |
 | FITZ_STREAM_STORAGE_LAYOUT | promotion-frontier or frontier | promotion-frontier | Stream layout selector. `promotion-frontier` is the only supported layout; any other value warns and falls back to it. |
+| FITZ_STREAM_MAX_SUBSCRIPTIONS_PER_SESSION | Positive integer | 10000 | Total retained Stream registrations per session across exact and wildcard selectors. |
+| FITZ_STREAM_SUBSCRIPTION_BUDGET_BYTES | Positive integer | 134217728 | Retained Stream registration charges across one broker. Each registration costs 512 bytes plus the original selector and canonical selector path lengths in bytes. |
 | FITZ_MIN_MEMORY_BYTES | Unsigned integer byte count | 134217728 | Startup preflight minimum cgroup memory threshold. Set 0 to bypass memory-limit check. |
 
 Schedule persistence follows the selected storage mode. `memory` mode uses

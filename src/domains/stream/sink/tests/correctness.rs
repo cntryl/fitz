@@ -188,7 +188,7 @@ fn should_fail_closed_given_malformed_stream_commit_notification() {
     let family = context.family;
     let pending_is_empty = context.sink.inspect_family_for_tests(family, move |state| {
         state.core.handle_domain_publish(&malformed);
-        state.core.subscriptions.pending.is_empty()
+        state.core.delivery.parked_is_empty()
     });
 
     // Assert
@@ -592,7 +592,7 @@ fn should_project_persisted_unprovisioned_family_into_admin_snapshot() {
         StreamStorageLayout::default(),
         Some(&[RouteFamily::new(1)]),
         StreamStorageWriteOptions::local(),
-        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
+        (crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize).into(),
     )
     .expect("create family-1-only Stream domain");
 

@@ -20,7 +20,7 @@ fn should_confirm_stream_family_cleanup_before_reporting_delivery() {
         StreamStorageLayout::PromotionFrontier,
         Some(&[family]),
         StreamStorageWriteOptions::local(),
-        crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize,
+        (crate::protocol::wire2::DEFAULT_MAX_MESSAGE_BYTES as usize).into(),
     )
     .expect("create family Stream sink");
     let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
@@ -536,6 +536,7 @@ fn should_flush_pending_subscription_when_visibility_advances_without_publish() 
                 "event": "committed",
                 "last_area_offset": 1,
                 "last_realm_offset": 1,
+                "first_global_offset": 1,
                 "last_global_offset": 1,
             })
             .to_string(),
@@ -555,8 +556,9 @@ fn should_flush_pending_subscription_when_visibility_advances_without_publish() 
         .set_watermark(1, "bench", "events", 1)
         .expect("advance area watermark");
     let pending_is_empty = context.sink.inspect_family_for_tests(family, move |state| {
-        state.core.handle_visibility_advance(family);
-        state.core.subscriptions.pending.is_empty()
+        state.core.recheck_commit_scopes("bench", "events");
+        state.core.dispatch_ready_notifications();
+        state.core.delivery.parked_is_empty()
     });
 
     // Assert

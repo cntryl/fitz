@@ -61,6 +61,7 @@ impl StreamFamilyRuntime {
         ) {
             Ok(()) => {
                 self.forget_dropped_runtime_state(scope);
+                self.core.discard_drop_notifications(scope);
                 self.core.observability.forget_drop_watermarks(scope);
                 self.core.mark_committed_admin_snapshot_dirty();
                 StreamClientResponseBody::Ok {

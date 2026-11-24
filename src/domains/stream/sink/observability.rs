@@ -376,55 +376,44 @@ impl StreamFamilyState {
     }
 
     fn overlay_live_subscription_snapshots(&self, streams: &mut StreamAdminSnapshotMap) {
-        for (family_id, subscriptions) in &self.subscriptions.families {
-            for subscription in subscriptions.values() {
-                if let Ok(crate::domains::stream::route_grammar::StreamRouteShape::Resource {
-                    realm,
-                    area,
-                    resource,
-                }) = crate::domains::stream::route_grammar::classify_stream_route_shape(
-                    subscription.pattern.route(),
-                ) {
-                    let key = (
-                        *family_id,
-                        realm.to_string(),
-                        area.to_string(),
-                        resource.to_string(),
-                    );
-                    streams.entry(key).or_insert_with(|| {
-                        crate::control::admin::StreamInfo::snapshot(
-                            crate::control::admin::StreamInfoSnapshot {
-                                route_family: *family_id,
-                                realm,
-                                area,
-                                resource,
-                                committed_event_count: 0,
-                                offset: 0,
-                                watermark: 0,
-                                size_bytes: 0,
-                                sessions_active: 0,
-                            },
-                        )
-                    });
-                }
+        let family = self.family.as_u64();
+        for subscription in self.subscriptions.values() {
+            if let Ok(crate::domains::stream::route_grammar::StreamRouteShape::Resource {
+                realm,
+                area,
+                resource,
+            }) = crate::domains::stream::route_grammar::classify_stream_route_shape(
+                subscription.original.as_ref(),
+            ) {
+                let key = (
+                    family,
+                    realm.to_string(),
+                    area.to_string(),
+                    resource.to_string(),
+                );
+                streams.entry(key).or_insert_with(|| {
+                    crate::control::admin::StreamInfo::snapshot(
+                        crate::control::admin::StreamInfoSnapshot {
+                            route_family: family,
+                            realm,
+                            area,
+                            resource,
+                            committed_event_count: 0,
+                            offset: 0,
+                            watermark: 0,
+                            size_bytes: 0,
+                            sessions_active: 0,
+                        },
+                    )
+                });
             }
         }
 
         for ((family_id, realm, area, resource), stream) in streams.iter_mut() {
-            let route = format!("stream://{realm}/{area}/{resource}");
-            stream.subscriptions_active =
-                self.subscriptions
-                    .families
-                    .get(family_id)
-                    .map_or(0, |subscriptions| {
-                        subscriptions
-                            .matching_ids(
-                                crate::runtime::routing::RouteFamily::try_from(*family_id)
-                                    .expect("subscription family IDs originate from RouteFamily"),
-                                &route,
-                            )
-                            .len()
-                    });
+            if *family_id == family {
+                let route = format!("stream://{realm}/{area}/{resource}");
+                stream.subscriptions_active = self.subscriptions.matching_count(&route);
+            }
         }
     }
 
@@ -447,17 +436,10 @@ impl StreamFamilyState {
     }
 
     pub(in crate::domains::stream::sink) fn live_counts(&mut self) -> StreamLiveCounts {
-        let subscriptions = self
-            .subscriptions
-            .families
-            .values()
-            .map(crate::domains::subscription_state::RoutedSubscriptionSet::subscription_count)
-            .sum();
-
         StreamLiveCounts {
             streams: self.actors.len(),
             append_sessions: self.session_owners.len(),
-            subscriptions,
+            subscriptions: self.subscriptions.count(),
         }
     }
 }
