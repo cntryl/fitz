@@ -24,7 +24,7 @@ enum Scope {
     Realm,
 }
 
-fn command_history(size: usize) -> (StreamStore, Vec<EventPayload>) {
+fn command_history(size: usize) -> (StreamStore, Vec<EventPayload>, usize) {
     let engine = create_write_heavy_bench_store();
     let store = StreamStore::new(engine.clone());
     let events = (0..64_u64)
@@ -122,7 +122,12 @@ fn command_history(size: usize) -> (StreamStore, Vec<EventPayload>) {
             );
             let resource_page = CompactResourcePageValue::try_decode(&resource_rows[0].1).unwrap();
             assert_eq!(resource_page.records.len(), 64);
-            return (store, events);
+            let baseline_decoder_copy_bytes = resource_page
+                .records
+                .iter()
+                .map(|record| record.body.len() + record.metadata.as_ref().map_or(0, Bytes::len))
+                .sum();
+            return (store, events, baseline_decoder_copy_bytes);
         }
     }
     panic!("fixture must finish compaction");
@@ -136,7 +141,7 @@ fn measure_projection(
     limit: u64,
     name: &'static str,
 ) {
-    let (store, events) = command_history(size);
+    let (store, events, baseline_decoder_copy_bytes) = command_history(size);
     ctx.parameter("scenario", "compacted_command_projection");
     ctx.parameter("measurement_scope", "direct_store");
     ctx.parameter("storage_profile", "memory");
@@ -154,16 +159,19 @@ fn measure_projection(
     ctx.parameter("from_offset", from);
     ctx.parameter("read_limit", limit);
     if matches!(scope, Scope::Resource) {
-        let baseline_decoder_copy_bytes = if size >= 17 * 1024 {
+        let expected_inline_bytes: usize = events
+            .iter()
+            .map(|event| event.body.len() + event.metadata.as_ref().map_or(0, Bytes::len))
+            .sum();
+        let candidate_decoder_copy_bytes = if baseline_decoder_copy_bytes < expected_inline_bytes {
             0
         } else {
-            64 * (size + b"event-kind=OrderChanged;command=cmd-001".len())
-        };
-        let candidate_decoder_copy_bytes = if size >= 17 * 1024 {
-            0
-        } else {
-            usize::try_from(limit).unwrap()
-                * (size + b"event-kind=OrderChanged;command=cmd-001".len())
+            events
+                .iter()
+                .skip(usize::try_from(from).unwrap())
+                .take(usize::try_from(limit).unwrap())
+                .map(|event| event.body.len() + event.metadata.as_ref().map_or(0, Bytes::len))
+                .sum()
         };
         ctx.parameter(
             "baseline_decoder_copy_bytes_per_request",
@@ -172,6 +180,14 @@ fn measure_projection(
         ctx.parameter(
             "candidate_decoder_copy_bytes_per_request",
             candidate_decoder_copy_bytes,
+        );
+        ctx.parameter(
+            "baseline_blob_reference_copy_bytes_per_request",
+            if baseline_decoder_copy_bytes < expected_inline_bytes {
+                baseline_decoder_copy_bytes
+            } else {
+                0
+            },
         );
     }
     ctx.parameter("filter_selectivity", "unfiltered");
