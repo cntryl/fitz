@@ -32,6 +32,7 @@ const LARGE_PERMISSION_RAW: [&str; 8] = [
     "kv://acme/**#write",
 ];
 const CACHE_HIT_REPEAT_COUNT: u64 = 16_777_216;
+const CHURN_BATCH_OPS: u64 = 64;
 
 fn parse_permissions(raws: &[&str]) -> Vec<Permission> {
     raws.iter()
@@ -52,6 +53,97 @@ fn warmed_permissions(raws: &[&str], route: &Route, access: Access) -> SessionPe
     let _ = permissions.allows(route, access);
     permissions
 }
+
+fn churn_routes(count: usize, route_bytes: usize) -> Vec<String> {
+    (0..count)
+        .map(|index| {
+            let realm = if index % 2 == 0 { "acme" } else { "nope" };
+            if route_bytes == 0 {
+                format!("rpc://{realm}/auth/items/item-{index}")
+            } else {
+                let prefix = format!("rpc://{realm}/auth/items/");
+                let suffix = format!("/item-{index}");
+                let padding = "x".repeat(route_bytes.saturating_sub(prefix.len() + suffix.len()));
+                format!("{prefix}{padding}{suffix}")
+            }
+        })
+        .collect()
+}
+
+fn measure_churn(ctx: &mut StressContext, name: &str, count: usize, route_bytes: usize) {
+    record_group(ctx, "hotpath_permissions_churn");
+    mark_validated_micro(ctx);
+    ctx.parameter("route_count", count);
+    ctx.parameter(
+        "route_bytes",
+        if route_bytes == 0 {
+            "short"
+        } else {
+            "about_1k"
+        },
+    );
+    ctx.parameter("logical_unit", "authorization_check");
+
+    let permissions =
+        SessionPermissions::from_permissions(parse_permissions(&["rpc://acme/**#write"]));
+    let routes = churn_routes(count, route_bytes);
+    assert_eq!(routes.len(), count);
+    for (index, route) in routes.iter().enumerate() {
+        assert_eq!(
+            permissions.allows_route(route, Access::Write),
+            index % 2 == 0
+        );
+    }
+
+    let mut index = 0;
+    ctx.measure_batch(name, CHURN_BATCH_OPS, || {
+        for _ in 0..CHURN_BATCH_OPS {
+            let allowed = permissions.allows_route(black_box(&routes[index]), Access::Write);
+            black_box(allowed);
+            index = (index + 1) % routes.len();
+        }
+    });
+}
+
+macro_rules! churn_bench {
+    ($fn_name:ident, $bench_name:literal, $count:literal, $route_bytes:literal) => {
+        #[stress(tier = 1)]
+        fn $fn_name(ctx: &mut StressContext) {
+            measure_churn(ctx, $bench_name, $count, $route_bytes);
+        }
+    };
+}
+
+churn_bench!(
+    should_churn_128_short_routes,
+    "churn_128_short_routes",
+    128,
+    0
+);
+churn_bench!(
+    should_churn_256_short_routes,
+    "churn_256_short_routes",
+    256,
+    0
+);
+churn_bench!(
+    should_churn_300_short_routes,
+    "churn_300_short_routes",
+    300,
+    0
+);
+churn_bench!(
+    should_churn_32_long_routes,
+    "churn_32_long_routes",
+    32,
+    1024
+);
+churn_bench!(
+    should_churn_96_long_routes,
+    "churn_96_long_routes",
+    96,
+    1024
+);
 
 macro_rules! cache_hit_bench {
     ($fn_name:ident, $bench_name:literal, $raw:ident, $route:literal, $access:expr) => {

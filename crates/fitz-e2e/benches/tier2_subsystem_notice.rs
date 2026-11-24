@@ -22,10 +22,10 @@ const EXACT_ROUTE_16_PUBLISH_REPEAT_COUNT: u64 = 262_144;
 const EXACT_ROUTE_64_PUBLISH_REPEAT_COUNT: u64 = 131_072;
 const DOUBLE_STAR_16_PUBLISH_REPEAT_COUNT: u64 = 131_072;
 const DOUBLE_STAR_64_PUBLISH_REPEAT_COUNT: u64 = 131_072;
-// Keep each measured batch within the production per-family delivery lane's
-// capacity so this row measures completed fanout rather than intentional
-// fire-and-forget drops under saturation.
-const PUBLISH_CHUNK_SIZE: u64 = 64;
+// The worker queues delivery jobs, each containing up to 64 subscribers.
+// Budget for an entire publish burst even if the worker has yet to drain it.
+const DELIVERY_JOBS_PER_BURST: u64 = 64;
+const SUBSCRIBERS_PER_JOB: usize = 64;
 const DELIVERY_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct NoticePublishCase {
@@ -125,10 +125,17 @@ fn create_publish_case(subscriber_count: usize, pattern: &str) -> NoticePublishC
 fn publish_fanout(ctx: &mut StressContext, name: &str, subscriber_count: usize, pattern: &str) {
     let case = create_publish_case(subscriber_count, pattern);
     let repeat_count = publish_repeat_count(subscriber_count, pattern);
+    let jobs_per_publish = u64::try_from(subscriber_count.div_ceil(SUBSCRIBERS_PER_JOB))
+        .expect("delivery job count fits u64");
+    let publishes_per_chunk = DELIVERY_JOBS_PER_BURST / jobs_per_publish;
+    assert!(
+        publishes_per_chunk > 0,
+        "one publish must fit in the delivery lane"
+    );
     let mut remaining = repeat_count;
     let mut total = Duration::ZERO;
     while remaining > 0 {
-        let chunk = remaining.min(PUBLISH_CHUNK_SIZE);
+        let chunk = remaining.min(publishes_per_chunk);
         case.reset_subscriber_counts();
         let start = Instant::now();
         for _ in 0..chunk {
