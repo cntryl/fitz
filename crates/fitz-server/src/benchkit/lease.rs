@@ -7,20 +7,11 @@ use std::sync::Arc;
 
 /// Typed Lease fixture for measuring the production expiry sweep and its
 /// same-lane completion barrier without expanding the generic bench handle.
-#[cfg(any(test, feature = "benchkit"))]
 pub struct LeaseSweepFixture {
     sink: Arc<LeaseDomain>,
 }
 
-#[cfg(any(test, feature = "benchkit"))]
 impl LeaseSweepFixture {
-    #[must_use]
-    pub fn new(router: Arc<Router>) -> Self {
-        Self {
-            sink: super::live_sink::create_raw_bench_lease_sink(router),
-        }
-    }
-
     /// Invoke Lease's normal sweep and wait for a count request on the same
     /// control lane. The returned count also verifies the fixture's live set.
     #[must_use]
@@ -39,7 +30,6 @@ impl LeaseSweepFixture {
     }
 }
 
-#[cfg(any(test, feature = "benchkit"))]
 impl MailboxSink for LeaseSweepFixture {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.sink.deliver(envelope)
@@ -50,8 +40,9 @@ impl MailboxSink for LeaseSweepFixture {
     }
 }
 
-#[cfg(any(test, feature = "benchkit"))]
 #[must_use]
 pub fn create_bench_lease_sweep_fixture(router: Arc<Router>) -> LeaseSweepFixture {
-    LeaseSweepFixture::new(router)
+    LeaseSweepFixture {
+        sink: super::live_sink::create_raw_bench_lease_sink(router),
+    }
 }

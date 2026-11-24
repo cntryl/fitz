@@ -4,7 +4,8 @@
 //! including common setup helpers, mock factories, and test data generators.
 //! Available when compiled with bench configuration.
 
-pub mod lease;
+#[cfg(any(test, feature = "benchkit"))]
+mod lease;
 pub mod live_sink;
 pub mod queue;
 pub mod runtime;
