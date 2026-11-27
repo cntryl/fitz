@@ -1,5 +1,6 @@
 export interface SessionState {
   authRequired?: boolean;
+  oidcEnabled?: boolean;
   authenticated: boolean;
   routeFamilies: string[];
   routeFamiliesWildcard: boolean;
@@ -29,4 +30,9 @@ export interface ActiveSession {
 
 export interface ActiveSessionsOverview {
   sessions: ActiveSession[];
+}
+
+export interface SignOutResult {
+  performed: boolean;
+  oidcEnabled?: boolean;
 }

@@ -1,21 +1,46 @@
 import { state } from "@askrjs/askr";
-import { task } from "@askrjs/askr/resources";
+import { task, watch } from "@askrjs/askr/resources";
 import { currentRoute, navigate } from "@askrjs/askr/router";
-import { Alert, Block, Button, Field, Input, Label, PageHeader } from "@askrjs/themes/components";
+import {
+  Alert,
+  Block,
+  Button,
+  Field,
+  Input,
+  Label,
+  PageHeader,
+  Spinner,
+} from "@askrjs/themes/components";
 import AuthBrand from "@/components/shared/auth-brand";
 import { createSignInMutation } from "@/features/session/session-mutation";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
 import { formatUnknownError } from "@/shared/errors/format";
 
-function resolveNextTarget() {
-  const next = currentRoute().query.get("next");
-
-  if (typeof next === "string" && next.startsWith("/") && !next.startsWith("//")) {
-    return next;
+function resolveNextTarget(next: string | null) {
+  if (!next?.startsWith("/") || next.startsWith("//") || next.includes("\\")) {
+    return "/";
+  }
+  for (const character of next) {
+    const code = character.charCodeAt(0);
+    if (code < 32 || code === 127) return "/";
   }
 
-  return "/";
+  const target = new URL(next, window.location.origin);
+  if (
+    target.origin !== window.location.origin ||
+    target.pathname.startsWith("//") ||
+    target.pathname.startsWith("/api/") ||
+    target.pathname === "/login" ||
+    target.pathname === "/logout"
+  ) {
+    return "/";
+  }
+  return `${target.pathname}${target.search}${target.hash}`;
+}
+
+function openProvider(next: string) {
+  window.location.replace(`/api/v1/session/oidc/start?${new URLSearchParams({ next })}`);
 }
 
 export default function Login() {
@@ -26,8 +51,59 @@ export default function Login() {
 
   const signIn = createSignInMutation();
   const currentSession = createCurrentSessionQuery();
-  const nextTarget = resolveNextTarget();
+  const { query } = currentRoute();
+  const nextTarget = resolveNextTarget(query.get("next"));
+  const callbackFailed = query.get("oidc_error") === "1";
+  const signedOut = query.get("signed_out") === "1";
+  const stopped = callbackFailed || signedOut;
   const openAccess = currentSession.data?.authRequired === false;
+
+  watch(
+    [
+      () => currentSession.data?.oidcEnabled === true,
+      () => currentSession.data?.authenticated === true,
+      () => Boolean(currentSession.error),
+      () => stopped,
+      () => nextTarget,
+    ] as const,
+    ([enabled, authenticated, failed, paused, next]) => {
+      if (!enabled || failed || paused) return;
+      if (authenticated) {
+        navigate(next, { history: "replace" });
+      } else {
+        openProvider(next);
+      }
+    },
+  );
+
+  if (currentSession.loading || currentSession.error || currentSession.data?.oidcEnabled) {
+    const title = currentSession.error
+      ? "Could not verify your session"
+      : callbackFailed
+        ? "Sign in failed"
+        : signedOut
+          ? "Signed out"
+          : "Sign in to Fitz Admin";
+    return (
+      <Block direction="column" gap="xl">
+        <Block direction="column" gap="md">
+          <AuthBrand />
+          <PageHeader title={title} />
+        </Block>
+        {currentSession.error ? (
+          <Button onPress={() => void currentSession.refresh()}>Retry</Button>
+        ) : currentSession.loading || !stopped ? (
+          <Spinner
+            label={currentSession.loading ? "Checking sign-in options" : "Opening sign-in provider"}
+          />
+        ) : (
+          <Button variant="primary" width="full" onPress={() => openProvider(nextTarget)}>
+            {callbackFailed ? "Try again" : "Sign in"}
+          </Button>
+        )}
+      </Block>
+    );
+  }
 
   async function onSubmit(event: Event) {
     event.preventDefault();
