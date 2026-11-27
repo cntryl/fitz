@@ -1,6 +1,7 @@
 # Auth0 Setup
 
-This is the recommended first-party Auth0 shape for Fitz.
+This guide covers the Fitz broker connection. For browser sign-in see
+[OpenID Connect sign-in for Fitz Admin](admin-oidc.md).
 
 Use an Auth0 API access token, not an ID token. Fitz validates the token at
 CONNECT time, resolves the broker-internal route family from `org_id`, and then

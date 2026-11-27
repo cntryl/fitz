@@ -71,6 +71,7 @@ fitz-schedule.workspace = true
 fitz-stream.workspace = true
 
 [dev-dependencies]
+aws-lc-rs = "1"
 fitz-kv = { workspace = true, features = ["test-support"] }
 fitz-lease = { workspace = true, features = ["test-support", "benchkit"] }
 fitz-notice = { workspace = true, features = ["test-support"] }
@@ -80,8 +81,10 @@ fitz-schedule = { workspace = true, features = ["test-support"] }
 fitz-stream = { workspace = true, features = ["test-support"] }
 cntryl-stress.workspace = true
 jsonschema.workspace = true
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs"] }
 serial_test.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+tokio-rustls = "0.26"
 
 [features]
 bench-no-snapshot = ["fitz-rpc/bench-no-snapshot", "fitz-schedule/bench-no-snapshot"]

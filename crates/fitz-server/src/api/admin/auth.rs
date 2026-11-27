@@ -14,14 +14,23 @@ use uuid::Uuid;
 
 mod config;
 mod cookies;
+mod oidc;
+mod oidc_routes;
 mod origin_checks;
 mod responses;
 
 pub use config::protected_admin_configured_from_env;
 use config::{env_non_empty, parse_admin_route_family_access};
 use cookies::{build_cookie, clear_cookie, extract_cookie_value};
+pub(crate) use oidc_routes::{oidc_callback, oidc_start};
 use origin_checks::{expected_admin_origin, request_origin};
 pub use responses::{parse_login_request, session_created_response, session_deleted_response};
+
+pub(crate) const OIDC_CALLBACK_PATH: &str = oidc::CALLBACK_PATH;
+
+pub(crate) fn validate_admin_oidc_config() -> Result<bool, String> {
+    oidc::validate_config()
+}
 
 const ADMIN_SESSION_COOKIE: &str = "fitz_admin_session";
 const DEFAULT_SESSION_TTL_SECS: i64 = 28_800;
@@ -63,6 +72,7 @@ pub enum AdminAuthMode {
 pub struct AdminAuth {
     settings: Arc<Option<AdminAuthSettings>>,
     mode: AdminAuthMode,
+    oidc: Option<Arc<oidc::Oidc>>,
     provisioned_route_families: Arc<parking_lot::RwLock<Option<BTreeSet<u32>>>>,
     login_rate_limiter: Arc<parking_lot::Mutex<LoginRateLimiter>>,
 }
@@ -164,9 +174,17 @@ impl AdminRouteFamilyAccess {
 
 impl AdminAuth {
     pub fn from_env() -> Self {
-        let mode = match std::env::var("FITZ_ADMIN_AUTH_MODE") {
+        let mut mode = match std::env::var("FITZ_ADMIN_AUTH_MODE") {
             Ok(value) if value.eq_ignore_ascii_case("open") => AdminAuthMode::Open,
             _ => AdminAuthMode::Protected,
+        };
+        let oidc = match oidc::Oidc::from_env() {
+            Ok(oidc) => oidc.map(Arc::new),
+            Err(error) => {
+                mode = AdminAuthMode::Protected;
+                tracing::error!(%error, "Invalid Fitz admin OIDC configuration");
+                None
+            }
         };
         let root_password = env_non_empty(ROOT_PASSWORD_ENV);
 
@@ -208,6 +226,7 @@ impl AdminAuth {
                     route_family_access,
                 })
             }
+            None if oidc.is_some() => None,
             _ if matches!(mode, AdminAuthMode::Protected) => {
                 tracing::warn!(
                     "Admin auth is not fully configured; session login endpoints will remain unavailable"
@@ -223,6 +242,7 @@ impl AdminAuth {
         Self {
             settings: Arc::new(settings),
             mode,
+            oidc,
             provisioned_route_families: Arc::new(parking_lot::RwLock::new(None)),
             login_rate_limiter: Arc::new(parking_lot::Mutex::new(LoginRateLimiter::default())),
         }
@@ -282,7 +302,28 @@ impl AdminAuth {
 
     #[must_use]
     pub fn is_configured(&self) -> bool {
+        self.oidc.is_some() || self.password_login_configured()
+    }
+
+    pub(crate) fn password_login_configured(&self) -> bool {
         self.settings.is_some()
+    }
+
+    pub(crate) fn oidc_enabled(&self) -> bool {
+        self.oidc.is_some()
+    }
+
+    pub(crate) fn oidc_session_token<B>(&self, request: &hyper::Request<B>) -> Option<String> {
+        self.oidc.as_ref()?;
+        extract_cookie_value(request, oidc::SESSION_COOKIE)
+    }
+
+    pub(crate) fn clear_oidc_session(
+        &self,
+        previous: Option<&str>,
+        response: &mut crate::api::http::Response,
+    ) {
+        oidc_routes::clear_admin_oidc_cookie(previous, self, response);
     }
 
     #[must_use]
@@ -437,11 +478,24 @@ impl AdminAuth {
             });
         }
 
-        let settings = self
-            .settings
-            .as_ref()
-            .as_ref()
-            .ok_or(AuthFailure::Unavailable)?;
+        if let Some(oidc) = &self.oidc {
+            if let Some(token) = extract_cookie_value(req, oidc::SESSION_COOKIE) {
+                return oidc
+                    .principal(&token)
+                    .filter(|principal| {
+                        self.valid_route_family_grants(&principal.route_family_access)
+                    })
+                    .ok_or(AuthFailure::InvalidSession);
+            }
+        }
+
+        let settings = self.settings.as_ref().as_ref().ok_or_else(|| {
+            if self.oidc_enabled() {
+                AuthFailure::MissingSession
+            } else {
+                AuthFailure::Unavailable
+            }
+        })?;
         let token =
             extract_cookie_value(req, ADMIN_SESSION_COOKIE).ok_or(AuthFailure::MissingSession)?;
         let key = DecodingKey::from_secret(settings.jwt_secret.as_bytes())
@@ -516,12 +570,16 @@ impl AdminAuth {
             return Ok(());
         }
 
-        let settings = self
-            .settings
-            .as_ref()
-            .as_ref()
-            .ok_or(AuthFailure::Unavailable)?;
-        let expected = expected_admin_origin(req, settings)?;
+        let expected = if let Some(oidc) = &self.oidc {
+            oidc.origin().clone()
+        } else {
+            let settings = self
+                .settings
+                .as_ref()
+                .as_ref()
+                .ok_or(AuthFailure::Unavailable)?;
+            expected_admin_origin(req, settings)?
+        };
         let candidate = request_origin(req)?.ok_or(AuthFailure::Csrf)?;
 
         if expected.same_origin(&candidate) {

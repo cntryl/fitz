@@ -319,10 +319,12 @@ fn parse_jwks_issuers_from_env(
     Ok(issuers)
 }
 
+pub(crate) const DEFAULT_BROKER_AUDIENCES: &str = "fitz,fitz-broker";
+
 fn audiences_from_env() -> Vec<String> {
     let raw = std::env::var("FITZ_JWT_AUDIENCES")
         .or_else(|_| std::env::var("FITZ_JWT_AUDIENCE"))
-        .unwrap_or_else(|_| "fitz,fitz-broker".to_string());
+        .unwrap_or_else(|_| DEFAULT_BROKER_AUDIENCES.to_owned());
     raw.split(',')
         .map(str::trim)
         .filter(|aud| !aud.is_empty())

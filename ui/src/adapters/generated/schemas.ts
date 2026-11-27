@@ -1,6 +1,7 @@
 export type AdminFeaturesResponse = {
   "admin_auth_required": boolean;
   "admin_auth_mode": "protected" | "open";
+  "admin_oidc_enabled"?: boolean;
   "route_families": Array<string>;
   "route_families_wildcard": boolean;
 };

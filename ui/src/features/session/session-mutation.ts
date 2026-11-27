@@ -1,5 +1,5 @@
 import { createMutation } from "@askrjs/askr/data";
-import type { LoginPayload } from "./session-models";
+import type { LoginPayload, SignOutResult } from "./session-models";
 import { SESSION_QUERY_PREFIX } from "./session-query";
 import { sessionService } from "./session-service";
 
@@ -14,7 +14,7 @@ export function createSignInMutation() {
 }
 
 export function createSignOutMutation() {
-  return createMutation<undefined, { performed: boolean }>({
+  return createMutation<undefined, SignOutResult>({
     action: async (_input, { signal }) => {
       return sessionService.signOut({ signal });
     },

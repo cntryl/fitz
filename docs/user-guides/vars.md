@@ -75,12 +75,24 @@ Identity claim lookup precedence is fixed:
 | --- | --- | --- | --- |
 | FITZ_ADMIN_AUTH_MODE | protected or open | protected | Admin auth mode. Open mode bypasses session login. |
 | Root login username | `root` | `root` | Fixed administrative identity; it is not configurable. |
-| FITZ_ROOT_PASSWORD | Non-empty secret | Unset | Required for protected admin login. Fitz hashes it in memory at startup; supply it from a deployment secret. |
-| FITZ_ADMIN_SESSION_TTL_SECS | Positive integer seconds | 28800 | Admin session cookie lifetime. |
+| FITZ_ROOT_PASSWORD | Non-empty secret | Unset | Required for protected root password login. Fitz hashes it in memory at startup; supply it from a deployment secret. |
+| FITZ_ADMIN_SESSION_TTL_SECS | Positive integer seconds | 28800 | Root session cookie lifetime and an upper bound for the OIDC browser session, which is capped at eight hours. |
 | FITZ_ADMIN_COOKIE_SECURE | true or false | true | Sets Secure cookie attribute for admin session cookie. Set false only for loopback/local non-TLS development. |
 | FITZ_ADMIN_PUBLIC_ORIGIN | Exact URL origin, e.g. https://admin.example.com | Request host on local binds | Expected same-origin value for protected unsafe admin requests. Required for protected admin on non-loopback binds. Must not include a path, query, fragment, or trailing slash. |
-| FITZ_ADMIN_ROUTE_FAMILIES | `*` or comma-separated route-family identifiers | `*` | Route families visible to an authenticated admin session. Empty and `*` both select wildcard access. |
-| FITZ_ADMIN_JWT_SECRET | Secret string | Generated per process | Signs protected-admin session cookies. Set a stable secret only when sessions must survive process restarts. |
+| FITZ_ADMIN_ROUTE_FAMILIES | `*` or comma-separated route-family identifiers | `*` | Route families granted to the root password session. Empty and `*` both select wildcard access. |
+| FITZ_ADMIN_JWT_SECRET | Secret string | Generated per process | Signs root password session cookies. Set a stable secret only when sessions must survive process restarts. |
+| FITZ_ADMIN_OIDC_ISSUER | Exact HTTPS issuer URL | Unset | Enables provider discovery with the other required OIDC settings. |
+| FITZ_ADMIN_OIDC_CLIENT_ID | Non-empty string | Unset | Confidential web application client ID. |
+| FITZ_ADMIN_OIDC_CLIENT_SECRET | Non-empty secret | Unset | Secret for the server-side code exchange. |
+| FITZ_ADMIN_OIDC_API_AUDIENCE | Non-empty identifier | Unset | Dedicated JWT audience for Fitz Admin. |
+| FITZ_ADMIN_OIDC_PERMISSIONS_CLAIM | Claim name | permissions | Verified admin access-token claim containing permissions. |
+| FITZ_ADMIN_OIDC_AUDIENCE_PARAMETER | audience, resource, or none | audience | Provider parameter used to request the admin API. Fitz always checks the access-token audience. |
+| FITZ_ADMIN_OIDC_CLIENT_AUTH_METHOD | client_secret_post or client_secret_basic | Provider discovery | Token-endpoint client authentication method. |
+| FITZ_ADMIN_OIDC_SCOPES | Space-separated scope strings | Unset | Provider scopes in addition to openid. |
+
+Admin OIDC requires a configured HTTPS `FITZ_ADMIN_PUBLIC_ORIGIN`, secure
+cookies, and protected mode. See the
+[Auth0 setup walkthrough](admin-oidc.md#configure-auth0).
 
 `FITZ_ADMIN_JWT_SECRET` is optional. When it is unset, Fitz generates a
 process-ephemeral signing key and protected-admin sessions do not survive a
@@ -113,7 +125,7 @@ For authenticated browser or API deployments outside local development:
 - Set `FITZ_ASSUME_EXTERNAL_TLS=true` when TLS terminates outside Fitz.
 - Do not set `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE`; it is only for host-loopback local container publishing.
 - Set `FITZ_WS_ALLOWED_ORIGINS` to the exact public SPA origins allowed to open browser WebSockets.
-- Set `FITZ_ADMIN_AUTH_MODE=protected`, provide `FITZ_ROOT_PASSWORD` from a secret, set `FITZ_ADMIN_PUBLIC_ORIGIN=https://admin.example.com`, and keep `FITZ_ADMIN_COOKIE_SECURE=true`.
+- Set `FITZ_ADMIN_AUTH_MODE=protected`, configure [admin OIDC](admin-oidc.md) or provide `FITZ_ROOT_PASSWORD` from a secret, set `FITZ_ADMIN_PUBLIC_ORIGIN=https://admin.example.com`, and keep `FITZ_ADMIN_COOKIE_SECURE=true`.
 - Expect protected-admin session cookies to expire on broker restart because the signing key is generated in memory per process.
 - Keep Fitz reachable only from your TLS terminator or other trusted network boundary.
 

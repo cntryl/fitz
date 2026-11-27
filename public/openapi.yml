@@ -3544,6 +3544,9 @@ components:
         admin_auth_mode:
           type: string
           enum: [protected, open]
+        admin_oidc_enabled:
+          type: boolean
+          description: Whether protected admin browsers can sign in through the configured OpenID Connect issuer.
         route_families:
           type: array
           items:
