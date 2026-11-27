@@ -168,7 +168,7 @@ where
         return Ok(no_content_response());
     }
 
-    if !admin_auth.is_configured() {
+    if !admin_auth.password_login_configured() {
         return Ok(super::error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "Admin authentication is not configured",
@@ -184,6 +184,7 @@ where
         .get::<auth::AdminClientIp>()
         .copied()
         .unwrap_or_default();
+    let previous = admin_auth.oidc_session_token(&req);
     let Ok(login) = auth::parse_login_request(req).await else {
         return Ok(super::error_response(
             StatusCode::BAD_REQUEST,
@@ -227,7 +228,9 @@ where
         Err(err) => return Ok(auth_error_response(err)),
     };
 
-    Ok(auth::session_created_response(&cookie))
+    let mut response = auth::session_created_response(&cookie);
+    admin_auth.clear_oidc_session(previous.as_deref(), &mut response);
+    Ok(response)
 }
 
 pub(super) async fn handle_current_session<B>(
@@ -259,9 +262,10 @@ pub(super) async fn handle_logout<B>(
         return Ok(*response);
     }
     let admin_auth = runtime.admin_auth();
-    Ok(auth::session_deleted_response(
-        &admin_auth.clear_session_cookie(),
-    ))
+    let mut response = auth::session_deleted_response(&admin_auth.clear_session_cookie());
+    let previous = admin_auth.oidc_session_token(req);
+    admin_auth.clear_oidc_session(previous.as_deref(), &mut response);
+    Ok(response)
 }
 
 pub(super) async fn handle_features(runtime: &Arc<Runtime>) -> Result<Response, Infallible> {
@@ -275,6 +279,7 @@ pub(super) async fn handle_features(runtime: &Arc<Runtime>) -> Result<Response, 
     Ok(super::json_response(AdminFeaturesResponse {
         admin_auth_required: login_required,
         admin_auth_mode: admin_auth.auth_mode(),
+        admin_oidc_enabled: admin_auth.oidc_enabled(),
         route_families: if login_required {
             Vec::new()
         } else {

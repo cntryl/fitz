@@ -7,7 +7,12 @@ import {
   type ServiceRequestOptions,
 } from "@/shared/errors/api";
 import { mapActiveSessionsOverview, mapLoginPayload, mapSessionResponse } from "./session-mappers";
-import type { ActiveSessionsOverview, LoginPayload, SessionState } from "./session-models";
+import type {
+  ActiveSessionsOverview,
+  LoginPayload,
+  SessionState,
+  SignOutResult,
+} from "./session-models";
 
 export type { LoginPayload, SessionState } from "./session-models";
 
@@ -41,10 +46,22 @@ async function getCurrentSession(
   const response = await apiv1.getAdminSession(options);
 
   if (response.status === 401) {
-    return null;
+    return features.admin_oidc_enabled
+      ? {
+          authRequired: true,
+          oidcEnabled: true,
+          authenticated: false,
+          routeFamilies: [],
+          routeFamiliesWildcard: false,
+          username: "",
+        }
+      : null;
   }
 
-  return mapSessionResponse(unwrapResponse(response, "Unable to load admin session"));
+  return {
+    ...mapSessionResponse(unwrapResponse(response, "Unable to load admin session")),
+    oidcEnabled: features.admin_oidc_enabled === true,
+  };
 }
 
 async function signIn(payload: LoginPayload, options: ServiceRequestOptions = {}): Promise<void> {
@@ -63,7 +80,7 @@ async function signIn(payload: LoginPayload, options: ServiceRequestOptions = {}
   ensureResponseOk(response, "Unable to sign in");
 }
 
-async function signOut(options: ServiceRequestOptions = {}): Promise<{ performed: boolean }> {
+async function signOut(options: ServiceRequestOptions = {}): Promise<SignOutResult> {
   const features = await getAdminFeatures(options);
 
   if (!features.admin_auth_required) {
@@ -73,11 +90,11 @@ async function signOut(options: ServiceRequestOptions = {}): Promise<{ performed
   const response = await apiv1.deleteAdminSession(options);
 
   if (response.status === 401) {
-    return { performed: true };
+    return { performed: true, oidcEnabled: features.admin_oidc_enabled === true };
   }
 
   ensureResponseOk(response, "Unable to sign out");
-  return { performed: true };
+  return { performed: true, oidcEnabled: features.admin_oidc_enabled === true };
 }
 
 async function listActiveSessions(

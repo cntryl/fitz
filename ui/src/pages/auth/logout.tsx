@@ -22,8 +22,8 @@ export default function Logout() {
     setError("");
 
     try {
-      await signOut.execute(undefined);
-      navigate("/login", { history: "replace" });
+      const result = await signOut.execute(undefined);
+      navigate(result?.oidcEnabled ? "/login?signed_out=1" : "/login", { history: "replace" });
     } catch (err) {
       setError(formatUnknownError(err));
       setPhase("error");

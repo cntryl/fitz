@@ -14,6 +14,7 @@ use super::collections_and_details::{
     handle_current_session, handle_features, handle_login, handle_logout,
 };
 use super::{error_response, json_response, not_found};
+use crate::api::admin::auth;
 use crate::api::http::Response;
 use crate::boot::Runtime;
 use hyper::{Method, StatusCode};
@@ -33,6 +34,7 @@ use hierarchical_mutations::{handle_hierarchical_delete, handle_hierarchical_pos
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct AdminFeaturesResponse {
     pub(crate) admin_auth_required: bool,
+    pub(crate) admin_oidc_enabled: bool,
     pub(crate) admin_auth_mode: &'static str,
     pub(crate) route_families: Vec<String>,
     pub(crate) route_families_wildcard: bool,
@@ -204,6 +206,12 @@ where
         (Method::GET, "/api/v1/session") => handle_current_session(req, &runtime).await,
         (Method::DELETE, "/api/v1/session") => handle_logout(&req, &runtime).await,
         (Method::GET, "/api/v1/features") => handle_features(&runtime).await,
+        (Method::GET, "/api/v1/session/oidc/start") => {
+            Ok(auth::oidc_start(req, &runtime.admin_auth()).await)
+        }
+        (Method::GET, auth::OIDC_CALLBACK_PATH) => {
+            Ok(auth::oidc_callback(req, &runtime.admin_auth()).await)
+        }
 
         // Raw Prometheus is exposed only by the dedicated metrics listener.
         // Keep the main authenticated listener from treating this path as an

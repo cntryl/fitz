@@ -879,8 +879,9 @@ impl BootConfig {
         self.stream_subscription_limits
             .as_ref()
             .map_err(String::as_str)?;
+        let oidc_admin_configured = crate::api::admin::auth::validate_admin_oidc_config()?;
         let protected_admin_configured =
-            crate::api::admin::auth::protected_admin_configured_from_env();
+            oidc_admin_configured || crate::api::admin::auth::protected_admin_configured_from_env();
         TransportConfig::from_boot_config(self).validate(protected_admin_configured)?;
         self.auth_config
             .validate(self.auth_required)
