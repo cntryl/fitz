@@ -360,45 +360,128 @@ dependencies = [
 
 [[package]]
 name = "cntryl-midge"
-version = "0.5.3"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32be5a029183a4f3fcb76dc47289d3abb416b750383980c9cae2ad0025b6ffcf"
+checksum = "a9705506ec9234a5c6bd22d341dda6cc809e3a2fd91ec1712bc858e45322a4dc"
 dependencies = [
  "arc-swap",
- "base64 0.23.1",
  "bytes",
  "chrono",
+ "cntryl-midge-core",
+ "cntryl-midge-durability",
+ "cntryl-midge-storage",
+ "cntryl-midge-table",
  "crc32c",
  "crossbeam",
  "dashmap",
  "hex",
- "hmac",
- "hostname",
  "libc",
- "loom",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "winapi",
+]
+
+[[package]]
+name = "cntryl-midge-core"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f976da1f230644235b4decc62399ec096a0dc35d74aa4e700dbafdf8df1ee039"
+dependencies = [
+ "bytes",
+ "crc32c",
+ "libc",
  "lz4_flex",
+ "parking_lot 0.13.0",
+ "serde",
+ "thiserror",
+ "tracing",
+ "winapi",
+ "zstd",
+]
+
+[[package]]
+name = "cntryl-midge-durability"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af7f28acd8a9057fdea92150fd5c66f5ae941576f237d372c661cc2c161a71c2"
+dependencies = [
+ "arc-swap",
+ "bytes",
+ "chrono",
+ "cntryl-midge-core",
+ "cntryl-midge-storage",
+ "cntryl-midge-table",
+ "crc32c",
+ "crossbeam",
+ "hex",
+ "hostname",
+ "parking_lot 0.13.0",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "cntryl-midge-storage"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3971552637afe852f4ab0e96812f1bcf583f7d0d903f2818ae7973f87059e715"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "chrono",
+ "cntryl-midge-core",
+ "crc32c",
+ "crossbeam",
+ "hex",
+ "hmac",
+ "libc",
  "md-5",
  "parking_lot 0.13.0",
  "percent-encoding",
  "rand 0.10.4",
  "reqwest",
  "ring",
- "rmp-serde",
  "serde",
  "serde_json",
  "sha1",
  "sha2",
- "sysinfo",
- "tempfile",
- "thiserror",
  "tokio",
  "tracing",
  "url",
  "urlencoding",
  "uuid",
- "winapi",
+]
+
+[[package]]
+name = "cntryl-midge-table"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3011ed325060803abe37bf611b5599a85480d00b2455812e56355264c9c1dc"
+dependencies = [
+ "arc-swap",
+ "bytes",
+ "cntryl-midge-core",
+ "crc32c",
+ "dashmap",
+ "loom",
+ "parking_lot 0.13.0",
+ "rand 0.10.4",
+ "serde",
+ "tracing",
+ "uuid",
  "xxhash-rust",
- "zstd",
 ]
 
 [[package]]
