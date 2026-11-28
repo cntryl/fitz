@@ -28,7 +28,7 @@ code and repository-owned deployment files.
 | FITZ_DRAIN_GRACE_SECONDS | Positive integer seconds | 25 | Planned drain grace for an active broker after SIGTERM or an authenticated runtime drain request. During drain, `/targetz`, `/healthz`, and `/readyz` fail and new TCP/WebSocket sessions are rejected before active sessions are closed. Ctrl-C, fatal actor failure, active Midge writer-lease-health failure, and standby shutdown skip this delay. |
 | FITZ_DRAIN_CLOSE_REASON | Non-empty string | broker draining for redeploy | Server close reason recorded when planned drain shutdown closes active sessions. |
 | FITZ_ROUTE_FAMILIES | Comma-separated u32 list, contiguous from 1 (example: 1,2,3) | 1 | Provisioned route-family allowlist accepted after identity resolution. |
-| FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when auth is enabled. |
+| FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when generic JWT authentication is enabled. |
 | FITZ_ROUTE_FAMILY_CLAIM | JWT claim key | tid | Default identity claim key used for route-family resolution. |
 | FITZ_RPC_CANCELLATION_GRACE_MS | Integer milliseconds, 0 through 86400000 | 5000 | Grace an RPC worker gets to acknowledge cancellation cleanup after a request times out or is cancelled. Invalid values log a warning and keep the default. See [rpc-cancellation-lifecycle.md](../development/rpc-cancellation-lifecycle.md). |
 
@@ -42,6 +42,7 @@ Midge does not cooperatively cancel open or recovery.
 
 | Key | Allowed Values / Format | Default | Description |
 | --- | --- | --- | --- |
+| FITZ_AWS_IAM_TRUST_FILE | JSON file path | Unset | Enables AWS STS role tokens for broker CONNECT. See [AWS IAM authentication](aws-iam.md). |
 | FITZ_JWT_JWKS_MAP | Comma-separated issuer=jwks_url pairs | Unset | Preferred runtime token verification mode when `FITZ_AUTH_REQUIRED=true`. JWKS URLs must be absolute URLs without credentials or fragments. By default, only `https` is accepted. |
 | FITZ_JWT_HMAC_SECRET | Secret string | Unset | Local-development fallback. Enables HS256 tokens when JWKS is not configured. Externally reachable authenticated deployments should use issuer-scoped JWKS verification. |
 | FITZ_JWT_AUDIENCES | Comma-separated audience strings | fitz,fitz-broker | Audience allowlist used by runtime JWKS verification. |

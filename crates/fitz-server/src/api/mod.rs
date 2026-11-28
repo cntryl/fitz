@@ -20,6 +20,7 @@
 
 pub mod admin;
 pub(crate) mod authentication;
+pub(crate) mod aws_iam;
 pub mod background;
 mod broker;
 mod broker_shutdown;

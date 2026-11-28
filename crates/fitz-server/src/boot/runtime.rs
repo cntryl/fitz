@@ -68,7 +68,7 @@ pub(crate) fn init_with_test_route_families(
     }
     config
         .route_family_resolver
-        .validate(families, config.auth_required)?;
+        .validate(families, config.generic_auth_required())?;
 
     Ok(init_validated(config))
 }
@@ -83,6 +83,7 @@ fn init_validated(config: &BootConfig) -> RuntimeComponents {
             .with_router(router.clone())
             .with_admin_read_model(admin_read_model.clone())
             .with_auth_config(config.auth_config.clone())
+            .with_aws_iam(config.aws_iam.as_ref().ok().and_then(Clone::clone))
             .with_auth_claims_config(config.auth_claims_config.clone())
             .with_route_family_resolver(config.route_family_resolver.clone())
             .with_route_families(&config.route_families)

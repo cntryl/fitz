@@ -23,6 +23,7 @@ impl RuntimeIngress {
             route_families: Arc::new(std::iter::once(1).collect()),
             auth_required,
             auth_config: None,
+            aws_iam: None,
             auth_claims_config: crate::auth::AuthClaimsConfig::default(),
             route_family_resolver: crate::auth::RouteFamilyResolverConfig::default(),
             connect_diagnostics_budget: Arc::default(),
@@ -114,6 +115,14 @@ impl RuntimeIngress {
     #[must_use]
     pub fn with_auth_config(mut self, auth_config: crate::auth::AuthConfig) -> Self {
         self.authenticator.auth_config = Some(auth_config);
+        self
+    }
+
+    pub(crate) fn with_aws_iam(
+        mut self,
+        trust: Option<Arc<crate::api::aws_iam::AwsIamTrust>>,
+    ) -> Self {
+        self.authenticator.aws_iam = trust;
         self
     }
 
