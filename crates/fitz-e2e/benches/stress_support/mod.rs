@@ -5,6 +5,9 @@ mod durable;
 mod ephemeral;
 mod fixture;
 mod histogram;
+// Only the Tier 6 target registers the mixed restart workload.
+#[allow(dead_code)]
+pub(crate) mod mixed_endurance;
 // Shared helpers for offered-rate pressure and fixed Queue drain envelopes.
 #[allow(dead_code)]
 mod queue_pressure;

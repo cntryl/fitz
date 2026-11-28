@@ -1,13 +1,13 @@
 //! Strict TCP workloads shared by the durable-domain saturation and endurance rows.
 
 #[path = "kv.rs"]
-mod kv;
+pub(super) mod kv;
 #[path = "queue.rs"]
-mod queue;
+pub(super) mod queue;
 #[path = "schedule.rs"]
 mod schedule;
 #[path = "stream.rs"]
-mod stream;
+pub(super) mod stream;
 
 pub(super) use super::response::{complete, empty_success, error_code, require_ok};
 use crate::stress_support::types::{BenchFailure, Domain, StepOutcome};

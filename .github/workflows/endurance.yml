@@ -32,6 +32,7 @@ jobs:
           - should_soak_rpc
           - should_soak_notice
           - should_soak_lease
+          - should_soak_mixed_local_restart
     uses: ./.github/workflows/run-stress-benchmark.yml
     with:
       bench: tier6_endurance
