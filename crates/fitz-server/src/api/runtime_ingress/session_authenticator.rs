@@ -29,6 +29,7 @@ pub(super) struct SessionAuthenticator {
     pub(super) route_families: Arc<std::collections::HashSet<u32>>,
     pub(super) auth_required: bool,
     pub(super) auth_config: Option<crate::auth::AuthConfig>,
+    pub(super) aws_iam: Option<Arc<crate::api::aws_iam::AwsIamTrust>>,
     pub(super) auth_claims_config: crate::auth::AuthClaimsConfig,
     pub(super) route_family_resolver: crate::auth::RouteFamilyResolverConfig,
     pub(super) connect_diagnostics_budget: Arc<ConnectDiagnosticsBudget>,
@@ -474,18 +475,28 @@ impl SessionAuthenticator {
             "Ingress: verifying CONNECT JWT"
         );
 
-        let auth_config = self
-            .auth_config
-            .clone()
-            .unwrap_or_else(|| crate::auth::AuthConfig::from_env(true));
+        let unverified = crate::auth::parse_jwt_noverify(compact);
+        let verified = match unverified {
+            Ok(raw) if crate::api::aws_iam::is_aws_issuer(&raw.iss) => {
+                return self.verify_aws_connect(session_id, compact, &raw.iss).await;
+            }
+            Ok(raw) => {
+                let auth_config = self
+                    .auth_config
+                    .clone()
+                    .unwrap_or_else(|| crate::auth::AuthConfig::from_env(true));
+                crate::api::authentication::verified_jwt_with_raw_claims(
+                    compact,
+                    &auth_config,
+                    &self.auth_claims_config,
+                    raw,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
 
-        match crate::api::authentication::verified_jwt_with_claims_config(
-            compact,
-            &auth_config,
-            &self.auth_claims_config,
-        )
-        .await
-        {
+        match verified {
             Ok(verified) => {
                 let route_family =
                     match self.resolve_authenticated_route_family(&verified.raw_claims) {
@@ -519,6 +530,52 @@ impl SessionAuthenticator {
                         )
                         .unwrap_or_default(),
                         message: format!("connect failed: {error}"),
+                    },
+                ))
+            }
+        }
+    }
+
+    async fn verify_aws_connect(
+        &self,
+        session_id: u64,
+        compact: &str,
+        issuer: &str,
+    ) -> Result<
+        (
+            SessionPermissions,
+            crate::auth::Claims,
+            crate::runtime::routing::RouteFamily,
+        ),
+        IngressDecision,
+    > {
+        let result = if let Some(trust) = &self.aws_iam {
+            trust.verify(compact, issuer).await
+        } else {
+            Err("AWS IAM CONNECT is not configured".to_owned())
+        };
+        match result {
+            Ok(verified) if self.route_families.contains(&verified.route_family) => Ok((
+                verified.permissions,
+                verified.claims,
+                crate::runtime::routing::RouteFamily::new(verified.route_family),
+            )),
+            _ => {
+                self.log_connect_failure(
+                    session_id,
+                    compact,
+                    "aws_iam",
+                    "AWS IAM authentication rejected",
+                );
+                Err(self.reject_connect(
+                    session_id,
+                    &ConnectRefusal {
+                        code: crate::protocol::wire2::catalog::shared(
+                            crate::protocol::wire2::catalog::block::PROTOCOL,
+                            crate::protocol::wire2::envelope::ErrorClass::Unauthorized,
+                        )
+                        .unwrap_or_default(),
+                        message: "connect failed: AWS IAM authentication rejected".to_owned(),
                     },
                 ))
             }

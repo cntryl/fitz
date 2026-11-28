@@ -309,6 +309,27 @@ pub(crate) async fn refresh_jwks_for_missing_kid(jwks_url: &str, kid: &str) -> R
     fetch_and_cache_jwks_unlocked(jwks_url).await
 }
 
+// AWS requires the signed header's key ID to identify the exact issuer key.
+pub(crate) async fn exact_issuer_key(jwks_url: &str, kid: &str) -> Result<DecodingKey, String> {
+    ensure_jwks_cached(jwks_url).await?;
+    let lookup = || {
+        let entry = JWKS_CACHE.get(jwks_url)?;
+        if is_cache_entry_stale(&entry, now_epoch_secs()) {
+            return None;
+        }
+        entry.keys.get(kid).cloned()
+    };
+    if let Some(key) = lookup() {
+        return Ok(key);
+    }
+    let lock = refresh_lock(jwks_url);
+    let _guard = lock.lock().await;
+    if lookup().is_none() && claim_forced_refresh(jwks_url) {
+        fetch_and_cache_jwks_unlocked(jwks_url).await?;
+    }
+    lookup().ok_or_else(|| "no matching issuer key".to_owned())
+}
+
 /// Derive a default JWKS URL from issuer.
 ///
 /// Example: `<https://idp.example>` becomes

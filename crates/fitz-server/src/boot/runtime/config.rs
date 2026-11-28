@@ -480,6 +480,7 @@ pub struct BootConfig {
     pub auth_required: bool,
     /// Explicit auth configuration for token verification
     pub auth_config: crate::auth::AuthConfig,
+    pub(crate) aws_iam: Result<Option<std::sync::Arc<crate::api::aws_iam::AwsIamTrust>>, String>,
     /// Claim normalization behavior for authenticated CONNECT JWTs.
     pub auth_claims_config: crate::auth::AuthClaimsConfig,
     /// Broker-local route-family resolver for verified identity claims.
@@ -655,6 +656,7 @@ impl Default for BootConfig {
             ),
             auth_required,
             auth_config: crate::auth::AuthConfig::from_env(auth_required),
+            aws_iam: crate::api::aws_iam::AwsIamTrust::from_env(),
             auth_claims_config: crate::auth::AuthClaimsConfig::from_env(),
             route_family_resolver: crate::auth::RouteFamilyResolverConfig::from_env(),
             route_families,
@@ -867,6 +869,12 @@ impl BootConfig {
         Duration::from_secs(self.storage_lease_ttl_seconds)
     }
 
+    pub(crate) fn generic_auth_required(&self) -> bool {
+        self.auth_required
+            && (!matches!(self.auth_config, crate::auth::AuthConfig::Disabled)
+                || !matches!(self.aws_iam, Ok(Some(_))))
+    }
+
     /// Validate the full broker boot configuration.
     ///
     /// # Errors
@@ -883,8 +891,17 @@ impl BootConfig {
         let protected_admin_configured =
             oidc_admin_configured || crate::api::admin::auth::protected_admin_configured_from_env();
         TransportConfig::from_boot_config(self).validate(protected_admin_configured)?;
+        let aws_iam = self.aws_iam.as_ref().map_err(String::as_str)?;
+        if let Some(trust) = aws_iam {
+            trust.validate_deployment(
+                self.auth_required,
+                self.assume_external_tls,
+                &self.auth_config,
+                &self.route_families,
+            )?;
+        }
         self.auth_config
-            .validate(self.auth_required)
+            .validate(self.auth_required && aws_iam.is_none())
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         if self.route_families.is_empty() {
             return Err("FITZ_ROUTE_FAMILIES must contain at least one family".into());
@@ -904,7 +921,7 @@ impl BootConfig {
             .validate()
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         self.route_family_resolver
-            .validate(&self.route_families, self.auth_required)
+            .validate(&self.route_families, self.generic_auth_required())
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
     }

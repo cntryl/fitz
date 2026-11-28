@@ -37,12 +37,12 @@ pub(crate) async fn verified_jwt_using_jwks_with_claims_config(
     )
 }
 
-pub(crate) async fn verified_jwt_with_claims_config(
+pub(crate) async fn verified_jwt_with_raw_claims(
     compact: &str,
     auth_config: &AuthConfig,
     claims_config: &AuthClaimsConfig,
+    raw_claims: RawClaims,
 ) -> Result<VerifiedJwt, String> {
-    let raw_claims = crate::auth::parse_jwt_noverify(compact)?;
     match auth_config {
         AuthConfig::Disabled => Err("authentication is disabled".to_string()),
         AuthConfig::Hmac(config) => {
@@ -73,6 +73,16 @@ pub(crate) async fn verified_jwt_with_claims_config(
             .await
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) async fn verified_jwt_with_claims_config(
+    compact: &str,
+    auth_config: &AuthConfig,
+    claims_config: &AuthClaimsConfig,
+) -> Result<VerifiedJwt, String> {
+    let raw = crate::auth::parse_jwt_noverify(compact)?;
+    verified_jwt_with_raw_claims(compact, auth_config, claims_config, raw).await
 }
 
 #[cfg(test)]
