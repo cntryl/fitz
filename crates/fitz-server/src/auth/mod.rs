@@ -22,9 +22,9 @@ mod realm;
 mod token;
 
 pub use claims::{
-    parse_jwt_noverify, AuthClaimsConfig, Claims, RawClaims, RouteFamilyResolverConfig,
-    DEFAULT_ROLE_CLAIM, DEFAULT_ROUTE_FAMILY_CLAIM, ENV_AUTH_CUSTOM_CLAIM, ENV_AUTH_ROLE_CLAIM,
-    ENV_ROUTE_FAMILY_CLAIM, ENV_ROUTE_FAMILY_MAP,
+    parse_jwt_noverify, AudienceClaim, AuthClaimsConfig, Claims, RawClaims,
+    RouteFamilyResolverConfig, DEFAULT_ROLE_CLAIM, DEFAULT_ROUTE_FAMILY_CLAIM,
+    ENV_AUTH_CUSTOM_CLAIM, ENV_AUTH_ROLE_CLAIM, ENV_ROUTE_FAMILY_CLAIM, ENV_ROUTE_FAMILY_MAP,
 };
 pub use diagnostics::{jwt_failure_diagnostics, JwtClaimDiagnostics, JwtFailureDiagnostics};
 pub use errors::AuthError;

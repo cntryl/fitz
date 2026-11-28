@@ -42,6 +42,12 @@ Midge does not cooperatively cancel open or recovery.
 
 | Key | Allowed Values / Format | Default | Description |
 | --- | --- | --- | --- |
+| FITZ_WORKLOAD_IDENTITY_TRUST_FILE | JSON file path | Unset | Enables AWS, Azure, and Google Cloud workload CONNECT. See [cloud workload identity](workload-identity.md). |
+| FITZ_WORKLOAD_PROVIDER | aws, azure, or google | Unset | Enables flat single-provider workload trust. See [environment setup](workload-identity.md#single-provider-environment-setup). |
+| FITZ_WORKLOAD_AUDIENCE | String | Unset | Expected audience for the flat provider. |
+| FITZ_WORKLOAD_SUBJECT | String | Unset | Exact workload identity, or `*` for the configured AWS account or Azure tenant. |
+| FITZ_WORKLOAD_PERMISSIONS | Comma-separated permissions | Unset | Shared permissions for admitted workloads. |
+| FITZ_WORKLOAD_ROUTE_FAMILY | u32 | 1 | Shared route family for admitted workloads. |
 | FITZ_AWS_IAM_TRUST_FILE | JSON file path | Unset | Enables AWS STS role tokens for broker CONNECT. See [AWS IAM authentication](aws-iam.md). |
 | FITZ_JWT_JWKS_MAP | Comma-separated issuer=jwks_url pairs | Unset | Preferred runtime token verification mode when `FITZ_AUTH_REQUIRED=true`. JWKS URLs must be absolute URLs without credentials or fragments. By default, only `https` is accepted. |
 | FITZ_JWT_HMAC_SECRET | Secret string | Unset | Local-development fallback. Enables HS256 tokens when JWKS is not configured. Externally reachable authenticated deployments should use issuer-scoped JWKS verification. |

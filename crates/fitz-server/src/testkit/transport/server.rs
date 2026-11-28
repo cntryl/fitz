@@ -481,7 +481,7 @@ impl TestServer {
             } else {
                 crate::auth::AuthConfig::Disabled
             },
-            aws_iam: Ok(None),
+            workload_identity: Ok(None),
             auth_claims_config: crate::auth::AuthClaimsConfig::default(),
             route_family_resolver: if auth_required {
                 crate::auth::RouteFamilyResolverConfig::from_mappings(
