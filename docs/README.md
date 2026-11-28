@@ -1,9 +1,5 @@
 # Fitz Documentation
 
-Fitz is a broker for Stream, Queue, Notice, RPC, KV, Lease, and Schedule. It
-uses one active writer per storage namespace. This index links to user guides,
-protocol contracts, operations, and contributor references.
-
 ## Learn Fitz
 
 - [Overview](user-guides/overview.md)
@@ -29,6 +25,7 @@ protocol contracts, operations, and contributor references.
 - [Auth and browser deployment](operations/auth-browser-deployment.md)
 - [Probes and observability](operations/observability.md)
 - [Operations runbook](operations/operations-runbook.md)
+- [S3 recovery runbook](operations/operations-runbook.md#s3-backup-and-point-in-time-recovery)
 - [Resource limits](operations/resource-limits.md)
 - [Release checklist](operations/release-checklist.md)
 - [Fitz 0.3.1 release notes](operations/release-0.3.1.md)
@@ -55,3 +52,4 @@ protocol contracts, operations, and contributor references.
 - [Release policy](development/release-policy.md)
 - [Support and validation matrix](development/support-matrix.md)
 - [Testing](development/testing.md)
+- [Benchmarks](development/benchmarks.md)

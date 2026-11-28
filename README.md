@@ -1,17 +1,9 @@
 # fitz
 
-Fitz is a container-friendly application broker that exposes seven communication
-and state primitives through one active broker process and one route model per
-storage namespace.
-
-Each storage namespace has one active writer. Independent workloads can use
-separate deployments and namespaces.
+Fitz is a container-friendly application broker for messaging, durable history,
+and application state. Each storage namespace has one active writer.
 
 ## What Fitz Provides
-
-Fitz combines streams, queues, live fanout, RPC, KV, leases, and schedules
-behind one broker process. Each domain has its own persistence, disconnect, and
-restart semantics.
 
 | Domain | Use it for | Durability model |
 | --- | --- | --- |
@@ -23,40 +15,13 @@ restart semantics.
 | Lease | single-broker ownership coordination | ephemeral |
 | Schedule | durable future timing intent | durable definitions and pending fire claims |
 
-Durable paths use Midge-backed persistence. Local storage writes to disk.
-Blob/object-backed storage uses a local cache plus provider storage, so durable
-state that has reached the configured cloud durability barrier can outlive and
-be recovered by a replacement broker process. A storage writer lease ensures
-only one process at a time owns a storage namespace. Each domain's contract and
-selected write policy determine which commits are durable.
-
-## Deployment Tradeoffs
-
-Each storage namespace has one active writer. A replacement process can recover
-persisted state after it acquires the storage lease. An ungraceful failure may
-delay that handoff while the lease expires. Clients reconnect and rebuild
-ephemeral session state.
-
-Assign independent workloads or partitions to separate Fitz deployments, each
-with its own storage namespace and local cache. Application routing owns that
-assignment; Fitz does not automatically shard one logical broker across
-processes. RouteFamily remains an isolation boundary within a deployment, not a
-cross-process shard selector.
-
-Fitz does not form a multi-node consensus cluster or provide a clustered
-high-availability mode. Process replacement can interrupt traffic; it does not
-provide:
-
-- zero-downtime or transparent failover during process replacement
-- session recovery after disconnect
-- exactly-once delivery
-- durable live subscription recovery
-- durable RPC pending work
-- crash-safe lease ownership
-
-Sessions are ephemeral. Disconnect creates a new session, and clients must
-rebuild subscriptions, workers, leases, transactions, and Stream resume
-positions explicitly.
+Midge persists durable state to local disk or provider storage with a local
+cache. A replacement broker can recover persisted state after acquiring the
+storage lease. Lease expiry can delay replacement after a crash. Clients
+reconnect and rebuild ephemeral sessions. Cluster failover and sharding are
+outside Fitz's deployment model. Assign independent workloads to separate
+deployments and storage namespaces. See the [durability guide](docs/user-guides/durability.md) and
+[operator guide](docs/operations/operator-guide.md) for recovery behavior.
 
 ## Quick Start
 
@@ -133,12 +98,8 @@ Important defaults:
 
 ## Documentation
 
-Use [docs/README.md](docs/README.md) as the documentation index.
-
-Start here:
-
-- [docs/user-guides/overview.md](docs/user-guides/overview.md)
-- [docs/user-guides/quick-start.md](docs/user-guides/quick-start.md)
-- [docs/user-guides/api-guide.md](docs/user-guides/api-guide.md)
-- [docs/development/domain-boundaries-spec.md](docs/development/domain-boundaries-spec.md)
-- [docs/clients/client-spec.md](docs/clients/client-spec.md)
+- [Documentation index](docs/README.md)
+- [Quick start](docs/user-guides/quick-start.md)
+- [API guide](docs/user-guides/api-guide.md)
+- [Client specification](docs/clients/client-spec.md)
+- [Contributing](CONTRIBUTING.md)

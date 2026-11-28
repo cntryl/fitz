@@ -1,13 +1,13 @@
 name: Benchmark Tier 5 Saturation
-run-name: Saturation benchmarks (${{ inputs.profile || 'extended' }})
+run-name: Saturation benchmarks (${{ inputs.profile || 'full' }})
 
 on:
   workflow_dispatch:
     inputs:
       profile:
-        description: Workload duration (60s smoke, 600s standard, 3600s extended)
+        description: Workload duration (60s smoke, 600s standard, 3600s full)
         type: choice
-        options: [smoke, standard, extended]
+        options: [smoke, standard, full]
         default: standard
   schedule:
     - cron: "0 6 * * 1"
@@ -21,8 +21,6 @@ concurrency:
 
 jobs:
   bench:
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -53,39 +51,9 @@ jobs:
             workload: should_drain_queue_finite_25k
           - bench: tier5_queue_drains
             workload: should_drain_queue_finite_100k
-    env:
-      RUSTUP_TOOLCHAIN: "1.99.1"
-      CARGO_INCREMENTAL: "0"
-      RUST_LOG: "off"
-      FITZ_LOG_LEVEL: "off"
-      OTEL_ENABLED: "false"
-      STRESS_OUTPUT_DIR: ${{ github.workspace }}/target/stress
-      STRESS_PROFILE: smoke
-      STRESS_SAMPLES: "1"
-      STRESS_WARMUP_SAMPLES: "0"
-      STRESS_COOLDOWN_SAMPLES: "0"
-      FITZ_STRESS_STORAGE_PROFILE: local_disk
-      STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
-      # Scheduled runs use the extended settings.
-      FITZ_TIER5_DURATION_SECS: ${{ inputs.profile == 'smoke' && '60' || inputs.profile == 'standard' && '600' || '3600' }}
-      STRESS_TIMEOUT_SECS: ${{ inputs.profile == 'smoke' && '960' || inputs.profile == 'standard' && '1500' || '4500' }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Install Rust
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-
-      - name: Run benchmarks
-        run: cargo bench --locked -p fitz-e2e --bench '${{ matrix.bench }}' --features benchkit,stress-soak -- --workload '${{ matrix.workload }}'
-
-      - name: Upload benchmark reports
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: bench-tier5-${{ matrix.bench }}-${{ matrix.workload }}-${{ github.sha }}
-          path: |
-            target/stress/**
-            target/fitz-stress/**
-          if-no-files-found: ignore
+    uses: ./.github/workflows/run-stress-benchmark.yml
+    with:
+      bench: ${{ matrix.bench }}
+      workload: ${{ matrix.workload }}
+      profile: ${{ inputs.profile || 'full' }}
+      artifact_name: bench-tier5-${{ matrix.bench }}-${{ matrix.workload }}-${{ github.sha }}
