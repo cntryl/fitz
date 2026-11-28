@@ -37,16 +37,16 @@
     "jsdom": "^31.0.1",
     "postcss": "^8.5.33",
     "typescript": "^7.0.2",
-    "vite": "npm:@voidzero-dev/vite-plus-core@8.3.8000",
-    "vite-plus": "1.7.0"
+    "vite": "npm:@voidzero-dev/vite-plus-core@8.3.8001",
+    "vite-plus": "1.8.0"
   },
   "overrides": {
-    "@vitest/browser-playwright": "5.1.0",
+    "@vitest/browser-playwright": "5.1.1",
     "@xmldom/xmldom": "0.9.12",
     "glob": "14.0.6",
     "minimatch": "11.0.9",
     "vite": "$vite",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   },
   "packageManager": "npm@12.2.3",
   "allowScripts": {

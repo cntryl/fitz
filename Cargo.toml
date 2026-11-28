@@ -16,7 +16,7 @@ members = [
 default-members = ["crates/fitz-server"]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 license-file = "LICENSE"
 repository = "https://github.com/cntryl/fitz"
@@ -36,7 +36,7 @@ base64 = "0.23.1"
 brotli = "9"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-cntryl-midge = "0.6.1"
+cntryl-midge = "0.6.2"
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"
 flate2 = "1"
@@ -49,7 +49,7 @@ hyper = { version = "1", features = ["full"] }
 hyper-tungstenite = "0.30"
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
 jsonwebtoken = { version = "12", default-features = false, features = ["aws_lc_rs", "use_pem"] }
-lexkey = { package = "cntryl-lexkey", version = "0.1.0" }
+lexkey = { package = "cntryl-lexkey", version = "0.1.1" }
 libc = "0.2"
 lz4_flex = "0.14.2"
 num-traits = "0.2"
@@ -60,7 +60,7 @@ opentelemetry_sdk = { version = "0.33", features = ["rt-tokio", "trace"] }
 parking_lot = "0.13"
 percent-encoding = "2"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-rmcp = { version = "=3.11.0", default-features = false, features = [
+rmcp = { version = "=3.12.0", default-features = false, features = [
     "client",
     "server",
     "transport-child-process",
@@ -88,17 +88,17 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 cntryl-stress = "0.5.1"
 crc32c = "0.6"
-jsonschema = { version = "0.62.0", default-features = false }
+jsonschema = { version = "0.63.2", default-features = false }
 proptest = "1"
 serial_test = "4.0.1"
 
-fitz-core = { path = "crates/fitz-core", version = "0.5.1" }
-fitz-storage = { path = "crates/fitz-storage", version = "0.5.1" }
-fitz-kv = { path = "crates/fitz-kv", version = "0.5.1" }
-fitz-lease = { path = "crates/fitz-lease", version = "0.5.1" }
-fitz-notice = { path = "crates/fitz-notice", version = "0.5.1" }
-fitz-queue = { path = "crates/fitz-queue", version = "0.5.1" }
-fitz-rpc = { path = "crates/fitz-rpc", version = "0.5.1" }
-fitz-schedule = { path = "crates/fitz-schedule", version = "0.5.1" }
-fitz-stream = { path = "crates/fitz-stream", version = "0.5.1" }
-fitz = { path = "crates/fitz-server", version = "0.5.1" }
+fitz-core = { path = "crates/fitz-core", version = "0.5.2" }
+fitz-storage = { path = "crates/fitz-storage", version = "0.5.2" }
+fitz-kv = { path = "crates/fitz-kv", version = "0.5.2" }
+fitz-lease = { path = "crates/fitz-lease", version = "0.5.2" }
+fitz-notice = { path = "crates/fitz-notice", version = "0.5.2" }
+fitz-queue = { path = "crates/fitz-queue", version = "0.5.2" }
+fitz-rpc = { path = "crates/fitz-rpc", version = "0.5.2" }
+fitz-schedule = { path = "crates/fitz-schedule", version = "0.5.2" }
+fitz-stream = { path = "crates/fitz-stream", version = "0.5.2" }
+fitz = { path = "crates/fitz-server", version = "0.5.2" }

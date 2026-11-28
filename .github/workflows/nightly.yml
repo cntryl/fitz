@@ -26,6 +26,7 @@ defaults:
 
 env:
   RUSTUP_TOOLCHAIN: "1.99.1"
+  BENCH_FEATURES: ""
   CARGO_INCREMENTAL: "0"
   RUST_LOG: "off"
   FITZ_LOG_LEVEL: "off"
@@ -59,13 +60,13 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: bench-release-${{ matrix.package }}-${{ env.BENCH_FEATURES || 'default' }}
+
       - name: Run benchmark
-        run: |
-          feature_args=()
-          if [[ -n "${BENCH_FEATURES:-}" ]]; then
-            feature_args=(--features "$BENCH_FEATURES")
-          fi
-          cargo bench --locked -p '${{ matrix.package }}' --bench '${{ matrix.bench }}' "${feature_args[@]}"
+        run: cargo bench --locked -p '${{ matrix.package }}' --bench '${{ matrix.bench }}' --features "$BENCH_FEATURES"
 
       - name: Upload benchmark reports
         if: always()
@@ -75,7 +76,7 @@ jobs:
           path: |
             target/stress/**
             target/fitz-stress/**
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   tier2:
     if: github.event_name == 'schedule' || inputs.tier == 'all' || inputs.tier == 'tier2'

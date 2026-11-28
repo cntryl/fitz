@@ -11,6 +11,9 @@ workloads are diagnostic and are not a pull-request performance gate.
 
 Scheduled saturation and endurance runs use the extended profile (3,600-second
 duration setting). Manual runs default to standard (600 seconds).
+The workflows restore optimized dependencies before compiling and upload native
+reports and workload artifacts after the run. Saturation and endurance share
+the same runner configuration.
 
 To start a Tier 4 smoke run from the command line, use the nightly workflow.
 
