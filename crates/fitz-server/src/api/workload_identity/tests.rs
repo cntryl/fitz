@@ -22,7 +22,7 @@ const AUDIENCE: &str = "https://orders.fitz.test/workload";
 const KID: &str = "fixture-key";
 
 struct Fixture {
-    trust: Arc<AwsIamTrust>,
+    trust: Arc<WorkloadIdentityTrust>,
     issuer: String,
     signing_key: RsaKeyPair,
 }
@@ -34,8 +34,9 @@ impl Fixture {
             uuid::Uuid::new_v4().simple(),
             AWS_ISSUER_SUFFIX
         );
-        let trust = AwsIamTrust::parse(
-            &serde_json::to_vec(&json!({
+        Self::from_document(
+            issuer.clone(),
+            &json!({
                 "audience": AUDIENCE,
                 "accounts": [{
                     "account_id": ACCOUNT, "issuer": issuer,
@@ -44,10 +45,12 @@ impl Fixture {
                         "permissions": ["notice://prod/orders/**#read"]
                     }]
                 }]
-            }))
-            .unwrap(),
+            }),
         )
-        .unwrap();
+    }
+
+    fn from_document(issuer: String, document: &Value) -> Self {
+        let trust = WorkloadIdentityTrust::parse(&serde_json::to_vec(document).unwrap()).unwrap();
         let signing_key = RsaKeyPair::generate(KeySize::Rsa2048).unwrap();
         let public = signing_key.public_key();
         let keys = json!({"keys": [{
@@ -55,11 +58,8 @@ impl Fixture {
             "n": URL_SAFE_NO_PAD.encode(public.modulus().big_endian_without_leading_zero()),
             "e": URL_SAFE_NO_PAD.encode(public.exponent().big_endian_without_leading_zero())
         }]});
-        crate::api::jwks::cache_jwks_from_json(
-            &trust.accounts[&issuer].jwks_url,
-            &keys.to_string(),
-        )
-        .unwrap();
+        crate::api::jwks::cache_jwks_from_json(&trust.issuers[&issuer].jwks_url, &keys.to_string())
+            .unwrap();
         Self {
             trust: Arc::new(trust),
             issuer,
@@ -77,6 +77,17 @@ impl Fixture {
             "iat": now, "exp": now + 120,
             "https://sts.amazonaws.com/": {"aws_account": ACCOUNT, "principal_id": ROLE},
             "permissions": ["notice://**#*"], "tid": "token-controlled"
+        })
+    }
+
+    fn workload_claims(&self, audience: &str, subject: &str) -> Value {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        json!({
+            "iss": self.issuer, "aud": audience, "sub": subject, "iat": now, "exp": now + 120,
+            "permissions": ["notice://**#*"]
         })
     }
 
@@ -98,7 +109,7 @@ impl Fixture {
         format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature))
     }
 
-    async fn verify(&self, claims: &Value) -> Result<AwsSession, String> {
+    async fn verify(&self, claims: &Value) -> Result<WorkloadSession, String> {
         self.trust.verify(&self.sign(claims), &self.issuer).await
     }
 
@@ -110,7 +121,7 @@ impl Fixture {
             .with_auth_config(AuthConfig::Disabled)
             .with_route_family_resolver(crate::auth::RouteFamilyResolverConfig::default());
         config.auth_required = true;
-        config.aws_iam = Ok(Some(self.trust.clone()));
+        config.workload_identity = Ok(Some(self.trust.clone()));
         config
     }
 }
@@ -207,7 +218,7 @@ fn should_require_external_tls_given_aws_connect_configuration() {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("AWS IAM CONNECT requires"));
+        .contains("workload CONNECT requires"));
 }
 
 #[tokio::test]
@@ -332,7 +343,7 @@ async fn tcp_connect(client: &mut TcpStream, jwt: &str) -> Vec<u8> {
 async fn should_deny_new_operations_after_the_established_session_token_expires() {
     // Arrange
     let fixture = Fixture::new();
-    let AwsSession {
+    let WorkloadSession {
         mut claims,
         permissions,
         ..
@@ -370,4 +381,68 @@ fn ready_runtime(
 async fn stop(listener: ListenerHandle) {
     listener.shutdown.send(()).unwrap();
     listener.join.await.unwrap();
+}
+
+mod providers;
+
+#[test]
+fn should_limit_a_flat_aws_wildcard_to_roles_in_the_configured_account() {
+    // Arrange
+    let fixture = Fixture::new();
+    let file = environment::read(|name| {
+        Ok(match name {
+            "FITZ_WORKLOAD_PROVIDER" => Some("aws"),
+            "FITZ_WORKLOAD_AUDIENCE" => Some(AUDIENCE),
+            "FITZ_WORKLOAD_PERMISSIONS" => Some("notice://prod/orders/**#read"),
+            "FITZ_WORKLOAD_SUBJECT" => Some("*"),
+            "FITZ_WORKLOAD_AWS_ACCOUNT_ID" => Some(ACCOUNT),
+            "FITZ_WORKLOAD_AWS_ISSUER" => Some(fixture.issuer.as_str()),
+            _ => None,
+        }
+        .map(str::to_owned))
+    })
+    .unwrap()
+    .unwrap();
+    let trust = WorkloadIdentityTrust::from_document(file, true).unwrap();
+    let issuer = &trust.issuers[&fixture.issuer];
+    let claims = fixture.claims();
+    let now = claims["iat"].as_u64().unwrap();
+    let token = serde_json::from_value(claims.clone()).unwrap();
+    // Act
+    let session = WorkloadIdentityTrust::bind(&token, &fixture.issuer, issuer, now).unwrap();
+    // Assert
+    assert_eq!(session.route_family, 1);
+    assert_eq!(session.claims.sub, ROLE);
+    for subject in [
+        "arn:aws:iam::987654321098:role/Orders",
+        "arn:aws:iam::123456789012:user/Orders",
+    ] {
+        let mut claims = claims.clone();
+        claims["sub"] = json!(subject);
+        claims["https://sts.amazonaws.com/"]["principal_id"] = json!(subject);
+        let token = serde_json::from_value(claims).unwrap();
+        assert!(WorkloadIdentityTrust::bind(&token, &fixture.issuer, issuer, now).is_err());
+    }
+}
+
+#[test]
+fn should_reject_a_flat_google_wildcard() {
+    // Arrange
+    let file = environment::read(|name| {
+        Ok(match name {
+            "FITZ_WORKLOAD_PROVIDER" => Some("google"),
+            "FITZ_WORKLOAD_AUDIENCE" => Some(AUDIENCE),
+            "FITZ_WORKLOAD_PERMISSIONS" => Some("notice://prod/orders/**#read"),
+            "FITZ_WORKLOAD_SUBJECT" => Some("*"),
+            _ => None,
+        }
+        .map(str::to_owned))
+    })
+    .unwrap()
+    .unwrap();
+    // Act
+    let trust = WorkloadIdentityTrust::from_document(file, true);
+
+    // Assert
+    assert!(trust.is_err());
 }

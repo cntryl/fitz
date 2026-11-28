@@ -29,7 +29,7 @@ pub(super) struct SessionAuthenticator {
     pub(super) route_families: Arc<std::collections::HashSet<u32>>,
     pub(super) auth_required: bool,
     pub(super) auth_config: Option<crate::auth::AuthConfig>,
-    pub(super) aws_iam: Option<Arc<crate::api::aws_iam::AwsIamTrust>>,
+    pub(super) workload_identity: Option<Arc<crate::api::workload_identity::WorkloadIdentityTrust>>,
     pub(super) auth_claims_config: crate::auth::AuthClaimsConfig,
     pub(super) route_family_resolver: crate::auth::RouteFamilyResolverConfig,
     pub(super) connect_diagnostics_budget: Arc<ConnectDiagnosticsBudget>,
@@ -477,8 +477,16 @@ impl SessionAuthenticator {
 
         let unverified = crate::auth::parse_jwt_noverify(compact);
         let verified = match unverified {
-            Ok(raw) if crate::api::aws_iam::is_aws_issuer(&raw.iss) => {
-                return self.verify_aws_connect(session_id, compact, &raw.iss).await;
+            Ok(raw)
+                if crate::api::workload_identity::is_aws_issuer(&raw.iss)
+                    || self
+                        .workload_identity
+                        .as_ref()
+                        .is_some_and(|trust| trust.selects(&raw)) =>
+            {
+                return self
+                    .verify_workload_connect(session_id, compact, &raw.iss)
+                    .await;
             }
             Ok(raw) => {
                 let auth_config = self
@@ -536,7 +544,7 @@ impl SessionAuthenticator {
         }
     }
 
-    async fn verify_aws_connect(
+    async fn verify_workload_connect(
         &self,
         session_id: u64,
         compact: &str,
@@ -549,10 +557,10 @@ impl SessionAuthenticator {
         ),
         IngressDecision,
     > {
-        let result = if let Some(trust) = &self.aws_iam {
+        let result = if let Some(trust) = &self.workload_identity {
             trust.verify(compact, issuer).await
         } else {
-            Err("AWS IAM CONNECT is not configured".to_owned())
+            Err("workload CONNECT is not configured".to_owned())
         };
         match result {
             Ok(verified) if self.route_families.contains(&verified.route_family) => Ok((
@@ -564,8 +572,8 @@ impl SessionAuthenticator {
                 self.log_connect_failure(
                     session_id,
                     compact,
-                    "aws_iam",
-                    "AWS IAM authentication rejected",
+                    "workload_identity",
+                    "workload authentication rejected",
                 );
                 Err(self.reject_connect(
                     session_id,
@@ -575,7 +583,7 @@ impl SessionAuthenticator {
                             crate::protocol::wire2::envelope::ErrorClass::Unauthorized,
                         )
                         .unwrap_or_default(),
-                        message: "connect failed: AWS IAM authentication rejected".to_owned(),
+                        message: "connect failed: workload authentication rejected".to_owned(),
                     },
                 ))
             }

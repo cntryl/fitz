@@ -20,7 +20,6 @@
 
 pub mod admin;
 pub(crate) mod authentication;
-pub(crate) mod aws_iam;
 pub mod background;
 mod broker;
 mod broker_shutdown;
@@ -35,6 +34,7 @@ pub mod outbound;
 pub mod runtime_ingress;
 pub mod session;
 pub mod tcp;
+pub(crate) mod workload_identity;
 
 /// Run the broker transport runtime to completion.
 ///

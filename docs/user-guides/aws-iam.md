@@ -6,6 +6,9 @@ role, EC2 instance role, or another attached role that can request an identity
 token. The broker maps an exact role ARN to a local route family and permission
 set.
 
+For a broker that also accepts Azure or Google Cloud identities, see the
+[cloud workload identity guide](workload-identity.md).
+
 ## AWS setup
 
 Enable outbound identity federation in each trusted AWS account. Record the

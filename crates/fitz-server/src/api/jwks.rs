@@ -32,6 +32,9 @@ struct Jwk {
     pub n: Option<String>,
     pub e: Option<String>,
     pub k: Option<String>,
+    pub crv: Option<String>,
+    pub x: Option<String>,
+    pub y: Option<String>,
     pub _x5c: Option<Vec<String>>,
 }
 
@@ -72,7 +75,7 @@ fn is_cache_entry_stale(entry: &CachedJwksEntry, now: u64) -> bool {
     now > entry.fetched_at.saturating_add(entry.ttl_seconds)
 }
 
-fn usable_key_from_jwk(jwk: Jwk) -> Result<Option<(String, DecodingKey)>, String> {
+fn usable_key_from_jwk(jwk: Jwk, aws: bool) -> Result<Option<(String, DecodingKey)>, String> {
     let kid = jwk.kid.unwrap_or_default();
     match jwk.kty.as_str() {
         "oct" => {
@@ -92,6 +95,14 @@ fn usable_key_from_jwk(jwk: Jwk) -> Result<Option<(String, DecodingKey)>, String
             };
             let key = DecodingKey::from_rsa_components(&n, &e)
                 .map_err(|error| format!("invalid RSA key material: {error}"))?;
+            Ok(Some((kid, key)))
+        }
+        "EC" if aws && jwk.crv.as_deref() == Some("P-384") => {
+            let (Some(x), Some(y)) = (jwk.x, jwk.y) else {
+                return Err("invalid AWS P-384 key: missing coordinates".to_owned());
+            };
+            let key = DecodingKey::from_ec_components(&x, &y)
+                .map_err(|error| format!("invalid AWS P-384 key material: {error}"))?;
             Ok(Some((kid, key)))
         }
         other => {
@@ -127,8 +138,9 @@ pub fn cache_jwks_from_json_with_ttl(
         serde_json::from_str(jwks_json).map_err(|e| format!("jwks json parse error: {e}"))?;
 
     let mut map = HashMap::new();
+    let aws = super::workload_identity::is_aws_issuer(jwks_url);
     for jwk in jwks.keys {
-        if let Some((kid, cached_jwk)) = usable_key_from_jwk(jwk)? {
+        if let Some((kid, cached_jwk)) = usable_key_from_jwk(jwk, aws)? {
             map.insert(kid, cached_jwk);
         }
     }
