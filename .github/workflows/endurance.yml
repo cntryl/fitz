@@ -1,13 +1,13 @@
 name: Benchmark Tier 6 Endurance
-run-name: Endurance benchmarks (${{ inputs.profile || 'extended' }})
+run-name: Endurance benchmarks (${{ inputs.profile || 'full' }})
 
 on:
   workflow_dispatch:
     inputs:
       profile:
-        description: Workload duration (60s smoke, 600s standard, 3600s extended)
+        description: Workload duration (60s smoke, 600s standard, 3600s full)
         type: choice
-        options: [smoke, standard, extended]
+        options: [smoke, standard, full]
         default: standard
   schedule:
     - cron: "0 7 1 * *"
@@ -36,5 +36,5 @@ jobs:
     with:
       bench: tier6_endurance
       workload: ${{ matrix.workload }}
-      profile: ${{ inputs.profile || 'extended' }}
+      profile: ${{ inputs.profile || 'full' }}
       artifact_name: bench-tier6-${{ matrix.workload }}-${{ github.sha }}

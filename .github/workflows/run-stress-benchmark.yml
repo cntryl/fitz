@@ -38,7 +38,7 @@ jobs:
       STRESS_COOLDOWN_SAMPLES: "0"
       FITZ_STRESS_STORAGE_PROFILE: local_disk
       STRESS_NO_PROGRESS_TIMEOUT_SECS: "60"
-      # Scheduled runs use the extended settings.
+      # Scheduled runs use the full settings.
       FITZ_TIER5_DURATION_SECS: ${{ inputs.profile == 'smoke' && '60' || inputs.profile == 'standard' && '600' || '3600' }}
       FITZ_TIER6_DURATION_SECS: ${{ inputs.profile == 'smoke' && '60' || inputs.profile == 'standard' && '600' || '3600' }}
       STRESS_TIMEOUT_SECS: ${{ inputs.profile == 'smoke' && '960' || inputs.profile == 'standard' && '1500' || '4500' }}

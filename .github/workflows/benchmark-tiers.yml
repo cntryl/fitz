@@ -1,5 +1,5 @@
-name: Benchmark Nightly
-run-name: Nightly benchmarks (${{ inputs.tier || 'all' }}, ${{ inputs.profile || 'standard' }})
+name: Benchmark Tiers 1–4
+run-name: Tiers 1–4 benchmarks (${{ inputs.tier || 'all' }}, ${{ inputs.profile || 'standard' }})
 
 on:
   workflow_dispatch:
@@ -7,12 +7,12 @@ on:
       tier:
         description: Benchmark tier to run
         type: choice
-        options: [tier1, tier2, tier3, tier4, all]
-        default: tier1
+        options: [all, tier1, tier2, tier3, tier4]
+        default: all
       profile:
         description: Measurement intensity
         type: choice
-        options: [smoke, standard, extended]
+        options: [smoke, standard, full]
         default: standard
   schedule:
     - cron: "0 5 * * *"
@@ -32,7 +32,7 @@ env:
   FITZ_LOG_LEVEL: "off"
   OTEL_ENABLED: "false"
   STRESS_OUTPUT_DIR: ${{ github.workspace }}/target/stress
-  STRESS_PROFILE: ${{ inputs.profile == 'smoke' && 'smoke' || inputs.profile == 'extended' && 'lab' || 'default' }}
+  STRESS_PROFILE: ${{ inputs.profile == 'smoke' && 'smoke' || inputs.profile == 'full' && 'lab' || 'default' }}
 
 jobs:
   tier1:
