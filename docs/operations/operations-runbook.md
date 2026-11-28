@@ -1,8 +1,7 @@
 # Operations Runbook
 
-This runbook describes startup, observation, replacement, drain, and rollback
-procedures exposed by Fitz. Operators remain responsible for validating these
-procedures in their own environment.
+This runbook covers Fitz startup, observation, replacement, drain, backup,
+and rollback. Operators validate these procedures in their own environment.
 
 ## Startup Procedure
 
@@ -89,6 +88,114 @@ writer lease TTL defaults to 30 seconds and is configured with
 TTL reduces provider coordination requests but delays takeover after a crash or
 failed release. Successful graceful shutdown conditionally expires the lease
 immediately.
+
+## S3 Backup and Point-in-Time Recovery
+
+For a Fitz deployment on AWS S3, use AWS Backup to protect the whole bucket
+containing the Midge database. Qualify this procedure with the deployed Fitz
+image and its embedded Midge version. AWS Backup defines a recovery point for
+each bucket. For applications that span multiple Fitz deployments or other
+datastores, coordinate and verify the application recovery point across them.
+See the [Midge backup guide](https://github.com/cntryl/midge/blob/main/docs/user-guides/backup-and-restore.md)
+for the database storage requirements.
+
+### Configure backup
+
+1. Enable S3 Versioning and apply noncurrent-version expiration. Start with
+   seven days for retired WAL and SST data and a shorter window for old
+   `midge_primary_lease.json` versions. Keep every current Midge object out of
+   age-based expiration. When enabling versioning for the first time, stop the
+   bucket's writers and allow [15 minutes for propagation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/manage-versioning-examples.html)
+   before resuming writes or deletes.
+2. Assign the bucket to one AWS Backup continuous backup rule with **7 days**
+   of retention. Enable the bucket's Amazon EventBridge notifications. Add
+   daily snapshots in the same vault if you need dated recovery points beyond
+   that window. Source lifecycle and vault retention are separate settings.
+   [AWS S3 backup types](https://docs.aws.amazon.com/aws-backup/latest/devguide/s3-backups.html#s3-backup-types-comparison)
+3. Configure [backup alerts](#backup-alerts) when you enable the plan.
+
+### Backup alerts
+
+Send vault notifications to a standard SNS topic subscribed by the on-call team.
+Use a topic in the vault's account and Region, allow `backup.amazonaws.com`
+to publish to it, and confirm the subscription. For an encrypted topic,
+also configure the KMS permissions required for AWS Backup to publish.
+In the vault's account and Region, set `BACKUP_VAULT` and
+`BACKUP_ALERT_TOPIC_ARN`. Check the existing configuration and preserve any
+events other operators already use. [AWS Backup notifications](https://docs.aws.amazon.com/aws-backup/latest/devguide/backup-notifications.html)
+
+```sh
+aws backup get-backup-vault-notifications --backup-vault-name "$BACKUP_VAULT"
+
+aws backup put-backup-vault-notifications \
+  --backup-vault-name "$BACKUP_VAULT" \
+  --sns-topic-arn "$BACKUP_ALERT_TOPIC_ARN" \
+  --backup-vault-events BACKUP_JOB_FAILED BACKUP_JOB_EXPIRED \
+    CONTINUOUS_BACKUP_INTERRUPTED RESTORE_JOB_FAILED \
+    S3_BACKUP_OBJECT_FAILED S3_RESTORE_OBJECT_FAILED
+```
+
+Test delivery to the on-call subscriber, then verify AWS Backup event delivery
+with an isolated test job. Group object-level failures by job ID so one
+incomplete restore produces one incident. Review jobs that finish with issues
+as well as failed jobs. In the AWS Backup API, a backup shown as **Completed with
+issues** has state `COMPLETED` with a `MessageCategory` other than `SUCCESS`.
+In a shared vault, use bucket-scoped job queries so another bucket's success
+cannot conceal missing Fitz backups. [AWS Backup job API](https://docs.aws.amazon.com/aws-backup/latest/APIReference/API_ListBackupJobs.html)
+
+Check freshness independently of event delivery. Use the protected S3
+resource in AWS Backup. Open the continuous recovery point's restore
+dialog to check its available time range without submitting a restore.
+Use the following thresholds as examples and set alerts based on your
+recovery objectives. [Reading the restore window](https://docs.aws.amazon.com/aws-backup/latest/devguide/point-in-time-recovery-restoring.html)
+
+| Signal | Example trigger and response |
+| --- | --- |
+| Continuous coverage | Page if the continuous point is missing or stopped after initial setup. Warn if the latest restorable time falls more than 30 minutes behind and page at 60 minutes. Check the bucket's EventBridge notifications, permissions, and whether AWS has fallen back to snapshots. |
+| Daily snapshot freshness | Alert when the last successful snapshot is older than the daily interval plus your expected scheduling and completion delay, for example 26 hours with two hours of slack. Use the recorded recovery point time and check for expired or failed jobs. |
+| Restore verification | Run the [recovery drill](#verify-a-recovery-point) before relying on the plan, after changes to the deployed image or backup configuration, and on a regular schedule such as monthly. Alert on a missed drill, failed data checks, or recovery that exceeds the time objective. A completed AWS restore job still needs Fitz data checks. |
+
+Review the oldest restorable time as the seven-day window fills. Record the
+bucket, recovery point ARN, latest restorable time, and job error in any
+backup incident. AWS documents about 15 minutes of lag at the newest end
+of the S3 continuous restore window. [AWS point-in-time recovery](https://docs.aws.amazon.com/aws-backup/latest/devguide/point-in-time-recovery.html)
+
+### Verify a recovery point
+
+1. For a drill, commit a known KV value with sync durability. Record a UTC
+   restore time after Fitz acknowledges the commit. Submit a second sync
+   commit for a different key after that time. Wait for the selected time to
+   enter the available recovery window.
+2. Restore the selected point into a new, empty, versioned bucket. Use the
+   entire bucket and the latest object version at that point. Inspect the job
+   details for skipped or failed objects. Provision the target's access,
+   encryption, and lifecycle settings before opening it. [AWS S3 restore](https://docs.aws.amazon.com/aws-backup/latest/devguide/restoring-s3.html)
+3. Run an isolated Fitz task with the same image and route-family configuration.
+   Set `FITZ_STORAGE_BUCKET` to the target bucket, keep the original
+   `FITZ_STORAGE_PREFIX`, and set `FITZ_STORAGE_CACHE_PATH` to an empty
+   directory. Keep production traffic and workers disconnected.
+4. Wait for `/readyz` or `/healthz`. Read both test keys through Fitz. The first
+   value must be present and the second absent. Check representative state in
+   each persistent domain you use. Readiness alone can succeed against an
+   empty prefix. Record the recovery point and selected timestamp, the
+   recovered values, and the elapsed time to verified readiness.
+
+### Resume service
+
+Drain and stop the original writer before routing production traffic to the
+restored task. The two buckets have independent writer leases. Reconnect
+clients and resume workers after checking the effects of rollback.
+
+| Domain | Operator check |
+| --- | --- |
+| KV | Verify the expected values and have clients reopen transactions and watches. |
+| Stream | Reconcile client-owned checkpoints with the restored history before resuming readers. A checkpoint can refer to events beyond the restored tail. |
+| Queue | Reconcile accepted work and acknowledgements with the producer or consumer record. Queue uses best-effort persistence, and restored messages can redeliver. |
+| Schedule | Reconcile pending claims with actions already performed outside Fitz before reconnecting subscribers. |
+
+See [recovery internals](../development/recovery-internals.md) for live session
+ownership and each domain's startup behavior. After the restored broker accepts
+writes, returning to the original bucket requires reconciling those writes.
 
 ## Emergency Rollback
 

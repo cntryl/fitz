@@ -61,6 +61,10 @@ Common Fitz keys:
 
 Use only the keys required by the selected provider. `FITZ_STORAGE_BUCKET` and `FITZ_STORAGE_CONTAINER` are intentionally separate because not every backend uses bucket terminology.
 
+For an AWS S3 deployment, see
+[S3 backup and point-in-time recovery](operations-runbook.md#s3-backup-and-point-in-time-recovery)
+for backup configuration, restore verification, and broker cutover.
+
 ## Local Emulator Flow
 
 Use one of the provider-specific profiles for local blob/object storage testing
