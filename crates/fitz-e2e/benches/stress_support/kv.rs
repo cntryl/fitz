@@ -16,7 +16,7 @@ pub(crate) struct KvDriver {
 }
 
 impl KvDriver {
-    pub(super) async fn connect(addr: SocketAddr, lane: usize) -> Result<Self, BenchFailure> {
+    pub(crate) async fn connect(addr: SocketAddr, lane: usize) -> Result<Self, BenchFailure> {
         let mut driver = Self {
             client: TestClient::new(addr)
                 .await
@@ -33,6 +33,15 @@ impl KvDriver {
         Ok(driver)
     }
 
+    // The driver retains its pre-restart oracle across the server shutdown.
+    #[allow(dead_code)] // Only the mixed endurance target reattaches the driver.
+    pub(crate) async fn reconnect(&mut self, addr: SocketAddr) -> Result<(), BenchFailure> {
+        self.client = TestClient::new(addr)
+            .await
+            .map_err(BenchFailure::transport)?;
+        Ok(())
+    }
+
     async fn begin(&mut self, mode: u8) -> Result<Vec<u8>, BenchFailure> {
         request(&mut self.client, &build_kv_begin(&self.route, mode), 100).await
     }
@@ -46,7 +55,7 @@ impl KvDriver {
         Ok(id)
     }
 
-    pub(super) async fn step(&mut self, sequence: u64) -> Result<StepOutcome, BenchFailure> {
+    pub(crate) async fn step(&mut self, sequence: u64) -> Result<StepOutcome, BenchFailure> {
         let begin = self.begin(1).await?;
         if begin.first().copied() != Some(0)
             && error_code(&begin, "KV BEGIN")? == u32::from(ERR_BUSY)
@@ -112,7 +121,7 @@ impl KvDriver {
         Ok(())
     }
 
-    pub(super) async fn verify(&mut self) -> Result<u64, BenchFailure> {
+    pub(crate) async fn verify(&mut self) -> Result<u64, BenchFailure> {
         let mut checked = 0;
         for slot in 0..KEY_COUNT {
             if self.expected[slot].is_some() {
@@ -128,7 +137,7 @@ impl KvDriver {
         Ok(checked)
     }
 
-    pub(super) async fn close(self) -> Result<(), BenchFailure> {
+    pub(crate) async fn close(self) -> Result<(), BenchFailure> {
         self.client.close().await.map_err(BenchFailure::transport)
     }
 }

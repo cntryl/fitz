@@ -66,7 +66,7 @@ impl Driver {
     }
 }
 
-async fn bounded<T>(
+pub(super) async fn bounded<T>(
     operation: impl Future<Output = Result<T, BenchFailure>>,
 ) -> Result<T, BenchFailure> {
     tokio::time::timeout(OPERATION_TIMEOUT, operation)
@@ -78,7 +78,7 @@ async fn bounded<T>(
         })?
 }
 
-fn configured_duration(tier: u8) -> Result<Duration, BenchFailure> {
+pub(super) fn configured_duration(tier: u8) -> Result<Duration, BenchFailure> {
     let key = format!("FITZ_TIER{tier}_DURATION_SECS");
     let configured = match environment_value(&key)? {
         Some(value) => Some(value),

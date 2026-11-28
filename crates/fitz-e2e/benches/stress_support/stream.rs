@@ -20,16 +20,20 @@ pub(crate) struct StreamDriver {
 }
 
 impl StreamDriver {
-    pub(super) async fn connect(addr: SocketAddr, lane: usize) -> Result<Self, BenchFailure> {
+    pub(crate) async fn open(addr: SocketAddr, lane: usize) -> Result<Self, BenchFailure> {
         let route = format!("stream://stress-bench/history/lane-{lane}");
-        let mut driver = Self {
+        Ok(Self {
             client: TestClient::new(addr)
                 .await
                 .map_err(BenchFailure::transport)?,
             read_frame: build_stream_read_with_limit(&route, 0, u64::from(HISTORY_LEN) + 1),
             route,
             lane,
-        };
+        })
+    }
+
+    pub(crate) async fn connect(addr: SocketAddr, lane: usize) -> Result<Self, BenchFailure> {
+        let mut driver = Self::open(addr, lane).await?;
         let body = driver.read().await?;
         let missing = body.first().copied() != Some(0)
             && error_code(&body, "Stream seed READ")? == u32::from(ERR_RESOURCE_NOT_FOUND);
@@ -167,12 +171,12 @@ impl StreamDriver {
         Ok(StepOutcome::Completed)
     }
 
-    pub(super) async fn verify(&mut self) -> Result<u64, BenchFailure> {
+    pub(crate) async fn verify(&mut self) -> Result<u64, BenchFailure> {
         let body = self.read().await?;
         self.check_read(&body, false)
     }
 
-    pub(super) async fn close(self) -> Result<(), BenchFailure> {
+    pub(crate) async fn close(self) -> Result<(), BenchFailure> {
         self.client.close().await.map_err(BenchFailure::transport)
     }
 }

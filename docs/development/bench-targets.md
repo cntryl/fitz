@@ -10,6 +10,16 @@ workloads are diagnostic and are not a pull-request performance gate.
 - **Benchmark Tier 5 Saturation** runs weekly.
 - **Benchmark Tier 6 Endurance** runs monthly.
 
+Endurance runs the seven single-domain workloads and a mixed local-disk
+workload. The mixed workload fills and drains a bounded Queue backlog, commits
+KV updates, replays committed Stream history, and checks Schedule deliveries
+while the same broker is serving the load. After graceful shutdown and reopen,
+it reads the existing KV values and Stream history, checks the IDs and payloads
+of any best-effort Queue redeliveries, and verifies that the recovered Schedule
+can fire. The
+short smoke run forces a due scan to exercise delivery without waiting for a
+wall-clock minute.
+
 Scheduled saturation and endurance runs use the full profile (3,600-second
 duration setting). Manual runs default to standard (600 seconds).
 The workflows restore optimized dependencies before compiling and upload native

@@ -37,6 +37,11 @@ fn should_soak_lease(ctx: &mut StressContext) -> StressResult {
     stress_support::run(ctx, Domain::Lease, 6)
 }
 
+#[stress(tier = 6, role = "diagnostic")]
+fn should_soak_mixed_local_restart(ctx: &mut StressContext) -> StressResult {
+    stress_support::mixed_endurance::run(ctx)
+}
+
 fn main() {
     stress_support::main();
 }
